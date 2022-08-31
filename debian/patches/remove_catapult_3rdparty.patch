@@ -1,0 +1,442 @@
+Author: Patrick Franz <deltaone@debian.org>
+Description: Remove dependencies on catapult from src/3rdparty
+Forwarded: not-needed
+
+--- a/src/3rdparty/chromium/BUILD.gn
++++ b/src/3rdparty/chromium/BUILD.gn
+@@ -246,7 +246,6 @@ group("gn_all") {
+       "//google_apis/gcm:mcs_probe",
+       "//media/capture:capture_unittests",
+       "//media/cast:cast_unittests",
+-      "//third_party/catapult/telemetry:bitmaptools($host_toolchain)",
+     ]
+   } else if (is_ios && !use_qt) {
+     deps += [
+@@ -356,7 +355,6 @@ group("gn_all") {
+       "//net/android:net_junit_tests",
+       "//services:services_junit_tests",
+       "//testing/android/junit:junit_unit_tests",
+-      "//third_party/catapult/devil",
+       "//third_party/r8:custom_d8_java",
+       "//third_party/smhasher:murmurhash3",
+       "//tools/android:android_tools",
+@@ -957,7 +955,6 @@ if (is_chromeos_ash) {
+       "//third_party/dawn/src/tests:dawn_unittests",
+ 
+       # Blocked on https://github.com/catapult-project/catapult/issues/2297
+-      #"//third_party/catapult/telemetry:bitmaptools",
+       "//tools/perf/clear_system_cache",
+       "//ui/ozone/gl:ozone_gl_unittests",
+     ]
+@@ -1038,7 +1035,6 @@ if (!is_ios && !use_qt) {
+       data_deps = [
+         "//chrome:chrome",
+         "//chrome/test/chromedriver",
+-        "//third_party/catapult/third_party/typ",
+       ]
+       if (is_win) {
+         data_deps += [ "//build/win:copy_cdb_to_output" ]
+@@ -1079,7 +1075,6 @@ if (!is_ios && !use_qt) {
+       "//third_party/blink/public:blink_devtools_inspector_resources",
+       "//third_party/blink/public/mojom:mojom_platform_js_data_deps",
+       "//third_party/blink/renderer/core:js_files_for_form_controls_web_tests",
+-      "//third_party/catapult/third_party/typ",
+       "//third_party/hyphenation-patterns:test_data",
+       "//third_party/mesa_headers",
+       "//tools/imagediff",
+@@ -1146,7 +1141,6 @@ if (!is_ios && !use_qt) {
+ 
+     if (is_android) {
+       data += [
+-        "//third_party/catapult/",
+         "//build/android/",
+       ]
+     }
+@@ -1284,11 +1278,6 @@ if (!is_ios && !use_qt) {
+       "//third_party/blink/web_tests/StaleTestExpectations",
+       "//third_party/blink/web_tests/TestExpectations",
+       "//third_party/blink/web_tests/VirtualTestSuites",
+-      "//third_party/catapult/common/py_utils/",
+-      "//third_party/catapult/devil/",
+-      "//third_party/catapult/dependency_manager/",
+-      "//third_party/catapult/third_party/zipfile/",
+-      "//third_party/catapult/third_party/typ/",
+       "//third_party/depot_tools/pylint",
+       "//third_party/depot_tools/pylint-1.5",
+       "//third_party/depot_tools/pylint_main.py",
+diff --git a/chromium/chrome/chrome_paks.gni b/chromium/chrome/chrome_paks.gni
+index a3ea9ff5668..fafd291e7ec 100644
+--- a/src/3rdparty/chromium/chrome/chrome_paks.gni
++++ b/src/3rdparty/chromium/chrome/chrome_paks.gni
+@@ -147,7 +147,6 @@ template("chrome_extra_paks") {
+         "$root_gen_dir/chrome/tab_search_resources.pak",
+         "$root_gen_dir/chrome/webid_resources_100_percent.pak",
+         "$root_gen_dir/content/browser/devtools/devtools_resources.pak",
+-        "$root_gen_dir/content/browser/tracing/tracing_resources.pak",
+         "$root_gen_dir/headless/headless_lib_resources.pak",
+       ]
+       deps += [
+@@ -167,7 +166,6 @@ template("chrome_extra_paks") {
+         "//chrome/browser/resources/settings:resources",
+         "//chrome/browser/resources/tab_search:resources",
+         "//content/browser/devtools:devtools_resources",
+-        "//content/browser/tracing:resources",
+         "//headless:resources",
+       ]
+       if (is_chrome_branded) {
+diff --git a/chromium/chrome/test/BUILD.gn b/chromium/chrome/test/BUILD.gn
+index 09819073179..6b0469fe7fa 100644
+--- a/src/3rdparty/chromium/chrome/test/BUILD.gn
++++ b/src/3rdparty/chromium/chrome/test/BUILD.gn
+@@ -7544,8 +7544,6 @@ if (!is_fuchsia && !is_android) {
+       "//chrome/test/data/password/captured_sites/",
+       "//chrome/test/data/web_page_replay_go_helper_scripts/automation_helper.js",
+       "//components/test/data/autofill/web_page_replay_support_files/",
+-      "//third_party/catapult/telemetry/telemetry/bin/",
+-      "//third_party/catapult/web_page_replay_go/deterministic.js",
+     ]
+ 
+     if (is_linux || is_chromeos || is_win) {
+@@ -7582,7 +7580,6 @@ if (!is_fuchsia && !is_android) {
+ 
+       # TODO(uwyiming@chromium.org) create a gn target for Web Page Replay Go (WPR Go) and only WPR Go.
+       # So that test targets requiring WPR Go does not pull down the whole telemetry tool chain.
+-      "//third_party/catapult:telemetry_chrome_test_support",
+       "//third_party/hunspell",
+       "//third_party/icu",
+       "//third_party/libpng",
+@@ -7611,7 +7608,6 @@ if (!is_fuchsia && !is_android) {
+     deps = [ "//tools/perf/chrome_telemetry_build:telemetry_chrome_test" ]
+ 
+     data = [
+-      "//third_party/catapult/telemetry/telemetry/internal/bin/",
+       "//tools/perf/run_telemetry_tests",
+ 
+       # For isolate contract.
+@@ -7750,7 +7746,6 @@ if (is_mac || is_win || is_android) {
+       "//testing/scripts",
+       "//testing/test_env.py",
+       "//testing/xvfb.py",
+-      "//third_party/catapult",
+       "//tools",
+     ]
+   }
+diff --git a/chromium/content/browser/BUILD.gn b/chromium/content/browser/BUILD.gn
+index d5bc254da9b..e7cb81a824d 100644
+--- a/src/3rdparty/chromium/content/browser/BUILD.gn
++++ b/src/3rdparty/chromium/content/browser/BUILD.gn
+@@ -2257,7 +2257,6 @@ jumbo_static_library("browser") {
+   if (!is_android) {
+     deps += [
+       "//components/vector_icons",
+-      "//content/browser/tracing:resources",
+     ]
+   }
+ 
+diff --git a/chromium/content/browser/tracing/BUILD.gn b/chromium/content/browser/tracing/BUILD.gn
+deleted file mode 100644
+index 9d744a67cfd..00000000000
+--- a/src/3rdparty/chromium/content/browser/tracing/BUILD.gn
++++ b/src/3rdparty/chromium/content/browser/tracing/BUILD.gn
+@@ -1,39 +0,0 @@
+-# Copyright 2014 The Chromium Authors. All rights reserved.
+-# Use of this source code is governed by a BSD-style license that can be
+-# found in the LICENSE file.
+-
+-import("//tools/grit/grit_rule.gni")
+-import("//ui/webui/resources/tools/generate_grd.gni")
+-
+-assert(!is_android)
+-
+-# The script just writes filename with no dirs to the .grd, so we always need
+-# this file to be in the same directory as the inputs.
+-tracing_grd = "$target_gen_dir/tracing_resources.grd"
+-
+-generate_grd("build_grd") {
+-  grd_prefix = "tracing"
+-  out_grd = tracing_grd
+-  input_files = [
+-    "about_tracing.html",
+-    "about_tracing.js",
+-  ]
+-  input_files_base_dir = rebase_path(target_gen_dir, root_build_dir)
+-  deps = [ "//third_party/catapult/tracing:generate_about_tracing" ]
+-}
+-
+-grit("resources") {
+-  source = tracing_grd
+-
+-  # Required because the .grd is generated.
+-  enable_input_discovery_for_gn_analyze = false
+-
+-  outputs = [
+-    "grit/tracing_resources.h",
+-    "grit/tracing_resources_map.cc",
+-    "grit/tracing_resources_map.h",
+-    "tracing_resources.pak",
+-  ]
+-
+-  deps = [ ":build_grd" ]
+-}
+diff --git a/chromium/content/browser/tracing/tracing_ui.cc b/chromium/content/browser/tracing/tracing_ui.cc
+index 44e47fcd3cc..3023c1934da 100644
+--- a/src/3rdparty/chromium/content/browser/tracing/tracing_ui.cc
++++ b/src/3rdparty/chromium/content/browser/tracing/tracing_ui.cc
+@@ -26,7 +26,6 @@
+ #include "base/strings/stringprintf.h"
+ #include "base/trace_event/trace_event.h"
+ #include "base/values.h"
+-#include "content/browser/tracing/grit/tracing_resources.h"
+ #include "content/browser/tracing/tracing_controller_impl.h"
+ #include "content/public/browser/browser_context.h"
+ #include "content/public/browser/browser_thread.h"
+@@ -241,8 +240,6 @@ TracingUI::TracingUI(WebUI* web_ui)
+   WebUIDataSource* source = WebUIDataSource::Create(kChromeUITracingHost);
+   source->DisableTrustedTypesCSP();
+   source->UseStringsJs();
+-  source->SetDefaultResource(IDR_TRACING_ABOUT_TRACING_HTML);
+-  source->AddResourcePath("tracing.js", IDR_TRACING_ABOUT_TRACING_JS);
+ 
+   source->SetRequestFilter(base::BindRepeating(OnShouldHandleRequest),
+                            base::BindRepeating(OnTracingRequest));
+diff --git a/chromium/content/shell/BUILD.gn b/chromium/content/shell/BUILD.gn
+index ce0353199a8..52b7520608d 100644
+--- a/src/3rdparty/chromium/content/shell/BUILD.gn
++++ b/src/3rdparty/chromium/content/shell/BUILD.gn
+@@ -437,11 +437,6 @@ repack("pak") {
+     "//ui/strings",
+   ]
+ 
+-  if (!is_android) {
+-    deps += [ "//content/browser/tracing:resources" ]
+-    sources += [ "$root_gen_dir/content/browser/tracing/tracing_resources.pak" ]
+-  }
+-
+   if (toolkit_views && !is_chromecast) {
+     deps += [ "//ui/views/resources" ]
+     sources +=
+diff --git a/chromium/fuchsia/engine/BUILD.gn b/chromium/fuchsia/engine/BUILD.gn
+index 20cd491b429..e92b9941fb2 100644
+--- a/src/3rdparty/chromium/fuchsia/engine/BUILD.gn
++++ b/src/3rdparty/chromium/fuchsia/engine/BUILD.gn
+@@ -32,7 +32,6 @@ repack("web_engine_pak") {
+   sources = [
+     "$root_gen_dir/components/components_resources.pak",
+     "$root_gen_dir/content/app/resources/content_resources_100_percent.pak",
+-    "$root_gen_dir/content/browser/tracing/tracing_resources.pak",
+     "$root_gen_dir/content/content_resources.pak",
+     "$root_gen_dir/content/dev_ui_content_resources.pak",
+     "$root_gen_dir/mojo/public/js/mojo_bindings_resources.pak",
+@@ -47,7 +46,6 @@ repack("web_engine_pak") {
+     "//content:content_resources",
+     "//content:dev_ui_content_resources",
+     "//content/app/resources",
+-    "//content/browser/tracing:resources",
+     "//gpu/command_buffer/service",
+     "//mojo/public/js:resources",
+     "//net:net_resources",
+diff --git a/chromium/headless/BUILD.gn b/chromium/headless/BUILD.gn
+index f5e17e70679..e8c5adeeff9 100644
+--- a/src/3rdparty/chromium/headless/BUILD.gn
++++ b/src/3rdparty/chromium/headless/BUILD.gn
+@@ -31,7 +31,6 @@ repack("pak") {
+     "$root_gen_dir/components/components_resources.pak",
+     "$root_gen_dir/components/strings/components_strings_en-US.pak",
+     "$root_gen_dir/content/app/resources/content_resources_100_percent.pak",
+-    "$root_gen_dir/content/browser/tracing/tracing_resources.pak",
+     "$root_gen_dir/content/content_resources.pak",
+     "$root_gen_dir/content/dev_ui_content_resources.pak",
+     "$root_gen_dir/headless/headless_lib_resources.pak",
+@@ -60,7 +59,6 @@ repack("pak") {
+     "//content:content_resources",
+     "//content:dev_ui_content_resources",
+     "//content/app/resources",
+-    "//content/browser/tracing:resources",
+     "//mojo/public/js:resources",
+     "//net:net_resources",
+     "//third_party/blink/public:resources",
+diff --git a/chromium/mojo/public/tools/BUILD.gn b/chromium/mojo/public/tools/BUILD.gn
+index 4c68350b399..1cc01256f00 100644
+--- a/src/3rdparty/chromium/mojo/public/tools/BUILD.gn
++++ b/src/3rdparty/chromium/mojo/public/tools/BUILD.gn
+@@ -14,5 +14,4 @@ group("mojo_python_unittests") {
+     "//testing/xvfb.py",
+   ]
+   deps = [ "//mojo/public/tools/mojom/mojom:tests" ]
+-  data_deps = [ "//third_party/catapult/third_party/typ/" ]
+ }
+diff --git a/chromium/testing/BUILD.gn b/chromium/testing/BUILD.gn
+index 5a578973524..dbfb2f1906c 100644
+--- a/src/3rdparty/chromium/testing/BUILD.gn
++++ b/src/3rdparty/chromium/testing/BUILD.gn
+@@ -29,7 +29,6 @@ group("run_perf_test") {
+ 
+   data_deps = [
+     ":test_scripts_shared",
+-    "//third_party/catapult/tracing:convert_chart_json",
+   ]
+ 
+   if (is_android) {
+diff --git a/chromium/third_party/angle/gni/angle.gni b/chromium/third_party/angle/gni/angle.gni
+index 8d9c55eb7e7..2b357316d8e 100644
+--- a/src/3rdparty/chromium/third_party/angle/gni/angle.gni
++++ b/src/3rdparty/chromium/third_party/angle/gni/angle.gni
+@@ -390,10 +390,6 @@ if (angle_standalone || build_with_chromium) {
+       if (angle_has_histograms) {
+         sources +=
+             [ "$angle_root/src/tests/test_utils/runner/HistogramWriter.cpp" ]
+-        deps += [
+-          "//third_party/catapult/tracing/tracing:histogram",
+-          "//third_party/catapult/tracing/tracing:reserved_infos",
+-        ]
+       }
+ 
+       if (is_mac && angle_enable_metal) {
+diff --git a/chromium/third_party/webrtc/test/BUILD.gn b/chromium/third_party/webrtc/test/BUILD.gn
+index ed4eebefd5b..c34f1657689 100644
+--- a/src/3rdparty/chromium/third_party/webrtc/test/BUILD.gn
++++ b/src/3rdparty/chromium/third_party/webrtc/test/BUILD.gn
+@@ -262,10 +262,6 @@ rtc_library("perf_test") {
+   ]
+   if (rtc_enable_protobuf) {
+     sources += [ "testsupport/perf_test_histogram_writer.cc" ]
+-    deps += [
+-      "//third_party/catapult/tracing/tracing:histogram",
+-      "//third_party/catapult/tracing/tracing:reserved_infos",
+-    ]
+   } else {
+     sources += [ "testsupport/perf_test_histogram_writer_no_protobuf.cc" ]
+   }
+@@ -573,7 +569,6 @@ if (rtc_include_tests && !build_with_chromium) {
+ 
+     if (rtc_enable_protobuf) {
+       sources += [ "testsupport/perf_test_histogram_writer_unittest.cc" ]
+-      deps += [ "//third_party/catapult/tracing/tracing:histogram" ]
+     }
+ 
+     data = test_support_unittests_resources
+diff --git a/chromium/tools/binary_size/BUILD.gn b/chromium/tools/binary_size/BUILD.gn
+index 383ab115e57..e681d1f6e70 100644
+--- a/src/3rdparty/chromium/tools/binary_size/BUILD.gn
++++ b/src/3rdparty/chromium/tools/binary_size/BUILD.gn
+@@ -18,7 +18,6 @@ python_library("binary_size_trybot_py") {
+ python_library("sizes_py") {
+   testonly = true
+   pydeps_file = "sizes.pydeps"
+-  data_deps = [ "//third_party/catapult/tracing:convert_chart_json" ]
+ }
+ 
+ if (is_linux) {
+diff --git a/chromium/tools/grit/BUILD.gn b/chromium/tools/grit/BUILD.gn
+index 1cd3c75b553..60c4cf2f77a 100644
+--- a/src/3rdparty/chromium/tools/grit/BUILD.gn
++++ b/src/3rdparty/chromium/tools/grit/BUILD.gn
+@@ -33,7 +33,6 @@ group("grit_python_unittests") {
+     "//testing/scripts/run_isolated_script_test.py",
+     "//testing/xvfb.py",
+     "//tools/grit/",
+-    "//third_party/catapult/third_party/typ/",
+   ]
+ }
+ 
+diff --git a/chromium/tools/gritsettings/resource_ids.spec b/chromium/tools/gritsettings/resource_ids.spec
+index 864a81c62cc..6a2c1648305 100644
+--- a/src/3rdparty/chromium/tools/gritsettings/resource_ids.spec
++++ b/src/3rdparty/chromium/tools/gritsettings/resource_ids.spec
+@@ -544,11 +544,6 @@
+     "includes": [2950],
+   },
+ 
+-  # This file is generated during the build.
+-  "<(SHARED_INTERMEDIATE_DIR)/content/browser/tracing/tracing_resources.grd": {
+-    "META": {"sizes": {"includes": [20],}},
+-    "includes": [2960],
+-  },
+   # END content/ section.
+ 
+   # START ios/web/ section.
+diff --git a/chromium/tools/metrics/BUILD.gn b/chromium/tools/metrics/BUILD.gn
+index c9e8df25e11..2bfc209c7b0 100644
+--- a/src/3rdparty/chromium/tools/metrics/BUILD.gn
++++ b/src/3rdparty/chromium/tools/metrics/BUILD.gn
+@@ -50,7 +50,6 @@ group("metrics_python_tests") {
+     "//testing/scripts/common.py",
+     "//testing/xvfb.py",
+     "//testing/test_env.py",
+-    "//third_party/catapult/third_party/typ/",
+ 
+     # Scripts we depend on. Their unit tests are also included.
+     "//tools/json_comment_eater/json_comment_eater.py",
+diff --git a/chromium/tools/perf/chrome_telemetry_build/BUILD.gn b/chromium/tools/perf/chrome_telemetry_build/BUILD.gn
+index 82f745109a9..54e1b08c612 100644
+--- a/src/3rdparty/chromium/tools/perf/chrome_telemetry_build/BUILD.gn
++++ b/src/3rdparty/chromium/tools/perf/chrome_telemetry_build/BUILD.gn
+@@ -137,7 +137,6 @@ group("telemetry_chrome_test_without_chrome") {
+     "//tools/perf/core/",  # chrome_telemetry_build/ depends on core/
+   ]
+   data_deps = [
+-    "//third_party/catapult:telemetry_chrome_test_support",
+     "//tools/metrics:metrics_python_tests",
+   ]
+ 
+@@ -181,7 +180,5 @@ group("telemetry_chrome_test_without_chrome") {
+       "//build/android:devil_chromium_py",
+       "//build/android:stack_tools",
+     ]
+-  } else if (!is_fuchsia) {
+-    data_deps += [ "//third_party/catapult/telemetry:bitmaptools" ]
+   }
+ }
+diff --git a/chromium/tools/perf/core/perfetto_binary_roller/BUILD.gn b/chromium/tools/perf/core/perfetto_binary_roller/BUILD.gn
+index d7289e158c6..72c9991df95 100644
+--- a/src/3rdparty/chromium/tools/perf/core/perfetto_binary_roller/BUILD.gn
++++ b/src/3rdparty/chromium/tools/perf/core/perfetto_binary_roller/BUILD.gn
+@@ -7,7 +7,6 @@ import("//build/util/generate_wrapper.gni")
+ generate_wrapper("upload_trace_processor") {
+   testonly = true
+   data_deps = [
+-    "//third_party/catapult:telemetry_chrome_test_support",
+     "//third_party/perfetto/src/trace_processor:trace_processor_shell",
+   ]
+   data = [
+diff --git a/chromium/tools/polymer/BUILD.gn b/chromium/tools/polymer/BUILD.gn
+index 092066b7c04..d115144cd61 100644
+--- a/src/3rdparty/chromium/tools/polymer/BUILD.gn
++++ b/src/3rdparty/chromium/tools/polymer/BUILD.gn
+@@ -10,6 +10,5 @@ group("polymer_tools_python_unittests") {
+     "//testing/scripts/run_isolated_script_test.py",
+     "//testing/xvfb.py",
+     "//tools/polymer/",
+-    "//third_party/catapult/third_party/typ/",
+   ]
+ }
+diff --git a/chromium/v8/tools/BUILD.gn b/chromium/v8/tools/BUILD.gn
+index 2f8197dd369..83304b6342b 100644
+--- a/src/3rdparty/chromium/v8/tools/BUILD.gn
++++ b/src/3rdparty/chromium/v8/tools/BUILD.gn
+@@ -31,10 +31,6 @@ group("v8_android_test_runner_deps") {
+ 
+   if (is_android && !build_with_chromium) {
+     data_deps = [ "//build/android:test_runner_py" ]
+-    data = [
+-      # This is used by android.py, but not included by test_runner_py above.
+-      "//third_party/catapult/devil/devil/android/perf/",
+-    ]
+   }
+ }
+ 
+diff --git a/chromium/weblayer/shell/BUILD.gn b/chromium/weblayer/shell/BUILD.gn
+index 14fa0a4416f..9cd776834c6 100644
+--- a/src/3rdparty/chromium/weblayer/shell/BUILD.gn
++++ b/src/3rdparty/chromium/weblayer/shell/BUILD.gn
+@@ -195,9 +195,6 @@ repack("support_pak") {
+   }
+   if (is_android) {
+     deps += [ "//ui/android:ui_java_resources" ]
+-  } else {
+-    deps += [ "//content/browser/tracing:resources" ]
+-    sources += [ "$root_gen_dir/content/browser/tracing/tracing_resources.pak" ]
+   }
+   output = "$root_out_dir/weblayer_support.pak"
+ }
+-- 

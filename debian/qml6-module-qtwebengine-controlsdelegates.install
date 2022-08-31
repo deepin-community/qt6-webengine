@@ -1,0 +1,15 @@
+usr/lib/${DEB_HOST_MULTIARCH}/qt6/qml/QtWebEngine/ControlsDelegates/AlertDialog.qml
+usr/lib/${DEB_HOST_MULTIARCH}/qt6/qml/QtWebEngine/ControlsDelegates/AuthenticationDialog.qml
+usr/lib/${DEB_HOST_MULTIARCH}/qt6/qml/QtWebEngine/ControlsDelegates/ColorDialog.qml
+usr/lib/${DEB_HOST_MULTIARCH}/qt6/qml/QtWebEngine/ControlsDelegates/ConfirmDialog.qml
+usr/lib/${DEB_HOST_MULTIARCH}/qt6/qml/QtWebEngine/ControlsDelegates/FilePicker.qml
+usr/lib/${DEB_HOST_MULTIARCH}/qt6/qml/QtWebEngine/ControlsDelegates/Menu.qml
+usr/lib/${DEB_HOST_MULTIARCH}/qt6/qml/QtWebEngine/ControlsDelegates/MenuItem.qml
+usr/lib/${DEB_HOST_MULTIARCH}/qt6/qml/QtWebEngine/ControlsDelegates/MenuSeparator.qml
+usr/lib/${DEB_HOST_MULTIARCH}/qt6/qml/QtWebEngine/ControlsDelegates/PromptDialog.qml
+usr/lib/${DEB_HOST_MULTIARCH}/qt6/qml/QtWebEngine/ControlsDelegates/ToolTip.qml
+usr/lib/${DEB_HOST_MULTIARCH}/qt6/qml/QtWebEngine/ControlsDelegates/TouchHandle.qml
+usr/lib/${DEB_HOST_MULTIARCH}/qt6/qml/QtWebEngine/ControlsDelegates/TouchSelectionMenu.qml
+usr/lib/${DEB_HOST_MULTIARCH}/qt6/qml/QtWebEngine/ControlsDelegates/WebEngineQuickDelegatesQml.qmltypes
+usr/lib/${DEB_HOST_MULTIARCH}/qt6/qml/QtWebEngine/ControlsDelegates/libqtwebenginequickdelegatesplugin.so
+usr/lib/${DEB_HOST_MULTIARCH}/qt6/qml/QtWebEngine/ControlsDelegates/qmldir

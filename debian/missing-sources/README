@@ -1,0 +1,15 @@
+Missing source files
+--------------------
+
+QtWebEngine ships embeded minified javascript libraries.
+The GPL requires you to provide the corresponding source code.
+
+For Debian all missing sources are bundled in this directory.
+They have been grabbed from the various upstream projects.
+
+Last synchronization was made with QtWebEngine v6.2.2.
+
+Files: src/3rdparty/chromium/third_party/mocha/mocha.js
+Project: Mocha v6.1.4
+License: MIT
+Source: https://github.com/mochajs/mocha/archive/v6.1.4.tar.gz

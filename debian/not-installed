@@ -1,0 +1,13 @@
+usr/include/${DEB_HOST_MULTIARCH}/qt6/QtPdf/6.*
+usr/include/${DEB_HOST_MULTIARCH}/qt6/QtPdfQuick/6.*
+usr/include/${DEB_HOST_MULTIARCH}/qt6/QtPdfWidgets/6.*
+usr/lib/qt6/libexec/gn
+usr/lib/${DEB_HOST_MULTIARCH}/cmake/Qt6Qml/QmlPlugins/Qt6qtpdfquickpluginAdditionalTargetInfo.cmake
+usr/lib/${DEB_HOST_MULTIARCH}/cmake/Qt6Qml/QmlPlugins/Qt6qtpdfquickpluginConfig.cmake
+usr/lib/${DEB_HOST_MULTIARCH}/cmake/Qt6Qml/QmlPlugins/Qt6qtpdfquickpluginConfigVersion.cmake
+usr/lib/${DEB_HOST_MULTIARCH}/cmake/Qt6Qml/QmlPlugins/Qt6qtpdfquickpluginConfigVersionImpl.cmake
+usr/lib/${DEB_HOST_MULTIARCH}/cmake/Qt6Qml/QmlPlugins/Qt6qtpdfquickpluginTargets-none.cmake
+usr/lib/${DEB_HOST_MULTIARCH}/cmake/Qt6Qml/QmlPlugins/Qt6qtpdfquickpluginTargets.cmake
+usr/lib/${DEB_HOST_MULTIARCH}/qt6/mkspecs/modules/qt_lib_pdf_private.pri
+usr/lib/${DEB_HOST_MULTIARCH}/qt6/mkspecs/modules/qt_lib_pdfquick_private.pri
+usr/lib/${DEB_HOST_MULTIARCH}/qt6/mkspecs/modules/qt_lib_pdfwidgets_private.pri

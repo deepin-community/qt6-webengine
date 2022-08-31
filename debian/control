@@ -1,0 +1,353 @@
+Source: qt6-webengine
+Section: libs
+Priority: optional
+Maintainer: Deepin Developer <deepin-dev@deepin.org>
+Uploaders: Deepin Packages Builder <packages@deepin.org>
+Build-Depends: binutils (>= 2.31),
+               bison,
+               cmake (>= 3.19~),
+               debhelper-compat (= 13),
+               flex,
+               gperf,
+               libavcodec-dev (>= 7:4.0~),
+               libavformat-dev (>= 7:4.0~),
+               libavutil-dev (>= 7:4.0~),
+               libcups2-dev (>= 1.5.0),
+               libdbus-1-dev,
+               libegl1-mesa-dev,
+               libevent-dev,
+               libfontconfig1-dev,
+               libgl-dev,
+               libgles-dev,
+               libglib2.0-dev,
+               libglu1-mesa-dev,
+               libgstreamer-plugins-base1.0-dev,
+               libgstreamer1.0-dev,
+               libharfbuzz-dev,
+               libicu-dev,
+               libjpeg-dev,
+               libjs-d3,
+               libjs-jquery,
+               libjs-jquery-tablesorter,
+               libjsoncpp-dev,
+               libkrb5-dev,
+               liblcms2-dev,
+               libminizip-dev,
+               libnss3-dev,
+               libopus-dev (>= 1.3.1),
+               libpci-dev,
+               libpng-dev,
+               libprotobuf-dev,
+               libpulse-dev,
+               libqt6opengl6-dev (>= 6.2.4),
+               libqt6webchannel6-dev (>= 6.2.4),
+               libre2-dev,
+               libsnappy-dev,
+               libsqlite3-dev,
+               libssl-dev,
+               libusb-1.0-0-dev,
+               libvpx-dev (>= 1.7),
+               libvulkan-dev [linux-any],
+               libwayland-dev (>= 1.8.0),
+               libwebp-dev,
+               libx11-xcb-dev,
+               libxcb-dri3-dev,
+               libxcomposite-dev,
+               libxcursor-dev,
+               libxdamage-dev,
+               libxkbcommon-dev (>= 0.2.0),
+               libxkbfile-dev,
+               libxml2-dev,
+               libxnvctrl-dev,
+               libxrandr-dev,
+               libxrender-dev,
+               libxshmfence-dev,
+               libxslt1-dev,
+               libxss-dev,
+               libxtst-dev,
+               mesa-common-dev,
+               ninja-build,
+               node-pako,
+               node-yargs,
+               nodejs,
+               pkg-config,
+               pkg-kde-tools,
+               protobuf-compiler,
+               python2,
+               qt6-base-dev (>= 6.2.4),
+               qt6-base-private-dev (>= 6.2.4),
+               qt6-declarative-dev (>= 6.2.4),
+               qt6-declarative-private-dev (>= 6.2.4),
+               qt6-positioning-dev (>= 6.2.4),
+               qt6-tools-dev (>= 6.2.4),
+               re2c,
+               rollup,
+               ruby,
+               xauth <!nocheck>,
+               xvfb <!nocheck>,
+Standards-Version: 4.6.0
+Homepage: https://www.qt.io/developers/
+Rules-Requires-Root: no
+
+Package: libqt6webenginecore6
+Architecture: amd64 arm64 armhf i386
+Multi-Arch: same
+Depends: libqt6webengine6-data (= ${binary:Version}),
+         ${misc:Depends},
+         ${shlibs:Depends},
+Pre-Depends: ${misc:Pre-Depends}
+Provides: qt6-webengine-abi (= 6.2.4)
+Description: Qt 6 WebEngine Core library
+ Qt is a cross-platform C++ application framework. Qt's primary feature
+ is its rich set of widgets that provide standard GUI functionality.
+ .
+ Qt WebEngine provides a Web browser engine that makes it easy to embed content
+ from the World Wide Web into your Qt application.
+ .
+ This package contains the Qt 6 WebEngine Core library.
+
+Package: libqt6pdf6
+Architecture: amd64 arm64 armhf i386
+Multi-Arch: same
+Depends: ${misc:Depends}, ${shlibs:Depends}
+Description: Qt 6 PDF library
+ Qt is a cross-platform C++ application framework. Qt's primary feature
+ is its rich set of widgets that provide standard GUI functionality.
+ .
+ The Qt PDF module contains classes and functions for rendering PDF documents.
+ .
+ This package contains the Qt 6 PDF library.
+
+Package: libqt6pdfquick6
+Architecture: amd64 arm64 armhf i386
+Multi-Arch: same
+Depends: ${misc:Depends}, ${shlibs:Depends}
+Pre-Depends: ${misc:Pre-Depends}
+Description: Qt 6 PDF Quick library
+ Qt is a cross-platform C++ application framework. Qt's primary feature
+ is its rich set of widgets that provide standard GUI functionality.
+ .
+ The Qt PDF module contains classes and functions for rendering PDF documents.
+ .
+ This package contains the Qt 6 PDF Quick library.
+
+Package: libqt6pdfwidgets6
+Architecture: amd64 arm64 armhf i386
+Multi-Arch: same
+Depends: ${misc:Depends}, ${shlibs:Depends}
+Description: Qt 6 PDF Widgets library
+ Qt is a cross-platform C++ application framework. Qt's primary feature
+ is its rich set of widgets that provide standard GUI functionality.
+ .
+ The Qt PDF module contains classes and functions for rendering PDF documents.
+ .
+ This package contains the Qt 6 PDF Widgets library.
+
+Package: libqt6webenginecore6-bin
+Architecture: amd64 arm64 armhf i386
+Multi-Arch: foreign
+Depends: ${misc:Depends}, ${shlibs:Depends}
+Pre-Depends: ${misc:Pre-Depends}
+Description: Qt 6 WebEngine Core binaries
+ Qt is a cross-platform C++ application framework. Qt's primary feature
+ is its rich set of widgets that provide standard GUI functionality.
+ .
+ Qt WebEngine provides a Web browser engine that makes it easy to embed content
+ from the World Wide Web into your Qt application.
+ .
+ This package contains the Qt 6 WebEngine Core binaries.
+
+Package: libqt6webenginequick6
+Architecture: amd64 arm64 armhf i386
+Multi-Arch: same
+Depends: ${misc:Depends}, ${shlibs:Depends}
+Pre-Depends: ${misc:Pre-Depends}
+Description: Qt 6 WebEngine Quick library
+ Qt is a cross-platform C++ application framework. Qt's primary feature
+ is its rich set of widgets that provide standard GUI functionality.
+ .
+ Qt WebEngine provides a Web browser engine that makes it easy to embed content
+ from the World Wide Web into your Qt application.
+ .
+ This package contains the Qt 6 WebEngine Quick library.
+
+Package: libqt6webenginequickdelegatesqml6
+Architecture: amd64 arm64 armhf i386
+Multi-Arch: same
+Depends: ${misc:Depends}, ${shlibs:Depends}
+Pre-Depends: ${misc:Pre-Depends}
+Description: Qt 6 WebEngine Quick Delegates QML library
+ Qt is a cross-platform C++ application framework. Qt's primary feature
+ is its rich set of widgets that provide standard GUI functionality.
+ .
+ Qt WebEngine provides a Web browser engine that makes it easy to embed content
+ from the World Wide Web into your Qt application.
+ .
+ This package contains the Qt 6 WebEngine Quick Delegates QML library.
+
+Package: libqt6webenginewidgets6
+Architecture: amd64 arm64 armhf i386
+Multi-Arch: same
+Depends: libqt6webengine6-data (= ${binary:Version}),
+         ${misc:Depends},
+         ${shlibs:Depends},
+Pre-Depends: ${misc:Pre-Depends}
+Description: Qt 6 WebEngine Widgets library
+ Qt is a cross-platform C++ application framework. Qt's primary feature
+ is its rich set of widgets that provide standard GUI functionality.
+ .
+ Qt WebEngine provides a Web browser engine that makes it easy to embed content
+ from the World Wide Web into your Qt application.
+ .
+ This package contains the Qt 6 WebEngine Widgets library.
+
+Package: libqt6webengine6-data
+Architecture: all
+Multi-Arch: foreign
+Depends: ${misc:Depends}
+Pre-Depends: ${misc:Pre-Depends}
+Description: Qt 6 Web content engine library - data
+ Qt is a cross-platform C++ application framework. Qt's primary feature
+ is its rich set of widgets that provide standard GUI functionality.
+ .
+ Qt WebEngine provides a Web browser engine that makes it easy to embed content
+ from the World Wide Web into your Qt application.
+ .
+ This package contains the arch independent parts of Qt WebEngine libraries.
+
+Package: qt6-image-formats-plugin-pdf
+Architecture: amd64 arm64 armhf i386
+Multi-Arch: same
+Depends: ${misc:Depends}, ${shlibs:Depends}
+Description: Qt 6 PDF image format plugin
+ Qt is a cross-platform C++ application framework. Qt's primary feature
+ is its rich set of widgets that provide standard GUI functionality.
+ .
+ The Qt PDF module contains classes and functions for rendering PDF documents.
+ .
+ This package provides an image plugin that allows image-viewing applications
+ to view PDF files (the first page of PDF will be shown).
+
+Package: qml6-module-qtquick-pdf
+Architecture: amd64 arm64 armhf i386
+Multi-Arch: same
+Depends: qml6-module-qtquick (>= 6.2.4),
+         qml6-module-qtquick-controls (>= 6.2.4),
+         qml6-module-qtquick-shapes (>= 6.2.4),
+         qml6-module-qtquick-templates (>= 6.2.4),
+         qml6-module-qtquick-window (>= 6.2.4),
+         qt6-image-formats-plugin-pdf,
+         ${misc:Depends},
+         ${shlibs:Depends},
+Description: Qt 6 Quick PDF QML module
+ Qt is a cross-platform C++ application framework. Qt's primary feature
+ is its rich set of widgets that provide standard GUI functionality.
+ .
+ The Qt PDF module contains classes and functions for rendering PDF documents.
+ .
+ This package contains the Qt 6 Quick PDF QML module.
+
+Package: qml6-module-qtwebengine
+Architecture: amd64 arm64 armhf i386
+Multi-Arch: same
+Depends: qml6-module-qtquick, ${misc:Depends}, ${shlibs:Depends}
+Pre-Depends: ${misc:Pre-Depends}
+Description: Qt 6 WebEngine QML module
+ Qt is a cross-platform C++ application framework. Qt's primary feature
+ is its rich set of widgets that provide standard GUI functionality.
+ .
+ Qt WebEngine provides a Web browser engine that makes it easy to embed content
+ from the World Wide Web into your Qt application.
+ .
+ This package contains the Qt 6 WebEngine QML module for Qt 6 Declarative.
+
+Package: qml6-module-qtwebengine-controlsdelegates
+Architecture: amd64 arm64 armhf i386
+Multi-Arch: same
+Depends: qml6-module-qtquick, ${misc:Depends}, ${shlibs:Depends}
+Pre-Depends: ${misc:Pre-Depends}
+Description: Qt 6 WebEngine Controls Delegates QML module
+ Qt is a cross-platform C++ application framework. Qt's primary feature
+ is its rich set of widgets that provide standard GUI functionality.
+ .
+ Qt WebEngine provides a Web browser engine that makes it easy to embed content
+ from the World Wide Web into your Qt application.
+ .
+ This package contains the Qt 6 WebEngine Controls Delegates QML module
+ for Qt 6 Declarative.
+
+Package: qt6-webengine-dev
+Architecture: amd64 arm64 armhf i386
+Multi-Arch: same
+Section: libdevel
+Depends: libqt6webchannel6-dev,
+         libqt6webenginecore6 (= ${binary:Version}),
+         libqt6webenginequick6 (= ${binary:Version}),
+         libqt6webenginequickdelegatesqml6 (= ${binary:Version}),
+         libqt6webenginewidgets6 (= ${binary:Version}),
+         qt6-base-dev,
+         qt6-declarative-dev,
+         qt6-positioning-dev,
+         qt6-webengine-dev-tools (= ${binary:Version}),
+         ${misc:Depends},
+         ${shlibs:Depends},
+Recommends: qt6-pdf-dev (= ${binary:Version})
+Description: Qt 6 WebEngine library - development files
+ Qt is a cross-platform C++ application framework. Qt's primary feature
+ is its rich set of widgets that provide standard GUI functionality.
+ .
+ Qt WebEngine provides a Web browser engine that makes it easy to embed content
+ from the World Wide Web into your Qt application.
+ .
+ This package contains the development files needed to build Qt 6 applications
+ using Qt WebEngine libraries.
+
+Package: qt6-webengine-private-dev
+Architecture: amd64 arm64 armhf i386
+Multi-Arch: same
+Section: libdevel
+Depends: qt6-webengine-dev (= ${binary:Version}), ${misc:Depends}
+Description: Qt 6 WebEngine library - private development files
+ Qt is a cross-platform C++ application framework. Qt's primary feature
+ is its rich set of widgets that provide standard GUI functionality.
+ .
+ Qt WebEngine provides a Web browser engine that makes it easy to embed content
+ from the World Wide Web into your Qt application.
+ .
+ This package contains the private development files needed to build Qt 6
+ applications using Qt WebEngine libraries.
+
+Package: qt6-webengine-dev-tools
+Architecture: amd64 arm64 armhf i386
+Multi-Arch: foreign
+Section: devel
+Depends: qtchooser, ${misc:Depends}, ${shlibs:Depends}
+Description: Qt 6 WebEngine development programs
+ Qt is a cross-platform C++ application framework. Qt's primary feature
+ is its rich set of widgets that provide standard GUI functionality.
+ .
+ Qt is a cross-platform C++ application framework. Qt's primary feature
+ is its rich set of widgets that provide standard GUI functionality.
+ .
+ This package contains qwebengine_convert_dict tool which converts hunspell
+ 'dic' dictionaries to binary 'bdic' format, which is required by spellchecker
+ in Qt 6 WebEngine.
+
+Package: qt6-pdf-dev
+Architecture: amd64 arm64 armhf i386
+Multi-Arch: same
+Section: libdevel
+Depends: libqt6pdf6 (= ${binary:Version}),
+         libqt6pdfquick6 (= ${binary:Version}),
+         libqt6pdfwidgets6 (= ${binary:Version}),
+         qt6-base-dev,
+         ${misc:Depends},
+         ${shlibs:Depends},
+Description: Qt 6 PDF library - development files
+ Qt is a cross-platform C++ application framework. Qt's primary feature
+ is its rich set of widgets that provide standard GUI functionality.
+ .
+ The Qt PDF module contains classes and functions for rendering PDF documents.
+ .
+ This package contains the development files needed to build Qt 6 applications
+ using Qt PDF library.

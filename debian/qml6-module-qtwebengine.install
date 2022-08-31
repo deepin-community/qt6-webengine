@@ -1,0 +1,3 @@
+usr/lib/${DEB_HOST_MULTIARCH}/qt6/qml/QtWebEngine/libqtwebenginequickplugin.so
+usr/lib/${DEB_HOST_MULTIARCH}/qt6/qml/QtWebEngine/plugins.qmltypes
+usr/lib/${DEB_HOST_MULTIARCH}/qt6/qml/QtWebEngine/qmldir

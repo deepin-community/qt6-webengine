@@ -1,0 +1,6 @@
+usr/lib/${DEB_HOST_MULTIARCH}/qt6/qml/QtQuick/Pdf/libqtpdfquickplugin.so
+usr/lib/${DEB_HOST_MULTIARCH}/qt6/qml/QtQuick/Pdf/qml/PdfMultiPageView.qml
+usr/lib/${DEB_HOST_MULTIARCH}/qt6/qml/QtQuick/Pdf/qml/PdfPageView.qml
+usr/lib/${DEB_HOST_MULTIARCH}/qt6/qml/QtQuick/Pdf/qml/PdfScrollablePageView.qml
+usr/lib/${DEB_HOST_MULTIARCH}/qt6/qml/QtQuick/Pdf/qml/PdfStyle.qml
+usr/lib/${DEB_HOST_MULTIARCH}/qt6/qml/QtQuick/Pdf/qmldir

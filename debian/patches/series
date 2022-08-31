@@ -1,0 +1,14 @@
+# remove catapult
+remove_catapult_3rdparty.patch
+remove_catapult_core.patch
+
+# CVE-2022-1096 patch
+# fixed in Qt 6.2.5 and Qt 6.3.0
+CVE-2022-1096-qtwebengine-6.2.diff
+
+# reduce debugging info
+reduce_debugging_info.patch
+
+# fit gcc 8.3.0
+uniontech0001-feat-build-on-gcc8.3.0-ok.patch
+

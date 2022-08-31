@@ -1,0 +1,70 @@
+#!/usr/bin/make -f
+
+include /usr/share/dpkg/architecture.mk
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+PARALLEL_OPTION = $(filter parallel=%,$(DEB_BUILD_OPTIONS))
+ifneq (,$(PARALLEL_OPTION))
+       MNUMJOBS = $(patsubst parallel=%,%,$(PARALLEL_OPTION))
+       NUMJOBS = $(shell if [ $(MNUMJOBS) -ge 16 ]; then echo "16"; else echo $(MNUMJOBS); fi)
+       export NINJAFLAGS = -j$(NUMJOBS)
+endif
+
+# Reduce memory consumption on certain architectures
+ifeq (armhf, $(DEB_HOST_ARCH))
+export LDFLAGS+=-Wl,--no-keep-memory
+export NINJAFLAGS = -j2
+export NINJAJOBS = -j2
+endif
+
+ifeq (i386, $(DEB_HOST_ARCH))
+export LDFLAGS+=-Wl,--no-keep-memory
+endif
+
+
+%:
+	dh $@ --with pkgkde_symbolshelper --buildsystem=cmake+ninja
+
+touch_files = src/3rdparty/chromium/third_party/devtools-frontend/src/front_end/third_party/lighthouse/lighthouse-dt-bundle.js \
+	      src/3rdparty/chromium/third_party/devtools-frontend/src/front_end/third_party/lighthouse/report-assets/report-generator.js \
+	      src/3rdparty/chromium/third_party/devtools-frontend/src/front_end/diff/diff_match_patch.js
+
+override_dh_auto_clean:
+	# dh_auto_clean
+	rm -f $(CURDIR)/src/3rdparty/chromium/third_party/jstemplate/jstemplate_compiled.js
+	for fname in $(touch_files); do \
+		rm -f $(CURDIR)/$${fname}; \
+	done
+
+override_dh_auto_configure:
+	dh_auto_configure -- \
+		-DCMAKE_LIBRARY_PATH=$(DEB_HOST_MULTIARCH) \
+		-DFEATURE_webengine_system_ffmpeg=ON \
+		-DFEATURE_webengine_system_icu=ON \
+		-DFEATURE_webengine_system_libevent=ON \
+		-DFEATURE_qtpdf_build=ON \
+		-DFEATURE_qtpdf_widgets_build=ON \
+		-DFEATURE_qtpdf_quick_build=ON \
+		-DFEATURE_webengine_proprietary_codecs=ON \
+		-DFEATURE_webengine_kerberos=ON
+
+	# Create js files, that are needed for building step for arch and indep builds
+	cd $(CURDIR)/src/3rdparty/chromium/third_party/jstemplate/; \
+		cat util.js jsevalcontext.js jstemplate.js exports.js > jstemplate_compiled.js
+
+	# jQuery
+	cp /usr/share/javascript/jquery/jquery.min.js examples/webenginewidgets/contentmanipulation/
+	cp /usr/share/javascript/jquery/jquery.min.js src/3rdparty/chromium/third_party/pycoverage/coverage/htmlfiles/
+	cp /usr/share/javascript/jquery-tablesorter/jquery.tablesorter.min.js src/3rdparty/chromium/third_party/pycoverage/coverage/htmlfiles/
+
+	set -ex; for fname in $(touch_files); do \
+		mkdir -p $(CURDIR)/$$(dirname $${fname}); \
+		touch $(CURDIR)/$${fname}; \
+	done
+
+execute_after_dh_auto_install:
+	# Reproducible builds: remove build paths from .prl files
+	sed -i -e '/^QMAKE_PRL_BUILD_DIR/d' debian/tmp/usr/lib/$(DEB_HOST_MULTIARCH)/libQt6*.prl
+
+override_dh_dwz:

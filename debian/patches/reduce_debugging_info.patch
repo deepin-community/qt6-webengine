@@ -1,0 +1,11 @@
+--- a/src/3rdparty/chromium/build/config/compiler/BUILD.gn
++++ b/src/3rdparty/chromium/build/config/compiler/BUILD.gn
+@@ -2450,7 +2450,7 @@
+     # flag, so we can use use -g1 for pnacl and nacl-clang compiles.
+     # gcc nacl is is_nacl && !is_clang, pnacl and nacl-clang are && is_clang.
+     if (!is_nacl || is_clang) {
+-      cflags += [ "-g2" ]
++      cflags += [ "-g1" ]
+     }
+ 
+     # TODO(https://crbug.com/1050118): Investigate missing debug info on mac.

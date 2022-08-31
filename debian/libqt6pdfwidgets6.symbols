@@ -1,0 +1,45 @@
+# SymbolsHelper-Confirmed: 6.2.2 amd64
+libQt6PdfWidgets.so.6 libqt6pdfwidgets6 #MINVER#
+| libqt6pdfwidgets6 #MINVER#, qt6-webengine-abi (= 6.2.4)
+* Build-Depends-Package: qt6-webengine-dev
+ _ZN8QPdfView10paintEventEP11QPaintEvent@Base 6.2.2
+ _ZN8QPdfView11qt_metacallEN11QMetaObject4CallEiPPv@Base 6.2.2
+ _ZN8QPdfView11qt_metacastEPKc@Base 6.2.2
+ _ZN8QPdfView11resizeEventEP12QResizeEvent@Base 6.2.2
+ _ZN8QPdfView11setDocumentEP12QPdfDocument@Base 6.2.2
+ _ZN8QPdfView11setPageModeENS_8PageModeE@Base 6.2.2
+ _ZN8QPdfView11setZoomModeENS_8ZoomModeE@Base 6.2.2
+ _ZN8QPdfView13setZoomFactorEd@Base 6.2.2
+ _ZN8QPdfView14setPageSpacingEi@Base 6.2.2
+ _ZN8QPdfView15documentChangedEP12QPdfDocument@Base 6.2.2
+ _ZN8QPdfView15pageModeChangedENS_8PageModeE@Base 6.2.2
+ _ZN8QPdfView15zoomModeChangedENS_8ZoomModeE@Base 6.2.2
+ _ZN8QPdfView16scrollContentsByEii@Base 6.2.2
+ _ZN8QPdfView16staticMetaObjectE@Base 6.2.2
+ _ZN8QPdfView17zoomFactorChangedEd@Base 6.2.2
+ _ZN8QPdfView18pageSpacingChangedEi@Base 6.2.2
+ _ZN8QPdfView18setDocumentMarginsE8QMargins@Base 6.2.2
+ _ZN8QPdfView22documentMarginsChangedE8QMargins@Base 6.2.2
+ _ZN8QPdfViewC1EP7QWidget@Base 6.2.2
+ _ZN8QPdfViewC2EP7QWidget@Base 6.2.2
+ _ZN8QPdfViewD0Ev@Base 6.2.2
+ _ZN8QPdfViewD1Ev@Base 6.2.2
+ _ZN8QPdfViewD2Ev@Base 6.2.2
+ _ZNK8QPdfView10metaObjectEv@Base 6.2.2
+ _ZNK8QPdfView10zoomFactorEv@Base 6.2.2
+ _ZNK8QPdfView11pageSpacingEv@Base 6.2.2
+ _ZNK8QPdfView14pageNavigationEv@Base 6.2.2
+ _ZNK8QPdfView15documentMarginsEv@Base 6.2.2
+ _ZNK8QPdfView8documentEv@Base 6.2.2
+ _ZNK8QPdfView8pageModeEv@Base 6.2.2
+ _ZNK8QPdfView8zoomModeEv@Base 6.2.2
+ _ZTI8QPdfView@Base 6.2.2
+ _ZTS8QPdfView@Base 6.2.2
+ _ZTV8QPdfView@Base 6.2.2
+ (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeIdE10getCopyCtrEvENUlPKNS_18QMetaTypeInterfaceEPvPKvE_4_FUNES4_S5_S7_@Base 6.2.2
+ (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeIdE10getMoveCtrEvENUlPKNS_18QMetaTypeInterfaceEPvS5_E_4_FUNES4_S5_S5_@Base 6.2.2
+ (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeIdE13getDefaultCtrEvENUlPKNS_18QMetaTypeInterfaceEPvE_4_FUNES4_S5_@Base 6.2.2
+ (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeIiE10getCopyCtrEvENUlPKNS_18QMetaTypeInterfaceEPvPKvE_4_FUNES4_S5_S7_@Base 6.2.2
+ (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeIiE10getMoveCtrEvENUlPKNS_18QMetaTypeInterfaceEPvS5_E_4_FUNES4_S5_S5_@Base 6.2.2
+ (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeIiE13getDefaultCtrEvENUlPKNS_18QMetaTypeInterfaceEPvE_4_FUNES4_S5_@Base 6.2.2
+ (c++)"non-virtual thunk to QPdfView::~QPdfView()@Base" 6.2.2
