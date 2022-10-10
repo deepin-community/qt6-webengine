@@ -1,5 +1,5 @@
-qt6-webengine (unknown) stable; urgency=medium
+qt6-webengine (6.2.4.1-1+dde) unstable; urgency=medium
 
-  * ['Rebuild  against by  current gcc 11.2']
+  * upgrade version for build
 
- -- Deepin Packages Builder <packages@deepin.org>  Wed, 31 Aug 2022 15:09:51 +0800
+ -- Ma Aiguo <maaiguo@uniontech.com>  Mon, 10 Oct 2022 13:25:55 +0800
