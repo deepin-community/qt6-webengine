@@ -13,6 +13,7 @@
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/public/platform/web_content_settings_client.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
+#include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_throw_dom_exception.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
@@ -27,7 +28,7 @@
 #include "third_party/blink/renderer/platform/bindings/exception_code.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
-#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/mojo/heap_mojo_remote.h"
 #include "third_party/blink/renderer/platform/wtf/casting.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
@@ -91,7 +92,6 @@ void OnRenameResult(ScriptPromiseResolver* resolver,
   ScriptState* script_state = resolver->GetScriptState();
   if (!script_state->ContextIsValid())
     return;
-  ScriptState::Scope scope(script_state);
 
   if (rename_error->type != mojom::blink::NativeIOErrorType::kSuccess) {
     blink::RejectNativeIOWithError(resolver, std::move(rename_error));
@@ -403,11 +403,17 @@ ScriptPromise NativeIOFileManager::requestCapacity(
   }
 
   auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
-  backend_->RequestCapacityChange(
-      requested_capacity,
-      WTF::Bind(&NativeIOFileManager::OnRequestCapacityChangeResult,
-                WrapPersistent(this), WrapPersistent(resolver)));
-  return resolver->Promise();
+  auto promise = resolver->Promise();
+  ExecutionContext* execution_context = GetExecutionContext();
+  DCHECK(execution_context);
+
+  CheckStorageAccessAllowed(
+      execution_context, resolver,
+      WTF::Bind(&NativeIOFileManager::RequestCapacityImpl,
+                WrapWeakPersistent(this), requested_capacity,
+                WrapPersistent(resolver)));
+
+  return promise;
 }
 
 ScriptPromise NativeIOFileManager::releaseCapacity(
@@ -421,45 +427,40 @@ ScriptPromise NativeIOFileManager::releaseCapacity(
                                "NativeIOHost backend went away"));
     return ScriptPromise();
   }
-  if (!base::IsValueInRangeForNumericType<int64_t>(requested_release)) {
-    ThrowNativeIOWithError(
-        exception_state,
-        mojom::blink::NativeIOError::New(
-            mojom::blink::NativeIOErrorType::kNoSpace,
-            "Attempted to release more capacity than available"));
-    return ScriptPromise();
-  }
-
-  int64_t requested_difference = -base::as_signed(requested_release);
-
-  // Reducing available capacity must be done before performing the IPC, so
-  // capacity cannot be double-spent by concurrent NativeIO operations.
-  if (!capacity_tracker_->ChangeAvailableCapacity(requested_difference)) {
-    ThrowNativeIOWithError(
-        exception_state,
-        mojom::blink::NativeIOError::New(
-            mojom::blink::NativeIOErrorType::kNoSpace,
-            "Attempted to release more capacity than available."));
-    return ScriptPromise();
-  }
 
   auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
-  backend_->RequestCapacityChange(
-      -requested_release,
-      WTF::Bind(&NativeIOFileManager::OnRequestCapacityChangeResult,
-                WrapPersistent(this), WrapPersistent(resolver)));
-  return resolver->Promise();
+  auto promise = resolver->Promise();
+  ExecutionContext* execution_context = GetExecutionContext();
+  DCHECK(execution_context);
+
+  CheckStorageAccessAllowed(
+      execution_context, resolver,
+      WTF::Bind(&NativeIOFileManager::ReleaseCapacityImpl,
+                WrapWeakPersistent(this), requested_release,
+                WrapPersistent(resolver)));
+
+  return promise;
 }
 
 ScriptPromise NativeIOFileManager::getRemainingCapacity(
     ScriptState* script_state,
     ExceptionState& exception_state) {
   auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
-  // TODO(rstz): Consider using ScriptPromise::Cast instead.
-  const ScriptPromise promise = resolver->Promise();
-  uint64_t available_capacity =
-      base::as_unsigned(capacity_tracker_->GetAvailableCapacity());
-  resolver->Resolve(available_capacity);
+  auto promise = resolver->Promise();
+  ExecutionContext* execution_context = GetExecutionContext();
+  if (!execution_context) {
+    ThrowNativeIOWithError(exception_state,
+                           mojom::blink::NativeIOError::New(
+                               mojom::blink::NativeIOErrorType::kInvalidState,
+                               "Execution context went away"));
+    return ScriptPromise();
+  }
+
+  CheckStorageAccessAllowed(
+      execution_context, resolver,
+      WTF::Bind(&NativeIOFileManager::GetRemainingCapacityImpl,
+                WrapWeakPersistent(this), WrapPersistent(resolver)));
+
   return promise;
 }
 
@@ -514,11 +515,6 @@ void NativeIOFileManager::DidCheckStorageAccessAllowed(
     return;
   }
 
-  ScriptState* script_state = resolver->GetScriptState();
-  if (!script_state->ContextIsValid())
-    return;
-  ScriptState::Scope scope(script_state);
-
   blink::RejectNativeIOWithError(resolver,
                                  mojom::blink::NativeIOError::New(
                                      mojom::blink::NativeIOErrorType::kUnknown,
@@ -563,6 +559,15 @@ uint64_t NativeIOFileManager::requestCapacitySync(
                                "NativeIOHost backend went away"));
     return 0;
   }
+
+  ExecutionContext* execution_context = GetExecutionContext();
+  DCHECK(execution_context);
+
+  if (!CheckStorageAccessAllowedSync(execution_context)) {
+    ThrowStorageAccessError(exception_state);
+    return 0;
+  }
+
   if (!base::IsValueInRangeForNumericType<int64_t>(requested_capacity)) {
     ThrowNativeIOWithError(exception_state,
                            mojom::blink::NativeIOError::New(
@@ -591,6 +596,15 @@ uint64_t NativeIOFileManager::releaseCapacitySync(
                                "NativeIOHost backend went away"));
     return 0;
   }
+
+  ExecutionContext* execution_context = GetExecutionContext();
+  DCHECK(execution_context);
+
+  if (!CheckStorageAccessAllowedSync(execution_context)) {
+    ThrowStorageAccessError(exception_state);
+    return 0;
+  }
+
   if (!base::IsValueInRangeForNumericType<int64_t>(requested_release)) {
     ThrowNativeIOWithError(exception_state,
                            mojom::blink::NativeIOError::New(
@@ -601,17 +615,42 @@ uint64_t NativeIOFileManager::releaseCapacitySync(
 
   int64_t requested_difference = -base::as_signed(requested_release);
 
+  // Reducing available capacity is done before performing the IPC for symmetry
+  // with the async operation.
+  if (!capacity_tracker_->ChangeAvailableCapacity(requested_difference)) {
+    ThrowNativeIOWithError(exception_state,
+                           mojom::blink::NativeIOError::New(
+                               mojom::blink::NativeIOErrorType::kNoSpace,
+                               "No capacity available for this operation"));
+    return 0;
+  }
+
+  // As `requested_difference` < 0, `granted_capacity_delta` is guaranteed to
+  // equal `requested_difference`.
   int64_t granted_capacity_delta;
   bool call_succeeded = backend_->RequestCapacityChange(
       requested_difference, &granted_capacity_delta);
   DCHECK(call_succeeded) << "Mojo call failed";
 
-  capacity_tracker_->ChangeAvailableCapacity(granted_capacity_delta);
   return capacity_tracker_->GetAvailableCapacity();
 }
 
 uint64_t NativeIOFileManager::getRemainingCapacitySync(
     ExceptionState& exception_state) {
+  ExecutionContext* execution_context = GetExecutionContext();
+  if (!execution_context) {
+    ThrowNativeIOWithError(exception_state,
+                           mojom::blink::NativeIOError::New(
+                               mojom::blink::NativeIOErrorType::kInvalidState,
+                               "Execution context went away"));
+    return 0;
+  }
+
+  if (!CheckStorageAccessAllowedSync(execution_context)) {
+    ThrowStorageAccessError(exception_state);
+    return 0;
+  }
+
   uint64_t available_capacity =
       base::as_unsigned(capacity_tracker_->GetAvailableCapacity());
   return available_capacity;
@@ -653,7 +692,6 @@ void NativeIOFileManager::OnDeleteResult(
   ScriptState* script_state = resolver->GetScriptState();
   if (!script_state->ContextIsValid())
     return;
-  ScriptState::Scope scope(script_state);
 
   if (delete_error->type != mojom::blink::NativeIOErrorType::kSuccess) {
     blink::RejectNativeIOWithError(resolver, std::move(delete_error));
@@ -674,7 +712,7 @@ void NativeIOFileManager::OnRequestCapacityChangeResult(
   ScriptState* script_state = resolver->GetScriptState();
   if (!script_state->ContextIsValid())
     return;
-  ScriptState::Scope scope(script_state);
+
   // If `granted_capacity` < 0, the available capacity has already been released
   // prior to the IPC.
   if (granted_capacity > 0) {
@@ -697,10 +735,17 @@ void NativeIOFileManager::OpenImpl(String name,
   if (!script_state->ContextIsValid())
     return;
 
+  if (!backend_.is_bound()) {
+    blink::RejectNativeIOWithError(
+        resolver, mojom::blink::NativeIOError::New(
+                      mojom::blink::NativeIOErrorType::kInvalidState,
+                      "NativeIOHost backend went away"));
+    return;
+  }
+
   ExecutionContext* execution_context = ExecutionContext::From(script_state);
   HeapMojoRemote<mojom::blink::NativeIOFileHost> backend_file(
       execution_context);
-
   mojo::PendingReceiver<mojom::blink::NativeIOFileHost> backend_file_receiver =
       backend_file.BindNewPipeAndPassReceiver(receiver_task_runner_);
 
@@ -718,6 +763,18 @@ void NativeIOFileManager::DeleteImpl(String name,
   DCHECK(storage_access_allowed_.value())
       << "called even though storage access was denied";
 
+  ScriptState* script_state = resolver->GetScriptState();
+  if (!script_state->ContextIsValid())
+    return;
+
+  if (!backend_.is_bound()) {
+    blink::RejectNativeIOWithError(
+        resolver, mojom::blink::NativeIOError::New(
+                      mojom::blink::NativeIOErrorType::kInvalidState,
+                      "NativeIOHost backend went away"));
+    return;
+  }
+
   backend_->DeleteFile(
       name, WTF::Bind(&NativeIOFileManager::OnDeleteResult,
                       WrapPersistent(this), WrapPersistent(resolver)));
@@ -728,6 +785,18 @@ void NativeIOFileManager::GetAllImpl(ScriptPromiseResolver* resolver) {
       << "called without checking if storage access was allowed";
   DCHECK(storage_access_allowed_.value())
       << "called even though storage access was denied";
+
+  ScriptState* script_state = resolver->GetScriptState();
+  if (!script_state->ContextIsValid())
+    return;
+
+  if (!backend_.is_bound()) {
+    blink::RejectNativeIOWithError(
+        resolver, mojom::blink::NativeIOError::New(
+                      mojom::blink::NativeIOErrorType::kInvalidState,
+                      "NativeIOHost backend went away"));
+    return;
+  }
 
   backend_->GetAllFileNames(
       WTF::Bind(&OnGetAllResult, WrapPersistent(resolver)));
@@ -741,8 +810,102 @@ void NativeIOFileManager::RenameImpl(String old_name,
   DCHECK(storage_access_allowed_.value())
       << "called even though storage access was denied";
 
+  ScriptState* script_state = resolver->GetScriptState();
+  if (!script_state->ContextIsValid())
+    return;
+
+  if (!backend_.is_bound()) {
+    blink::RejectNativeIOWithError(
+        resolver, mojom::blink::NativeIOError::New(
+                      mojom::blink::NativeIOErrorType::kInvalidState,
+                      "NativeIOHost backend went away"));
+    return;
+  }
+
   backend_->RenameFile(old_name, new_name,
                        WTF::Bind(&OnRenameResult, WrapPersistent(resolver)));
+}
+
+void NativeIOFileManager::RequestCapacityImpl(uint64_t requested_capacity,
+                                              ScriptPromiseResolver* resolver) {
+  DCHECK(storage_access_allowed_.has_value())
+      << "called without checking if storage access was allowed";
+  DCHECK(storage_access_allowed_.value())
+      << "called even though storage access was denied";
+
+  ScriptState* script_state = resolver->GetScriptState();
+  if (!script_state->ContextIsValid())
+    return;
+
+  if (!backend_.is_bound()) {
+    blink::RejectNativeIOWithError(
+        resolver, mojom::blink::NativeIOError::New(
+                      mojom::blink::NativeIOErrorType::kInvalidState,
+                      "NativeIOHost backend went away"));
+    return;
+  }
+
+  backend_->RequestCapacityChange(
+      requested_capacity,
+      WTF::Bind(&NativeIOFileManager::OnRequestCapacityChangeResult,
+                WrapPersistent(this), WrapPersistent(resolver)));
+}
+
+void NativeIOFileManager::ReleaseCapacityImpl(uint64_t requested_release,
+                                              ScriptPromiseResolver* resolver) {
+  DCHECK(storage_access_allowed_.has_value())
+      << "called without checking if storage access was allowed";
+  DCHECK(storage_access_allowed_.value())
+      << "called even though storage access was denied";
+
+  ScriptState* script_state = resolver->GetScriptState();
+  if (!script_state->ContextIsValid())
+    return;
+
+  if (!backend_.is_bound()) {
+    blink::RejectNativeIOWithError(
+        resolver, mojom::blink::NativeIOError::New(
+                      mojom::blink::NativeIOErrorType::kInvalidState,
+                      "NativeIOHost backend went away"));
+    return;
+  }
+
+  if (!base::IsValueInRangeForNumericType<int64_t>(requested_release)) {
+    blink::RejectNativeIOWithError(
+        resolver, mojom::blink::NativeIOError::New(
+                      mojom::blink::NativeIOErrorType::kNoSpace,
+                      "Attempted to release more capacity than available"));
+    return;
+  }
+
+  int64_t requested_difference = -base::as_signed(requested_release);
+
+  // Reducing available capacity must be done before performing the IPC, so
+  // capacity cannot be double-spent by concurrent NativeIO operations.
+  if (!capacity_tracker_->ChangeAvailableCapacity(requested_difference)) {
+    blink::RejectNativeIOWithError(
+        resolver, mojom::blink::NativeIOError::New(
+                      mojom::blink::NativeIOErrorType::kNoSpace,
+                      "Attempted to release more capacity than available."));
+    return;
+  }
+
+  backend_->RequestCapacityChange(
+      requested_difference,
+      WTF::Bind(&NativeIOFileManager::OnRequestCapacityChangeResult,
+                WrapPersistent(this), WrapPersistent(resolver)));
+}
+
+void NativeIOFileManager::GetRemainingCapacityImpl(
+    ScriptPromiseResolver* resolver) {
+  DCHECK(storage_access_allowed_.has_value())
+      << "called without checking if storage access was allowed";
+  DCHECK(storage_access_allowed_.value())
+      << "called even though storage access was denied";
+
+  uint64_t available_capacity =
+      base::as_unsigned(capacity_tracker_->GetAvailableCapacity());
+  resolver->Resolve(available_capacity);
 }
 
 void NativeIOFileManager::Trace(Visitor* visitor) const {

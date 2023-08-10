@@ -37,6 +37,8 @@
 #include <X11/Xutil.h>
 #elif defined(VK_USE_PLATFORM_WAYLAND_KHR)
 #include <linux/input.h>
+#include "xdg-shell-client-header.h"
+#include "xdg-decoration-client-header.h"
 #endif
 
 #ifdef _WIN32
@@ -290,6 +292,23 @@ void dumpVec4(const char *note, vec4 vector) {
     fflush(stdout);
 }
 
+char const *to_string(VkPhysicalDeviceType const type) {
+    switch (type) {
+        case VK_PHYSICAL_DEVICE_TYPE_OTHER:
+            return "Other";
+        case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU:
+            return "IntegratedGpu";
+        case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU:
+            return "DiscreteGpu";
+        case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU:
+            return "VirtualGpu";
+        case VK_PHYSICAL_DEVICE_TYPE_CPU:
+            return "Cpu";
+        default:
+            return "Unknown";
+    }
+}
+
 typedef struct {
     VkImage image;
     VkCommandBuffer cmd;
@@ -324,8 +343,12 @@ struct demo {
     struct wl_registry *registry;
     struct wl_compositor *compositor;
     struct wl_surface *window;
-    struct wl_shell *shell;
-    struct wl_shell_surface *shell_surface;
+    struct xdg_wm_base *xdg_wm_base;
+    struct zxdg_decoration_manager_v1 *xdg_decoration_mgr;
+    struct zxdg_toplevel_decoration_v1 *toplevel_decoration;
+    struct xdg_surface *xdg_surface;
+    int xdg_surface_has_been_configured;
+    struct xdg_toplevel *xdg_toplevel;
     struct wl_seat *seat;
     struct wl_pointer *pointer;
     struct wl_keyboard *keyboard;
@@ -440,6 +463,7 @@ struct demo {
     bool validate_checks_disabled;
     bool use_break;
     bool suppress_popups;
+    bool force_errors;
 
     PFN_vkCreateDebugUtilsMessengerEXT CreateDebugUtilsMessengerEXT;
     PFN_vkDestroyDebugUtilsMessengerEXT DestroyDebugUtilsMessengerEXT;
@@ -627,6 +651,10 @@ static void demo_flush_init_cmd(struct demo *demo) {
 
     VkFence fence;
     VkFenceCreateInfo fence_ci = {.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO, .pNext = NULL, .flags = 0};
+    if (demo->force_errors) {
+        // Remove sType to intentionally force validation layer errors.
+        fence_ci.sType = 0;
+    }
     err = vkCreateFence(demo->device, &fence_ci, NULL, &fence);
     assert(!err);
 
@@ -882,7 +910,8 @@ void demo_update_data_buffer(struct demo *demo) {
 
     // Rotate around the Y axis
     mat4x4_dup(Model, demo->model_matrix);
-    mat4x4_rotate(demo->model_matrix, Model, 0.0f, 1.0f, 0.0f, (float)degreesToRadians(demo->spin_angle));
+    mat4x4_rotate_Y(demo->model_matrix, Model, (float)degreesToRadians(demo->spin_angle));
+    mat4x4_orthonormalize(demo->model_matrix, demo->model_matrix);
     mat4x4_mul(MVP, VP, demo->model_matrix);
 
     memcpy(demo->swapchain_image_resources[demo->current_buffer].uniform_memory_ptr, (const void *)&MVP[0][0], matrixSize);
@@ -1056,8 +1085,8 @@ static void demo_draw(struct demo *demo) {
     VkSubmitInfo submit_info;
     submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submit_info.pNext = NULL;
-    submit_info.pWaitDstStageMask = &pipe_stage_flags;
     pipe_stage_flags = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    submit_info.pWaitDstStageMask = &pipe_stage_flags;
     submit_info.waitSemaphoreCount = 1;
     submit_info.pWaitSemaphores = &demo->image_acquired_semaphores[demo->frame_index];
     submit_info.commandBufferCount = 1;
@@ -1169,8 +1198,14 @@ static void demo_draw(struct demo *demo) {
         // must be recreated:
         demo_resize(demo);
     } else if (err == VK_SUBOPTIMAL_KHR) {
-        // demo->swapchain is not as optimal as it could be, but the platform's
-        // presentation engine will still present the image correctly.
+        // SUBOPTIMAL could be due to a resize
+        VkSurfaceCapabilitiesKHR surfCapabilities;
+        err = demo->fpGetPhysicalDeviceSurfaceCapabilitiesKHR(demo->gpu, demo->surface, &surfCapabilities);
+        assert(!err);
+        if (surfCapabilities.currentExtent.width != (uint32_t)demo->width ||
+            surfCapabilities.currentExtent.height != (uint32_t)demo->height) {
+            demo_resize(demo);
+        }
     } else if (err == VK_ERROR_SURFACE_LOST_KHR) {
         vkDestroySurfaceKHR(demo->inst, demo->surface, NULL);
         demo_create_surface(demo);
@@ -1224,7 +1259,7 @@ static void demo_prepare_buffers(struct demo *demo) {
         demo->height = surfCapabilities.currentExtent.height;
     }
 
-    if (demo->width == 0 || demo->height == 0) {
+    if (surfCapabilities.maxImageExtent.width == 0 || surfCapabilities.maxImageExtent.height == 0) {
         demo->is_minimized = true;
         return;
     } else {
@@ -1432,6 +1467,11 @@ static void demo_prepare_depth(struct demo *demo) {
         .flags = 0,
         .viewType = VK_IMAGE_VIEW_TYPE_2D,
     };
+
+    if (demo->force_errors) {
+        // Intentionally force a bad pNext value to generate a validation layer error
+        view.pNext = &image;
+    }
 
     VkMemoryRequirements mem_reqs;
     VkResult U_ASSERT_ONLY err;
@@ -2195,6 +2235,13 @@ static void demo_prepare_framebuffers(struct demo *demo) {
 }
 
 static void demo_prepare(struct demo *demo) {
+    demo_prepare_buffers(demo);
+
+    if (demo->is_minimized) {
+        demo->prepared = false;
+        return;
+    }
+
     VkResult U_ASSERT_ONLY err;
     if (demo->cmd_pool == VK_NULL_HANDLE) {
         const VkCommandPoolCreateInfo cmd_pool_info = {
@@ -2224,13 +2271,6 @@ static void demo_prepare(struct demo *demo) {
     };
     err = vkBeginCommandBuffer(demo->cmd, &cmd_buf_info);
     assert(!err);
-
-    demo_prepare_buffers(demo);
-
-    if (demo->is_minimized) {
-        demo->prepared = false;
-        return;
-    }
 
     demo_prepare_depth(demo);
     demo_prepare_textures(demo);
@@ -2367,9 +2407,14 @@ static void demo_cleanup(struct demo *demo) {
     wl_keyboard_destroy(demo->keyboard);
     wl_pointer_destroy(demo->pointer);
     wl_seat_destroy(demo->seat);
-    wl_shell_surface_destroy(demo->shell_surface);
+    xdg_toplevel_destroy(demo->xdg_toplevel);
+    xdg_surface_destroy(demo->xdg_surface);
     wl_surface_destroy(demo->window);
-    wl_shell_destroy(demo->shell);
+    xdg_wm_base_destroy(demo->xdg_wm_base);
+    if (demo->xdg_decoration_mgr) {
+        zxdg_toplevel_decoration_v1_destroy(demo->toplevel_decoration);
+        zxdg_decoration_manager_v1_destroy(demo->xdg_decoration_mgr);
+    }
     wl_compositor_destroy(demo->compositor);
     wl_registry_destroy(demo->registry);
     wl_display_disconnect(demo->display);
@@ -2750,18 +2795,45 @@ static void demo_run(struct demo *demo) {
     }
 }
 
-static void handle_ping(void *data UNUSED, struct wl_shell_surface *shell_surface, uint32_t serial) {
-    wl_shell_surface_pong(shell_surface, serial);
+static void handle_surface_configure(void *data, struct xdg_surface *xdg_surface, uint32_t serial) {
+    struct demo *demo = (struct demo *)data;
+    xdg_surface_ack_configure(xdg_surface, serial);
+    if (demo->xdg_surface_has_been_configured) {
+        demo_resize(demo);
+    }
+    demo->xdg_surface_has_been_configured = 1;
 }
 
-static void handle_configure(void *data UNUSED, struct wl_shell_surface *shell_surface UNUSED, uint32_t edges UNUSED,
-                             int32_t width UNUSED, int32_t height UNUSED) {}
+static const struct xdg_surface_listener xdg_surface_listener = {handle_surface_configure};
 
-static void handle_popup_done(void *data UNUSED, struct wl_shell_surface *shell_surface UNUSED) {}
+static void handle_toplevel_configure(void *data, struct xdg_toplevel *xdg_toplevel UNUSED, int32_t width, int32_t height,
+                                      struct wl_array *states UNUSED) {
+    struct demo *demo = (struct demo *)data;
+    /* zero values imply the program may choose its own size, so in that case
+     * stay with the existing value (which on startup is the default) */
+    if (width > 0) {
+        demo->width = width;
+    }
+    if (height > 0) {
+        demo->height = height;
+    }
+    /* This should be followed by a surface configure */
+}
 
-static const struct wl_shell_surface_listener shell_surface_listener = {handle_ping, handle_configure, handle_popup_done};
+static void handle_toplevel_close(void *data, struct xdg_toplevel *xdg_toplevel UNUSED) {
+    struct demo *demo = (struct demo *)data;
+    demo->quit = true;
+}
+
+static const struct xdg_toplevel_listener xdg_toplevel_listener = {handle_toplevel_configure, handle_toplevel_close};
 
 static void demo_create_window(struct demo *demo) {
+    if (!demo->xdg_wm_base) {
+        printf("Compositor did not provide the standard protocol xdg-wm-base\n");
+        fflush(stdout);
+        exit(1);
+    }
+
     demo->window = wl_compositor_create_surface(demo->compositor);
     if (!demo->window) {
         printf("Can not create wayland_surface from compositor!\n");
@@ -2769,15 +2841,29 @@ static void demo_create_window(struct demo *demo) {
         exit(1);
     }
 
-    demo->shell_surface = wl_shell_get_shell_surface(demo->shell, demo->window);
-    if (!demo->shell_surface) {
-        printf("Can not get shell_surface from wayland_surface!\n");
+    demo->xdg_surface = xdg_wm_base_get_xdg_surface(demo->xdg_wm_base, demo->window);
+    if (!demo->xdg_surface) {
+        printf("Can not get xdg_surface from wayland_surface!\n");
         fflush(stdout);
         exit(1);
     }
-    wl_shell_surface_add_listener(demo->shell_surface, &shell_surface_listener, demo);
-    wl_shell_surface_set_toplevel(demo->shell_surface);
-    wl_shell_surface_set_title(demo->shell_surface, APP_SHORT_NAME);
+    demo->xdg_toplevel = xdg_surface_get_toplevel(demo->xdg_surface);
+    if (!demo->xdg_toplevel) {
+        printf("Can not allocate xdg_toplevel for xdg_surface!\n");
+        fflush(stdout);
+        exit(1);
+    }
+    xdg_surface_add_listener(demo->xdg_surface, &xdg_surface_listener, demo);
+    xdg_toplevel_add_listener(demo->xdg_toplevel, &xdg_toplevel_listener, demo);
+    xdg_toplevel_set_title(demo->xdg_toplevel, APP_SHORT_NAME);
+    if (demo->xdg_decoration_mgr) {
+        // if supported, let the compositor render titlebars for us
+        demo->toplevel_decoration =
+            zxdg_decoration_manager_v1_get_toplevel_decoration(demo->xdg_decoration_mgr, demo->xdg_toplevel);
+        zxdg_toplevel_decoration_v1_set_mode(demo->toplevel_decoration, ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
+    }
+
+    wl_surface_commit(demo->window);
 }
 #elif defined(VK_USE_PLATFORM_DIRECTFB_EXT)
 static void demo_create_directfb_window(struct demo *demo) {
@@ -2884,15 +2970,6 @@ static VkResult demo_create_display_surface(struct demo *demo) {
     VkDisplaySurfaceCreateInfoKHR create_info;
 
     // Get the first display
-    err = vkGetPhysicalDeviceDisplayPropertiesKHR(demo->gpu, &display_count, NULL);
-    assert(!err);
-
-    if (display_count == 0) {
-        printf("Cannot find any display!\n");
-        fflush(stdout);
-        exit(1);
-    }
-
     display_count = 1;
     err = vkGetPhysicalDeviceDisplayPropertiesKHR(demo->gpu, &display_count, &display_props);
     assert(!err || (err == VK_INCOMPLETE));
@@ -2977,8 +3054,8 @@ static VkResult demo_create_display_surface(struct demo *demo) {
     VkDisplayPlaneCapabilitiesKHR planeCaps;
     vkGetDisplayPlaneCapabilitiesKHR(demo->gpu, mode_props.displayMode, plane_index, &planeCaps);
     // Find a supported alpha mode
-    VkCompositeAlphaFlagBitsKHR alphaMode = VK_DISPLAY_PLANE_ALPHA_OPAQUE_BIT_KHR;
-    VkCompositeAlphaFlagBitsKHR alphaModes[4] = {
+    VkDisplayPlaneAlphaFlagBitsKHR alphaMode = VK_DISPLAY_PLANE_ALPHA_OPAQUE_BIT_KHR;
+    VkDisplayPlaneAlphaFlagBitsKHR alphaModes[4] = {
         VK_DISPLAY_PLANE_ALPHA_OPAQUE_BIT_KHR,
         VK_DISPLAY_PLANE_ALPHA_GLOBAL_BIT_KHR,
         VK_DISPLAY_PLANE_ALPHA_PER_PIXEL_BIT_KHR,
@@ -3039,7 +3116,30 @@ static VkBool32 demo_check_layers(uint32_t check_count, char **check_names, uint
     }
     return 1;
 }
-
+#if defined(VK_USE_PLATFORM_DISPLAY_KHR)
+int find_display_gpu(int gpu_number, uint32_t gpu_count, VkPhysicalDevice *physical_devices) {
+    uint32_t display_count = 0;
+    VkResult result;
+    int gpu_return = gpu_number;
+    if (gpu_number >= 0) {
+        result = vkGetPhysicalDeviceDisplayPropertiesKHR(physical_devices[gpu_number], &display_count, NULL);
+        assert(!result);
+    } else {
+        for (uint32_t i = 0; i < gpu_count; i++) {
+            result = vkGetPhysicalDeviceDisplayPropertiesKHR(physical_devices[i], &display_count, NULL);
+            assert(!result);
+            if (display_count) {
+                gpu_return = i;
+                break;
+            }
+        }
+    }
+    if (display_count > 0)
+        return gpu_return;
+    else
+        return -1;
+}
+#endif
 static void demo_init_vk(struct demo *demo) {
     VkResult err;
     uint32_t instance_extension_count = 0;
@@ -3081,6 +3181,7 @@ static void demo_init_vk(struct demo *demo) {
     /* Look for instance extensions */
     VkBool32 surfaceExtFound = 0;
     VkBool32 platformSurfaceExtFound = 0;
+    bool portabilityEnumerationActive = false;
     memset(demo->extension_names, 0, sizeof(demo->extension_names));
 
     err = vkEnumerateInstanceExtensionProperties(NULL, &instance_extension_count, NULL);
@@ -3143,6 +3244,12 @@ static void demo_init_vk(struct demo *demo) {
                 if (demo->validate) {
                     demo->extension_names[demo->enabled_extension_count++] = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
                 }
+            }
+            // We want cube to be able to enumerate drivers that support the portability_subset extension, so we have to enable the
+            // portability enumeration extension.
+            if (!strcmp(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME, instance_extensions[i].extensionName)) {
+                portabilityEnumerationActive = true;
+                demo->extension_names[demo->enabled_extension_count++] = VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME;
             }
             assert(demo->enabled_extension_count < 64);
         }
@@ -3220,6 +3327,7 @@ static void demo_init_vk(struct demo *demo) {
     VkInstanceCreateInfo inst_info = {
         .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
         .pNext = NULL,
+        .flags = (portabilityEnumerationActive ? VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR : 0),
         .pApplicationInfo = &app,
         .enabledLayerCount = demo->enabled_layer_count,
         .ppEnabledLayerNames = (const char *const *)instance_validation_layers,
@@ -3288,6 +3396,14 @@ static void demo_init_vk(struct demo *demo) {
         ERR_EXIT("Specified GPU number is not present", "User Error");
     }
 
+#if defined(VK_USE_PLATFORM_DISPLAY_KHR)
+    demo->gpu_number = find_display_gpu(demo->gpu_number, gpu_count, physical_devices);
+    if (demo->gpu_number < 0) {
+        printf("Cannot find any display!\n");
+        fflush(stdout);
+        exit(1);
+    }
+#else
     /* Try to auto select most suitable device */
     if (demo->gpu_number == -1) {
         uint32_t count_device_type[VK_PHYSICAL_DEVICE_TYPE_CPU + 1];
@@ -3321,13 +3437,14 @@ static void demo_init_vk(struct demo *demo) {
             }
         }
     }
+#endif
     assert(demo->gpu_number >= 0);
     demo->gpu = physical_devices[demo->gpu_number];
     {
         VkPhysicalDeviceProperties physicalDeviceProperties;
         vkGetPhysicalDeviceProperties(demo->gpu, &physicalDeviceProperties);
-        fprintf(stderr, "Selected GPU %d: %s, type: %u\n", demo->gpu_number, physicalDeviceProperties.deviceName,
-                physicalDeviceProperties.deviceType);
+        fprintf(stderr, "Selected GPU %d: %s, type: %s\n", demo->gpu_number, physicalDeviceProperties.deviceName,
+                to_string(physicalDeviceProperties.deviceType));
     }
     free(physical_devices);
 
@@ -3716,7 +3833,7 @@ static void pointer_handle_button(void *data, struct wl_pointer *wl_pointer, uin
                                   uint32_t state) {
     struct demo *demo = data;
     if (button == BTN_LEFT && state == WL_POINTER_BUTTON_STATE_PRESSED) {
-        wl_shell_surface_move(demo->shell_surface, demo->seat, serial);
+        xdg_toplevel_move(demo->xdg_toplevel, demo->seat, serial);
     }
 }
 
@@ -3784,21 +3901,31 @@ static const struct wl_seat_listener seat_listener = {
     seat_handle_capabilities,
 };
 
-static void registry_handle_global(void *data, struct wl_registry *registry, uint32_t id, const char *interface, uint32_t version) {
+static void wm_base_ping(void *data UNUSED, struct xdg_wm_base *xdg_wm_base, uint32_t serial) {
+    xdg_wm_base_pong(xdg_wm_base, serial);
+}
+
+static const struct xdg_wm_base_listener wm_base_listener = {wm_base_ping};
+
+static void registry_handle_global(void *data, struct wl_registry *registry, uint32_t id, const char *interface,
+                                   uint32_t version UNUSED) {
     struct demo *demo = data;
     // pickup wayland objects when they appear
-    if (strcmp(interface, "wl_compositor") == 0) {
+    if (strcmp(interface, wl_compositor_interface.name) == 0) {
         uint32_t minVersion = version < 4 ? version : 4;
         demo->compositor = wl_registry_bind(registry, id, &wl_compositor_interface, minVersion);
         if (demo->VK_KHR_incremental_present_enabled && minVersion < 4) {
             fprintf(stderr, "Wayland compositor doesn't support VK_KHR_incremental_present, disabling.\n");
             demo->VK_KHR_incremental_present_enabled = false;
         }
-    } else if (strcmp(interface, "wl_shell") == 0) {
-        demo->shell = wl_registry_bind(registry, id, &wl_shell_interface, 1);
-    } else if (strcmp(interface, "wl_seat") == 0) {
+    } else if (strcmp(interface, xdg_wm_base_interface.name) == 0) {
+        demo->xdg_wm_base = wl_registry_bind(registry, id, &xdg_wm_base_interface, 1);
+        xdg_wm_base_add_listener(demo->xdg_wm_base, &wm_base_listener, NULL);
+    } else if (strcmp(interface, wl_seat_interface.name) == 0) {
         demo->seat = wl_registry_bind(registry, id, &wl_seat_interface, 1);
         wl_seat_add_listener(demo->seat, &seat_listener, demo);
+    } else if (strcmp(interface, zxdg_decoration_manager_v1_interface.name) == 0) {
+        demo->xdg_decoration_mgr = wl_registry_bind(registry, id, &zxdg_decoration_manager_v1_interface, 1);
     }
 }
 
@@ -3822,7 +3949,7 @@ static void demo_init_connection(struct demo *demo) {
 
     demo->connection = xcb_connect(NULL, &scr);
     if (xcb_connection_has_error(demo->connection) > 0) {
-        printf("Cannot find a compatible Vulkan installable client driver (ICD).\nExiting ...\n");
+        printf("Cannot connect to XCB.\nExiting ...\n");
         fflush(stdout);
         exit(1);
     }
@@ -3836,7 +3963,7 @@ static void demo_init_connection(struct demo *demo) {
     demo->display = wl_display_connect(NULL);
 
     if (demo->display == NULL) {
-        printf("Cannot find a compatible Vulkan installable client driver (ICD).\nExiting ...\n");
+        printf("Cannot connect to wayland.\nExiting ...\n");
         fflush(stdout);
         exit(1);
     }
@@ -3918,6 +4045,10 @@ static void demo_init(struct demo *demo, int argc, char **argv) {
             i++;
             continue;
         }
+        if (strcmp(argv[i], "--force_errors") == 0) {
+            demo->force_errors = true;
+            continue;
+        }
 
 #if defined(ANDROID)
         ERR_EXIT("Usage: vkcube [--validate]\n", "Usage");
@@ -3929,6 +4060,7 @@ static void demo_init(struct demo *demo, int argc, char **argv) {
             "\t[--gpu_number <index of physical device>]\n"
             "\t[--present_mode <present mode enum>]\n"
             "\t[--width <width>] [--height <height>]\n"
+            "\t[--force_errors]\n"
             "\t<present_mode_enum>\n"
             "\t\tVK_PRESENT_MODE_IMMEDIATE_KHR = %d\n"
             "\t\tVK_PRESENT_MODE_MAILBOX_KHR = %d\n"

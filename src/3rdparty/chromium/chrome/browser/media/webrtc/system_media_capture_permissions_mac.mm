@@ -13,7 +13,6 @@
 #include "base/logging.h"
 #include "base/mac/foundation_util.h"
 #include "base/mac/scoped_cftyperef.h"
-#include "base/macros.h"
 #include "base/no_destructor.h"
 #include "base/task/post_task.h"
 #include "base/task/task_traits.h"
@@ -37,12 +36,17 @@ bool UsingFakeMediaDevices() {
 MediaAuthorizationWrapper* g_media_authorization_wrapper_for_tests = nullptr;
 
 // Implementation of OS call wrapper that does the actual OS calls.
-class MediaAuthorizationWrapperImpl : public MediaAuthorizationWrapper {
+class MediaAuthorizationWrapperImpl final : public MediaAuthorizationWrapper {
  public:
   MediaAuthorizationWrapperImpl() = default;
-  ~MediaAuthorizationWrapperImpl() final = default;
 
-  NSInteger AuthorizationStatusForMediaType(AVMediaType media_type) final {
+  MediaAuthorizationWrapperImpl(const MediaAuthorizationWrapperImpl&) = delete;
+  MediaAuthorizationWrapperImpl& operator=(
+      const MediaAuthorizationWrapperImpl&) = delete;
+
+  ~MediaAuthorizationWrapperImpl() override = default;
+
+  NSInteger AuthorizationStatusForMediaType(AVMediaType media_type) override {
     if (@available(macOS 10.14, *)) {
       return [AVCaptureDevice authorizationStatusForMediaType:media_type];
     } else {
@@ -52,22 +56,20 @@ class MediaAuthorizationWrapperImpl : public MediaAuthorizationWrapper {
   }
 
   void RequestAccessForMediaType(AVMediaType media_type,
-                                 base::RepeatingClosure callback,
-                                 const base::TaskTraits& traits) final {
+                                 base::OnceClosure callback,
+                                 const base::TaskTraits& traits) override {
     if (@available(macOS 10.14, *)) {
-      [AVCaptureDevice
-          requestAccessForMediaType:media_type
-                  completionHandler:^(BOOL granted) {
-                    base::PostTask(FROM_HERE, traits, std::move(callback));
-                  }];
+      __block base::OnceClosure block_callback = std::move(callback);
+      [AVCaptureDevice requestAccessForMediaType:media_type
+                               completionHandler:^(BOOL granted) {
+                                 base::PostTask(FROM_HERE, traits,
+                                                std::move(block_callback));
+                               }];
     } else {
       NOTREACHED();
       base::PostTask(FROM_HERE, traits, std::move(callback));
     }
   }
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(MediaAuthorizationWrapperImpl);
 };
 
 MediaAuthorizationWrapper& GetMediaAuthorizationWrapper() {
@@ -114,10 +116,8 @@ SystemPermission CheckSystemMediaCapturePermission(AVMediaType media_type) {
   return SystemPermission::kAllowed;
 }
 
-// Use RepeatingCallback since it must be copyable for use in the block. It's
-// only called once though.
 void RequestSystemMediaCapturePermission(AVMediaType media_type,
-                                         base::RepeatingClosure callback,
+                                         base::OnceClosure callback,
                                          const base::TaskTraits& traits) {
   if (UsingFakeMediaDevices()) {
     base::PostTask(FROM_HERE, traits, std::move(callback));
@@ -136,10 +136,6 @@ void RequestSystemMediaCapturePermission(AVMediaType media_type,
   }
 }
 
-// Heuristic to check screen capture permission on macOS 10.15.
-// Screen Capture is considered allowed if the name of at least one normal
-// or dock window running on another process is visible.
-// See https://crbug.com/993692.
 bool IsScreenCaptureAllowed() {
   if (@available(macOS 10.15, *)) {
     if (!base::FeatureList::IsEnabled(
@@ -168,16 +164,14 @@ SystemPermission CheckSystemScreenCapturePermission() {
 
 void RequestSystemAudioCapturePermisson(base::OnceClosure callback,
                                         const base::TaskTraits& traits) {
-  RequestSystemMediaCapturePermission(
-      AVMediaTypeAudio, base::AdaptCallbackForRepeating(std::move(callback)),
-      traits);
+  RequestSystemMediaCapturePermission(AVMediaTypeAudio, std::move(callback),
+                                      traits);
 }
 
 void RequestSystemVideoCapturePermisson(base::OnceClosure callback,
                                         const base::TaskTraits& traits) {
-  RequestSystemMediaCapturePermission(
-      AVMediaTypeVideo, base::AdaptCallbackForRepeating(std::move(callback)),
-      traits);
+  RequestSystemMediaCapturePermission(AVMediaTypeVideo, std::move(callback),
+                                      traits);
 }
 
 void SetMediaAuthorizationWrapperForTesting(

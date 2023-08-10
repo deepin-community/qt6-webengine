@@ -9,9 +9,10 @@
 
 #include "bench/Benchmark.h"
 #include "include/core/SkCanvas.h"
+#include "include/core/SkColorSpace.h"
 #include "include/core/SkGraphics.h"
 #include "include/core/SkTypeface.h"
-#include "src/core/SkRemoteGlyphCache.h"
+#include "include/private/chromium/SkChromeRemoteGlyphCache.h"
 #include "src/core/SkStrikeSpec.h"
 #include "src/core/SkTLazy.h"
 #include "src/core/SkTaskGroup.h"
@@ -147,7 +148,7 @@ public:
         return id <= fLastDeletedHandleId;
     }
 
-    void notifyCacheMiss(SkStrikeClient::CacheMissType type) override {
+    void notifyCacheMiss(SkStrikeClient::CacheMissType type, int fontSize) override {
         SkAutoMutexExclusive l(fMutex);
 
         fCacheMissCount[type]++;
@@ -223,11 +224,12 @@ class DiffCanvasBench : public Benchmark {
     void onDraw(int loops, SkCanvas* modelCanvas) override {
         SkSurfaceProps props;
         if (modelCanvas) { modelCanvas->getProps(&props); }
-        SkTextBlobCacheDiffCanvas canvas{1024, 1024, props, fServer.get()};
+        std::unique_ptr<SkCanvas> canvas = fServer->makeAnalysisCanvas(1024, 1024, props,
+                                                                       nullptr, true);
         loops *= 100;
         while (loops --> 0) {
             for (const auto& record : fTrace) {
-                canvas.drawTextBlob(
+                canvas->drawTextBlob(
                         record.blob.get(), record.offset.x(), record.offset.y(),record.paint);
             }
         }

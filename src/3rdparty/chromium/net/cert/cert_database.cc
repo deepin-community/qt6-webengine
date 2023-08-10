@@ -6,6 +6,9 @@
 
 #include "base/memory/singleton.h"
 #include "base/observer_list_threadsafe.h"
+#include "build/build_config.h"
+#include "net/log/net_log.h"
+#include "net/log/net_log_values.h"
 
 namespace net {
 
@@ -26,6 +29,12 @@ void CertDatabase::RemoveObserver(Observer* observer) {
 }
 
 void CertDatabase::NotifyObserversCertDBChanged() {
+  // Log to NetLog as it may help debug issues like https://crbug.com/915463
+  // This isn't guarded with net::NetLog::Get()->IsCapturing()) because an
+  // AddGlobalEntry() call without much computation is really cheap.
+  net::NetLog::Get()->AddGlobalEntry(
+      NetLogEventType::CERTIFICATE_DATABASE_CHANGED);
+
   observer_list_->Notify(FROM_HERE, &Observer::OnCertDBChanged);
 }
 
@@ -33,7 +42,7 @@ CertDatabase::CertDatabase()
     : observer_list_(new base::ObserverListThreadSafe<Observer>) {}
 
 CertDatabase::~CertDatabase() {
-#if defined(OS_MAC)
+#if BUILDFLAG(IS_MAC)
   ReleaseNotifier();
 #endif
 }

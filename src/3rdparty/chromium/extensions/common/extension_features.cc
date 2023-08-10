@@ -3,40 +3,23 @@
 // found in the LICENSE file.
 
 #include "extensions/common/extension_features.h"
+#include "base/feature_list.h"
 
 namespace extensions_features {
 
-// Controls whether we redirect the NTP to the chrome://extensions page or show
-// a middle slot promo, and which of the the three checkup banner messages
-// (performance focused, privacy focused or neutral) to show.
-const base::Feature kExtensionsCheckup{"ExtensionsCheckup",
-                                       base::FEATURE_DISABLED_BY_DEFAULT};
+// Controls whether we show an install friction dialog when an Enhanced Safe
+// Browsing user tries to install an extension that is not included in the
+// Safe Browsing CRX allowlist. This feature also controls if we show a warning
+// in 'chrome://extensions' for extensions not included in the allowlist.
+const base::Feature kSafeBrowsingCrxAllowlistShowWarnings{
+    "SafeBrowsingCrxAllowlistShowWarnings", base::FEATURE_ENABLED_BY_DEFAULT};
 
-// Controls whether we disable extensions for malware.
-const base::Feature kDisableMalwareExtensionsRemotely{
-    "DisableMalwareExtensionsRemotely", base::FEATURE_ENABLED_BY_DEFAULT};
-
-// Controls whether we disable extensions not allowlisted for Enhanced Safe
-// Browsing users.
-const base::Feature kEnforceSafeBrowsingExtensionAllowlist{
-    "EnforceSafeBrowsingExtensionAllowlist", base::FEATURE_DISABLED_BY_DEFAULT};
-
-// Parameters for ExtensionsCheckup feature.
-const char kExtensionsCheckupEntryPointParameter[] = "entry_point";
-const char kExtensionsCheckupBannerMessageParameter[] = "banner_message_type";
-
-// Constants for ExtensionsCheckup parameters.
-// Indicates that the user should be shown the chrome://extensions page on
-// startup.
-const char kStartupEntryPoint[] = "startup";
-// Indicates that the user should be shown a promo on the NTP leading to the
-// chrome://extensions page.
-const char kNtpPromoEntryPoint[] = "promo";
-// Indicates the focus of the message shown on chrome://the extensions page
-// banner and the NTP promo.
-const char kPerformanceMessage[] = "0";
-const char kPrivacyMessage[] = "1";
-const char kNeutralMessage[] = "2";
+// Automatically disable extensions not included in the Safe Browsing CRX
+// allowlist if the user has turned on Enhanced Safe Browsing (ESB). The
+// extensions can be disabled at ESB opt-in time or when an extension is moved
+// out of the allowlist.
+const base::Feature kSafeBrowsingCrxAllowlistAutoDisable{
+    "SafeBrowsingCrxAllowlistAutoDisable", base::FEATURE_DISABLED_BY_DEFAULT};
 
 // Forces requests to go through WebRequestProxyingURLLoaderFactory.
 const base::Feature kForceWebRequestProxyForTest{
@@ -51,19 +34,57 @@ const base::Feature kAllowWithholdingExtensionPermissionsOnInstall{
 // Enables support for the "match_origin_as_fallback" property in content
 // scripts.
 const base::Feature kContentScriptsMatchOriginAsFallback{
-    "ContentScriptsMatchOriginAsFallback", base::FEATURE_DISABLED_BY_DEFAULT};
-
-// Whether Manifest Version 3-based extensions are supported.
-const base::Feature kMv3ExtensionsSupported{"Mv3ExtensionsSupported",
-                                            base::FEATURE_ENABLED_BY_DEFAULT};
+    "ContentScriptsMatchOriginAsFallback", base::FEATURE_ENABLED_BY_DEFAULT};
 
 // Reports Extensions.WebRequest.KeepaliveRequestFinished when enabled.
 const base::Feature kReportKeepaliveUkm{"ReportKeepaliveUkm",
                                         base::FEATURE_ENABLED_BY_DEFAULT};
 
-// Enables default Chrome apps on Chrome OS to sync uninstallation across
-// devices.
-const base::Feature kDefaultChromeAppUninstallSync{
-    "DefaultChromeAppUninstallSync", base::FEATURE_DISABLED_BY_DEFAULT};
+// Whether extension contexts can use SharedArrayBuffers unconditionally (i.e.
+// without requiring cross origin isolation).
+// TODO(crbug.com/1184892): Flip this in M95.
+const base::Feature kAllowSharedArrayBuffersUnconditionally{
+    "AllowSharedArrayBuffersUnconditionally", base::FEATURE_ENABLED_BY_DEFAULT};
+
+// Enables the CryptoToken component extension, which implements the deprecated
+// U2F Security Key API. Once this flag is default disabled sites can continue
+// to use CryptoToken via a Deprecation Trail with the same name.
+// TODO(1224886): Delete together with CryptoToken code.
+const base::Feature kU2FSecurityKeyAPI{"U2FSecurityKeyAPI",
+                                       base::FEATURE_DISABLED_BY_DEFAULT};
+
+// When enabled, causes Manifest V3 (and greater) extensions to use structured
+// cloning (instead of JSON serialization) for extension messaging, except when
+// communicating with native messaging hosts.
+const base::Feature kStructuredCloningForMV3Messaging{
+    "StructuredCloningForMV3Messaging", base::FEATURE_DISABLED_BY_DEFAULT};
+
+// When enabled, causes extensions to allow access to certain APIs only if the
+// user is in the developer mode.
+const base::Feature kRestrictDeveloperModeAPIs{
+    "RestrictDeveloperModeAPIs", base::FEATURE_DISABLED_BY_DEFAULT};
+
+// When enabled, then bad_message::ReceivedBadMessage will be called when
+// browser receives an IPC from a content script and the IPC that unexpectedly
+// claims to act on behalf of a given extension id, (i.e. even if the browser
+// process things that renderer process never run content scripts from the
+// extension).
+// Currently disabled due to https://crbug.com/1312125.
+const base::Feature kCheckingUnexpectedExtensionIdInContentScriptIpcs{
+    "EMF_INVALID_EXTENSION_ID_FOR_CONTENT_SCRIPT",
+    base::FEATURE_DISABLED_BY_DEFAULT};
+
+// When enabled, then bad_message::ReceivedBadMessage will be called when
+// browser receives an IPC from a content script and the IPC that unexpectedly
+// claims to act on behalf of a given extension id, (i.e. even if the browser
+// process things that renderer process never run content scripts from the
+// extension).
+extern const base::Feature kCheckingNoExtensionIdInExtensionIpcs{
+    "EMF_NO_EXTENSION_ID_FOR_EXTENSION_SOURCE",
+    base::FEATURE_ENABLED_BY_DEFAULT};
+
+// Controls whether extensions can use the new favicon fetching in Manifest V3.
+const base::Feature kNewExtensionFaviconHandling{
+    "ExtensionsNewFaviconHandling", base::FEATURE_DISABLED_BY_DEFAULT};
 
 }  // namespace extensions_features

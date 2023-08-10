@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # Copyright 2015 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
@@ -51,6 +51,7 @@ class FeatureCompilerTest(unittest.TestCase):
       ],
       'default_parent': True,
       'dependencies': ['dependency1', 'dependency2'],
+      'developer_mode_only': True,
       'disallow_for_service_workers': True,
       'extension_types': ['extension'],
       'location': 'component',

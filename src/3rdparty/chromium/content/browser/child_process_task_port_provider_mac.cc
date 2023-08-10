@@ -5,10 +5,11 @@
 #include "content/browser/child_process_task_port_provider_mac.h"
 
 #include "base/bind.h"
+#include "base/containers/cxx20_erase.h"
 #include "base/logging.h"
 #include "base/mac/foundation_util.h"
 #include "base/mac/mach_logging.h"
-#include "base/stl_util.h"
+#include "base/no_destructor.h"
 #include "base/strings/stringprintf.h"
 #include "content/common/child_process.mojom.h"
 #include "mojo/public/cpp/system/platform_handle.h"
@@ -87,7 +88,8 @@ void ChildProcessTaskPortProvider::OnTaskPortReceived(
       // single-process mode, tests, or if the PID is reused and this races the
       // DEAD_NAME notification. Self-reseting is not allowed on ScopedGeneric,
       // so test for that first.
-      it->second.swap(port);
+      if (it->second.get() != port.get())
+        it->second = std::move(port);
     }
   }
 

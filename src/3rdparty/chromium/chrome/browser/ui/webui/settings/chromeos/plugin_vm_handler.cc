@@ -10,8 +10,8 @@
 
 #include "base/bind.h"
 #include "base/callback_helpers.h"
-#include "chrome/browser/chromeos/plugin_vm/plugin_vm_manager.h"
-#include "chrome/browser/chromeos/plugin_vm/plugin_vm_manager_factory.h"
+#include "chrome/browser/ash/plugin_vm/plugin_vm_manager.h"
+#include "chrome/browser/ash/plugin_vm/plugin_vm_manager_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "content/public/browser/browser_thread.h"
 
@@ -40,20 +40,20 @@ void PluginVmHandler::OnJavascriptAllowed() {}
 void PluginVmHandler::OnJavascriptDisallowed() {}
 
 void PluginVmHandler::HandleIsRelaunchNeededForNewPermissions(
-    const base::ListValue* args) {
+    const base::Value::List& args) {
   AllowJavascript();
 
-  CHECK_EQ(1U, args->GetList().size());
+  CHECK_EQ(1U, args.size());
   bool requires_relaunch =
       plugin_vm::PluginVmManagerFactory::GetForProfile(profile_)
           ->IsRelaunchNeededForNewPermissions();
   ResolveJavascriptCallback(
-      /*callback_id=*/base::Value(args->GetList()[0].GetString()),
+      /*callback_id=*/base::Value(args[0].GetString()),
       base::Value(requires_relaunch));
 }
 
-void PluginVmHandler::HandleRelaunchPluginVm(const base::ListValue* args) {
-  CHECK_EQ(0U, args->GetList().size());
+void PluginVmHandler::HandleRelaunchPluginVm(const base::Value::List& args) {
+  CHECK_EQ(0U, args.size());
   plugin_vm::PluginVmManagerFactory::GetForProfile(profile_)
       ->RelaunchPluginVm();
 }

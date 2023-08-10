@@ -14,25 +14,13 @@
 #include "components/signin/public/base/signin_client.h"
 #include "components/signin/public/base/signin_pref_names.h"
 
-const base::Feature kUseMultiloginEndpoint{"UseMultiloginEndpoint",
-                                           base::FEATURE_ENABLED_BY_DEFAULT};
-
 namespace signin {
 
-DiceAccountReconcilorDelegate::DiceAccountReconcilorDelegate(
-    SigninClient* signin_client,
-    bool migration_completed)
-    : signin_client_(signin_client),
-      migration_completed_(migration_completed) {
-  DCHECK(signin_client_);
-}
+DiceAccountReconcilorDelegate::DiceAccountReconcilorDelegate() = default;
+DiceAccountReconcilorDelegate::~DiceAccountReconcilorDelegate() = default;
 
 bool DiceAccountReconcilorDelegate::IsReconcileEnabled() const {
   return true;
-}
-
-bool DiceAccountReconcilorDelegate::IsMultiloginEndpointEnabled() const {
-  return base::FeatureList::IsEnabled(kUseMultiloginEndpoint);
 }
 
 DiceAccountReconcilorDelegate::InconsistencyReason
@@ -296,15 +284,6 @@ AccountReconcilorDelegate::RevokeTokenOption
 DiceAccountReconcilorDelegate::ShouldRevokeSecondaryTokensBeforeReconcile(
     const std::vector<gaia::ListedAccount>& gaia_accounts) {
   return RevokeTokenOption::kRevokeIfInError;
-}
-
-bool DiceAccountReconcilorDelegate::ShouldRevokeTokensNotInCookies() const {
-  return !migration_completed_;
-}
-
-void DiceAccountReconcilorDelegate::OnRevokeTokensNotInCookiesCompleted() {
-  migration_completed_ = true;
-  signin_client_->SetDiceMigrationCompleted();
 }
 
 bool DiceAccountReconcilorDelegate::ShouldRevokeTokensOnCookieDeleted() {

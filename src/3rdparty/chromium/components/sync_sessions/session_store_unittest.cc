@@ -16,6 +16,8 @@
 #include "base/test/task_environment.h"
 #include "components/prefs/testing_pref_service.h"
 #include "components/sync/base/hash_util.h"
+#include "components/sync/protocol/entity_data.h"
+#include "components/sync/protocol/entity_metadata.pb.h"
 #include "components/sync/protocol/session_specifics.pb.h"
 #include "components/sync/test/model/model_type_store_test_util.h"
 #include "components/sync/test/model/test_matchers.h"
@@ -39,6 +41,7 @@ using syncer::MetadataBatch;
 using syncer::MetadataBatchContains;
 using syncer::ModelTypeStore;
 using syncer::NoModelError;
+using testing::_;
 using testing::ElementsAre;
 using testing::Eq;
 using testing::IsEmpty;
@@ -49,7 +52,6 @@ using testing::NotNull;
 using testing::Pair;
 using testing::Return;
 using testing::UnorderedElementsAre;
-using testing::_;
 
 const char kLocalCacheGuid[] = "SomeCacheGuid";
 
@@ -59,7 +61,7 @@ class MockOpenCallback {
  public:
   MOCK_METHOD(void,
               Run,
-              (const base::Optional<syncer::ModelError>& error,
+              (const absl::optional<syncer::ModelError>& error,
                SessionStore* store,
                MetadataBatch* metadata_batch),
               ());
@@ -67,7 +69,7 @@ class MockOpenCallback {
   SessionStore::OpenCallback Get() {
     return base::BindOnce(
         [](MockOpenCallback* callback,
-           const base::Optional<syncer::ModelError>& error,
+           const absl::optional<syncer::ModelError>& error,
            std::unique_ptr<SessionStore> store,
            std::unique_ptr<MetadataBatch> metadata_batch) {
           // Store a copy of the pointer for GetResult().
@@ -100,9 +102,7 @@ std::map<std::string, EntityData> BatchToEntityDataMap(
     std::unique_ptr<DataBatch> batch) {
   std::map<std::string, EntityData> storage_key_to_data;
   while (batch && batch->HasNext()) {
-    auto batch_entry = batch->Next();
-    const std::string& storage_key = batch_entry.first;
-    std::unique_ptr<EntityData> entity_data = std::move(batch_entry.second);
+    auto [storage_key, entity_data] = batch->Next();
     EXPECT_THAT(entity_data, NotNull());
     if (entity_data) {
       storage_key_to_data.emplace(storage_key, std::move(*entity_data));
@@ -117,7 +117,7 @@ std::unique_ptr<MetadataBatch> ReadAllPersistedMetadataFrom(
   base::RunLoop loop;
   store->ReadAllMetadata(base::BindOnce(
       [](std::unique_ptr<MetadataBatch>* output_batch, base::RunLoop* loop,
-         const base::Optional<syncer::ModelError>& error,
+         const absl::optional<syncer::ModelError>& error,
          std::unique_ptr<MetadataBatch> input_batch) {
         EXPECT_FALSE(error) << error->ToString();
         EXPECT_THAT(input_batch, NotNull());
@@ -135,7 +135,7 @@ std::map<std::string, SessionSpecifics> ReadAllPersistedDataFrom(
   base::RunLoop loop;
   store->ReadAllData(base::BindOnce(
       [](std::unique_ptr<ModelTypeStore::RecordList>* output_records,
-         base::RunLoop* loop, const base::Optional<syncer::ModelError>& error,
+         base::RunLoop* loop, const absl::optional<syncer::ModelError>& error,
          std::unique_ptr<ModelTypeStore::RecordList> input_records) {
         EXPECT_FALSE(error) << error->ToString();
         EXPECT_THAT(input_records, NotNull());
@@ -175,7 +175,7 @@ class SessionStoreOpenTest : public ::testing::Test {
                 underlying_store_.get())));
   }
 
-  ~SessionStoreOpenTest() override {}
+  ~SessionStoreOpenTest() override = default;
 
   base::test::SingleThreadTaskEnvironment task_environment_;
   TestingPrefServiceSimple pref_service_;
@@ -228,7 +228,7 @@ TEST_F(SessionStoreOpenTest, ShouldNotUseClientIfCancelled) {
     }
 
    private:
-    void Completed(const base::Optional<syncer::ModelError>& error,
+    void Completed(const absl::optional<syncer::ModelError>& error,
                    std::unique_ptr<SessionStore> store,
                    std::unique_ptr<syncer::MetadataBatch> metadata_batch) {
       std::move(cb_).Run(error, std::move(store), std::move(metadata_batch));
@@ -257,9 +257,7 @@ TEST_F(SessionStoreOpenTest, ShouldNotUseClientIfCancelled) {
 // Test fixture that creates an initial session store.
 class SessionStoreTest : public SessionStoreOpenTest {
  protected:
-  SessionStoreTest() {
-    session_store_ = CreateSessionStore();
-  }
+  SessionStoreTest() { session_store_ = CreateSessionStore(); }
 
   std::unique_ptr<SessionStore> CreateSessionStore() {
     NiceMock<MockOpenCallback> completion;

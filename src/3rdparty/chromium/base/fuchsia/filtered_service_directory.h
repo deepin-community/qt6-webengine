@@ -10,11 +10,17 @@
 #include <lib/sys/cpp/outgoing_directory.h>
 #include <lib/sys/cpp/service_directory.h>
 #include <lib/zx/channel.h>
-#include <memory>
 
 #include "base/base_export.h"
-#include "base/macros.h"
 #include "base/strings/string_piece.h"
+
+// TODO(crbug.com/1196525): Remove once Chromecast calls are checking results.
+#include "build/chromecast_buildflags.h"
+#if BUILDFLAG(IS_CHROMECAST)
+#define MAYBE_NODISCARD
+#else
+#define MAYBE_NODISCARD [[nodiscard]]
+#endif
 
 namespace base {
 
@@ -25,15 +31,19 @@ class BASE_EXPORT FilteredServiceDirectory {
   // Creates a directory that proxies requests to the specified service
   // |directory|.
   explicit FilteredServiceDirectory(sys::ServiceDirectory* directory);
+
+  FilteredServiceDirectory(const FilteredServiceDirectory&) = delete;
+  FilteredServiceDirectory& operator=(const FilteredServiceDirectory&) = delete;
+
   ~FilteredServiceDirectory();
 
-  // Adds the specified service to the list of whitelisted services.
-  void AddService(base::StringPiece service_name);
+  // Adds the specified service to the list of allowed services.
+  MAYBE_NODISCARD zx_status_t AddService(base::StringPiece service_name);
 
   // Connects a directory client. The directory can be passed to a sandboxed
   // process to be used for /svc namespace.
-  void ConnectClient(
-      fidl::InterfaceRequest<::fuchsia::io::Directory> dir_request);
+  MAYBE_NODISCARD zx_status_t
+  ConnectClient(fidl::InterfaceRequest<::fuchsia::io::Directory> dir_request);
 
   // Accessor for the OutgoingDirectory, used to add handlers for services
   // in addition to those provided from |directory| via AddService().
@@ -42,8 +52,6 @@ class BASE_EXPORT FilteredServiceDirectory {
  private:
   const sys::ServiceDirectory* const directory_;
   sys::OutgoingDirectory outgoing_directory_;
-
-  DISALLOW_COPY_AND_ASSIGN(FilteredServiceDirectory);
 };
 
 }  // namespace base

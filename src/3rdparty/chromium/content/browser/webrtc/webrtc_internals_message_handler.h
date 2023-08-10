@@ -5,9 +5,10 @@
 #ifndef CONTENT_BROWSER_WEBRTC_WEBRTC_INTERNALS_MESSAGE_HANDLER_H_
 #define CONTENT_BROWSER_WEBRTC_WEBRTC_INTERNALS_MESSAGE_HANDLER_H_
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "content/browser/webrtc/webrtc_internals_ui_observer.h"
+#include "content/common/content_export.h"
 #include "content/public/browser/web_ui_message_handler.h"
 
 namespace base {
@@ -26,6 +27,11 @@ class CONTENT_EXPORT WebRTCInternalsMessageHandler
       public WebRTCInternalsUIObserver {
  public:
   WebRTCInternalsMessageHandler();
+
+  WebRTCInternalsMessageHandler(const WebRTCInternalsMessageHandler&) = delete;
+  WebRTCInternalsMessageHandler& operator=(
+      const WebRTCInternalsMessageHandler&) = delete;
+
   ~WebRTCInternalsMessageHandler() override;
 
   // WebUIMessageHandler implementation.
@@ -35,12 +41,12 @@ class CONTENT_EXPORT WebRTCInternalsMessageHandler
   // The WebRTCInternals to use. Always WebRTCInternals::GetInstance()
   // except for testing.
   explicit WebRTCInternalsMessageHandler(WebRTCInternals* webrtc_internals);
-  WebRTCInternals* const webrtc_internals_;
+  const raw_ptr<WebRTCInternals> webrtc_internals_;
 
  private:
   // Returns a pointer to the RFH iff it is currently hosting the
   // webrtc-internals page.
-  RenderFrameHost* GetWebRTCInternalsHost() const;
+  RenderFrameHost* GetWebRTCInternalsHost();
 
   // Javascript message handler.
   void OnGetStandardStats(const base::ListValue* list);
@@ -51,12 +57,11 @@ class CONTENT_EXPORT WebRTCInternalsMessageHandler
   void OnDOMLoadDone(const base::ListValue* list);
 
   // WebRTCInternalsUIObserver override.
-  void OnUpdate(const char* command, const base::Value* args) override;
+  void OnUpdate(const std::string& event_name,
+                const base::Value* event_data) override;
 
   // Executes Javascript command.
   void ExecuteJavascriptCommand(const char* command, const base::Value* args);
-
-  DISALLOW_COPY_AND_ASSIGN(WebRTCInternalsMessageHandler);
 };
 
 }  // namespace content

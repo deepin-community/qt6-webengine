@@ -3,3 +3,6 @@ usr/share/qt6/resources/qtwebengine_resources.pak
 usr/share/qt6/resources/qtwebengine_resources_100p.pak
 usr/share/qt6/resources/qtwebengine_resources_200p.pak
 usr/share/qt6/translations/qtwebengine_locales/*
+
+# Set the WebEngine Hunspell .bdic binary dictionary directory environment variable.
+debian/90qt6webengine-dictionaries-path.conf etc/environment.d

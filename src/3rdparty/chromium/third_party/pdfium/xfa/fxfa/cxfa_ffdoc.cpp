@@ -23,7 +23,6 @@
 #include "core/fxge/dib/cfx_dibitmap.h"
 #include "fxjs/xfa/cjx_object.h"
 #include "third_party/base/check.h"
-#include "third_party/base/ptr_util.h"
 #include "v8/include/cppgc/allocation.h"
 #include "v8/include/cppgc/heap.h"
 #include "xfa/fgas/font/cfgas_pdffontmgr.h"
@@ -54,7 +53,7 @@ FX_IMAGEDIB_AND_DPI::FX_IMAGEDIB_AND_DPI(const RetainPtr<CFX_DIBBase>& pDib,
 FX_IMAGEDIB_AND_DPI::~FX_IMAGEDIB_AND_DPI() = default;
 
 CXFA_FFDoc::CXFA_FFDoc(CXFA_FFApp* pApp,
-                       IXFA_DocEnvironment* pDocEnvironment,
+                       CallbackIface* pDocEnvironment,
                        CPDF_Document* pPDFDoc,
                        cppgc::Heap* pHeap)
     : m_pDocEnvironment(pDocEnvironment),
@@ -90,8 +89,7 @@ void CXFA_FFDoc::Trace(cppgc::Visitor* visitor) const {
 }
 
 bool CXFA_FFDoc::BuildDoc(CFX_XMLDocument* pXML) {
-  if (!pXML)
-    return false;
+  DCHECK(pXML);
 
   CXFA_DocumentBuilder builder(m_pDocument);
   if (!builder.BuildDocument(pXML, XFA_PacketType::Xdp))
@@ -137,8 +135,9 @@ bool CXFA_FFDoc::PopupMenu(CXFA_FFWidget* hWidget, const CFX_PointF& ptPopup) {
   return m_pDocEnvironment->PopupMenu(hWidget, ptPopup);
 }
 
-void CXFA_FFDoc::PageViewEvent(CXFA_FFPageView* pPageView, uint32_t dwFlags) {
-  m_pDocEnvironment->PageViewEvent(pPageView, dwFlags);
+void CXFA_FFDoc::OnPageViewEvent(CXFA_FFPageView* pPageView,
+                                 PageViewEvent eEvent) {
+  m_pDocEnvironment->OnPageViewEvent(pPageView, eEvent);
 }
 
 void CXFA_FFDoc::WidgetPostAdd(CXFA_FFWidget* hWidget) {
@@ -199,7 +198,7 @@ void CXFA_FFDoc::SetFocusWidget(CXFA_FFWidget* hWidget) {
 
 void CXFA_FFDoc::Print(int32_t nStartPage,
                        int32_t nEndPage,
-                       uint32_t dwOptions) {
+                       Mask<XFA_PrintOpt> dwOptions) {
   m_pDocEnvironment->Print(this, nStartPage, nEndPage, dwOptions);
 }
 
@@ -267,7 +266,7 @@ bool CXFA_FFDoc::OpenDoc(CFX_XMLDocument* pXML) {
 RetainPtr<CFX_DIBitmap> CXFA_FFDoc::GetPDFNamedImage(WideStringView wsName,
                                                      int32_t& iImageXDpi,
                                                      int32_t& iImageYDpi) {
-  uint32_t dwHash = FX_HashCode_GetW(wsName, false);
+  uint32_t dwHash = FX_HashCode_GetW(wsName);
   auto it = m_HashToDibDpiMap.find(dwHash);
   if (it != m_HashToDibDpiMap.end()) {
     iImageXDpi = it->second.iImageXDpi;
@@ -280,7 +279,8 @@ RetainPtr<CFX_DIBitmap> CXFA_FFDoc::GetPDFNamedImage(WideStringView wsName,
   if (count == 0)
     return nullptr;
 
-  CPDF_Object* pObject = name_tree->LookupValue(WideString(wsName));
+  RetainPtr<const CPDF_Object> pObject =
+      name_tree->LookupValue(WideString(wsName));
   if (!pObject) {
     for (size_t i = 0; i < count; ++i) {
       WideString wsTemp;
@@ -292,11 +292,12 @@ RetainPtr<CFX_DIBitmap> CXFA_FFDoc::GetPDFNamedImage(WideStringView wsName,
     }
   }
 
-  CPDF_Stream* pStream = ToStream(pObject);
+  RetainPtr<const CPDF_Stream> pStream = ToStream(pObject);
   if (!pStream)
     return nullptr;
 
-  auto pAcc = pdfium::MakeRetain<CPDF_StreamAcc>(pStream);
+  // TODO(tsepez): make CPDF_StreamAcc constructor take retained argument.
+  auto pAcc = pdfium::MakeRetain<CPDF_StreamAcc>(pStream.Get());
   pAcc->LoadAllDataFiltered();
 
   auto pImageFileRead =

@@ -20,7 +20,6 @@
 #include "base/bind.h"
 #include "base/callback_helpers.h"
 #include "base/containers/contains.h"
-#include "base/macros.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/process/kill.h"
 #include "base/process/launch.h"
@@ -28,9 +27,8 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task/post_task.h"
+#include "base/task/task_runner_util.h"
 #include "base/task/thread_pool.h"
-#include "base/task_runner_util.h"
 #include "base/threading/scoped_blocking_call.h"
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "components/storage_monitor/media_storage_util.h"
@@ -83,6 +81,12 @@ std::string MakeDeviceUniqueId(struct udev_device* device) {
 class ScopedGetDeviceInfoResultRecorder {
  public:
   ScopedGetDeviceInfoResultRecorder() = default;
+
+  ScopedGetDeviceInfoResultRecorder(const ScopedGetDeviceInfoResultRecorder&) =
+      delete;
+  ScopedGetDeviceInfoResultRecorder& operator=(
+      const ScopedGetDeviceInfoResultRecorder&) = delete;
+
   ~ScopedGetDeviceInfoResultRecorder() {
     UMA_HISTOGRAM_BOOLEAN("MediaDeviceNotification.UdevRequestSuccess",
                           result_);
@@ -94,8 +98,6 @@ class ScopedGetDeviceInfoResultRecorder {
 
  private:
   bool result_ = false;
-
-  DISALLOW_COPY_AND_ASSIGN(ScopedGetDeviceInfoResultRecorder);
 };
 
 // Returns the storage partition size of the device specified by |device_path|.
@@ -147,11 +149,11 @@ std::unique_ptr<StorageInfo> GetDeviceInfo(const base::FilePath& device_path,
   if (!device.get())
     return storage_info;
 
-  base::string16 volume_label = base::UTF8ToUTF16(
+  std::u16string volume_label = base::UTF8ToUTF16(
       device::UdevDeviceGetPropertyValue(device.get(), kLabel));
-  base::string16 vendor_name = base::UTF8ToUTF16(
+  std::u16string vendor_name = base::UTF8ToUTF16(
       device::UdevDeviceGetPropertyValue(device.get(), kVendor));
-  base::string16 model_name = base::UTF8ToUTF16(
+  std::u16string model_name = base::UTF8ToUTF16(
       device::UdevDeviceGetPropertyValue(device.get(), kModel));
 
   std::string unique_id = MakeDeviceUniqueId(device.get());
@@ -220,7 +222,7 @@ StorageMonitor::EjectStatus EjectPathOnBlockingTaskRunner(
   if (!process.IsValid())
     return StorageMonitor::EJECT_FAILURE;
 
-  static constexpr auto kEjectTimeout = base::TimeDelta::FromSeconds(3);
+  static constexpr auto kEjectTimeout = base::Seconds(3);
   int exit_code = -1;
   if (!process.WaitForExitWithTimeout(kEjectTimeout, &exit_code)) {
     process.Terminate(-1, false);

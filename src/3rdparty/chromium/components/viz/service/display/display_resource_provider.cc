@@ -9,16 +9,15 @@
 
 #include "base/atomic_sequence_num.h"
 #include "base/numerics/safe_math.h"
-#include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/memory_dump_manager.h"
 #include "base/trace_event/trace_event.h"
+#include "build/build_config.h"
 #include "components/viz/common/resources/resource_sizes.h"
 #include "gpu/command_buffer/common/shared_image_trace_utils.h"
+#include "ui/gfx/geometry/size.h"
 #include "ui/gl/trace_util.h"
-
-#include <GL/gl.h>
 
 namespace viz {
 
@@ -116,47 +115,22 @@ bool DisplayResourceProvider::OnMemoryDump(
   return true;
 }
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 bool DisplayResourceProvider::IsBackedBySurfaceTexture(ResourceId id) {
   ChildResource* resource = GetResource(id);
   return resource->transferable.is_backed_by_surface_texture;
 }
+#endif
 
-size_t DisplayResourceProvider::CountPromotionHintRequestsForTesting() {
-  return wants_promotion_hints_set_.size();
-}
-
-void DisplayResourceProvider::InitializePromotionHintRequest(ResourceId id) {
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_WIN)
+bool DisplayResourceProvider::DoesResourceWantPromotionHint(ResourceId id) {
   ChildResource* resource = TryGetResource(id);
   // TODO(ericrk): We should never fail TryGetResource, but we appear to
   // be doing so on Android in rare cases. Handle this gracefully until a
   // better solution can be found. https://crbug.com/811858
-  if (!resource)
-    return;
-
-  // We could sync all |wants_promotion_hint| resources elsewhere, and send 'no'
-  // to all resources that weren't used.  However, there's no real advantage.
-  if (resource->transferable.wants_promotion_hint)
-    wants_promotion_hints_set_.insert(id);
+  return resource && resource->transferable.wants_promotion_hint;
 }
 #endif
-
-bool DisplayResourceProvider::DoesResourceWantPromotionHint(
-    ResourceId id) const {
-#if defined(OS_ANDROID)
-  return wants_promotion_hints_set_.count(id) > 0;
-#else
-  return false;
-#endif
-}
-
-bool DisplayResourceProvider::DoAnyResourcesWantPromotionHints() const {
-#if defined(OS_ANDROID)
-  return wants_promotion_hints_set_.size() > 0;
-#else
-  return false;
-#endif
-}
 
 bool DisplayResourceProvider::IsOverlayCandidate(ResourceId id) {
   ChildResource* resource = TryGetResource(id);
@@ -166,8 +140,22 @@ bool DisplayResourceProvider::IsOverlayCandidate(ResourceId id) {
   return resource && resource->transferable.is_overlay_candidate;
 }
 
+SurfaceId DisplayResourceProvider::GetSurfaceId(ResourceId id) {
+  ChildResource* resource = GetResource(id);
+  return children_[resource->child_id].surface_id;
+}
+
+int DisplayResourceProvider::GetChildId(ResourceId id) {
+  ChildResource* resource = GetResource(id);
+  return resource->child_id;
+}
+
 bool DisplayResourceProvider::IsResourceSoftwareBacked(ResourceId id) {
   return GetResource(id)->transferable.is_software;
+}
+
+const gfx::Size DisplayResourceProvider::GetResourceBackedSize(ResourceId id) {
+  return GetResource(id)->transferable.size;
 }
 
 gfx::BufferFormat DisplayResourceProvider::GetBufferFormat(ResourceId id) {
@@ -184,12 +172,21 @@ const gfx::ColorSpace& DisplayResourceProvider::GetColorSpace(ResourceId id) {
   return resource->transferable.color_space;
 }
 
-int DisplayResourceProvider::CreateChild(ReturnCallback return_callback) {
+const absl::optional<gfx::HDRMetadata>& DisplayResourceProvider::GetHDRMetadata(
+    ResourceId id) {
+  ChildResource* resource = GetResource(id);
+  return resource->transferable.hdr_metadata;
+}
+
+int DisplayResourceProvider::CreateChild(ReturnCallback return_callback,
+                                         const SurfaceId& surface_id) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   int child_id = next_child_++;
   Child& child = children_[child_id];
+  child.id = child_id;
   child.return_callback = std::move(return_callback);
+  child.surface_id = surface_id;
 
   return child_id;
 }
@@ -205,17 +202,14 @@ void DisplayResourceProvider::ReceiveFromChild(
     const std::vector<TransferableResource>& resources) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
-  // TODO(crbug.com/855785): Fishing for misuse of DisplayResourceProvider
-  // causing crashes.
-  CHECK(child_id);
   auto child_it = children_.find(child_id);
-  // TODO(crbug.com/855785): Fishing for misuse of DisplayResourceProvider
-  // causing crashes.
-  CHECK(child_it != children_.end());
+  DCHECK(child_it != children_.end());
+
   Child& child_info = child_it->second;
   DCHECK(!child_info.marked_for_deletion);
-  for (const TransferableResource& resource : resources) {
-    auto resource_in_map_it = child_info.child_to_parent_map.find(resource.id);
+  for (const TransferableResource& transferable_resource : resources) {
+    auto resource_in_map_it =
+        child_info.child_to_parent_map.find(transferable_resource.id);
     if (resource_in_map_it != child_info.child_to_parent_map.end()) {
       ChildResource* resource = GetResource(resource_in_map_it->second);
       resource->marked_for_deletion = false;
@@ -223,18 +217,22 @@ void DisplayResourceProvider::ReceiveFromChild(
       continue;
     }
 
-    if (resource.is_software != IsSoftware() ||
-        resource.mailbox_holder.mailbox.IsZero()) {
+    if (transferable_resource.is_software != IsSoftware() ||
+        transferable_resource.mailbox_holder.mailbox.IsZero()) {
       TRACE_EVENT0(
           "viz", "DisplayResourceProvider::ReceiveFromChild dropping invalid");
-      child_info.return_callback.Run({resource.ToReturnedResource()});
+      std::vector<ReturnedResource> returned;
+      returned.push_back(transferable_resource.ToReturnedResource());
+      child_info.return_callback.Run(std::move(returned));
       continue;
     }
 
     ResourceId local_id = resource_id_generator_.GenerateNextId();
-    DCHECK(!resource.is_software || IsBitmapFormatSupported(resource.format));
-    resources_.emplace(local_id, ChildResource(child_id, resource));
-    child_info.child_to_parent_map[resource.id] = local_id;
+    DCHECK(!transferable_resource.is_software ||
+           IsBitmapFormatSupported(transferable_resource.format));
+    resources_.emplace(local_id,
+                       ChildResource(child_id, transferable_resource));
+    child_info.child_to_parent_map[transferable_resource.id] = local_id;
   }
 }
 
@@ -243,13 +241,9 @@ void DisplayResourceProvider::DeclareUsedResourcesFromChild(
     const ResourceIdSet& resources_from_child) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
-  // TODO(crbug.com/855785): Fishing for misuse of DisplayResourceProvider
-  // causing crashes.
-  CHECK(child);
   auto child_it = children_.find(child);
-  // TODO(crbug.com/855785): Fishing for misuse of DisplayResourceProvider
-  // causing crashes.
-  CHECK(child_it != children_.end());
+  DCHECK(child_it != children_.end());
+
   Child& child_info = child_it->second;
   DCHECK(!child_info.marked_for_deletion);
 
@@ -317,16 +311,6 @@ bool DisplayResourceProvider::ReadLockFenceHasPassed(
   return !resource->read_lock_fence || resource->read_lock_fence->HasPassed();
 }
 
-#if defined(OS_ANDROID)
-void DisplayResourceProvider::DeletePromotionHint(ResourceMap::iterator it) {
-  ChildResource* resource = &it->second;
-  // If this resource was interested in promotion hints, then remove it from
-  // the set of resources that we'll notify.
-  if (resource->transferable.wants_promotion_hint)
-    wants_promotion_hints_set_.erase(it->first);
-}
-#endif
-
 DisplayResourceProvider::CanDeleteNowResult
 DisplayResourceProvider::CanDeleteNow(const Child& child_info,
                                       const ChildResource& resource,
@@ -363,11 +347,8 @@ void DisplayResourceProvider::DeleteAndReturnUnusedResourcesToChild(
   if (unused.empty() && !child_info.marked_for_deletion)
     return;
 
-  // Store unused resources while batching is enabled or we can't access gpu
-  // thread right now.
-  // TODO(vasilyt): Technically we need to delay only resources with
-  // |image_context|.
-  if (batch_return_resources_lock_count_ > 0 || !can_access_gpu_thread_) {
+  // Store unused resources while batching is enabled.
+  if (batch_return_resources_lock_count_ > 0) {
     int child_id = child_it->first;
     auto& child_resources = batched_returning_resources_[child_id];
     child_resources.reserve(child_resources.size() + unused.size());
@@ -379,7 +360,7 @@ void DisplayResourceProvider::DeleteAndReturnUnusedResourcesToChild(
       DeleteAndReturnUnusedResourcesToChildImpl(child_info, style, unused);
 
   if (!to_return.empty())
-    child_info.return_callback.Run(to_return);
+    child_info.return_callback.Run(std::move(to_return));
 
   if (child_info.marked_for_deletion &&
       child_info.child_to_parent_map.empty()) {
@@ -453,8 +434,8 @@ DisplayResourceProvider::ScopedReadLockSharedImage::ScopedReadLockSharedImage(
       resource_(resource_provider_->GetResource(resource_id_)) {
   DCHECK(resource_);
   DCHECK(resource_->is_gpu_resource_type());
-  // Remove this #if defined(OS_WIN), when shared image is used on Windows.
-#if !defined(OS_WIN)
+  // Remove this #if BUILDFLAG(IS_WIN), when shared image is used on Windows.
+#if !BUILDFLAG(IS_WIN)
   DCHECK(resource_->transferable.mailbox_holder.mailbox.IsSharedImage());
 #endif
   resource_->lock_for_overlay_count++;
@@ -481,6 +462,18 @@ DisplayResourceProvider::ScopedReadLockSharedImage::operator=(
   other.resource_id_ = kInvalidResourceId;
   other.resource_ = nullptr;
   return *this;
+}
+
+void DisplayResourceProvider::ScopedReadLockSharedImage::SetReleaseFence(
+    gfx::GpuFenceHandle release_fence) {
+  DCHECK(resource_);
+  resource_->release_fence = std::move(release_fence);
+}
+
+bool DisplayResourceProvider::ScopedReadLockSharedImage::HasReadLockFence()
+    const {
+  DCHECK(resource_);
+  return resource_->transferable.read_lock_fences_enabled;
 }
 
 void DisplayResourceProvider::ScopedReadLockSharedImage::Reset() {

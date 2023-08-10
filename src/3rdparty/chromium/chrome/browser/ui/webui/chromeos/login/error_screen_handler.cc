@@ -6,20 +6,19 @@
 
 #include "base/time/time.h"
 #include "chrome/browser/ash/login/screens/error_screen.h"
-#include "chrome/browser/ui/webui/chromeos/network_element_localized_strings_provider.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/login/localized_values_builder.h"
 #include "ui/chromeos/devicetype_utils.h"
+#include "ui/chromeos/strings/network_element_localized_strings_provider.h"
 #include "ui/strings/grit/ui_strings.h"
 
 namespace chromeos {
 
 constexpr StaticOobeScreenId ErrorScreenView::kScreenId;
 
-ErrorScreenHandler::ErrorScreenHandler(JSCallsContainer* js_calls_container)
-    : BaseScreenHandler(kScreenId, js_calls_container) {
-  set_user_acted_method_path("login.ErrorMessageScreen.userActed");
+ErrorScreenHandler::ErrorScreenHandler() : BaseScreenHandler(kScreenId) {
+  set_user_acted_method_path_deprecated("login.ErrorMessageScreen.userActed");
 }
 
 ErrorScreenHandler::~ErrorScreenHandler() {
@@ -28,11 +27,11 @@ ErrorScreenHandler::~ErrorScreenHandler() {
 }
 
 void ErrorScreenHandler::Show() {
-  if (!page_is_ready()) {
+  if (!IsJavascriptAllowed()) {
     show_on_init_ = true;
     return;
   }
-  BaseScreenHandler::ShowScreen(kScreenId);
+  ShowInWebUI();
   if (screen_)
     screen_->DoShow();
   showing_ = true;
@@ -47,101 +46,51 @@ void ErrorScreenHandler::Hide() {
 
 void ErrorScreenHandler::Bind(ErrorScreen* screen) {
   screen_ = screen;
-  BaseScreenHandler::SetBaseScreen(screen_);
+  BaseScreenHandler::SetBaseScreenDeprecated(screen_);
 }
 
 void ErrorScreenHandler::Unbind() {
   screen_ = nullptr;
-  BaseScreenHandler::SetBaseScreen(nullptr);
+  BaseScreenHandler::SetBaseScreenDeprecated(nullptr);
 }
 
 void ErrorScreenHandler::ShowOobeScreen(OobeScreenId screen) {
-  ShowScreen(screen);
+  // TODO(https://crbug.com/1310191): Migrate off ShowScreenDeprecated.
+  ShowScreenDeprecated(screen);
 }
 
 void ErrorScreenHandler::SetErrorStateCode(
     NetworkError::ErrorState error_state) {
-  // TODO(crbug.com/1180291) - Remove once OOBE JS calls are fixed.
-  if (IsSafeToCallJavascript()) {
-    CallJS("login.ErrorMessageScreen.setErrorState",
-           static_cast<int>(error_state));
-  } else {
-    LOG(ERROR) << "Silently dropping SetErrorStateNetwork request.";
-  }
+  CallJS("login.ErrorMessageScreen.setErrorState",
+         static_cast<int>(error_state));
 }
 
 void ErrorScreenHandler::SetErrorStateNetwork(const std::string& network_name) {
-  // TODO(crbug.com/1180291) - Remove once OOBE JS calls are fixed.
-  if (IsSafeToCallJavascript()) {
-    CallJS("login.ErrorMessageScreen.setErrorStateNetwork", network_name);
-  } else {
-    LOG(ERROR) << "Silently dropping SetErrorStateNetwork request.";
-  }
+  CallJS("login.ErrorMessageScreen.setErrorStateNetwork", network_name);
 }
 
 void ErrorScreenHandler::SetGuestSigninAllowed(bool value) {
-  // TODO(crbug.com/1180291) - Remove once OOBE JS calls are fixed.
-  if (IsSafeToCallJavascript()) {
-    CallJS("login.ErrorMessageScreen.allowGuestSignin", value);
-  } else {
-    LOG(ERROR) << "Silently dropping SetGuestSigninAllowed request.";
-  }
+  CallJS("login.ErrorMessageScreen.allowGuestSignin", value);
 }
 
 void ErrorScreenHandler::SetOfflineSigninAllowed(bool value) {
-  // TODO(crbug.com/1180291) - Remove once OOBE JS calls are fixed.
-  if (IsSafeToCallJavascript()) {
-    CallJS("login.ErrorMessageScreen.allowOfflineLogin", value);
-  } else {
-    LOG(ERROR) << "Silently dropping SetOfflineSigninAllowed request.";
-  }
+  CallJS("login.ErrorMessageScreen.allowOfflineLogin", value);
 }
 
 void ErrorScreenHandler::SetShowConnectingIndicator(bool value) {
-  // TODO(crbug.com/1180291) - Remove once OOBE JS calls are fixed.
-  if (IsSafeToCallJavascript()) {
-    CallJS("login.ErrorMessageScreen.showConnectingIndicator", value);
-  } else {
-    LOG(ERROR) << "Silently dropping SetShowConnectingIndicator request.";
-  }
+  CallJS("login.ErrorMessageScreen.showConnectingIndicator", value);
 }
 
 void ErrorScreenHandler::SetIsPersistentError(bool is_persistent) {
-  // TODO(crbug.com/1180291) - Remove once OOBE JS calls are fixed.
-  if (IsSafeToCallJavascript()) {
-    CallJS("login.ErrorMessageScreen.setIsPersistentError", is_persistent);
-  } else {
-    LOG(ERROR) << "Silently dropping SetIsPersistentError request.";
-  }
+  CallJS("login.ErrorMessageScreen.setIsPersistentError", is_persistent);
 }
 
 void ErrorScreenHandler::SetUIState(NetworkError::UIState ui_state) {
-  // TODO(crbug.com/1180291) - Remove once OOBE JS calls are fixed
-  if (IsSafeToCallJavascript()) {
-    CallJS("login.ErrorMessageScreen.setUIState", static_cast<int>(ui_state));
-  } else {
-    LOG(ERROR) << "Silently dropping SetUIState request.";
-  }
-}
-
-// TODO (crbug.com/1168114): We need to handle that fully in C++ once
-// all error screen logic is migrated to Screen object.
-void ErrorScreenHandler::OnCancelButtonClicked() {
-  // TODO(crbug.com/1180291) - Remove once OOBE JS calls are fixed.
-  if (IsSafeToCallJavascript()) {
-    CallJS("cr.ui.Oobe.showUserPods");
-  } else {
-    LOG(ERROR) << "Silently dropping OnCancelButtonClicked request.";
-  }
+  CallJS("login.ErrorMessageScreen.setUIState", static_cast<int>(ui_state));
 }
 
 void ErrorScreenHandler::OnReloadGaiaClicked() {
-  // TODO(crbug.com/1180291) - Remove once OOBE JS calls are fixed.
-  if (IsSafeToCallJavascript()) {
-    CallJS("login.GaiaSigninScreen.doReload");
-  } else {
-    LOG(ERROR) << "Silently dropping OnReloadGaiaClicked request.";
-  }
+  CallJS("login.GaiaSigninScreen.doReload");
 }
 
 void ErrorScreenHandler::DeclareLocalizedValues(
@@ -184,11 +133,13 @@ void ErrorScreenHandler::DeclareLocalizedValues(
   builder->Add("proxySettingsMenuName",
                IDS_NETWORK_PROXY_SETTINGS_LIST_ITEM_NAME);
   builder->Add("addWiFiNetworkMenuName", IDS_NETWORK_ADD_WI_FI_LIST_ITEM_NAME);
-  network_element::AddLocalizedValuesToBuilder(builder);
+  ui::network_element::AddLocalizedValuesToBuilder(builder);
+
+  builder->Add("offlineLogin", IDS_OFFLINE_LOGIN_HTML);
 }
 
-void ErrorScreenHandler::Initialize() {
-  if (!page_is_ready())
+void ErrorScreenHandler::InitializeDeprecated() {
+  if (!IsJavascriptAllowed())
     return;
 
   if (show_on_init_) {

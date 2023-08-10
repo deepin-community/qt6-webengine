@@ -25,9 +25,11 @@ void WebLayerRenderThreadObserver::UnregisterMojoInterfaces(
 }
 
 // weblayer::mojom::RendererConfiguration:
-void WebLayerRenderThreadObserver::SetContentSettingRules(
-    const RendererContentSettingRules& rules) {
-  content_setting_rules_ = rules;
+void WebLayerRenderThreadObserver::SetInitialConfiguration(
+    mojo::PendingRemote<content_settings::mojom::ContentSettingsManager>
+        content_settings_manager) {
+  if (content_settings_manager)
+    content_settings_manager_.Bind(std::move(content_settings_manager));
 }
 
 void WebLayerRenderThreadObserver::OnRendererConfigurationAssociatedRequest(

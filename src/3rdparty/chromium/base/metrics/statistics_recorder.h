@@ -23,12 +23,15 @@
 #include "base/callback.h"
 #include "base/gtest_prod_util.h"
 #include "base/lazy_instance.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/metrics/histogram_base.h"
+#include "base/metrics/ranges_manager.h"
 #include "base/metrics/record_histogram_checker.h"
+#include "base/observer_list_threadsafe.h"
 #include "base/strings/string_piece.h"
 #include "base/synchronization/lock.h"
+#include "base/types/pass_key.h"
 
 namespace base {
 
@@ -56,7 +59,48 @@ class BASE_EXPORT StatisticsRecorder {
     virtual void MergeHistogramDeltas() = 0;
   };
 
+  // OnSampleCallback is a convenient callback type that provides information
+  // about a histogram sample. This is used in conjunction with
+  // ScopedHistogramSampleObserver to get notified when a sample is collected.
+  using OnSampleCallback =
+      base::RepeatingCallback<void(const char* /*=histogram_name*/,
+                                   uint64_t /*=name_hash*/,
+                                   HistogramBase::Sample)>;
+
+  // An observer that gets notified whenever a new sample is recorded for a
+  // particular histogram. Clients only need to construct it with the histogram
+  // name and the callback to be invoked. The class starts observing on
+  // construction and removes itself from the observer list on destruction. The
+  // clients are always notified on the same sequence in which they were
+  // registered.
+  class BASE_EXPORT ScopedHistogramSampleObserver {
+   public:
+    // Constructor. Called with the desired histogram name and the callback to
+    // be invoked when a sample is recorded.
+    explicit ScopedHistogramSampleObserver(const std::string& histogram_name,
+                                           OnSampleCallback callback);
+    ~ScopedHistogramSampleObserver();
+
+   private:
+    friend class StatisticsRecorder;
+
+    // Runs the callback.
+    void RunCallback(const char* histogram_name,
+                     uint64_t name_hash,
+                     HistogramBase::Sample sample);
+
+    // The name of the histogram to observe.
+    const std::string histogram_name_;
+
+    // The client supplied callback that is invoked when the histogram sample is
+    // collected.
+    const OnSampleCallback callback_;
+  };
+
   typedef std::vector<HistogramBase*> Histograms;
+
+  StatisticsRecorder(const StatisticsRecorder&) = delete;
+  StatisticsRecorder& operator=(const StatisticsRecorder&) = delete;
 
   // Restores the previous global recorder.
   //
@@ -133,39 +177,25 @@ class BASE_EXPORT StatisticsRecorder {
   // This method must be called on the UI thread.
   static void ImportProvidedHistograms();
 
-  // Snapshots all histograms via |snapshot_manager|. |flags_to_set| is used to
-  // set flags for each histogram. |required_flags| is used to select
-  // histograms to be recorded. Only histograms that have all the flags
-  // specified by the argument will be chosen. If all histograms should be
-  // recorded, set it to |Histogram::kNoFlags|.
+  // Snapshots all histograms via |snapshot_manager|. |include_persistent|
+  // determines whether histograms held in persistent storage are
+  // snapshotted. |flags_to_set| is used to set flags for each histogram.
+  // |required_flags| is used to select which histograms to record. Only
+  // histograms with all required flags are selected. If all histograms should
+  // be recorded, use |Histogram::kNoFlags| as the required flag.
   static void PrepareDeltas(bool include_persistent,
                             HistogramBase::Flags flags_to_set,
                             HistogramBase::Flags required_flags,
                             HistogramSnapshotManager* snapshot_manager);
 
-  using OnSampleCallback =
-      base::RepeatingCallback<void(const char* /*=histogram_name*/,
-                                   uint64_t /*=name_hash*/,
-                                   HistogramBase::Sample)>;
-
-  // Sets the callback to notify when a new sample is recorded on the histogram
-  // referred to by |histogram_name|. Can be called before or after the
-  // histogram is created. Returns whether the callback was successfully set.
+  // Retrieves and runs the list of callbacks for the histogram referred to by
+  // |histogram_name|, if any.
   //
   // This method is thread safe.
-  static bool SetCallback(const std::string& histogram_name,
-                          OnSampleCallback callback);
-
-  // Clears any callback set on the histogram referred to by |histogram_name|.
-  //
-  // This method is thread safe.
-  static void ClearCallback(const std::string& histogram_name);
-
-  // Retrieves the callback for the histogram referred to by |histogram_name|,
-  // or a null callback if no callback exists for this histogram.
-  //
-  // This method is thread safe.
-  static OnSampleCallback FindCallback(const std::string& histogram_name);
+  static void FindAndRunHistogramCallbacks(base::PassKey<HistogramBase>,
+                                           const char* histogram_name,
+                                           uint64_t name_hash,
+                                           HistogramBase::Sample sample);
 
   // Returns the number of known histograms.
   //
@@ -195,8 +225,8 @@ class BASE_EXPORT StatisticsRecorder {
   // they're created.
   //
   // This method is thread safe.
-  static std::unique_ptr<StatisticsRecorder> CreateTemporaryForTesting()
-      WARN_UNUSED_RESULT;
+  [[nodiscard]] static std::unique_ptr<StatisticsRecorder>
+  CreateTemporaryForTesting();
 
   // Sets the record checker for determining if a histogram should be recorded.
   // Record checker doesn't affect any already recorded histograms, so this
@@ -209,9 +239,10 @@ class BASE_EXPORT StatisticsRecorder {
   // Checks if the given histogram should be recorded based on the
   // ShouldRecord() method of the record checker. If the record checker is not
   // set, returns true.
+  // |histogram_hash| corresponds to the result of HashMetricNameAs32Bits().
   //
   // This method is thread safe.
-  static bool ShouldRecordHistogram(uint64_t histogram_hash);
+  static bool ShouldRecordHistogram(uint32_t histogram_hash);
 
   // Sorts histograms by name.
   static Histograms Sort(Histograms histograms);
@@ -246,26 +277,35 @@ class BASE_EXPORT StatisticsRecorder {
   }
 
  private:
+  // Adds an observer to be notified when a new sample is recorded on the
+  // histogram referred to by |histogram_name|. Can be called before or after
+  // the histogram is created.
+  //
+  // This method is thread safe.
+  static void AddHistogramSampleObserver(
+      const std::string& histogram_name,
+      ScopedHistogramSampleObserver* observer);
+
+  // Clears the given |observer| set on the histogram referred to by
+  // |histogram_name|.
+  //
+  // This method is thread safe.
+  static void RemoveHistogramSampleObserver(
+      const std::string& histogram_name,
+      ScopedHistogramSampleObserver* observer);
+
   typedef std::vector<WeakPtr<HistogramProvider>> HistogramProviders;
 
   typedef std::unordered_map<StringPiece, HistogramBase*, StringPieceHash>
       HistogramMap;
 
-  // We keep a map of callbacks to histograms, so that as histograms are
-  // created, we can set the callback properly.
-  typedef std::unordered_map<std::string, OnSampleCallback> CallbackMap;
-
-  struct BucketRangesHash {
-    size_t operator()(const BucketRanges* a) const;
-  };
-
-  struct BucketRangesEqual {
-    bool operator()(const BucketRanges* a, const BucketRanges* b) const;
-  };
-
-  typedef std::
-      unordered_set<const BucketRanges*, BucketRangesHash, BucketRangesEqual>
-          RangesMap;
+  // A map of histogram name to registered observers. If the histogram isn't
+  // created yet, the observers will be added after creation.
+  using HistogramSampleObserverList =
+      base::ObserverListThreadSafe<ScopedHistogramSampleObserver>;
+  typedef std::unordered_map<std::string,
+                             scoped_refptr<HistogramSampleObserverList>>
+      ObserverMap;
 
   friend class StatisticsRecorderTest;
   FRIEND_TEST_ALL_PREFIXES(StatisticsRecorderTest, IterationTest);
@@ -289,6 +329,10 @@ class BASE_EXPORT StatisticsRecorder {
   // Constructs a new StatisticsRecorder and sets it as the current global
   // recorder.
   //
+  // This singleton instance should be started during the single-threaded
+  // portion of startup and hence it is not thread safe. It initializes globals
+  // to provide support for all future calls.
+  //
   // Precondition: The global lock is already acquired.
   StatisticsRecorder();
 
@@ -299,13 +343,13 @@ class BASE_EXPORT StatisticsRecorder {
   static void InitLogOnShutdownWhileLocked();
 
   HistogramMap histograms_;
-  CallbackMap callbacks_;
-  RangesMap ranges_;
+  ObserverMap observers_;
   HistogramProviders providers_;
+  RangesManager ranges_manager_;
   std::unique_ptr<RecordHistogramChecker> record_checker_;
 
   // Previous global recorder that existed when this one was created.
-  StatisticsRecorder* previous_ = nullptr;
+  raw_ptr<StatisticsRecorder> previous_ = nullptr;
 
   // Global lock for internal synchronization.
   static LazyInstance<Lock>::Leaky lock_;
@@ -325,8 +369,6 @@ class BASE_EXPORT StatisticsRecorder {
   // Stores a raw callback which should be called on any every histogram sample
   // which gets added.
   static std::atomic<GlobalSampleCallback> global_sample_callback_;
-
-  DISALLOW_COPY_AND_ASSIGN(StatisticsRecorder);
 };
 
 }  // namespace base

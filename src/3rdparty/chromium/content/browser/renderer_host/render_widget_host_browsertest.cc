@@ -2,9 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
 #include <vector>
 
 #include "base/bind.h"
+#include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
 #include "base/test/bind.h"
 #include "base/test/test_timeouts.h"
@@ -18,7 +20,6 @@
 #include "content/browser/renderer_host/render_widget_host_input_event_router.h"
 #include "content/browser/renderer_host/render_widget_host_view_base.h"
 #include "content/browser/web_contents/web_contents_impl.h"
-#include "content/public/browser/notification_types.h"
 #include "content/public/browser/render_widget_host_observer.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
@@ -37,6 +38,7 @@
 #include "third_party/blink/public/common/input/synthetic_web_input_event_builders.h"
 #include "third_party/blink/public/common/input/web_input_event.h"
 #include "third_party/blink/public/common/input/web_mouse_event.h"
+#include "third_party/blink/public/common/switches.h"
 #include "ui/events/base_event_utils.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/latency/latency_info.h"
@@ -67,7 +69,7 @@ class TestRenderWidgetHostObserver : public RenderWidgetHostObserver {
   void Wait() { run_loop_.Run(); }
 
  private:
-  RenderWidgetHost* widget_host_;
+  raw_ptr<RenderWidgetHost> widget_host_;
   base::RunLoop run_loop_;
 };
 
@@ -99,12 +101,15 @@ class RenderWidgetHostBrowserTest : public ContentBrowserTest {
   }
 };
 
-// This test enables --site-per-porcess flag.
+// This test enables --site-per-process flag.
 class RenderWidgetHostSitePerProcessTest : public ContentBrowserTest {
  public:
   void SetUpCommandLine(base::CommandLine* command_line) override {
     ContentBrowserTest::SetUpCommandLine(command_line);
     IsolateAllSitesForTesting(command_line);
+    // Slow bots are flaky due to slower loading interacting with
+    // deferred commits.
+    command_line->AppendSwitch(blink::switches::kAllowPreCommitInput);
   }
 
   void SetUpOnMainThread() override {
@@ -164,7 +169,7 @@ class RenderWidgetHostTouchEmulatorBrowserTest : public ContentBrowserTest {
         host_(nullptr),
         router_(nullptr),
         last_simulated_event_time_(ui::EventTimeForNow()),
-        simulated_event_time_delta_(base::TimeDelta::FromMilliseconds(100)) {}
+        simulated_event_time_delta_(base::Milliseconds(100)) {}
 
   void SetUpOnMainThread() override {
     ContentBrowserTest::SetUpOnMainThread();
@@ -208,16 +213,16 @@ class RenderWidgetHostTouchEmulatorBrowserTest : public ContentBrowserTest {
   RenderWidgetHostViewBase* view() { return view_; }
 
  private:
-  RenderWidgetHostViewBase* view_;
-  RenderWidgetHostImpl* host_;
-  RenderWidgetHostInputEventRouter* router_;
+  raw_ptr<RenderWidgetHostViewBase> view_;
+  raw_ptr<RenderWidgetHostImpl> host_;
+  raw_ptr<RenderWidgetHostInputEventRouter> router_;
 
   base::TimeTicks last_simulated_event_time_;
   const base::TimeDelta simulated_event_time_delta_;
 };
 
 // Synthetic mouse events not allowed on Android.
-#if !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
 // This test makes sure that TouchEmulator doesn't emit a GestureScrollEnd
 // without a valid unique_touch_event_id when it sees a GestureFlingStart
 // terminating the underlying mouse scroll sequence. If the GestureScrollEnd is
@@ -275,7 +280,7 @@ IN_PROC_BROWSER_TEST_F(RenderWidgetHostTouchEmulatorBrowserTest,
     EXPECT_NE(dispatched_events.end(), it_gse);
   } while (!touch_emulator->suppress_next_fling_cancel_for_testing());
 }
-#endif  // !defined(OS_ANDROID)
+#endif  // !BUILDFLAG(IS_ANDROID)
 
 // Todo(crbug.com/994353): The test is flaky(crash/timeout) on MSAN, TSAN, and
 // DEBUG builds.
@@ -507,10 +512,13 @@ class DocumentLoadObserver : WebContentsObserver {
   DocumentLoadObserver(WebContents* contents, const GURL& url)
       : WebContentsObserver(contents), document_origin_(url) {}
 
+  DocumentLoadObserver(const DocumentLoadObserver&) = delete;
+  DocumentLoadObserver& operator=(const DocumentLoadObserver&) = delete;
+
   void Wait() {
     if (loaded_)
       return;
-    run_loop_.reset(new base::RunLoop());
+    run_loop_ = std::make_unique<base::RunLoop>();
     run_loop_->Run();
   }
 
@@ -524,8 +532,6 @@ class DocumentLoadObserver : WebContentsObserver {
   bool loaded_ = false;
   const GURL document_origin_;
   std::unique_ptr<base::RunLoop> run_loop_;
-
-  DISALLOW_COPY_AND_ASSIGN(DocumentLoadObserver);
 };
 
 // This test verifies that when a cross-process child frame loads, the initial
@@ -543,8 +549,8 @@ IN_PROC_BROWSER_TEST_F(RenderWidgetHostSitePerProcessTest,
   EXPECT_TRUE(NavigateToURL(shell(), main_url));
   child_frame_observer.Wait();
   auto* filter = GetTouchActionFilterForWidget(web_contents()
-                                                   ->GetFrameTree()
-                                                   ->root()
+                                                   ->GetPrimaryFrameTree()
+                                                   .root()
                                                    ->child_at(0)
                                                    ->current_frame_host()
                                                    ->GetRenderWidgetHost());
@@ -555,7 +561,7 @@ IN_PROC_BROWSER_TEST_F(RenderWidgetHostSitePerProcessTest,
 // where popup menus don't create a popup RenderWidget, but rather they trigger
 // a FrameHostMsg_ShowPopup to ask the browser to build and display the actual
 // popup using native controls.
-#if !defined(OS_MAC) && !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_ANDROID)
 
 namespace {
 
@@ -579,7 +585,7 @@ IN_PROC_BROWSER_TEST_F(RenderWidgetHostSitePerProcessTest,
   EXPECT_TRUE(NavigateToURL(shell(), main_url));
 
   auto* contents = static_cast<WebContentsImpl*>(shell()->web_contents());
-  FrameTreeNode* root = contents->GetFrameTree()->root();
+  FrameTreeNode* root = contents->GetPrimaryFrameTree().root();
   RenderFrameHostImpl* root_frame_host = root->current_frame_host();
   RenderProcessHost* process = root_frame_host->GetProcess();
 
@@ -597,7 +603,7 @@ IN_PROC_BROWSER_TEST_F(RenderWidgetHostSitePerProcessTest,
     // wait for the RenderWidgetHost to be shown.
     auto filter =
         std::make_unique<ShowPopupWidgetWaiter>(contents, root_frame_host);
-    EXPECT_TRUE(ExecuteScript(root_frame_host, "focusSelectMenu();"));
+    EXPECT_TRUE(ExecJs(root_frame_host, "focusSelectMenu();"));
     root_frame_host->GetRenderWidgetHost()->ForwardKeyboardEvent(event);
     filter->Wait();
 
@@ -620,8 +626,7 @@ IN_PROC_BROWSER_TEST_F(RenderWidgetHostSitePerProcessTest,
           popup_widget_host_impl->GetWeakPtr();
 
       // Close the popup RenderWidget from the renderer side by removing focus.
-      EXPECT_TRUE(
-          ExecuteScript(root_frame_host, "document.activeElement.blur()"));
+      EXPECT_TRUE(ExecJs(root_frame_host, "document.activeElement.blur()"));
 
       // Ensure that the RenderWidgetHostImpl gets destroyed, which implies the
       // close step has also been sent to the renderer process.
@@ -631,18 +636,17 @@ IN_PROC_BROWSER_TEST_F(RenderWidgetHostSitePerProcessTest,
     }
     // Ensure the renderer didn't explode :).
     {
-      base::string16 title_when_done[] = {base::UTF8ToUTF16("done 0"),
-                                          base::UTF8ToUTF16("done 1")};
+      std::u16string title_when_done[] = {u"done 0", u"done 1"};
       TitleWatcher title_watcher(shell()->web_contents(), title_when_done[i]);
-      EXPECT_TRUE(ExecuteScript(root_frame_host,
-                                JsReplace("document.title='done $1'", i)));
+      EXPECT_TRUE(
+          ExecJs(root_frame_host, JsReplace("document.title='done $1'", i)));
       EXPECT_EQ(title_watcher.WaitAndGetTitle(), title_when_done[i]);
     }
   }
 }
 #endif
 
-// Tests that the renderer receives the blink::ScreenInfo size overrides
+// Tests that the renderer receives the display::ScreenInfo size overrides
 // while the page is in fullscreen mode. This is a regression test for
 // https://crbug.com/1060795.
 IN_PROC_BROWSER_TEST_F(RenderWidgetHostBrowserTest,
@@ -673,8 +677,7 @@ IN_PROC_BROWSER_TEST_F(RenderWidgetHostBrowserTest,
   ASSERT_FALSE(web_contents()->IsFullscreen());
 
   // While not fullscreened, expect the screen size to not be overridden.
-  blink::ScreenInfo screen_info;
-  host()->GetScreenInfo(&screen_info);
+  display::ScreenInfo screen_info = host()->GetScreenInfo();
   WaitForVisualPropertiesAck();
   EXPECT_EQ(screen_info.rect.size().ToString(),
             EvalJs(web_contents(), "`${screen.width}x${screen.height}`"));
@@ -691,7 +694,7 @@ IN_PROC_BROWSER_TEST_F(RenderWidgetHostBrowserTest,
   // Exit fullscreen mode, and then the page should see the screen size again.
   ASSERT_TRUE(ExecJs(web_contents(), "document.exitFullscreen();"));
   FullscreenWaiter(web_contents()).Wait(false);
-  host()->GetScreenInfo(&screen_info);
+  screen_info = host()->GetScreenInfo();
   WaitForVisualPropertiesAck();
   EXPECT_EQ(screen_info.rect.size().ToString(),
             EvalJs(web_contents(), "`${screen.width}x${screen.height}`"));
@@ -714,19 +717,42 @@ IN_PROC_BROWSER_TEST_F(RenderWidgetHostFoldableCSSTest,
   const char kTestPageURL[] =
       R"HTML(data:text/html,<!DOCTYPE html>
       <style>
-        div {
-          margin: env(fold-top, 1px) env(fold-right, 1px)
-                  env(fold-bottom, 1px) env(fold-left, 1px);
-          width: env(fold-width, 1px);
-          height: env(fold-height, 1px);
+      /* The following styles set the margin top/left/bottom/right to the
+         values where the display feature between segments is, and the width and
+         height of the div to the width and height of the display feature */
+        @media (horizontal-viewport-segments: 2) {
+          div {
+            margin: env(viewport-segment-top 0 0, 10px)
+                    env(viewport-segment-left 1 0, 10px)
+                    env(viewport-segment-bottom 0 0, 10px)
+                    env(viewport-segment-right 0 0, 10px);
+            width: calc(env(viewport-segment-left 1 0, 10px) -
+                        env(viewport-segment-right 0 0, 0px));
+            height: env(viewport-segment-height 0 0, 10px);
+          }
         }
-        @media (screen-spanning: none) {
-          div { opacity: 0.1; }
+
+        @media (vertical-viewport-segments: 2) {
+          div {
+            margin: env(viewport-segment-bottom 0 0, 11px)
+                    env(viewport-segment-right 0 1, 11px)
+                    env(viewport-segment-top 0 1, 11px)
+                    env(viewport-segment-left 0 0, 11px);
+            width: env(viewport-segment-width 0 0, 11px);
+            height: calc(env(viewport-segment-top 0 1, 11px) -
+                         env(viewport-segment-bottom 0 0, 0px));
+          }
         }
-        @media (screen-spanning: single-fold-vertical) {
+        @media (horizontal-viewport-segments: 1) and
+               (vertical-viewport-segments: 1) {
+          div { opacity: 0.1; margin: 1px; width: 1px; height: 1px; }
+        }
+        @media (horizontal-viewport-segments: 2) and
+               (vertical-viewport-segments: 1) {
           div { opacity: 0.2; }
         }
-        @media (screen-spanning: single-fold-horizontal) {
+        @media (horizontal-viewport-segments: 1) and
+               (vertical-viewport-segments: 2) {
           div { opacity: 0.3; }
         }
       </style>
@@ -849,8 +875,9 @@ IN_PROC_BROWSER_TEST_F(RenderWidgetHostFoldableCSSTest,
   const char kTestPageURL[] =
       R"HTML(data:text/html,<!DOCTYPE html>
       <style>
-        @media (screen-spanning: single-fold-vertical) {
-          div { margin-left: env(fold-left, 10px); }
+        @media (horizontal-viewport-segments: 2) and
+               (vertical-viewport-segments: 1) {
+          div { margin-left: env(viewport-segment-right 0 0, 10px); }
         }
       </style>
       <div id='target'></div>)HTML";
@@ -873,8 +900,7 @@ IN_PROC_BROWSER_TEST_F(RenderWidgetHostFoldableCSSTest,
 
   // Ensure that the environment variables have the correct values in the new
   // document that is created on reloading the page.
-  WindowedNotificationObserver load_stop_observer(
-      NOTIFICATION_LOAD_STOP, NotificationService::AllSources());
+  LoadStopObserver load_stop_observer(shell()->web_contents());
   shell()->Reload();
   load_stop_observer.Wait();
 
@@ -901,9 +927,7 @@ IN_PROC_BROWSER_TEST_F(RenderWidgetHostDelegatedInkMetadataTest,
                        FlagGetsSetFromRenderFrameMetadata) {
   ASSERT_TRUE(ExecJs(shell()->web_contents(), R"(
       let presenter = null;
-      navigator.ink.requestPresenter('delegated-ink-trail').then(e => {
-        presenter = e;
-      });
+      navigator.ink.requestPresenter().then(e => { presenter = e; });
       let style = { color: 'green', diameter: 21 };
 
       window.addEventListener('pointermove' , evt => {

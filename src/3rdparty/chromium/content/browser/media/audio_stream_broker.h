@@ -10,19 +10,11 @@
 #include <string>
 
 #include "base/callback.h"
-#include "base/macros.h"
-#include "base/optional.h"
 #include "content/common/content_export.h"
 #include "media/mojo/mojom/audio_input_stream.mojom.h"
 #include "media/mojo/mojom/audio_output_stream.mojom.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "third_party/blink/public/mojom/media/renderer_audio_input_stream_factory.mojom.h"
-
-namespace audio {
-namespace mojom {
-class StreamFactory;
-}
-}  // namespace audio
 
 namespace base {
 class UnguessableToken;
@@ -31,6 +23,9 @@ class UnguessableToken;
 namespace media {
 class AudioParameters;
 class UserInputMonitorBase;
+namespace mojom {
+class AudioStreamFactory;
+}
 }
 
 namespace content {
@@ -44,31 +39,37 @@ class CONTENT_EXPORT AudioStreamBroker {
   class CONTENT_EXPORT LoopbackSink {
    public:
     LoopbackSink();
+
+    LoopbackSink(const LoopbackSink&) = delete;
+    LoopbackSink& operator=(const LoopbackSink&) = delete;
+
     virtual ~LoopbackSink();
     virtual void OnSourceGone() = 0;
-
-   private:
-    DISALLOW_COPY_AND_ASSIGN(LoopbackSink);
   };
 
   class CONTENT_EXPORT LoopbackSource {
    public:
     LoopbackSource();
+
+    LoopbackSource(const LoopbackSource&) = delete;
+    LoopbackSource& operator=(const LoopbackSource&) = delete;
+
     virtual ~LoopbackSource();
     virtual void AddLoopbackSink(LoopbackSink* sink) = 0;
     virtual void RemoveLoopbackSink(LoopbackSink* sink) = 0;
     virtual const base::UnguessableToken& GetGroupID() = 0;
-
-   private:
-    DISALLOW_COPY_AND_ASSIGN(LoopbackSource);
   };
 
   using DeleterCallback = base::OnceCallback<void(AudioStreamBroker*)>;
 
   AudioStreamBroker(int render_process_id, int render_frame_id);
+
+  AudioStreamBroker(const AudioStreamBroker&) = delete;
+  AudioStreamBroker& operator=(const AudioStreamBroker&) = delete;
+
   virtual ~AudioStreamBroker();
 
-  virtual void CreateStream(audio::mojom::StreamFactory* factory) = 0;
+  virtual void CreateStream(media::mojom::AudioStreamFactory* factory) = 0;
 
   // Thread-safe utility that notifies the process host identified by
   // |render_process_id| of a started stream to ensure that the renderer is not
@@ -83,9 +84,6 @@ class CONTENT_EXPORT AudioStreamBroker {
  protected:
   const int render_process_id_;
   const int render_frame_id_;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(AudioStreamBroker);
 };
 
 // Used for dependency injection into ForwardingAudioStreamFactory. Used on the
@@ -95,6 +93,10 @@ class CONTENT_EXPORT AudioStreamBrokerFactory {
   static std::unique_ptr<AudioStreamBrokerFactory> CreateImpl();
 
   AudioStreamBrokerFactory();
+
+  AudioStreamBrokerFactory(const AudioStreamBrokerFactory&) = delete;
+  AudioStreamBrokerFactory& operator=(const AudioStreamBrokerFactory&) = delete;
+
   virtual ~AudioStreamBrokerFactory();
 
   virtual std::unique_ptr<AudioStreamBroker> CreateAudioInputStreamBroker(
@@ -105,6 +107,7 @@ class CONTENT_EXPORT AudioStreamBrokerFactory {
       uint32_t shared_memory_count,
       media::UserInputMonitorBase* user_input_monitor,
       bool enable_agc,
+      media::mojom::AudioProcessingConfigPtr processing_config,
       AudioStreamBroker::DeleterCallback deleter,
       mojo::PendingRemote<blink::mojom::RendererAudioInputStreamFactoryClient>
           renderer_factory_client) = 0;
@@ -130,9 +133,6 @@ class CONTENT_EXPORT AudioStreamBrokerFactory {
       AudioStreamBroker::DeleterCallback deleter,
       mojo::PendingRemote<media::mojom::AudioOutputStreamProviderClient>
           client) = 0;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(AudioStreamBrokerFactory);
 };
 
 }  // namespace content

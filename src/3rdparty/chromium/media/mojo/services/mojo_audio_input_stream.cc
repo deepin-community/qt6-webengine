@@ -11,6 +11,7 @@
 #include "base/callback_helpers.h"
 #include "base/memory/read_only_shared_memory_region.h"
 #include "base/sync_socket.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "mojo/public/cpp/system/platform_handle.h"
 
 namespace media {
@@ -101,7 +102,7 @@ void MojoAudioInputStream::OnMuted(int stream_id, bool is_muted) {
 
 void MojoAudioInputStream::OnStreamError(int stream_id) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  client_->OnError();
+  client_->OnError(mojom::InputStreamErrorCode::kUnknown);
   OnError();
 }
 

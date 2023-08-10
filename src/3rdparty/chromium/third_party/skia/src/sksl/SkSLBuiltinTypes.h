@@ -51,22 +51,13 @@ public:
     const std::unique_ptr<Type> fUShort3;
     const std::unique_ptr<Type> fUShort4;
 
-    const std::unique_ptr<Type> fByte;
-    const std::unique_ptr<Type> fByte2;
-    const std::unique_ptr<Type> fByte3;
-    const std::unique_ptr<Type> fByte4;
-
-    const std::unique_ptr<Type> fUByte;
-    const std::unique_ptr<Type> fUByte2;
-    const std::unique_ptr<Type> fUByte3;
-    const std::unique_ptr<Type> fUByte4;
-
     const std::unique_ptr<Type> fBool;
     const std::unique_ptr<Type> fBool2;
     const std::unique_ptr<Type> fBool3;
     const std::unique_ptr<Type> fBool4;
 
     const std::unique_ptr<Type> fInvalid;
+    const std::unique_ptr<Type> fPoison;
     const std::unique_ptr<Type> fVoid;
     const std::unique_ptr<Type> fFloatLiteral;
     const std::unique_ptr<Type> fIntLiteral;
@@ -91,11 +82,36 @@ public:
     const std::unique_ptr<Type> fHalf4x3;
     const std::unique_ptr<Type> fHalf4x4;
 
+    const std::unique_ptr<Type> fVec2;
+    const std::unique_ptr<Type> fVec3;
+    const std::unique_ptr<Type> fVec4;
+
+    const std::unique_ptr<Type> fIVec2;
+    const std::unique_ptr<Type> fIVec3;
+    const std::unique_ptr<Type> fIVec4;
+
+    const std::unique_ptr<Type> fBVec2;
+    const std::unique_ptr<Type> fBVec3;
+    const std::unique_ptr<Type> fBVec4;
+
+    const std::unique_ptr<Type> fMat2;
+    const std::unique_ptr<Type> fMat3;
+    const std::unique_ptr<Type> fMat4;
+
+    const std::unique_ptr<Type> fMat2x2;
+    const std::unique_ptr<Type> fMat2x3;
+    const std::unique_ptr<Type> fMat2x4;
+    const std::unique_ptr<Type> fMat3x2;
+    const std::unique_ptr<Type> fMat3x3;
+    const std::unique_ptr<Type> fMat3x4;
+    const std::unique_ptr<Type> fMat4x2;
+    const std::unique_ptr<Type> fMat4x3;
+    const std::unique_ptr<Type> fMat4x4;
+
     const std::unique_ptr<Type> fTexture1D;
     const std::unique_ptr<Type> fTexture2D;
     const std::unique_ptr<Type> fTexture3D;
     const std::unique_ptr<Type> fTextureExternalOES;
-    const std::unique_ptr<Type> fTextureCube;
     const std::unique_ptr<Type> fTexture2DRect;
     const std::unique_ptr<Type> fITexture2D;
 
@@ -136,24 +152,10 @@ public:
     const std::unique_ptr<Type> fBVec;
 
     const std::unique_ptr<Type> fSkCaps;
-    const std::unique_ptr<Type> fFragmentProcessor;
 
-private:
-    static std::unique_ptr<Type> MakeScalarType(const char* name, Type::NumberKind numberKind,
-                                                int priority, bool highPrecision = false);
-    static std::unique_ptr<Type> MakeLiteralType(const char* name, const Type& scalarType,
-                                                 int priority);
-    static std::unique_ptr<Type> MakeVectorType(const char* name, const Type& componentType,
-                                                int columns);
-    static std::unique_ptr<Type> MakeGenericType(const char* name, std::vector<const Type*> types);
-    static std::unique_ptr<Type> MakeMatrixType(const char* name, const Type& componentType,
-                                                int columns, int rows);
-    static std::unique_ptr<Type> MakeTextureType(const char* name, SpvDim_ dimensions,
-                                                 bool isDepth, bool isArrayedTexture,
-                                                 bool isMultisampled, bool isSampled);
-    static std::unique_ptr<Type> MakeSamplerType(const char* name, const Type& textureType);
-    static std::unique_ptr<Type> MakeSeparateSamplerType(const char* name);
-    static std::unique_ptr<Type> MakeOtherType(const char* name);
+    const std::unique_ptr<Type> fColorFilter;
+    const std::unique_ptr<Type> fShader;
+    const std::unique_ptr<Type> fBlender;
 };
 
 }  // namespace SkSL

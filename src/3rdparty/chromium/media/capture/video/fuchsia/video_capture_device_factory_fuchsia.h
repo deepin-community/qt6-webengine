@@ -10,8 +10,8 @@
 #include <map>
 
 #include "base/containers/small_map.h"
-#include "base/optional.h"
 #include "media/capture/video/video_capture_device_factory.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace media {
 
@@ -27,7 +27,7 @@ class CAPTURE_EXPORT VideoCaptureDeviceFactoryFuchsia
       const VideoCaptureDeviceFactoryFuchsia&) = delete;
 
   // VideoCaptureDeviceFactory implementation.
-  std::unique_ptr<VideoCaptureDevice> CreateDevice(
+  VideoCaptureErrorOrDevice CreateDevice(
       const VideoCaptureDeviceDescriptor& device_descriptor) override;
   void GetDevicesInfo(GetDevicesInfoCallback callback) override;
 
@@ -52,7 +52,7 @@ class CAPTURE_EXPORT VideoCaptureDeviceFactoryFuchsia
 
   // Current list of devices. Set to nullopt if the list hasn't been received
   // yet.
-  base::Optional<
+  absl::optional<
       base::small_map<std::map<uint64_t, std::unique_ptr<DeviceConfigFetcher>>>>
       devices_;
 

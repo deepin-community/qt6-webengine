@@ -7,6 +7,7 @@
 
 #include <string>
 
+#include "base/callback.h"
 #include "services/tracing/public/cpp/perfetto/posix_system_producer.h"
 
 namespace base {
@@ -27,7 +28,9 @@ class MockSystemService {
  public:
   MockSystemService(const std::string& consumer_socket,
                     const std::string& producer_socket);
-  MockSystemService(const base::ScopedTempDir& tmp_dir);
+  explicit MockSystemService(const base::ScopedTempDir& tmp_dir);
+  MockSystemService(const base::ScopedTempDir& tmp_dir,
+                    std::unique_ptr<perfetto::base::TaskRunner>);
   ~MockSystemService();
 
   perfetto::TracingService* GetService();

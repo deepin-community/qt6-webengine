@@ -24,10 +24,11 @@ bool IsExactlyRepresentableByDouble(T value) {
 }
 
 // Pops values from |reader| and appends them to |list_value|.
-bool PopListElements(MessageReader* reader, base::ListValue* list_value) {
+bool PopListElements(MessageReader* reader, base::Value* list_value) {
+  DCHECK(list_value->is_list());
   while (reader->HasMoreData()) {
-    std::unique_ptr<base::Value> element_value = PopDataAsValue(reader);
-    if (!element_value)
+    base::Value element_value = PopDataAsValue(reader);
+    if (element_value.is_none())
       return false;
     list_value->Append(std::move(element_value));
   }
@@ -36,7 +37,8 @@ bool PopListElements(MessageReader* reader, base::ListValue* list_value) {
 
 // Pops dict-entries from |reader| and sets them to |dictionary_value|
 bool PopDictionaryEntries(MessageReader* reader,
-                          base::DictionaryValue* dictionary_value) {
+                          base::Value* dictionary_value) {
+  DCHECK(dictionary_value->is_dict());
   while (reader->HasMoreData()) {
     DCHECK_EQ(Message::DICT_ENTRY, reader->GetDataType());
     MessageReader entry_reader(nullptr);
@@ -50,17 +52,17 @@ bool PopDictionaryEntries(MessageReader* reader,
         return false;
     } else {
       // If the type of keys is not STRING, convert it to string.
-      std::unique_ptr<base::Value> key(PopDataAsValue(&entry_reader));
-      if (!key)
+      base::Value key = PopDataAsValue(&entry_reader);
+      if (key.is_none())
         return false;
       // Use JSONWriter to convert an arbitrary value to a string.
-      base::JSONWriter::Write(*key, &key_string);
+      base::JSONWriter::Write(key, &key_string);
     }
     // Get the value and set the key-value pair.
-    std::unique_ptr<base::Value> value = PopDataAsValue(&entry_reader);
-    if (!value)
+    base::Value value = PopDataAsValue(&entry_reader);
+    if (value.is_none())
       return false;
-    dictionary_value->SetWithoutPathExpansion(key_string, std::move(value));
+    dictionary_value->SetKey(key_string, std::move(value));
   }
   return true;
 }
@@ -90,8 +92,8 @@ std::string GetTypeSignature(const base::Value& value) {
 
 }  // namespace
 
-std::unique_ptr<base::Value> PopDataAsValue(MessageReader* reader) {
-  std::unique_ptr<base::Value> result;
+base::Value PopDataAsValue(MessageReader* reader) {
+  base::Value result;
   switch (reader->GetDataType()) {
     case Message::INVALID_DATA:
       // Do nothing.
@@ -99,37 +101,37 @@ std::unique_ptr<base::Value> PopDataAsValue(MessageReader* reader) {
     case Message::BYTE: {
       uint8_t value = 0;
       if (reader->PopByte(&value))
-        result = std::make_unique<base::Value>(value);
+        result = base::Value(value);
       break;
     }
     case Message::BOOL: {
       bool value = false;
       if (reader->PopBool(&value))
-        result = std::make_unique<base::Value>(value);
+        result = base::Value(value);
       break;
     }
     case Message::INT16: {
       int16_t value = 0;
       if (reader->PopInt16(&value))
-        result = std::make_unique<base::Value>(value);
+        result = base::Value(value);
       break;
     }
     case Message::UINT16: {
       uint16_t value = 0;
       if (reader->PopUint16(&value))
-        result = std::make_unique<base::Value>(value);
+        result = base::Value(value);
       break;
     }
     case Message::INT32: {
       int32_t value = 0;
       if (reader->PopInt32(&value))
-        result = std::make_unique<base::Value>(value);
+        result = base::Value(value);
       break;
     }
     case Message::UINT32: {
       uint32_t value = 0;
       if (reader->PopUint32(&value)) {
-        result = std::make_unique<base::Value>(static_cast<double>(value));
+        result = base::Value(static_cast<double>(value));
       }
       break;
     }
@@ -138,7 +140,7 @@ std::unique_ptr<base::Value> PopDataAsValue(MessageReader* reader) {
       if (reader->PopInt64(&value)) {
         DLOG_IF(WARNING, !IsExactlyRepresentableByDouble(value))
             << value << " is not exactly representable by double";
-        result = std::make_unique<base::Value>(static_cast<double>(value));
+        result = base::Value(static_cast<double>(value));
       }
       break;
     }
@@ -147,26 +149,26 @@ std::unique_ptr<base::Value> PopDataAsValue(MessageReader* reader) {
       if (reader->PopUint64(&value)) {
         DLOG_IF(WARNING, !IsExactlyRepresentableByDouble(value))
             << value << " is not exactly representable by double";
-        result = std::make_unique<base::Value>(static_cast<double>(value));
+        result = base::Value(static_cast<double>(value));
       }
       break;
     }
     case Message::DOUBLE: {
       double value = 0;
       if (reader->PopDouble(&value))
-        result = std::make_unique<base::Value>(value);
+        result = base::Value(value);
       break;
     }
     case Message::STRING: {
       std::string value;
       if (reader->PopString(&value))
-        result = std::make_unique<base::Value>(value);
+        result = base::Value(value);
       break;
     }
     case Message::OBJECT_PATH: {
       ObjectPath value;
       if (reader->PopObjectPath(&value))
-        result = std::make_unique<base::Value>(value.value());
+        result = base::Value(value.value());
       break;
     }
     case Message::UNIX_FD: {
@@ -178,15 +180,15 @@ std::unique_ptr<base::Value> PopDataAsValue(MessageReader* reader) {
       MessageReader sub_reader(nullptr);
       if (reader->PopArray(&sub_reader)) {
         // If the type of the array's element is DICT_ENTRY, create a
-        // DictionaryValue, otherwise create a ListValue.
+        // Value with type base::Value::Type::DICTIONARY, otherwise create a
+        // Value with type base::Value::Type::LIST.
         if (sub_reader.GetDataType() == Message::DICT_ENTRY) {
-          std::unique_ptr<base::DictionaryValue> dictionary_value(
-              new base::DictionaryValue);
-          if (PopDictionaryEntries(&sub_reader, dictionary_value.get()))
+          auto dictionary_value = base::Value(base::Value::Type::DICTIONARY);
+          if (PopDictionaryEntries(&sub_reader, &dictionary_value))
             result = std::move(dictionary_value);
         } else {
-          std::unique_ptr<base::ListValue> list_value(new base::ListValue);
-          if (PopListElements(&sub_reader, list_value.get()))
+          auto list_value = base::Value(base::Value::Type::LIST);
+          if (PopListElements(&sub_reader, &list_value))
             result = std::move(list_value);
         }
       }
@@ -195,8 +197,8 @@ std::unique_ptr<base::Value> PopDataAsValue(MessageReader* reader) {
     case Message::STRUCT: {
       MessageReader sub_reader(nullptr);
       if (reader->PopStruct(&sub_reader)) {
-        std::unique_ptr<base::ListValue> list_value(new base::ListValue);
-        if (PopListElements(&sub_reader, list_value.get()))
+        auto list_value = base::Value(base::Value::Type::LIST);
+        if (PopListElements(&sub_reader, &list_value))
           result = std::move(list_value);
       }
       break;
@@ -218,31 +220,19 @@ std::unique_ptr<base::Value> PopDataAsValue(MessageReader* reader) {
 void AppendBasicTypeValueData(MessageWriter* writer, const base::Value& value) {
   switch (value.type()) {
     case base::Value::Type::BOOLEAN: {
-      bool bool_value = false;
-      bool success = value.GetAsBoolean(&bool_value);
-      DCHECK(success);
-      writer->AppendBool(bool_value);
+      writer->AppendBool(value.GetBool());
       break;
     }
     case base::Value::Type::INTEGER: {
-      int int_value = 0;
-      bool success = value.GetAsInteger(&int_value);
-      DCHECK(success);
-      writer->AppendInt32(int_value);
+      writer->AppendInt32(value.GetInt());
       break;
     }
     case base::Value::Type::DOUBLE: {
-      double double_value = 0;
-      bool success = value.GetAsDouble(&double_value);
-      DCHECK(success);
-      writer->AppendDouble(double_value);
+      writer->AppendDouble(value.GetDouble());
       break;
     }
     case base::Value::Type::STRING: {
-      std::string string_value;
-      bool success = value.GetAsString(&string_value);
-      DCHECK(success);
-      writer->AppendString(string_value);
+      writer->AppendString(value.GetString());
       break;
     }
     default:
@@ -262,27 +252,22 @@ void AppendBasicTypeValueDataAsVariant(MessageWriter* writer,
 void AppendValueData(MessageWriter* writer, const base::Value& value) {
   switch (value.type()) {
     case base::Value::Type::DICTIONARY: {
-      const base::DictionaryValue* dictionary = nullptr;
-      value.GetAsDictionary(&dictionary);
       dbus::MessageWriter array_writer(nullptr);
       writer->OpenArray("{sv}", &array_writer);
-      for (base::DictionaryValue::Iterator iter(*dictionary); !iter.IsAtEnd();
-           iter.Advance()) {
+      for (auto item : value.DictItems()) {
         dbus::MessageWriter dict_entry_writer(nullptr);
         array_writer.OpenDictEntry(&dict_entry_writer);
-        dict_entry_writer.AppendString(iter.key());
-        AppendValueDataAsVariant(&dict_entry_writer, iter.value());
+        dict_entry_writer.AppendString(item.first);
+        AppendValueDataAsVariant(&dict_entry_writer, item.second);
         array_writer.CloseContainer(&dict_entry_writer);
       }
       writer->CloseContainer(&array_writer);
       break;
     }
     case base::Value::Type::LIST: {
-      const base::ListValue* list = nullptr;
-      value.GetAsList(&list);
       dbus::MessageWriter array_writer(nullptr);
       writer->OpenArray("v", &array_writer);
-      for (const auto& value_in_list : *list) {
+      for (const auto& value_in_list : value.GetListDeprecated()) {
         AppendValueDataAsVariant(&array_writer, value_in_list);
       }
       writer->CloseContainer(&array_writer);

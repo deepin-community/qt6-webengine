@@ -11,14 +11,13 @@
 // base::GlobalDescriptors object (see base/posix/global_descriptors.h)
 enum {
   kCrashDumpSignal,
-  kSandboxIPCChannel,  // https://chromium.googlesource.com/chromium/src/+/master/docs/linux/sandbox_ipc.md
+  kSandboxIPCChannel,  // https://chromium.googlesource.com/chromium/src/+/main/docs/linux/sandbox_ipc.md
   kMojoIPCChannel,
   kFieldTrialDescriptor,
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   kAndroidPropertyDescriptor,
   kAndroidICUDataDescriptor,
-  kAndroidICUExtraDataDescriptor,
 #endif
 
   // Reserves 100 to 199 for dynamically generated IDs.

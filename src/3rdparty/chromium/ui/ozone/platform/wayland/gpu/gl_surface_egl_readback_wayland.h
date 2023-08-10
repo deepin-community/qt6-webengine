@@ -6,7 +6,6 @@
 #define UI_OZONE_PLATFORM_WAYLAND_GPU_GL_SURFACE_EGL_READBACK_WAYLAND_H_
 
 #include "base/containers/circular_deque.h"
-#include "base/containers/flat_map.h"
 #include "base/memory/shared_memory_mapping.h"
 #include "ui/ozone/common/gl_surface_egl_readback.h"
 #include "ui/ozone/platform/wayland/gpu/wayland_surface_gpu.h"
@@ -72,9 +71,10 @@ class GLSurfaceEglReadbackWayland : public GLSurfaceEglReadback,
   ~GLSurfaceEglReadbackWayland() override;
 
   // WaylandSurfaceGpu:
-  void OnSubmission(uint32_t buffer_id,
-                    const gfx::SwapResult& swap_result) override;
-  void OnPresentation(uint32_t buffer_id,
+  void OnSubmission(uint32_t frame_id,
+                    const gfx::SwapResult& swap_result,
+                    gfx::GpuFenceHandle release_fence) override;
+  void OnPresentation(uint32_t frame_id,
                       const gfx::PresentationFeedback& feedback) override;
 
   void DestroyBuffers();
@@ -86,6 +86,7 @@ class GLSurfaceEglReadbackWayland : public GLSurfaceEglReadback,
 
   // Size of the buffer.
   gfx::Size size_;
+  float surface_scale_factor_ = 1.f;
 
   // Available pixel buffers based on shared memory.
   std::vector<std::unique_ptr<PixelBuffer>> available_buffers_;

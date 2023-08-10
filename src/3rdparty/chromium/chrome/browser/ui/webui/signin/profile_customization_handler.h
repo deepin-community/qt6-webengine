@@ -12,10 +12,6 @@
 #include "base/scoped_observation.h"
 #include "chrome/browser/profiles/profile_attributes_storage.h"
 
-namespace base {
-class ListValue;
-}
-
 class ProfileAttributesEntry;
 
 // WebUI message handler for the profile customization bubble.
@@ -41,11 +37,13 @@ class ProfileCustomizationHandler : public content::WebUIMessageHandler,
   void OnProfileThemeColorsChanged(const base::FilePath& profile_path) override;
   void OnProfileHostedDomainChanged(
       const base::FilePath& profile_path) override;
+  void OnProfileNameChanged(const base::FilePath& profile_path,
+                            const std::u16string& old_profile_name) override;
 
  private:
   // Handlers for messages from javascript.
-  void HandleInitialized(const base::ListValue* args);
-  void HandleDone(const base::ListValue* args);
+  void HandleInitialized(const base::Value::List& args);
+  void HandleDone(const base::Value::List& args);
 
   // Sends an updated profile info (avatar and colors) to the WebUI.
   // `profile_path` is the path of the profile being updated, this function does

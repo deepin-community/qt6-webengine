@@ -20,14 +20,18 @@ using ContextType = ExtensionApiTest::ContextType;
 class AlarmsApiTest : public ExtensionApiTest,
                       public testing::WithParamInterface<ContextType> {
  public:
+  AlarmsApiTest() : ExtensionApiTest(GetParam()) {}
+  ~AlarmsApiTest() override = default;
+  AlarmsApiTest& operator=(const AlarmsApiTest&) = delete;
+  AlarmsApiTest(const AlarmsApiTest&) = delete;
+
   void SetUpOnMainThread() override {
     ExtensionApiTest::SetUpOnMainThread();
     host_resolver()->AddRule("*", "127.0.0.1");
     ASSERT_TRUE(StartEmbeddedTestServer());
   }
 
-  static std::unique_ptr<base::ListValue> BuildEventArguments(
-      const bool last_message) {
+  static std::vector<base::Value> BuildEventArguments(const bool last_message) {
     api::test::OnMessage::Info info;
     info.data = "";
     info.last_message = last_message;
@@ -35,10 +39,8 @@ class AlarmsApiTest : public ExtensionApiTest,
   }
 
   const Extension* LoadAlarmsExtensionIncognito(const char* path) {
-    return LoadExtension(
-        test_data_dir_.AppendASCII("alarms").AppendASCII(path),
-        {.allow_in_incognito = true,
-         .load_as_service_worker = GetParam() == ContextType::kServiceWorker});
+    return LoadExtension(test_data_dir_.AppendASCII("alarms").AppendASCII(path),
+                         {.allow_in_incognito = true});
   }
 };
 
@@ -54,7 +56,8 @@ INSTANTIATE_TEST_SUITE_P(ServiceWorker,
 IN_PROC_BROWSER_TEST_P(AlarmsApiTest, IncognitoSplit) {
   // We need 2 ResultCatchers because we'll be running the same test in both
   // regular and incognito mode.
-  Profile* incognito_profile = browser()->profile()->GetPrimaryOTRProfile();
+  Profile* incognito_profile =
+      browser()->profile()->GetPrimaryOTRProfile(/*create_if_needed=*/true);
   ResultCatcher catcher_incognito;
   catcher_incognito.RestrictToBrowserContext(incognito_profile);
   ResultCatcher catcher;

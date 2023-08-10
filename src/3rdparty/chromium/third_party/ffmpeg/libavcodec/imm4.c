@@ -24,10 +24,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "libavutil/mem_internal.h"
 #include "libavutil/thread.h"
 
 #include "avcodec.h"
 #include "bswapdsp.h"
+#include "codec_internal.h"
 #include "copy_block.h"
 #include "get_bits.h"
 #include "idctdsp.h"
@@ -531,17 +533,17 @@ static av_cold int decode_close(AVCodecContext *avctx)
     return 0;
 }
 
-AVCodec ff_imm4_decoder = {
-    .name             = "imm4",
-    .long_name        = NULL_IF_CONFIG_SMALL("Infinity IMM4"),
-    .type             = AVMEDIA_TYPE_VIDEO,
-    .id               = AV_CODEC_ID_IMM4,
+const FFCodec ff_imm4_decoder = {
+    .p.name           = "imm4",
+    .p.long_name      = NULL_IF_CONFIG_SMALL("Infinity IMM4"),
+    .p.type           = AVMEDIA_TYPE_VIDEO,
+    .p.id             = AV_CODEC_ID_IMM4,
     .priv_data_size   = sizeof(IMM4Context),
     .init             = decode_init,
     .close            = decode_close,
     .decode           = decode_frame,
     .flush            = decode_flush,
-    .capabilities     = AV_CODEC_CAP_DR1,
+    .p.capabilities   = AV_CODEC_CAP_DR1,
     .caps_internal    = FF_CODEC_CAP_INIT_THREADSAFE |
                         FF_CODEC_CAP_INIT_CLEANUP,
 };

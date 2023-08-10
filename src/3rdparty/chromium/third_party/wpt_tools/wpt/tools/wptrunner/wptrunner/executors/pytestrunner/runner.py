@@ -43,22 +43,28 @@ def run(path, server_config, session_config, timeout=0, environ=None):
 
     old_environ = os.environ.copy()
     try:
-        os.environ["WD_HOST"] = session_config["host"]
-        os.environ["WD_PORT"] = str(session_config["port"])
-        os.environ["WD_CAPABILITIES"] = json.dumps(session_config["capabilities"])
-        os.environ["WD_SERVER_CONFIG"] = json.dumps(server_config.as_dict_for_wd_env_variable())
-        if environ:
-            os.environ.update(environ)
-
-        harness = HarnessResultRecorder()
-        subtests = SubtestResultRecorder()
-
         with TemporaryDirectory() as cache:
+            config_path = os.path.join(cache, "wd_config.json")
+            os.environ["WDSPEC_CONFIG_FILE"] = config_path
+
+            config = session_config.copy()
+            config["wptserve"] = server_config.as_dict()
+
+            with open(config_path, "w") as f:
+                json.dump(config, f)
+
+            if environ:
+                os.environ.update(environ)
+
+            harness = HarnessResultRecorder()
+            subtests = SubtestResultRecorder()
+
             try:
+                basetemp = os.path.join(cache, "pytest")
                 pytest.main(["--strict",  # turn warnings into errors
                              "-vv",  # show each individual subtest and full failure logs
                              "--capture", "no",  # enable stdout/stderr from tests
-                             "--basetemp", cache,  # temporary directory
+                             "--basetemp", basetemp,  # temporary directory
                              "--showlocals",  # display contents of variables in local scope
                              "-p", "no:mozlog",  # use the WPT result recorder
                              "-p", "no:cacheprovider",  # disable state preservation across invocations
@@ -74,7 +80,7 @@ def run(path, server_config, session_config, timeout=0, environ=None):
     return (harness.outcome, subtests.results)
 
 
-class HarnessResultRecorder(object):
+class HarnessResultRecorder:
     outcomes = {
         "failed": "ERROR",
         "passed": "OK",
@@ -90,7 +96,7 @@ class HarnessResultRecorder(object):
         self.outcome = (harness_result, None)
 
 
-class SubtestResultRecorder(object):
+class SubtestResultRecorder:
     def __init__(self):
         self.results = []
 
@@ -98,35 +104,34 @@ class SubtestResultRecorder(object):
         if report.passed and report.when == "call":
             self.record_pass(report)
         elif report.failed:
+            # pytest outputs the stacktrace followed by an error message prefixed
+            # with "E   ", e.g.
+            #
+            #        def test_example():
+            #  >         assert "fuu" in "foobar"
+            #  > E       AssertionError: assert 'fuu' in 'foobar'
+            message = ""
+            for line in report.longreprtext.splitlines():
+                if line.startswith("E   "):
+                    message = line[1:].strip()
+                    break
+
             if report.when != "call":
-                self.record_error(report)
+                self.record_error(report, message)
             else:
-                self.record_fail(report)
+                self.record_fail(report, message)
         elif report.skipped:
             self.record_skip(report)
 
     def record_pass(self, report):
         self.record(report.nodeid, "PASS")
 
-    def record_fail(self, report):
-        # pytest outputs the stacktrace followed by an error message prefixed
-        # with "E   ", e.g.
-        #
-        #        def test_example():
-        #  >         assert "fuu" in "foobar"
-        #  > E       AssertionError: assert 'fuu' in 'foobar'
-        message = ""
-        for line in report.longreprtext.splitlines():
-            if line.startswith("E   "):
-                message = line[1:].strip()
-                break
-
+    def record_fail(self, report, message):
         self.record(report.nodeid, "FAIL", message=message, stack=report.longrepr)
 
-    def record_error(self, report):
+    def record_error(self, report, message):
         # error in setup/teardown
-        if report.when != "call":
-            message = "%s error" % report.when
+        message = f"{report.when} error: {message}"
         self.record(report.nodeid, "ERROR", message, report.longrepr)
 
     def record_skip(self, report):
@@ -141,9 +146,9 @@ class SubtestResultRecorder(object):
         self.results.append(new_result)
 
 
-class TemporaryDirectory(object):
+class TemporaryDirectory:
     def __enter__(self):
-        self.path = tempfile.mkdtemp(prefix="pytest-")
+        self.path = tempfile.mkdtemp(prefix="wdspec-")
         return self.path
 
     def __exit__(self, *args):

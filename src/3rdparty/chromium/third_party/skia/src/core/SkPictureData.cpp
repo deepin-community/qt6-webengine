@@ -20,6 +20,10 @@
 
 #include <new>
 
+#if SK_SUPPORT_GPU
+#include "include/private/chromium/GrSlug.h"
+#endif
+
 template <typename T> int SafeCount(const T* obj) {
     return obj ? obj->count() : 0;
 }
@@ -41,6 +45,9 @@ SkPictureData::SkPictureData(const SkPictureRecord& record,
     , fTextBlobs(record.getTextBlobs())
     , fVertices(record.getVertices())
     , fImages(record.getImages())
+#if SK_SUPPORT_GPU
+    , fSlugs(record.getSlugs())
+#endif
     , fInfo(info) {
 
     fOpData = record.opData();
@@ -141,21 +148,21 @@ void SkPictureData::WriteTypefaces(SkWStream* stream, const SkRefCntSet& rec,
 }
 
 void SkPictureData::flattenToBuffer(SkWriteBuffer& buffer, bool textBlobsOnly) const {
-    int i, n;
-
     if (!textBlobsOnly) {
-        if ((n = fPaints.count()) > 0) {
-            write_tag_size(buffer, SK_PICT_PAINT_BUFFER_TAG, n);
-            for (i = 0; i < n; i++) {
-                buffer.writePaint(fPaints[i]);
+        int numPaints = fPaints.count();
+        if (numPaints > 0) {
+            write_tag_size(buffer, SK_PICT_PAINT_BUFFER_TAG, numPaints);
+            for (const SkPaint& paint : fPaints) {
+                buffer.writePaint(paint);
             }
         }
 
-        if ((n = fPaths.count()) > 0) {
-            write_tag_size(buffer, SK_PICT_PATH_BUFFER_TAG, n);
-            buffer.writeInt(n);
-            for (int i = 0; i < n; i++) {
-                buffer.writePath(fPaths[i]);
+        int numPaths = fPaths.count();
+        if (numPaths > 0) {
+            write_tag_size(buffer, SK_PICT_PATH_BUFFER_TAG, numPaths);
+            buffer.writeInt(numPaths);
+            for (const SkPath& path : fPaths) {
+                buffer.writePath(path);
             }
         }
     }
@@ -166,6 +173,15 @@ void SkPictureData::flattenToBuffer(SkWriteBuffer& buffer, bool textBlobsOnly) c
             SkTextBlobPriv::Flatten(*blob, buffer);
         }
     }
+
+#if SK_SUPPORT_GPU
+    if (!textBlobsOnly) {
+        write_tag_size(buffer, SK_PICT_SLUG_BUFFER_TAG, fSlugs.count());
+        for (const auto& slug : fSlugs) {
+            slug->doFlatten(buffer);
+        }
+    }
+#endif
 
     if (!textBlobsOnly) {
         if (!fVertices.empty()) {
@@ -415,8 +431,8 @@ void SkPictureData::parseBufferTag(SkReadBuffer& buffer, uint32_t tag, uint32_t 
             const int count = SkToInt(size);
 
             for (int i = 0; i < count; ++i) {
-                // Do we need to keep an array of fFonts for legacy draws?
-                if (!buffer.readPaint(&fPaints.push_back(), nullptr)) {
+                fPaints.push_back(buffer.readPaint());
+                if (!buffer.isValid()) {
                     return;
                 }
             }
@@ -436,6 +452,11 @@ void SkPictureData::parseBufferTag(SkReadBuffer& buffer, uint32_t tag, uint32_t 
             } break;
         case SK_PICT_TEXTBLOB_BUFFER_TAG:
             new_array_from_buffer(buffer, size, fTextBlobs, SkTextBlobPriv::MakeFromBuffer);
+            break;
+        case SK_PICT_SLUG_BUFFER_TAG:
+#if SK_SUPPORT_GPU
+            new_array_from_buffer(buffer, size, fSlugs, GrSlug::MakeFromBuffer);
+#endif
             break;
         case SK_PICT_VERTICES_BUFFER_TAG:
             new_array_from_buffer(buffer, size, fVertices, SkVerticesPriv::Decode);

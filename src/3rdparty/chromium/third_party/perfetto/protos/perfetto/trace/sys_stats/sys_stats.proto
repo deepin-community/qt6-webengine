@@ -94,4 +94,18 @@ message SysStats {
   // the top-level packet timestamp is the time at which
   // we begin collection.
   optional uint64 collection_end_timestamp = 9;
+
+  // Frequencies for /sys/class/devfreq/ entries in kHz.
+  message DevfreqValue {
+    optional string key = 1;
+    optional uint64 value = 2;
+  };
+
+  // One entry per device.
+  repeated DevfreqValue devfreq = 10;
+
+  // Cpu current frequency from
+  // /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_cur_freq in kHz.
+  // One entry per cpu. Report 0 for offline cpu
+  repeated uint32 cpufreq_khz = 11;
 }

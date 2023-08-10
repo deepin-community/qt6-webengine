@@ -164,12 +164,14 @@ void AecDumpBasedSimulator::PrepareProcessStreamCall(
     }
   }
 
-  if (!settings_.use_ts) {
+  if (settings_.override_key_pressed.has_value()) {
+    // Key pressed state overridden.
+    ap_->set_stream_key_pressed(*settings_.override_key_pressed);
+  } else {
+    // Set the recorded key pressed state.
     if (msg.has_keypress()) {
       ap_->set_stream_key_pressed(msg.keypress());
     }
-  } else {
-    ap_->set_stream_key_pressed(*settings_.use_ts);
   }
 
   // Level is always logged in AEC dumps.
@@ -502,10 +504,6 @@ void AecDumpBasedSimulator::HandleMessage(
                 << msg.experiments_description() << std::endl;
     }
 
-    if (settings_.use_ed) {
-      apm_config.residual_echo_detector.enabled = *settings_.use_ed;
-    }
-
     ap_->ApplyConfig(apm_config);
   }
 }
@@ -596,8 +594,23 @@ void AecDumpBasedSimulator::HandleMessage(
   RTC_CHECK(ap_.get());
   if (msg.has_capture_pre_gain()) {
     // Handle capture pre-gain runtime setting only if not overridden.
-    if ((!settings_.use_pre_amplifier || *settings_.use_pre_amplifier) &&
-        !settings_.pre_amplifier_gain_factor) {
+    const bool pre_amplifier_overridden =
+        (!settings_.use_pre_amplifier || *settings_.use_pre_amplifier) &&
+        !settings_.pre_amplifier_gain_factor;
+    const bool capture_level_adjustment_overridden =
+        (!settings_.use_capture_level_adjustment ||
+         *settings_.use_capture_level_adjustment) &&
+        !settings_.pre_gain_factor;
+    if (pre_amplifier_overridden || capture_level_adjustment_overridden) {
+      ap_->SetRuntimeSetting(
+          AudioProcessing::RuntimeSetting::CreateCapturePreGain(
+              msg.capture_pre_gain()));
+    }
+  } else if (msg.has_capture_post_gain()) {
+    // Handle capture post-gain runtime setting only if not overridden.
+    if ((!settings_.use_capture_level_adjustment ||
+         *settings_.use_capture_level_adjustment) &&
+        !settings_.post_gain_factor) {
       ap_->SetRuntimeSetting(
           AudioProcessing::RuntimeSetting::CreateCapturePreGain(
               msg.capture_pre_gain()));

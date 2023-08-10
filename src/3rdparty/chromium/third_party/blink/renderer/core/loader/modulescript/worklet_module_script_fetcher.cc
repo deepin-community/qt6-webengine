@@ -47,12 +47,12 @@ void WorkletModuleScriptFetcher::Fetch(
 void WorkletModuleScriptFetcher::NotifyFinished(Resource* resource) {
   ClearResource();
 
-  base::Optional<ModuleScriptCreationParams> params;
+  absl::optional<ModuleScriptCreationParams> params;
   auto* script_resource = To<ScriptResource>(resource);
   HeapVector<Member<ConsoleMessage>> error_messages;
   if (WasModuleLoadSuccessful(script_resource, expected_module_type_,
                               &error_messages)) {
-    const KURL& url = script_resource->GetResponse().CurrentRequestUrl();
+    const KURL& url = script_resource->GetResponse().ResponseUrl();
     // Create an external module script where base_url == source_url.
     // https://html.spec.whatwg.org/multipage/webappapis.html#concept-script-base-url
     params.emplace(/*source_url=*/url, /*base_url=*/url,

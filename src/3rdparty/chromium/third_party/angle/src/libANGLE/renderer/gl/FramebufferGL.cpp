@@ -10,6 +10,7 @@
 
 #include "common/bitset_utils.h"
 #include "common/debug.h"
+#include "libANGLE/ErrorStrings.h"
 #include "libANGLE/FramebufferAttachment.h"
 #include "libANGLE/State.h"
 #include "libANGLE/angletypes.h"
@@ -75,7 +76,8 @@ static BlitFramebufferBounds GetBlitFramebufferBounds(const gl::Context *context
 
 void BindFramebufferAttachment(const FunctionsGL *functions,
                                GLenum attachmentPoint,
-                               const FramebufferAttachment *attachment)
+                               const FramebufferAttachment *attachment,
+                               const angle::FeaturesGL &features)
 {
     if (attachment)
     {
@@ -89,9 +91,30 @@ void BindFramebufferAttachment(const FunctionsGL *functions,
                 texture->getType() == TextureType::Rectangle ||
                 texture->getType() == TextureType::External)
             {
-                functions->framebufferTexture2D(GL_FRAMEBUFFER, attachmentPoint,
-                                                ToGLenum(texture->getType()),
-                                                textureGL->getTextureID(), attachment->mipLevel());
+                if (attachment->isRenderToTexture())
+                {
+                    if (functions->framebufferTexture2DMultisampleEXT)
+                    {
+                        functions->framebufferTexture2DMultisampleEXT(
+                            GL_FRAMEBUFFER, attachmentPoint, ToGLenum(texture->getType()),
+                            textureGL->getTextureID(), attachment->mipLevel(),
+                            attachment->getSamples());
+                    }
+                    else
+                    {
+                        ASSERT(functions->framebufferTexture2DMultisampleIMG);
+                        functions->framebufferTexture2DMultisampleIMG(
+                            GL_FRAMEBUFFER, attachmentPoint, ToGLenum(texture->getType()),
+                            textureGL->getTextureID(), attachment->mipLevel(),
+                            attachment->getSamples());
+                    }
+                }
+                else
+                {
+                    functions->framebufferTexture2D(
+                        GL_FRAMEBUFFER, attachmentPoint, ToGLenum(texture->getType()),
+                        textureGL->getTextureID(), attachment->mipLevel());
+                }
             }
             else if (attachment->isLayered())
             {
@@ -137,6 +160,12 @@ void BindFramebufferAttachment(const FunctionsGL *functions,
         {
             const Renderbuffer *renderbuffer     = attachment->getRenderbuffer();
             const RenderbufferGL *renderbufferGL = GetImplAs<RenderbufferGL>(renderbuffer);
+
+            if (features.alwaysUnbindFramebufferTexture2D.enabled)
+            {
+                functions->framebufferTexture2D(GL_FRAMEBUFFER, attachmentPoint, GL_TEXTURE_2D, 0,
+                                                0);
+            }
 
             functions->framebufferRenderbuffer(GL_FRAMEBUFFER, attachmentPoint, GL_RENDERBUFFER,
                                                renderbufferGL->getRenderbufferID());
@@ -233,7 +262,7 @@ bool IsEmulatedAlphaChannelTextureAttachment(const FramebufferAttachment *attach
     return textureGL->hasEmulatedAlphaChannel(attachment->getTextureImageIndex());
 }
 
-class ScopedEXTTextureNorm16ReadbackWorkaround
+class ANGLE_NO_DISCARD ScopedEXTTextureNorm16ReadbackWorkaround
 {
   public:
     ScopedEXTTextureNorm16ReadbackWorkaround()
@@ -283,8 +312,9 @@ class ScopedEXTTextureNorm16ReadbackWorkaround
                 checkedAllocatedBytes += area.width * pixelBytes - rowBytes;
             }
             ANGLE_CHECK_GL_MATH(contextGL, checkedAllocatedBytes.IsValid());
-            tmpPixels = new GLubyte[checkedAllocatedBytes.ValueOrDie()];
-            memset(tmpPixels, 0, checkedAllocatedBytes.ValueOrDie());
+            const GLuint allocatedBytes = checkedAllocatedBytes.ValueOrDie();
+            tmpPixels                   = new GLubyte[allocatedBytes];
+            memset(tmpPixels, 0, allocatedBytes);
         }
 
         return angle::Result::Continue;
@@ -480,6 +510,7 @@ angle::Result FramebufferGL::invalidateSub(const gl::Context *context,
 
 angle::Result FramebufferGL::clear(const gl::Context *context, GLbitfield mask)
 {
+    ContextGL *contextGL         = GetImplAs<ContextGL>(context);
     const FunctionsGL *functions = GetFunctionsGL(context);
     StateManagerGL *stateManager = GetStateManagerGL(context);
 
@@ -498,6 +529,7 @@ angle::Result FramebufferGL::clear(const gl::Context *context, GLbitfield mask)
                                             GL_NONE, 0, nullptr, 0.0f, 0);
     }
 
+    contextGL->markWorkSubmitted();
     return angle::Result::Continue;
 }
 
@@ -506,6 +538,7 @@ angle::Result FramebufferGL::clearBufferfv(const gl::Context *context,
                                            GLint drawbuffer,
                                            const GLfloat *values)
 {
+    ContextGL *contextGL         = GetImplAs<ContextGL>(context);
     const FunctionsGL *functions = GetFunctionsGL(context);
     StateManagerGL *stateManager = GetStateManagerGL(context);
 
@@ -525,6 +558,7 @@ angle::Result FramebufferGL::clearBufferfv(const gl::Context *context,
                                             reinterpret_cast<const uint8_t *>(values), 0.0f, 0);
     }
 
+    contextGL->markWorkSubmitted();
     return angle::Result::Continue;
 }
 
@@ -533,6 +567,7 @@ angle::Result FramebufferGL::clearBufferuiv(const gl::Context *context,
                                             GLint drawbuffer,
                                             const GLuint *values)
 {
+    ContextGL *contextGL         = GetImplAs<ContextGL>(context);
     const FunctionsGL *functions = GetFunctionsGL(context);
     StateManagerGL *stateManager = GetStateManagerGL(context);
 
@@ -552,6 +587,7 @@ angle::Result FramebufferGL::clearBufferuiv(const gl::Context *context,
                                             reinterpret_cast<const uint8_t *>(values), 0.0f, 0);
     }
 
+    contextGL->markWorkSubmitted();
     return angle::Result::Continue;
 }
 
@@ -560,6 +596,7 @@ angle::Result FramebufferGL::clearBufferiv(const gl::Context *context,
                                            GLint drawbuffer,
                                            const GLint *values)
 {
+    ContextGL *contextGL         = GetImplAs<ContextGL>(context);
     const FunctionsGL *functions = GetFunctionsGL(context);
     StateManagerGL *stateManager = GetStateManagerGL(context);
 
@@ -579,6 +616,7 @@ angle::Result FramebufferGL::clearBufferiv(const gl::Context *context,
                                             reinterpret_cast<const uint8_t *>(values), 0.0f, 0);
     }
 
+    contextGL->markWorkSubmitted();
     return angle::Result::Continue;
 }
 
@@ -588,6 +626,7 @@ angle::Result FramebufferGL::clearBufferfi(const gl::Context *context,
                                            GLfloat depth,
                                            GLint stencil)
 {
+    ContextGL *contextGL         = GetImplAs<ContextGL>(context);
     const FunctionsGL *functions = GetFunctionsGL(context);
     StateManagerGL *stateManager = GetStateManagerGL(context);
 
@@ -607,6 +646,7 @@ angle::Result FramebufferGL::clearBufferfi(const gl::Context *context,
                                             nullptr, depth, stencil);
     }
 
+    contextGL->markWorkSubmitted();
     return angle::Result::Continue;
 }
 
@@ -650,7 +690,9 @@ angle::Result FramebufferGL::readPixels(const gl::Context *context,
                     GL_INVALID_OPERATION);
     }
 
-    stateManager->bindFramebuffer(GL_READ_FRAMEBUFFER, mFramebufferID);
+    GLenum framebufferTarget =
+        stateManager->getHasSeparateFramebufferBindings() ? GL_READ_FRAMEBUFFER : GL_FRAMEBUFFER;
+    stateManager->bindFramebuffer(framebufferTarget, mFramebufferID);
 
     bool useOverlappingRowsWorkaround = features.packOverlappingRowsSeparatelyPackBuffer.enabled &&
                                         packBuffer && packState.rowLength != 0 &&
@@ -680,7 +722,7 @@ angle::Result FramebufferGL::readPixels(const gl::Context *context,
 
     // We want to use rowLength, but that might not be supported.
     bool cannotSetDesiredRowLength =
-        packState.rowLength && !GetImplAs<ContextGL>(context)->getNativeExtensions().packSubimage;
+        packState.rowLength && !GetImplAs<ContextGL>(context)->getNativeExtensions().packSubimageNV;
 
     bool usePackSkipWorkaround = features.emulatePackSkipRowsAndPackSkipPixels.enabled &&
                                  (packState.skipRows != 0 || packState.skipPixels != 0);
@@ -709,6 +751,7 @@ angle::Result FramebufferGL::blit(const gl::Context *context,
                                   GLbitfield mask,
                                   GLenum filter)
 {
+    ContextGL *contextGL              = GetImplAs<ContextGL>(context);
     const FunctionsGL *functions      = GetFunctionsGL(context);
     StateManagerGL *stateManager      = GetStateManagerGL(context);
     const angle::FeaturesGL &features = GetFeaturesGL(context);
@@ -827,6 +870,7 @@ angle::Result FramebufferGL::blit(const gl::Context *context,
                                finalSourceArea.y1(), finalDestArea.x, finalDestArea.y,
                                finalDestArea.x1(), finalDestArea.y1(), blitMask, filter);
 
+    contextGL->markWorkSubmitted();
     return angle::Result::Continue;
 }
 
@@ -1186,7 +1230,7 @@ bool FramebufferGL::shouldSyncStateBeforeCheckStatus() const
     return true;
 }
 
-bool FramebufferGL::checkStatus(const gl::Context *context) const
+gl::FramebufferStatus FramebufferGL::checkStatus(const gl::Context *context) const
 {
     const FunctionsGL *functions = GetFunctionsGL(context);
     StateManagerGL *stateManager = GetStateManagerGL(context);
@@ -1195,9 +1239,12 @@ bool FramebufferGL::checkStatus(const gl::Context *context) const
     GLenum status = functions->checkFramebufferStatus(GL_FRAMEBUFFER);
     if (status != GL_FRAMEBUFFER_COMPLETE)
     {
-        WARN() << "GL framebuffer returned incomplete.";
+        WARN() << "GL framebuffer returned incomplete: " << gl::FmtHex(status);
+        return gl::FramebufferStatus::Incomplete(GL_FRAMEBUFFER_UNSUPPORTED,
+                                                 gl::err::kFramebufferIncompleteDriverUnsupported);
     }
-    return (status == GL_FRAMEBUFFER_COMPLETE);
+
+    return gl::FramebufferStatus::Complete();
 }
 
 angle::Result FramebufferGL::syncState(const gl::Context *context,
@@ -1226,7 +1273,8 @@ angle::Result FramebufferGL::syncState(const gl::Context *context,
             case Framebuffer::DIRTY_BIT_DEPTH_ATTACHMENT:
             {
                 const FramebufferAttachment *newAttachment = mState.getDepthAttachment();
-                BindFramebufferAttachment(functions, GL_DEPTH_ATTACHMENT, newAttachment);
+                BindFramebufferAttachment(functions, GL_DEPTH_ATTACHMENT, newAttachment,
+                                          GetFeaturesGL(context));
                 if (newAttachment)
                 {
                     attachment = newAttachment;
@@ -1236,7 +1284,8 @@ angle::Result FramebufferGL::syncState(const gl::Context *context,
             case Framebuffer::DIRTY_BIT_STENCIL_ATTACHMENT:
             {
                 const FramebufferAttachment *newAttachment = mState.getStencilAttachment();
-                BindFramebufferAttachment(functions, GL_STENCIL_ATTACHMENT, newAttachment);
+                BindFramebufferAttachment(functions, GL_STENCIL_ATTACHMENT, newAttachment,
+                                          GetFeaturesGL(context));
                 if (newAttachment)
                 {
                     attachment = newAttachment;
@@ -1275,6 +1324,10 @@ angle::Result FramebufferGL::syncState(const gl::Context *context,
                 functions->framebufferParameteri(GL_FRAMEBUFFER, GL_FRAMEBUFFER_DEFAULT_LAYERS_EXT,
                                                  mState.getDefaultLayers());
                 break;
+            case Framebuffer::DIRTY_BIT_FLIP_Y:
+                functions->framebufferParameteri(GL_FRAMEBUFFER, GL_FRAMEBUFFER_FLIP_Y_MESA,
+                                                 gl::ConvertToGLBoolean(mState.getFlipY()));
+                break;
             default:
             {
                 static_assert(Framebuffer::DIRTY_BIT_COLOR_ATTACHMENT_0 == 0, "FB dirty bits");
@@ -1285,7 +1338,7 @@ angle::Result FramebufferGL::syncState(const gl::Context *context,
                     const FramebufferAttachment *newAttachment = mState.getColorAttachment(index);
                     BindFramebufferAttachment(functions,
                                               static_cast<GLenum>(GL_COLOR_ATTACHMENT0 + index),
-                                              newAttachment);
+                                              newAttachment, GetFeaturesGL(context));
                     if (newAttachment)
                     {
                         attachment = newAttachment;
@@ -1340,32 +1393,27 @@ bool FramebufferGL::hasEmulatedAlphaChannelTextureAttachment() const
 
 void FramebufferGL::syncClearState(const gl::Context *context, GLbitfield mask)
 {
-    const FunctionsGL *functions = GetFunctionsGL(context);
+    StateManagerGL *stateManager      = GetStateManagerGL(context);
+    const angle::FeaturesGL &features = GetFeaturesGL(context);
 
-    if (functions->standard == STANDARD_GL_DESKTOP)
+    if (features.doesSRGBClearsOnLinearFramebufferAttachments.enabled &&
+        (mask & GL_COLOR_BUFFER_BIT) != 0 && !mIsDefault)
     {
-        StateManagerGL *stateManager      = GetStateManagerGL(context);
-        const angle::FeaturesGL &features = GetFeaturesGL(context);
-
-        if (features.doesSRGBClearsOnLinearFramebufferAttachments.enabled &&
-            (mask & GL_COLOR_BUFFER_BIT) != 0 && !mIsDefault)
+        bool hasSRGBAttachment = false;
+        for (const auto &attachment : mState.getColorAttachments())
         {
-            bool hasSRGBAttachment = false;
-            for (const auto &attachment : mState.getColorAttachments())
+            if (attachment.isAttached() && attachment.getColorEncoding() == GL_SRGB)
             {
-                if (attachment.isAttached() && attachment.getColorEncoding() == GL_SRGB)
-                {
-                    hasSRGBAttachment = true;
-                    break;
-                }
+                hasSRGBAttachment = true;
+                break;
             }
+        }
 
-            stateManager->setFramebufferSRGBEnabled(context, hasSRGBAttachment);
-        }
-        else
-        {
-            stateManager->setFramebufferSRGBEnabled(context, !mIsDefault);
-        }
+        stateManager->setFramebufferSRGBEnabled(context, hasSRGBAttachment);
+    }
+    else
+    {
+        stateManager->setFramebufferSRGBEnabled(context, !mIsDefault);
     }
 }
 
@@ -1373,40 +1421,35 @@ void FramebufferGL::syncClearBufferState(const gl::Context *context,
                                          GLenum buffer,
                                          GLint drawBuffer)
 {
-    const FunctionsGL *functions = GetFunctionsGL(context);
+    StateManagerGL *stateManager      = GetStateManagerGL(context);
+    const angle::FeaturesGL &features = GetFeaturesGL(context);
 
-    if (functions->standard == STANDARD_GL_DESKTOP)
+    if (features.doesSRGBClearsOnLinearFramebufferAttachments.enabled && buffer == GL_COLOR &&
+        !mIsDefault)
     {
-        StateManagerGL *stateManager      = GetStateManagerGL(context);
-        const angle::FeaturesGL &features = GetFeaturesGL(context);
+        // If doing a clear on a color buffer, set SRGB blend enabled only if the color buffer
+        // is an SRGB format.
+        const auto &drawbufferState  = mState.getDrawBufferStates();
+        const auto &colorAttachments = mState.getColorAttachments();
 
-        if (features.doesSRGBClearsOnLinearFramebufferAttachments.enabled && buffer == GL_COLOR &&
-            !mIsDefault)
+        const FramebufferAttachment *attachment = nullptr;
+        if (drawbufferState[drawBuffer] >= GL_COLOR_ATTACHMENT0 &&
+            drawbufferState[drawBuffer] < GL_COLOR_ATTACHMENT0 + colorAttachments.size())
         {
-            // If doing a clear on a color buffer, set SRGB blend enabled only if the color buffer
-            // is an SRGB format.
-            const auto &drawbufferState  = mState.getDrawBufferStates();
-            const auto &colorAttachments = mState.getColorAttachments();
-
-            const FramebufferAttachment *attachment = nullptr;
-            if (drawbufferState[drawBuffer] >= GL_COLOR_ATTACHMENT0 &&
-                drawbufferState[drawBuffer] < GL_COLOR_ATTACHMENT0 + colorAttachments.size())
-            {
-                size_t attachmentIdx =
-                    static_cast<size_t>(drawbufferState[drawBuffer] - GL_COLOR_ATTACHMENT0);
-                attachment = &colorAttachments[attachmentIdx];
-            }
-
-            if (attachment != nullptr)
-            {
-                stateManager->setFramebufferSRGBEnabled(context,
-                                                        attachment->getColorEncoding() == GL_SRGB);
-            }
+            size_t attachmentIdx =
+                static_cast<size_t>(drawbufferState[drawBuffer] - GL_COLOR_ATTACHMENT0);
+            attachment = &colorAttachments[attachmentIdx];
         }
-        else
+
+        if (attachment != nullptr)
         {
-            stateManager->setFramebufferSRGBEnabled(context, !mIsDefault);
+            stateManager->setFramebufferSRGBEnabled(context,
+                                                    attachment->getColorEncoding() == GL_SRGB);
         }
+    }
+    else
+    {
+        stateManager->setFramebufferSRGBEnabled(context, !mIsDefault);
     }
 }
 

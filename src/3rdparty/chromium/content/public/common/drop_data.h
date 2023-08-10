@@ -16,11 +16,10 @@
 #include <vector>
 
 #include "base/files/file_path.h"
-#include "base/optional.h"
-#include "base/strings/string16.h"
 #include "content/common/content_export.h"
 #include "ipc/ipc_message.h"
 #include "services/network/public/mojom/referrer_policy.mojom.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/base/clipboard/file_info.h"
 #include "url/gurl.h"
 
@@ -47,43 +46,49 @@ struct CONTENT_EXPORT DropData {
     STRING = 0,
     FILENAME,
     FILESYSTEMFILE,
-    LAST = FILESYSTEMFILE
+    BINARY,
+    LAST = BINARY
   };
 
   struct Metadata {
     Metadata();
     static Metadata CreateForMimeType(const Kind& kind,
-                                      const base::string16& mime_type);
+                                      const std::u16string& mime_type);
     static Metadata CreateForFilePath(const base::FilePath& filename);
     static Metadata CreateForFileSystemUrl(const GURL& file_system_url);
+    static Metadata CreateForBinary(const GURL& file_contents_url);
     Metadata(const Metadata& other);
     ~Metadata();
 
     Kind kind;
-    base::string16 mime_type;
+    std::u16string mime_type;
     base::FilePath filename;
     GURL file_system_url;
+    GURL file_contents_url;
   };
 
   DropData();
   DropData(const DropData& other);
   ~DropData();
 
-  // Returns a sanitized filename to use for the dragged image, or base::nullopt
+  // Returns a sanitized filename to use for the dragged image, or absl::nullopt
   // if no sanitized name could be synthesized.
-  base::Optional<base::FilePath> GetSafeFilenameForImageFileContents() const;
+  absl::optional<base::FilePath> GetSafeFilenameForImageFileContents() const;
 
   int view_id = MSG_ROUTING_NONE;
 
   // Whether this drag originated from a renderer.
   bool did_originate_from_renderer;
 
+  // Whether this drag is from a privileged Web Contents.
+  bool is_from_privileged = false;
+
   // User is dragging a link or image.
   GURL url;
-  base::string16 url_title;  // The title associated with |url|.
+  std::u16string url_title;  // The title associated with |url|.
 
   // User is dragging a link out-of the webview.
-  base::string16 download_metadata;
+  std::u16string download_metadata;
 
   // Referrer policy to use when dragging a link out of the webview results in
   // a download.
@@ -94,30 +99,31 @@ struct CONTENT_EXPORT DropData {
   // from web content.
   std::vector<ui::FileInfo> filenames;
   // The mime types of dragged files.
-  std::vector<base::string16> file_mime_types;
+  std::vector<std::u16string> file_mime_types;
 
   // Isolated filesystem ID for the files being dragged on the webview.
-  base::string16 filesystem_id;
+  std::u16string filesystem_id;
 
   // User is dragging files specified with filesystem: URLs.
   std::vector<FileSystemFileInfo> file_system_files;
 
   // User is dragging plain text into the webview.
-  base::Optional<base::string16> text;
+  absl::optional<std::u16string> text;
 
   // User is dragging text/html into the webview (e.g., out of Firefox).
   // |html_base_url| is the URL that the html fragment is taken from (used to
   // resolve relative links).  It's ok for |html_base_url| to be empty.
-  base::Optional<base::string16> html;
+  absl::optional<std::u16string> html;
   GURL html_base_url;
 
   // User is dragging an image out of the WebView.
   std::string file_contents;
+  bool file_contents_image_accessible = false;
   GURL file_contents_source_url;
   base::FilePath::StringType file_contents_filename_extension;
   std::string file_contents_content_disposition;
 
-  std::unordered_map<base::string16, base::string16> custom_data;
+  std::unordered_map<std::u16string, std::u16string> custom_data;
 };
 
 }  // namespace content

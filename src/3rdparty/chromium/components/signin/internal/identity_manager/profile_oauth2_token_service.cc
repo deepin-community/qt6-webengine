@@ -32,8 +32,6 @@ std::string SourceToString(SourceForRefreshTokenOperation source) {
       return "Unknown";
     case SourceForRefreshTokenOperation::kTokenService_LoadCredentials:
       return "TokenService::LoadCredentials";
-    case SourceForRefreshTokenOperation::kDeprecatedSupervisedUser_InitSync:
-      return "DeprecatedSupervisedUser::InitSync";
     case SourceForRefreshTokenOperation::kInlineLoginHandler_Signin:
       return "InlineLoginHandler::Signin";
     case SourceForRefreshTokenOperation::kPrimaryAccountManager_ClearAccount:
@@ -60,17 +58,14 @@ std::string SourceToString(SourceForRefreshTokenOperation source) {
       return "DiceResponseHandler::Signin";
     case SourceForRefreshTokenOperation::kDiceResponseHandler_Signout:
       return "DiceResponseHandler::Signout";
-    case SourceForRefreshTokenOperation::kDiceTurnOnSyncHelper_Abort:
-      return "DiceTurnOnSyncHelper::Abort";
+    case SourceForRefreshTokenOperation::kTurnOnSyncHelper_Abort:
+      return "TurnOnSyncHelper::Abort";
     case SourceForRefreshTokenOperation::kMachineLogon_CredentialProvider:
       return "MachineLogon::CredentialProvider";
     case SourceForRefreshTokenOperation::kTokenService_ExtractCredentials:
       return "TokenService::ExtractCredentials";
-    case SourceForRefreshTokenOperation::
-        kAccountReconcilor_RevokeTokensNotInCookies:
-      return "AccountReconcilor::RevokeTokensNotInCookies";
-    case SourceForRefreshTokenOperation::kLogoutTabHelper_DidFinishNavigation:
-      return "LogoutTabHelper::DidFinishNavigation";
+    case SourceForRefreshTokenOperation::kLogoutTabHelper_PrimaryPageChanged:
+      return "LogoutTabHelper::PrimaryPageChanged";
   }
 }
 }  // namespace
@@ -89,6 +84,8 @@ ProfileOAuth2TokenService::ProfileOAuth2TokenService(
 }
 
 ProfileOAuth2TokenService::~ProfileOAuth2TokenService() {
+  token_manager_->CancelAllRequests();
+  GetDelegate()->Shutdown();
   RemoveObserver(this);
 }
 
@@ -255,11 +252,6 @@ void ProfileOAuth2TokenService::SetRefreshTokenAvailableFromSourceCallback(
 void ProfileOAuth2TokenService::SetRefreshTokenRevokedFromSourceCallback(
     RefreshTokenRevokedFromSourceCallback callback) {
   on_refresh_token_revoked_callback_ = callback;
-}
-
-void ProfileOAuth2TokenService::Shutdown() {
-  token_manager_->CancelAllRequests();
-  GetDelegate()->Shutdown();
 }
 
 void ProfileOAuth2TokenService::LoadCredentials(

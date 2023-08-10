@@ -13,11 +13,12 @@ namespace views {
 namespace features {
 
 // Please keep alphabetized.
-
 VIEWS_EXPORT extern const base::Feature kEnablePlatformHighContrastInkDrop;
 VIEWS_EXPORT extern const base::Feature kEnableViewPaintOptimization;
-VIEWS_EXPORT extern const base::Feature kTextfieldFocusOnTapUp;
-VIEWS_EXPORT extern const base::Feature kEnableNewBadgeOnMenuItems;
+
+#if BUILDFLAG(IS_MAC)
+VIEWS_EXPORT extern const base::Feature kFullscreenControllerMac;
+#endif
 
 }  // namespace features
 }  // namespace views

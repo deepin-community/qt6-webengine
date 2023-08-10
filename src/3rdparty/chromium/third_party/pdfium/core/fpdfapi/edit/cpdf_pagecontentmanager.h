@@ -6,14 +6,13 @@
 #define CORE_FPDFAPI_EDIT_CPDF_PAGECONTENTMANAGER_H_
 
 #include <set>
-#include <sstream>
 
+#include "core/fxcrt/fx_string_wrappers.h"
 #include "core/fxcrt/retain_ptr.h"
 #include "core/fxcrt/unowned_ptr.h"
 
 class CPDF_Array;
 class CPDF_Document;
-class CPDF_Object;
 class CPDF_Stream;
 class CPDF_PageObjectHolder;
 
@@ -28,7 +27,7 @@ class CPDF_PageContentManager {
 
   // Adds a new Content stream. Its index in the array will be returned, or 0
   // if Contents is not an array, but only a single stream.
-  size_t AddStream(std::ostringstream* buf);
+  size_t AddStream(fxcrt::ostringstream* buf);
 
   // Schedule the removal of the Content stream at a given index. It will be
   // removed when ExecuteScheduledRemovals() is called.

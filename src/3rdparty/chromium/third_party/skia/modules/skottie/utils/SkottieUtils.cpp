@@ -45,12 +45,18 @@ public:
         }
     }
 
-    void onEnterNode(const char node_name[]) override {
+    void onEnterNode(const char node_name[], PropertyObserver::NodeType node_type) override {
+        if (node_name == nullptr) {
+            return;
+        }
         fMgr->fCurrentNode =
                 fMgr->fCurrentNode.empty() ? node_name : fMgr->fCurrentNode + "." + node_name;
     }
 
-    void onLeavingNode(const char node_name[]) override {
+    void onLeavingNode(const char node_name[], PropertyObserver::NodeType node_type) override {
+        if (node_name == nullptr) {
+            return;
+        }
         auto length = strlen(node_name);
         fMgr->fCurrentNode =
                 fMgr->fCurrentNode.length() > length
@@ -204,8 +210,11 @@ private:
     void render(SkCanvas* canvas, double t) override {
         fAnimation->seekFrameTime(t);
 
+        // The main animation will layer-isolate if needed - we don't want the nested animation
+        // to override that decision.
+        const auto flags = skottie::Animation::RenderFlag::kSkipTopLevelIsolation;
         const auto dst_rect = SkRect::MakeSize(fSize);
-        fAnimation->render(canvas, &dst_rect);
+        fAnimation->render(canvas, &dst_rect, flags);
     }
 
     const sk_sp<skottie::Animation> fAnimation;
@@ -235,6 +244,7 @@ sk_sp<skottie::ExternalLayer> ExternalAnimationPrecompInterceptor::onLoadPrecomp
 
     auto anim = skottie::Animation::Builder()
                     .setPrecompInterceptor(sk_ref_sp(this))
+                    .setResourceProvider(fResourceProvider)
                     .make(static_cast<const char*>(data->data()), data->size());
 
     return anim ? sk_make_sp<ExternalAnimationLayer>(std::move(anim), size)

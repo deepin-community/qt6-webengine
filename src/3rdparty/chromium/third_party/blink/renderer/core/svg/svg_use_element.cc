@@ -45,7 +45,7 @@
 #include "third_party/blink/renderer/core/svg_names.h"
 #include "third_party/blink/renderer/core/xlink_names.h"
 #include "third_party/blink/renderer/core/xml/parser/xml_document_parser.h"
-#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_parameters.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_fetcher.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_loader_options.h"
@@ -88,7 +88,7 @@ SVGUseElement::SVGUseElement(Document& document)
   AddToPropertyMap(width_);
   AddToPropertyMap(height_);
 
-  AttachShadowRootInternal(ShadowRootType::kClosed);
+  CreateUserAgentShadowRoot();
 }
 
 SVGUseElement::~SVGUseElement() = default;
@@ -207,15 +207,6 @@ void SVGUseElement::UpdateTargetReference() {
   }
 
   auto* context_document = &GetDocument();
-  if (GetDocument().ImportsController()) {
-    // For @imports from HTML imported Documents, we use the
-    // context document for getting origin and ResourceFetcher to use the
-    // main Document's origin, while using the element document for
-    // CompleteURL() to use imported Documents' base URLs.
-    context_document =
-        To<LocalDOMWindow>(GetDocument().GetExecutionContext())->document();
-  }
-
   ExecutionContext* execution_context = context_document->GetExecutionContext();
   ResourceLoaderOptions options(execution_context->GetCurrentWorld());
   options.initiator_info.name = localName();
@@ -420,7 +411,8 @@ static void MoveChildrenToReplacementElement(ContainerNode& source_root,
 }
 
 SVGElement* SVGUseElement::CreateInstanceTree(SVGElement& target_root) const {
-  SVGElement* instance_root = &To<SVGElement>(target_root.CloneWithChildren());
+  SVGElement* instance_root =
+      &To<SVGElement>(target_root.CloneWithChildren(CloneChildrenFlag::kClone));
   if (IsA<SVGSymbolElement>(target_root)) {
     // Spec: The referenced 'symbol' and its contents are deep-cloned into
     // the generated tree, with the exception that the 'symbol' is replaced
@@ -473,7 +465,7 @@ void SVGUseElement::AttachShadowTree(SVGElement& target) {
     }
     // Setup the mapping from the corresponding (original) element back to the
     // instance.
-    corresponding_element->MapInstanceToElement(&instance);
+    corresponding_element->AddInstance(&instance);
   }
 }
 
@@ -485,7 +477,7 @@ void SVGUseElement::DetachShadowTree() {
 
 LayoutObject* SVGUseElement::CreateLayoutObject(const ComputedStyle& style,
                                                 LegacyLayout) {
-  return new LayoutSVGTransformableContainer(this);
+  return MakeGarbageCollected<LayoutSVGTransformableContainer>(this);
 }
 
 static bool IsDirectReference(const SVGElement& element) {
@@ -569,13 +561,13 @@ bool SVGUseElement::SelfHasRelativeLengths() const {
          height_->CurrentValue()->IsRelative();
 }
 
-FloatRect SVGUseElement::GetBBox() {
+gfx::RectF SVGUseElement::GetBBox() {
   DCHECK(GetLayoutObject());
   auto& transformable_container =
       To<LayoutSVGTransformableContainer>(*GetLayoutObject());
   // Don't apply the additional translation if the oBB is invalid.
   if (!transformable_container.IsObjectBoundingBoxValid())
-    return FloatRect();
+    return gfx::RectF();
 
   // TODO(fs): Preferably this would just use objectBoundingBox() (and hence
   // don't need to override SVGGraphicsElement::getBBox at all) and be
@@ -583,8 +575,8 @@ FloatRect SVGUseElement::GetBBox() {
   // additional quirks. The problem stems from including the additional
   // translation directly on the LayoutObject corresponding to the
   // SVGUseElement.
-  FloatRect bbox = transformable_container.ObjectBoundingBox();
-  bbox.Move(transformable_container.AdditionalTranslation());
+  gfx::RectF bbox = transformable_container.ObjectBoundingBox();
+  bbox.Offset(transformable_container.AdditionalTranslation());
   return bbox;
 }
 

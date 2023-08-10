@@ -139,6 +139,11 @@ class WTF_EXPORT SharedBuffer : public RefCounted<SharedBuffer> {
     ALLOW_NUMERIC_ARG_TYPES_PROMOTABLE_TO(size_t);
     AppendInternal(data, size);
   }
+  HAS_STRICTLY_TYPED_ARG
+  void Append(const unsigned char* data, STRICTLY_TYPED_ARG(size)) {
+    ALLOW_NUMERIC_ARG_TYPES_PROMOTABLE_TO(size_t);
+    AppendInternal(reinterpret_cast<const char*>(data), size);
+  }
   void Append(const Vector<char>& data) { Append(data.data(), data.size()); }
 
   void Clear();
@@ -165,9 +170,9 @@ class WTF_EXPORT SharedBuffer : public RefCounted<SharedBuffer> {
   // Copies |byteLength| bytes from the beginning of the content data into
   // |dest| as a flat buffer. Returns true on success, otherwise the content of
   // |dest| is not guaranteed.
-  HAS_STRICTLY_TYPED_ARG
-  WARN_UNUSED_RESULT
-  bool GetBytes(void* dest, STRICTLY_TYPED_ARG(byte_length)) const {
+  HAS_STRICTLY_TYPED_ARG [[nodiscard]] bool GetBytes(
+      void* dest,
+      STRICTLY_TYPED_ARG(byte_length)) const {
     ALLOW_NUMERIC_ARG_TYPES_PROMOTABLE_TO(size_t);
     return GetBytesInternal(dest, byte_length);
   }

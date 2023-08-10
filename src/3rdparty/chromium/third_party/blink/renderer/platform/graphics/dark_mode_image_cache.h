@@ -10,6 +10,8 @@
 #include "base/hash/hash.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
 #include "third_party/skia/include/core/SkColorFilter.h"
+#include "third_party/skia/include/core/SkRect.h"
+#include "third_party/skia/include/core/SkRefCnt.h"
 
 namespace blink {
 
@@ -18,6 +20,8 @@ namespace blink {
 class PLATFORM_EXPORT DarkModeImageCache {
  public:
   DarkModeImageCache() = default;
+  DarkModeImageCache(const DarkModeImageCache&) = delete;
+  DarkModeImageCache& operator=(const DarkModeImageCache&) = delete;
   ~DarkModeImageCache() = default;
 
   bool Exists(const SkIRect& src) {
@@ -64,8 +68,6 @@ class PLATFORM_EXPORT DarkModeImageCache {
   };
 
   std::unordered_map<DarkModeKey, sk_sp<SkColorFilter>, DarkModeKeyHash> cache_;
-
-  DISALLOW_COPY_AND_ASSIGN(DarkModeImageCache);
 };
 
 }  // namespace blink

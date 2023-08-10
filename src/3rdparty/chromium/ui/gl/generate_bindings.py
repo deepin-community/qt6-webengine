@@ -49,6 +49,11 @@ versions array. This can be overridden by supplying a 'known_as' key.
 """
 GL_FUNCTIONS = [
 { 'return_type': 'void',
+  'versions': [{ 'name': 'glAcquireTexturesANGLE',
+                 'extensions': ['GL_ANGLE_vulkan_image'] }],
+  'arguments': 'GLuint numTextures, const GLuint* textures, '
+               'const GLenum* layouts', },
+{ 'return_type': 'void',
   'names': ['glActiveShaderProgram'],
   'arguments': 'GLuint pipeline, GLuint program', },
 { 'return_type': 'void',
@@ -206,6 +211,8 @@ GL_FUNCTIONS = [
 { 'return_type': 'void',
   'versions' : [{'name': 'glBlitFramebuffer',
                  'extensions': ['GL_ARB_framebuffer_object']},
+                {'name': 'glBlitFramebufferNV',
+                 'extensions': ['GL_NV_framebuffer_blit']},
                 {'name': 'glBlitFramebufferANGLE'},
                 {'name': 'glBlitFramebufferEXT'}],
   'arguments': 'GLint srcX0, GLint srcY0, GLint srcX1, GLint srcY1, '
@@ -1815,6 +1822,10 @@ GL_FUNCTIONS = [
   'names': ['glReleaseShaderCompiler'],
   'arguments': 'void', },
 { 'return_type': 'void',
+  'versions': [{ 'name': 'glReleaseTexturesANGLE',
+                 'extensions': ['GL_ANGLE_vulkan_image'] }],
+  'arguments': 'GLuint numTextures, const GLuint* textures, GLenum* layouts', },
+{ 'return_type': 'void',
   'names': ['glRenderbufferStorageEXT', 'glRenderbufferStorage'],
   'arguments':
       'GLenum target, GLenum internalformat, GLsizei width, GLsizei height', },
@@ -2131,7 +2142,8 @@ GL_FUNCTIONS = [
                  'extensions': ['GL_ANGLE_memory_object_flags'] }],
   'arguments': 'GLenum target, GLsizei levels, GLenum internalFormat, '
   'GLsizei width, GLsizei height, GLuint memory, GLuint64 offset, '
-  'GLbitfield createFlags, GLbitfield usageFlags', },
+  'GLbitfield createFlags, GLbitfield usageFlags, '
+  'const void* imageCreateInfoPNext', },
 { 'return_type': 'void',
   'names': ['glTexSubImage2D'],
   'arguments':
@@ -2492,6 +2504,12 @@ EGL_FUNCTIONS = [
   'arguments': 'EGLDisplay dpy, EGLImageKHR image, int* fourcc, '
                'int* num_planes, EGLuint64KHR* modifiers', },
 { 'return_type': 'EGLBoolean',
+    'versions': [{'name': 'eglExportVkImageANGLE',
+                  'extensions':
+                      ['EGL_ANGLE_vulkan_image']}],
+  'arguments': 'EGLDisplay dpy, EGLImageKHR image, void* vk_image, '
+               'void* vk_image_create_info', },
+{ 'return_type': 'EGLBoolean',
   'versions': [{ 'name': 'eglGetCompositorTimingANDROID',
                  'extensions': [
                    'EGL_ANDROID_get_frame_timestamps'
@@ -2624,6 +2642,11 @@ EGL_FUNCTIONS = [
   'versions': [{ 'name': 'eglQueryDebugKHR',
                  'client_extensions': ['EGL_KHR_debug'], }],
   'arguments': 'EGLint attribute, EGLAttrib* value', },
+{
+  'return_type': 'EGLBoolean',
+  'versions': [{ 'name': 'eglQueryDeviceAttribEXT',
+                 'client_extensions': ['EGL_EXT_device_query'], }],
+  'arguments': 'EGLDeviceEXT device, EGLint attribute, EGLAttrib* value' },
 { 'return_type': 'EGLBoolean',
   'known_as': 'eglQueryDevicesEXT',
   'versions': [{ 'name': 'eglQueryDevicesEXT',
@@ -2639,6 +2662,28 @@ EGL_FUNCTIONS = [
   'versions': [{ 'name': 'eglQueryDisplayAttribANGLE',
                  'client_extensions': ['EGL_ANGLE_feature_control'] }],
   'arguments': 'EGLDisplay dpy, EGLint attribute, EGLAttrib* value' },
+{
+  'return_type': 'EGLBoolean',
+  'versions': [{ 'name': 'eglQueryDisplayAttribEXT',
+                 'client_extensions': ['EGL_EXT_device_query'], }],
+  'arguments': 'EGLDisplay dpy, EGLint attribute, EGLAttrib* value' },
+{
+  'return_type': 'EGLBoolean',
+  'versions': [{ 'name': 'eglQueryDmaBufFormatsEXT',
+                 'extensions':
+                     ['EGL_EXT_image_dma_buf_import_modifiers'], }],
+  'arguments':
+      'EGLDisplay dpy, EGLint max_formats, '
+      'EGLint* formats, EGLint* num_formats' },
+{
+  'return_type': 'EGLBoolean',
+  'versions': [{ 'name': 'eglQueryDmaBufModifiersEXT',
+                 'extensions':
+                     ['EGL_EXT_image_dma_buf_import_modifiers'], }],
+  'arguments':
+      'EGLDisplay dpy, EGLint format, EGLint max_modifiers, '
+      'EGLuint64KHR* modifiers, EGLBoolean* external_only, '
+      'EGLint* num_modifiers' },
 { 'return_type': 'EGLBoolean',
   'versions': [{ 'name': 'eglQueryStreamKHR',
                  'extensions': ['EGL_KHR_stream'] }],
@@ -2989,6 +3034,7 @@ FUNCTION_SETS = [
       'GLES2/gl2extchromium.h'
     ], [
       "GL_ANGLE_robust_resource_initialization",
+      "GL_ANGLE_webgl_compatibility",
       "GL_ARB_texture_swizzle",
       "GL_EXT_texture_swizzle",
       "GL_EXT_texture_format_BGRA8888",
@@ -3150,7 +3196,7 @@ class GLContext;
         (func['known_as'], set_name.lower(), func['known_as']))
 
   file.write('\n')
-  file.write('#endif  //  UI_GL_GL_BINDINGS_AUTOGEN_%s_H_\n' %
+  file.write('#endif  // UI_GL_GL_BINDINGS_AUTOGEN_%s_H_\n' %
       set_name.upper())
 
 
@@ -3216,8 +3262,8 @@ def GenerateStubHeader(file, functions):
   file.write(LICENSE_AND_HEADER +
 """
 
-#ifndef UI_GL_GL_STUB_AUTOGEN_H_
-#define UI_GL_GL_STUB_AUTOGEN_H_
+#ifndef UI_GL_GL_STUB_AUTOGEN_GL_H_
+#define UI_GL_GL_STUB_AUTOGEN_GL_H_
 
 """)
 
@@ -3236,7 +3282,7 @@ def GenerateStubHeader(file, functions):
       file.write(';\n');
 
   file.write('\n')
-  file.write('#endif  //  UI_GL_GL_STUB_AUTOGEN_H_')
+  file.write('#endif  //  UI_GL_GL_STUB_AUTOGEN_GL_H_')
 
 def GenerateStubSource(file, functions):
   """Generates gl_stub_autogen_gl.cc"""
@@ -3396,16 +3442,16 @@ void DriverGL::InitializeDynamicBindings(const GLVersionInfo* ver,
     file.write("""\
 void DriverEGL::InitializeClientExtensionBindings() {
   std::string client_extensions(GetClientExtensions());
-  gfx::ExtensionSet extensions(gfx::MakeExtensionSet(client_extensions));
-  ALLOW_UNUSED_LOCAL(extensions);
+  [[maybe_unused]] gfx::ExtensionSet extensions(
+      gfx::MakeExtensionSet(client_extensions));
 
 """)
   else:
     file.write("""\
 void Driver%s::InitializeExtensionBindings() {
   std::string platform_extensions(GetPlatformExtensions());
-  gfx::ExtensionSet extensions(gfx::MakeExtensionSet(platform_extensions));
-  ALLOW_UNUSED_LOCAL(extensions);
+  [[maybe_unused]] gfx::ExtensionSet extensions(
+      gfx::MakeExtensionSet(platform_extensions));
 
 """ % (set_name.upper(),))
 
@@ -3432,8 +3478,8 @@ void Driver%s::InitializeExtensionBindings() {
 
 void DriverEGL::InitializeExtensionBindings() {
   std::string platform_extensions(GetPlatformExtensions());
-  gfx::ExtensionSet extensions(gfx::MakeExtensionSet(platform_extensions));
-  ALLOW_UNUSED_LOCAL(extensions);
+  [[maybe_unused]] gfx::ExtensionSet extensions(
+      gfx::MakeExtensionSet(platform_extensions));
 
 """)
 

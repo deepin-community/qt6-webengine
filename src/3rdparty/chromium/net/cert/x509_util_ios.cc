@@ -11,25 +11,6 @@ namespace net {
 
 namespace x509_util {
 
-base::ScopedCFTypeRef<SecCertificateRef> CreateSecCertificateFromBytes(
-    const uint8_t* data,
-    size_t length) {
-  base::ScopedCFTypeRef<CFDataRef> cert_data(
-      CFDataCreate(kCFAllocatorDefault, reinterpret_cast<const UInt8*>(data),
-                   base::checked_cast<CFIndex>(length)));
-  if (!cert_data)
-    return base::ScopedCFTypeRef<SecCertificateRef>();
-
-  return base::ScopedCFTypeRef<SecCertificateRef>(
-      SecCertificateCreateWithData(nullptr, cert_data));
-}
-
-base::ScopedCFTypeRef<SecCertificateRef>
-CreateSecCertificateFromX509Certificate(const X509Certificate* cert) {
-  return CreateSecCertificateFromBytes(CRYPTO_BUFFER_data(cert->cert_buffer()),
-                                       CRYPTO_BUFFER_len(cert->cert_buffer()));
-}
-
 scoped_refptr<X509Certificate> CreateX509CertificateFromSecCertificate(
     base::ScopedCFTypeRef<SecCertificateRef> sec_cert,
     const std::vector<base::ScopedCFTypeRef<SecCertificateRef>>& sec_chain) {
@@ -39,9 +20,8 @@ scoped_refptr<X509Certificate> CreateX509CertificateFromSecCertificate(
   if (!der_data)
     return nullptr;
   bssl::UniquePtr<CRYPTO_BUFFER> cert_handle(
-      X509Certificate::CreateCertBufferFromBytes(
-          reinterpret_cast<const char*>(CFDataGetBytePtr(der_data)),
-          CFDataGetLength(der_data)));
+      X509Certificate::CreateCertBufferFromBytes(base::make_span(
+          CFDataGetBytePtr(der_data), CFDataGetLength(der_data))));
   if (!cert_handle)
     return nullptr;
   std::vector<bssl::UniquePtr<CRYPTO_BUFFER>> intermediates;
@@ -52,9 +32,8 @@ scoped_refptr<X509Certificate> CreateX509CertificateFromSecCertificate(
     if (!der_data)
       return nullptr;
     bssl::UniquePtr<CRYPTO_BUFFER> intermediate_cert_handle(
-        X509Certificate::CreateCertBufferFromBytes(
-            reinterpret_cast<const char*>(CFDataGetBytePtr(der_data)),
-            CFDataGetLength(der_data)));
+        X509Certificate::CreateCertBufferFromBytes(base::make_span(
+            CFDataGetBytePtr(der_data), CFDataGetLength(der_data))));
     if (!intermediate_cert_handle)
       return nullptr;
     intermediates.push_back(std::move(intermediate_cert_handle));

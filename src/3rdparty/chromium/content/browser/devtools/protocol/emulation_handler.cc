@@ -11,6 +11,7 @@
 #include "base/strings/string_util.h"
 #include "build/build_config.h"
 #include "content/browser/devtools/devtools_agent_host_impl.h"
+#include "content/browser/idle/idle_manager_impl.h"
 #include "content/browser/renderer_host/input/touch_emulator.h"
 #include "content/browser/renderer_host/render_frame_host_impl.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
@@ -21,7 +22,7 @@
 #include "services/device/public/cpp/geolocation/geoposition.h"
 #include "services/device/public/mojom/geolocation_context.mojom.h"
 #include "services/device/public/mojom/geoposition.mojom.h"
-#include "third_party/blink/public/mojom/widget/screen_orientation.mojom.h"
+#include "ui/display/mojom/screen_orientation.mojom.h"
 #include "ui/events/gesture_detection/gesture_provider_config_helper.h"
 
 namespace content {
@@ -29,26 +30,26 @@ namespace protocol {
 
 namespace {
 
-blink::mojom::ScreenOrientation WebScreenOrientationTypeFromString(
+display::mojom::ScreenOrientation WebScreenOrientationTypeFromString(
     const std::string& type) {
   if (type == Emulation::ScreenOrientation::TypeEnum::PortraitPrimary)
-    return blink::mojom::ScreenOrientation::kPortraitPrimary;
+    return display::mojom::ScreenOrientation::kPortraitPrimary;
   if (type == Emulation::ScreenOrientation::TypeEnum::PortraitSecondary)
-    return blink::mojom::ScreenOrientation::kPortraitSecondary;
+    return display::mojom::ScreenOrientation::kPortraitSecondary;
   if (type == Emulation::ScreenOrientation::TypeEnum::LandscapePrimary)
-    return blink::mojom::ScreenOrientation::kLandscapePrimary;
+    return display::mojom::ScreenOrientation::kLandscapePrimary;
   if (type == Emulation::ScreenOrientation::TypeEnum::LandscapeSecondary)
-    return blink::mojom::ScreenOrientation::kLandscapeSecondary;
-  return blink::mojom::ScreenOrientation::kUndefined;
+    return display::mojom::ScreenOrientation::kLandscapeSecondary;
+  return display::mojom::ScreenOrientation::kUndefined;
 }
 
-base::Optional<content::DisplayFeature::Orientation>
+absl::optional<content::DisplayFeature::Orientation>
 DisplayFeatureOrientationTypeFromString(const std::string& type) {
   if (type == Emulation::DisplayFeature::OrientationEnum::Vertical)
     return content::DisplayFeature::Orientation::kVertical;
   if (type == Emulation::DisplayFeature::OrientationEnum::Horizontal)
     return content::DisplayFeature::Orientation::kHorizontal;
-  return base::nullopt;
+  return absl::nullopt;
 }
 
 ui::GestureProviderConfigType TouchEmulationConfigurationToType(
@@ -128,13 +129,7 @@ Response EmulationHandler::SetIdleOverride(bool is_user_active,
                                            bool is_screen_unlocked) {
   if (!host_)
     return Response::InternalError();
-  blink::mojom::UserIdleState user_state =
-      is_user_active ? blink::mojom::UserIdleState::kActive
-                     : blink::mojom::UserIdleState::kIdle;
-  blink::mojom::ScreenIdleState screen_idle_state =
-      is_screen_unlocked ? blink::mojom::ScreenIdleState::kUnlocked
-                         : blink::mojom::ScreenIdleState::kLocked;
-  host_->GetIdleManager()->SetIdleOverride(user_state, screen_idle_state);
+  host_->GetIdleManager()->SetIdleOverride(is_user_active, is_screen_unlocked);
   return Response::Success();
 }
 
@@ -145,8 +140,9 @@ Response EmulationHandler::ClearIdleOverride() {
   return Response::Success();
 }
 
-Response EmulationHandler::SetGeolocationOverride(
-    Maybe<double> latitude, Maybe<double> longitude, Maybe<double> accuracy) {
+Response EmulationHandler::SetGeolocationOverride(Maybe<double> latitude,
+                                                  Maybe<double> longitude,
+                                                  Maybe<double> accuracy) {
   if (!host_)
     return Response::InternalError();
 
@@ -188,7 +184,7 @@ Response EmulationHandler::SetEmitTouchEventsForMouse(
 }
 
 Response EmulationHandler::CanEmulate(bool* result) {
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   *result = false;
 #else
   *result = true;
@@ -197,7 +193,7 @@ Response EmulationHandler::CanEmulate(bool* result) {
         host_->GetRenderWidgetHost()->auto_resize_enabled())
       *result = false;
   }
-#endif  // defined(OS_ANDROID)
+#endif  // BUILDFLAG(IS_ANDROID)
   return Response::Success();
 }
 
@@ -250,14 +246,14 @@ Response EmulationHandler::SetDeviceMetricsOverride(
                                    base::NumberToString(max_scale));
   }
 
-  blink::mojom::ScreenOrientation orientationType =
-      blink::mojom::ScreenOrientation::kUndefined;
+  display::mojom::ScreenOrientation orientationType =
+      display::mojom::ScreenOrientation::kUndefined;
   int orientationAngle = 0;
   if (screen_orientation.isJust()) {
     Emulation::ScreenOrientation* orientation = screen_orientation.fromJust();
-    orientationType = WebScreenOrientationTypeFromString(
-        orientation->GetType());
-    if (orientationType == blink::mojom::ScreenOrientation::kUndefined)
+    orientationType =
+        WebScreenOrientationTypeFromString(orientation->GetType());
+    if (orientationType == display::mojom::ScreenOrientation::kUndefined)
       return Response::InvalidParams("Invalid screen orientation type value");
     orientationAngle = orientation->GetAngle();
     if (orientationAngle < 0 || orientationAngle >= max_orientation_angle) {
@@ -267,11 +263,11 @@ Response EmulationHandler::SetDeviceMetricsOverride(
     }
   }
 
-  base::Optional<content::DisplayFeature> display_feature = base::nullopt;
+  absl::optional<content::DisplayFeature> display_feature = absl::nullopt;
   if (displayFeature.isJust()) {
     protocol::Emulation::DisplayFeature* emu_display_feature =
         displayFeature.fromJust();
-    base::Optional<content::DisplayFeature::Orientation> disp_orientation =
+    absl::optional<content::DisplayFeature::Orientation> disp_orientation =
         DisplayFeatureOrientationTypeFromString(
             emu_display_feature->GetOrientation());
     if (!disp_orientation) {
@@ -413,7 +409,7 @@ Response EmulationHandler::SetUserAgentOverride(
   user_agent_ = user_agent;
   accept_language_ = accept_lang;
 
-  user_agent_metadata_ = base::nullopt;
+  user_agent_metadata_ = absl::nullopt;
   if (!ua_metadata_override.isJust())
     return Response::FallThrough();
 
@@ -437,13 +433,31 @@ Response EmulationHandler::SetUserAgentOverride(
 
       if (!ValidateClientHintString(bv->GetVersion()))
         return Response::InvalidParams("Invalid brand version string");
-      out_bv.major_version = bv->GetVersion();
+      out_bv.version = bv->GetVersion();
 
       new_ua_metadata.brand_version_list.push_back(std::move(out_bv));
     }
   } else {
     new_ua_metadata.brand_version_list =
         std::move(default_ua_metadata.brand_version_list);
+  }
+
+  if (ua_metadata->HasFullVersionList()) {
+    for (const auto& bv : *ua_metadata->GetFullVersionList(nullptr)) {
+      blink::UserAgentBrandVersion out_bv;
+      if (!ValidateClientHintString(bv->GetBrand()))
+        return Response::InvalidParams("Invalid brand string");
+      out_bv.brand = bv->GetBrand();
+
+      if (!ValidateClientHintString(bv->GetVersion()))
+        return Response::InvalidParams("Invalid brand version string");
+      out_bv.version = bv->GetVersion();
+
+      new_ua_metadata.brand_full_version_list.push_back(std::move(out_bv));
+    }
+  } else {
+    new_ua_metadata.brand_full_version_list =
+        std::move(default_ua_metadata.brand_full_version_list);
   }
 
   if (ua_metadata->HasFullVersion()) {
@@ -483,10 +497,12 @@ Response EmulationHandler::SetFocusEmulationEnabled(bool enabled) {
     return Response::FallThrough();
   focus_emulation_enabled_ = enabled;
   if (enabled) {
-    GetWebContents()->IncrementCapturerCount(gfx::Size(),
-                                             /* stay_hidden */ false);
+    capture_handle_ =
+        GetWebContents()->IncrementCapturerCount(gfx::Size(),
+                                                 /*stay_hidden=*/false,
+                                                 /*stay_awake=*/false);
   } else {
-    GetWebContents()->DecrementCapturerCount(/* stay_hidden */ false);
+    capture_handle_.RunAndReset();
   }
   return Response::FallThrough();
 }
@@ -519,7 +535,7 @@ void EmulationHandler::UpdateTouchEventEmulationState() {
     return;
   // We only have a single TouchEmulator for all frames, so let the main frame's
   // EmulationHandler enable/disable it.
-  if (!host_->frame_tree_node()->IsMainFrame())
+  if (!host_->is_main_frame())
     return;
 
   if (touch_emulation_enabled_) {
@@ -540,7 +556,7 @@ void EmulationHandler::UpdateDeviceEmulationState() {
   if (!host_)
     return;
   // Device emulation only happens on the main frame.
-  if (!host_->frame_tree_node()->IsMainFrame())
+  if (!host_->is_main_frame())
     return;
 
   // TODO(eseckler): Once we change this to mojo, we should wait for an ack to
@@ -573,9 +589,12 @@ void EmulationHandler::UpdateDeviceEmulationStateForHost(
   }
 }
 
-void EmulationHandler::ApplyOverrides(net::HttpRequestHeaders* headers) {
-  if (!user_agent_.empty())
+void EmulationHandler::ApplyOverrides(net::HttpRequestHeaders* headers,
+                                      bool* user_agent_overridden) {
+  if (!user_agent_.empty()) {
     headers->SetHeader(net::HttpRequestHeaders::kUserAgent, user_agent_);
+  }
+  *user_agent_overridden = !user_agent_.empty();
   if (!accept_language_.empty()) {
     headers->SetHeader(
         net::HttpRequestHeaders::kAcceptLanguage,
@@ -584,7 +603,7 @@ void EmulationHandler::ApplyOverrides(net::HttpRequestHeaders* headers) {
 }
 
 bool EmulationHandler::ApplyUserAgentMetadataOverrides(
-    base::Optional<blink::UserAgentMetadata>* override_out) {
+    absl::optional<blink::UserAgentMetadata>* override_out) {
   // This is conditional on basic user agent override being on; this helps us
   // emulate a device not sending any UA client hints.
   if (user_agent_.empty())

@@ -16,15 +16,13 @@
 
 namespace ui {
 
-namespace {
-constexpr uint32_t kXdgVersionStable = 7;
-}
-
 TEST(WaylandConnectionTest, Ping) {
   base::test::SingleThreadTaskEnvironment task_environment(
       base::test::SingleThreadTaskEnvironment::MainThreadType::UI);
   wl::TestWaylandServerThread server;
-  ASSERT_TRUE(server.Start(kXdgVersionStable));
+  constexpr uint32_t expected_compositor_version = 4;
+  ASSERT_TRUE(server.Start({.shell_version = wl::ShellVersion::kStable,
+                            .compositor_version = wl::CompositorVersion::kV4}));
   WaylandConnection connection;
   ASSERT_TRUE(connection.Initialize());
   connection.event_source()->StartProcessingEvents();
@@ -32,7 +30,7 @@ TEST(WaylandConnectionTest, Ping) {
   base::RunLoop().RunUntilIdle();
   server.Pause();
 
-  EXPECT_EQ(wl::TestCompositor::kVersion,
+  EXPECT_EQ(expected_compositor_version,
             wl::get_version_of_object(connection.compositor()));
 
   xdg_wm_base_send_ping(server.xdg_shell()->resource(), 1234);

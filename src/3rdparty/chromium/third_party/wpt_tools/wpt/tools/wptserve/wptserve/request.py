@@ -2,17 +2,21 @@ import base64
 import cgi
 import tempfile
 
-from six import BytesIO, binary_type, iteritems, PY3
-from six.moves.http_cookies import BaseCookie
-from six.moves.urllib.parse import parse_qsl, urlsplit
+from http.cookies import BaseCookie
+from io import BytesIO
+from typing import Dict, List, TypeVar
+from urllib.parse import parse_qsl, urlsplit
 
 from . import stash
 from .utils import HTTPException, isomorphic_encode, isomorphic_decode
 
+KT = TypeVar('KT')
+VT = TypeVar('VT')
+
 missing = object()
 
 
-class Server(object):
+class Server:
     """Data about the server environment
 
     .. attribute:: config
@@ -39,7 +43,7 @@ class Server(object):
         return self._stash
 
 
-class InputFile(object):
+class InputFile:
     max_buffer_size = 1024*1024
 
     def __init__(self, rfile, length):
@@ -157,7 +161,7 @@ class InputFile(object):
         return self
 
 
-class Request(object):
+class Request:
     """Object representing a HTTP request.
 
     .. attribute:: doc_root
@@ -301,9 +305,8 @@ class Request(object):
         if self._GET is None:
             kwargs = {
                 "keep_blank_values": True,
+                "encoding": "iso-8859-1",
             }
-            if PY3:
-                kwargs["encoding"] = "iso-8859-1"
             params = parse_qsl(self.url_parts.query, **kwargs)
             self._GET = MultiDict()
             for key, value in params:
@@ -321,9 +324,8 @@ class Request(object):
                 "environ": {"REQUEST_METHOD": self.method},
                 "headers": self.raw_headers,
                 "keep_blank_values": True,
+                "encoding": "iso-8859-1",
             }
-            if PY3:
-                kwargs["encoding"] = "iso-8859-1"
             fs = cgi.FieldStorage(**kwargs)
             self._POST = MultiDict.from_field_storage(fs)
             self.raw_input.seek(pos)
@@ -336,7 +338,7 @@ class Request(object):
             cookie_headers = self.headers.get("cookie", b"")
             parser.load(cookie_headers)
             cookies = Cookies()
-            for key, value in iteritems(parser):
+            for key, value in parser.items():
                 cookies[isomorphic_encode(key)] = CookieValue(value)
             self._cookies = cookies
         return self._cookies
@@ -367,10 +369,10 @@ class H2Request(Request):
     def __init__(self, request_handler):
         self.h2_stream_id = request_handler.h2_stream_id
         self.frames = []
-        super(H2Request, self).__init__(request_handler)
+        super().__init__(request_handler)
 
 
-class RequestHeaders(dict):
+class RequestHeaders(Dict[bytes, List[bytes]]):
     """Read-only dictionary-like API for accessing request headers.
 
     Unlike BaseHTTPRequestHandler.headers, this class always returns all
@@ -446,7 +448,7 @@ class RequestHeaders(dict):
             yield self[item]
 
 
-class CookieValue(object):
+class CookieValue:
     """Representation of cookies.
 
     Note that cookies are considered read-only and the string value
@@ -518,7 +520,7 @@ class CookieValue(object):
         return self.value == other
 
 
-class MultiDict(dict):
+class MultiDict(Dict[KT, VT]):
     """Dictionary type that holds multiple values for each key"""
     # TODO: this should perhaps also order the keys
     def __init__(self):
@@ -609,7 +611,7 @@ class MultiDict(dict):
         return self
 
 
-class BinaryCookieParser(BaseCookie):
+class BinaryCookieParser(BaseCookie):  # type: ignore
     """A subclass of BaseCookie that returns values in binary strings
 
     This is not intended to store the cookies; use Cookies instead.
@@ -630,17 +632,15 @@ class BinaryCookieParser(BaseCookie):
         This overrides and calls BaseCookie.load. Unlike BaseCookie.load, it
         does not accept dictionaries.
         """
-        assert isinstance(rawdata, binary_type)
-        if PY3:
-            # BaseCookie.load expects a native string, which in Python 3 is text.
-            rawdata = isomorphic_decode(rawdata)
-        super(BinaryCookieParser, self).load(rawdata)
+        assert isinstance(rawdata, bytes)
+        # BaseCookie.load expects a native string
+        super().load(isomorphic_decode(rawdata))
 
 
-class Cookies(MultiDict):
+class Cookies(MultiDict[bytes, CookieValue]):
     """MultiDict specialised for Cookie values
 
-    Keys and values are binary strings.
+    Keys are binary strings and values are CookieValue objects.
     """
     def __init__(self):
         pass
@@ -649,7 +649,7 @@ class Cookies(MultiDict):
         return self.last(key)
 
 
-class Authentication(object):
+class Authentication:
     """Object for dealing with HTTP Authentication
 
     .. attribute:: username
@@ -675,7 +675,7 @@ class Authentication(object):
 
         if "authorization" in headers:
             header = headers.get("authorization")
-            assert isinstance(header, binary_type)
+            assert isinstance(header, bytes)
             auth_type, data = header.split(b" ", 1)
             if auth_type in auth_schemes:
                 self.username, self.password = auth_schemes[auth_type](data)
@@ -683,6 +683,6 @@ class Authentication(object):
                 raise HTTPException(400, "Unsupported authentication scheme %s" % auth_type)
 
     def decode_basic(self, data):
-        assert isinstance(data, binary_type)
+        assert isinstance(data, bytes)
         decoded_data = base64.b64decode(data)
         return decoded_data.split(b":", 1)

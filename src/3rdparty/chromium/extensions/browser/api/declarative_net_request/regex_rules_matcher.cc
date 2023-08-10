@@ -44,16 +44,22 @@ re2::StringPiece ToRE2StringPiece(const ::flatbuffers::String& str) {
 // Helper to check if the |rule| metadata matches the given request |params|.
 bool DoesRuleMetadataMatchRequest(const flat_rule::UrlRule& rule,
                                   const RequestParams& params) {
-  // Compares |element_type| and |is_third_party|.
-  if (!url_pattern_index::DoesRuleFlagsMatch(rule, params.element_type,
-                                             flat_rule::ActivationType_NONE,
-                                             params.is_third_party)) {
+  // Evaluates `element_type`, `method`, `is_third_party` and
+  // `embedder_conditions_matcher`.
+  if (!url_pattern_index::DoesRuleFlagsMatch(
+          rule, params.element_type, flat_rule::ActivationType_NONE,
+          params.method, params.is_third_party,
+          params.embedder_conditions_matcher)) {
     return false;
   }
 
-  // Compares included and excluded domains.
-  return url_pattern_index::DoesOriginMatchDomainList(
-      params.first_party_origin, rule, false /* disable_generic_rules */);
+  // Compares included and excluded request domains.
+  if (!url_pattern_index::DoesURLMatchRequestDomainList(*params.url, rule))
+    return false;
+
+  // Compares included and excluded initiator domains.
+  return url_pattern_index::DoesOriginMatchInitiatorDomainList(
+      params.first_party_origin, rule);
 }
 
 bool IsBeforeRequestAction(flat::ActionType action_type) {
@@ -98,7 +104,7 @@ RegexRulesMatcher::~RegexRulesMatcher() = default;
 
 std::vector<RequestAction> RegexRulesMatcher::GetModifyHeadersActions(
     const RequestParams& params,
-    base::Optional<uint64_t> min_priority) const {
+    absl::optional<uint64_t> min_priority) const {
   const std::vector<RegexRuleInfo>& potential_matches =
       GetPotentialMatches(params);
 
@@ -119,7 +125,7 @@ std::vector<RequestAction> RegexRulesMatcher::GetModifyHeadersActions(
   return GetModifyHeadersActionsFromMetadata(params, rules, *metadata_list_);
 }
 
-base::Optional<RequestAction> RegexRulesMatcher::GetAllowAllRequestsAction(
+absl::optional<RequestAction> RegexRulesMatcher::GetAllowAllRequestsAction(
     const RequestParams& params) const {
   const std::vector<RegexRuleInfo>& potential_matches =
       GetPotentialMatches(params);
@@ -131,12 +137,12 @@ base::Optional<RequestAction> RegexRulesMatcher::GetAllowAllRequestsAction(
                                                            *info.regex);
                            });
   if (info == potential_matches.end())
-    return base::nullopt;
+    return absl::nullopt;
 
   return CreateAllowAllRequestsAction(params, *info->regex_rule->url_rule());
 }
 
-base::Optional<RequestAction>
+absl::optional<RequestAction>
 RegexRulesMatcher::GetBeforeRequestActionIgnoringAncestors(
     const RequestParams& params) const {
   const std::vector<RegexRuleInfo>& potential_matches =
@@ -148,7 +154,7 @@ RegexRulesMatcher::GetBeforeRequestActionIgnoringAncestors(
                re2::RE2::PartialMatch(params.url->spec(), *info.regex);
       });
   if (info == potential_matches.end())
-    return base::nullopt;
+    return absl::nullopt;
 
   const flat_rule::UrlRule& rule = *info->regex_rule->url_rule();
   switch (info->regex_rule->action_type()) {
@@ -174,7 +180,7 @@ RegexRulesMatcher::GetBeforeRequestActionIgnoringAncestors(
       break;
   }
 
-  return base::nullopt;
+  return absl::nullopt;
 }
 
 void RegexRulesMatcher::InitializeMatcher() {
@@ -300,7 +306,7 @@ const std::vector<RegexRuleInfo>& RegexRulesMatcher::GetPotentialMatches(
   return result.first->second;
 }
 
-base::Optional<RequestAction>
+absl::optional<RequestAction>
 RegexRulesMatcher::CreateRegexSubstitutionRedirectAction(
     const RequestParams& params,
     const RegexRuleInfo& info) const {
@@ -323,7 +329,7 @@ RegexRulesMatcher::CreateRegexSubstitutionRedirectAction(
         info.regex->pattern().c_str(),
         info.regex_rule->regex_substitution()->c_str(),
         params.url->spec().c_str());
-    return base::nullopt;
+    return absl::nullopt;
   }
 
   GURL redirect_url(redirect_str);
@@ -331,7 +337,7 @@ RegexRulesMatcher::CreateRegexSubstitutionRedirectAction(
   // Redirects to JavaScript urls are not allowed.
   // TODO(crbug.com/1033780): this results in counterintuitive behavior.
   if (redirect_url.SchemeIs(url::kJavaScriptScheme))
-    return base::nullopt;
+    return absl::nullopt;
 
   return CreateRedirectAction(params, *info.regex_rule->url_rule(),
                               std::move(redirect_url));

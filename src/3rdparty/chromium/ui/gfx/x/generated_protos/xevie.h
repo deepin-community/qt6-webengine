@@ -51,7 +51,7 @@
 #include "base/files/scoped_file.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/memory/scoped_refptr.h"
-#include "base/optional.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/gfx/x/error.h"
 #include "ui/gfx/x/ref_counted_fd.h"
 #include "xproto.h"
@@ -85,7 +85,9 @@ class COMPONENT_EXPORT(X11) Xevie {
     Modified = 1,
   };
 
-  struct Event {};
+  struct Event {
+    bool operator==(const Event& other) const { return true; }
+  };
 
   struct QueryVersionRequest {
     uint16_t client_major_version{};

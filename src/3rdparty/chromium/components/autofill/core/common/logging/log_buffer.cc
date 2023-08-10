@@ -65,8 +65,8 @@ bool TryCoalesceString(std::vector<base::Value>* buffer,
   auto* children = parent.FindListKey("children");
   if (!children)
     return false;
-  DCHECK(!children->GetList().empty());
-  auto& last_child = children->GetList().back();
+  DCHECK(!children->GetListDeprecated().empty());
+  auto& last_child = children->GetListDeprecated().back();
   if (!IsTextNode(last_child))
     return false;
   std::string* old_text = last_child.FindStringKey("value");
@@ -87,6 +87,7 @@ LogBuffer::LogBuffer() {
 }
 
 LogBuffer::LogBuffer(LogBuffer&& other) noexcept = default;
+LogBuffer& LogBuffer::operator=(LogBuffer&& other) = default;
 LogBuffer::~LogBuffer() = default;
 
 base::Value LogBuffer::RetrieveResult() {
@@ -98,13 +99,13 @@ base::Value LogBuffer::RetrieveResult() {
     *this << CTag{};
 
   auto* children = buffer_[0].FindListKey("children");
-  if (!children || children->GetList().empty())
+  if (!children || children->GetListDeprecated().empty())
     return base::Value();
 
   // If the fragment has a single child, remove it from |children| and return
   // that directly.
-  if (children->GetList().size() == 1) {
-    return std::move(children->TakeList().back());
+  if (children->GetListDeprecated().size() == 1) {
+    return std::move(std::move(*children).TakeListDeprecated().back());
   }
 
   return std::exchange(buffer_.back(), CreateEmptyFragment());
@@ -196,7 +197,7 @@ LogBuffer& operator<<(LogBuffer& buf, LogBuffer&& buffer) {
     auto* children = node_to_add.FindListKey("children");
     if (!children)
       return buf;
-    for (auto& child : children->GetList())
+    for (auto& child : children->GetListDeprecated())
       AppendChildToLastNode(&buf.buffer_, std::exchange(child, base::Value()));
     return buf;
   }
@@ -209,7 +210,7 @@ LogBuffer& operator<<(LogBuffer& buf, const GURL& url) {
     return buf;
   if (!url.is_valid())
     return buf << "Invalid URL";
-  return buf << url.GetOrigin().spec();
+  return buf << url.DeprecatedGetOriginAsURL().spec();
 }
 
 LogTableRowBuffer::LogTableRowBuffer(LogBuffer* parent) : parent_(parent) {
@@ -238,10 +239,9 @@ LogTableRowBuffer&& operator<<(LogTableRowBuffer&& buf, Attrib&& attrib) {
 
 namespace {
 // Highlights the first |needle| in |haystack| by wrapping it in <b> tags.
-template <typename STRING_TYPE>
-LogBuffer HighlightValueInternal(base::BasicStringPiece<STRING_TYPE> haystack,
-                                 base::BasicStringPiece<STRING_TYPE> needle) {
-  using StringPieceT = base::BasicStringPiece<STRING_TYPE>;
+template <typename T, typename CharT = typename T::value_type>
+LogBuffer HighlightValueInternal(T haystack, T needle) {
+  using StringPieceT = base::BasicStringPiece<CharT>;
   LogBuffer buffer;
   size_t pos = haystack.find(needle);
   if (pos == StringPieceT::npos || needle.empty()) {

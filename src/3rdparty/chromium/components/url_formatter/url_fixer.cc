@@ -25,7 +25,7 @@
 #include "url/url_file.h"
 #include "url/url_util.h"
 
-#if defined(OS_POSIX) || defined(OS_FUCHSIA)
+#if BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
 #include "base/path_service.h"
 #endif
 
@@ -56,9 +56,9 @@ url::Component UTF8ComponentToUTF16Component(
       text_utf8.substr(0, component_utf8.begin);
   std::string component_string =
       text_utf8.substr(component_utf8.begin, component_utf8.len);
-  base::string16 before_component_string_16 =
+  std::u16string before_component_string_16 =
       base::UTF8ToUTF16(before_component_string);
-  base::string16 component_string_16 = base::UTF8ToUTF16(component_string);
+  std::u16string component_string_16 = base::UTF8ToUTF16(component_string);
   url::Component component_16(before_component_string_16.length(),
                               component_string_16.length());
   return component_16;
@@ -84,10 +84,10 @@ void UTF8PartsToUTF16Parts(const std::string& text_utf8,
   parts->ref = UTF8ComponentToUTF16Component(text_utf8, parts_utf8.ref);
 }
 
-base::TrimPositions TrimWhitespace(const base::string16& input,
+base::TrimPositions TrimWhitespace(const std::u16string& input,
                                    base::TrimPositions positions,
                                    std::string* output) {
-  base::string16 output16;
+  std::u16string output16;
   base::TrimPositions result =
       base::TrimWhitespace(input, positions, &output16);
   *output = base::UTF16ToUTF8(output16);
@@ -100,14 +100,14 @@ base::TrimPositions TrimWhitespaceUTF8(const std::string& input,
   // This implementation is not so fast since it converts the text encoding
   // twice. Please feel free to file a bug if this function hurts the
   // performance of Chrome.
-  DCHECK(base::IsStringUTF8(input));
+  DCHECK(base::IsStringUTF8AllowingNoncharacters(input)) << input;
   return TrimWhitespace(base::UTF8ToUTF16(input), positions, output);
 }
 
 // does some basic fixes for input that we want to test for file-ness
 void PrepareStringForFileOps(const base::FilePath& text, std::string* output) {
   TrimWhitespace(text.AsUTF16Unsafe(), base::TRIM_ALL, output);
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   base::ranges::replace(*output, '/', '\\');
 #endif
 }
@@ -128,7 +128,7 @@ bool ValidPathForFile(const std::string& text, base::FilePath* full_path) {
   return true;
 }
 
-#if defined(OS_POSIX) || defined(OS_FUCHSIA)
+#if BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
 // Given a path that starts with ~, return a path that starts with an
 // expanded-out /user/foobar directory.
 std::string FixupHomedir(const std::string& text) {
@@ -157,7 +157,7 @@ std::string FixupHomedir(const std::string& text) {
 // user foobar's home directory.  Officially, we should use getpwent(),
 // but that is a nasty blocking call.
 
-#if defined(OS_APPLE)
+#if BUILDFLAG(IS_APPLE)
   static const char kHome[] = "/Users/";
 #else
   static const char kHome[] = "/home/";
@@ -175,14 +175,14 @@ std::string FixupPath(const std::string& text) {
   DCHECK(!text.empty());
 
   std::string filename;
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   base::FilePath input_path(base::UTF8ToWide(text));
   PrepareStringForFileOps(input_path, &filename);
 
   // Fixup Windows-style drive letters, where "C:" gets rewritten to "C|".
   if (filename.length() > 1 && filename[1] == '|')
     filename[1] = ':';
-#elif defined(OS_POSIX) || defined(OS_FUCHSIA)
+#elif BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
   base::FilePath input_path(text);
   PrepareStringForFileOps(input_path, &filename);
   if (filename.length() > 0 && filename[0] == '~')
@@ -425,12 +425,12 @@ std::string SegmentURLInternal(std::string* text, url::Parsed* parts) {
     return std::string();  // Nothing to segment.
 
   std::string scheme;
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   int trimmed_length = static_cast<int>(trimmed.length());
   if (url::DoesBeginWindowsDriveSpec(trimmed.data(), 0, trimmed_length) ||
       url::DoesBeginUNCPath(trimmed.data(), 0, trimmed_length, true))
     scheme = url::kFileScheme;
-#elif defined(OS_POSIX) || defined(OS_FUCHSIA)
+#elif BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
   if (base::FilePath::IsSeparator(trimmed.data()[0]) ||
       trimmed.data()[0] == '~')
     scheme = url::kFileScheme;
@@ -531,7 +531,7 @@ std::string SegmentURL(const std::string& text, url::Parsed* parts) {
   return SegmentURLInternal(&mutable_text, parts);
 }
 
-base::string16 SegmentURL(const base::string16& text, url::Parsed* parts) {
+std::u16string SegmentURL(const std::u16string& text, url::Parsed* parts) {
   std::string text_utf8 = base::UTF16ToUTF8(text);
   url::Parsed parts_utf8;
   std::string scheme_utf8 = SegmentURL(text_utf8, &parts_utf8);
@@ -673,9 +673,9 @@ GURL FixupRelativeFile(const base::FilePath& base_dir,
   }
 
 // Fall back on regular fixup for this input.
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   std::string text_utf8 = base::WideToUTF8(text.value());
-#elif defined(OS_POSIX) || defined(OS_FUCHSIA)
+#elif BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
   std::string text_utf8 = text.value();
 #endif
   return FixupURL(text_utf8, std::string());

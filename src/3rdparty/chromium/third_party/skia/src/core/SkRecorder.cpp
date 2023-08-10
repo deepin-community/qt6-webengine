@@ -11,8 +11,10 @@
 #include "include/core/SkPicture.h"
 #include "include/core/SkSurface.h"
 #include "include/private/SkTo.h"
+#include "include/private/chromium/GrSlug.h"
 #include "src/core/SkBigPicture.h"
 #include "src/core/SkCanvasPriv.h"
+#include "src/core/SkGlyphRun.h"
 #include "src/utils/SkPatchUtils.h"
 
 #include <memory>
@@ -233,6 +235,21 @@ void SkRecorder::onDrawTextBlob(const SkTextBlob* blob, SkScalar x, SkScalar y,
     this->append<SkRecords::DrawTextBlob>(paint, sk_ref_sp(blob), x, y);
 }
 
+#if SK_SUPPORT_GPU
+void SkRecorder::onDrawSlug(const GrSlug* slug) {
+    this->append<SkRecords::DrawSlug>(sk_ref_sp(slug));
+}
+#endif
+
+void SkRecorder::onDrawGlyphRunList(const SkGlyphRunList& glyphRunList, const SkPaint& paint) {
+    sk_sp<SkTextBlob> blob = sk_ref_sp(glyphRunList.blob());
+    if (glyphRunList.blob() == nullptr) {
+        blob = glyphRunList.makeBlob();
+    }
+
+    this->onDrawTextBlob(blob.get(), glyphRunList.origin().x(), glyphRunList.origin().y(), paint);
+}
+
 void SkRecorder::onDrawPicture(const SkPicture* pic, const SkMatrix* matrix, const SkPaint* paint) {
     fApproxBytesUsedBySubPictures += pic->approximateBytesUsed();
     this->append<SkRecords::DrawPicture>(this->copy(paint), sk_ref_sp(pic), matrix ? *matrix : SkMatrix::I());
@@ -313,7 +330,8 @@ SkCanvas::SaveLayerStrategy SkRecorder::getSaveLayerStrategy(const SaveLayerRec&
     this->append<SkRecords::SaveLayer>(this->copy(rec.fBounds)
                     , this->copy(rec.fPaint)
                     , sk_ref_sp(rec.fBackdrop)
-                    , rec.fSaveLayerFlags);
+                    , rec.fSaveLayerFlags
+                    , SkCanvasPriv::GetBackdropScaleFactor(rec));
     return SkCanvas::kNoLayer_SaveLayerStrategy;
 }
 
@@ -324,10 +342,6 @@ bool SkRecorder::onDoSaveBehind(const SkRect* subset) {
 
 void SkRecorder::didRestore() {
     this->append<SkRecords::Restore>(this->getTotalMatrix());
-}
-
-void SkRecorder::onMarkCTM(const char* name) {
-    this->append<SkRecords::MarkCTM>(SkString(name));
 }
 
 void SkRecorder::didConcat44(const SkM44& m) {
@@ -372,6 +386,11 @@ void SkRecorder::onClipShader(sk_sp<SkShader> cs, SkClipOp op) {
 void SkRecorder::onClipRegion(const SkRegion& deviceRgn, SkClipOp op) {
     INHERITED(onClipRegion, deviceRgn, op);
     this->append<SkRecords::ClipRegion>(deviceRgn, op);
+}
+
+void SkRecorder::onResetClip() {
+    INHERITED(onResetClip);
+    this->append<SkRecords::ResetClip>();
 }
 
 sk_sp<SkSurface> SkRecorder::onNewSurface(const SkImageInfo&, const SkSurfaceProps&) {

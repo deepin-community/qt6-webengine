@@ -15,6 +15,7 @@ include_rules = [
     "+base/metrics/statistics_recorder.h",
     "+base/strings/string_number_conversions.h",
     "+base/task/single_thread_task_executor.h",
+    "+base/task/thread_pool/thread_pool_instance.h",
     "+base/test/test_io_thread.h",
     "+cc",
     "+mojo/core/embedder",
@@ -56,6 +57,9 @@ specific_include_rules = {
     ],
     "empty_web_media_player\.cc": [
         "+media/base/video_frame.h",
+    ],
+    "testing_platform_support\.cc": [
+        "+gin/public/v8_platform.h",
     ],
     "testing_platform_support_with_mock_scheduler\.cc": [
         "+base/task/sequence_manager/test/sequence_manager_for_test.h",

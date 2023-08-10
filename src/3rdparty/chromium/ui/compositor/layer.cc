@@ -15,7 +15,8 @@
 #include "base/command_line.h"
 #include "base/json/json_writer.h"
 #include "base/memory/ptr_util.h"
-#include "base/numerics/ranges.h"
+#include "base/memory/raw_ptr.h"
+#include "base/observer_list.h"
 #include "base/trace_event/trace_event.h"
 #include "cc/layers/mirror_layer.h"
 #include "cc/layers/nine_patch_layer.h"
@@ -28,8 +29,10 @@
 #include "cc/trees/layer_tree_settings.h"
 #include "components/viz/common/frame_sinks/copy_output_request.h"
 #include "components/viz/common/resources/transferable_resource.h"
+#include "ui/compositor/compositor.h"
 #include "ui/compositor/compositor_switches.h"
 #include "ui/compositor/layer_animator.h"
+#include "ui/compositor/layer_delegate.h"
 #include "ui/compositor/layer_observer.h"
 #include "ui/compositor/paint_context.h"
 #include "ui/gfx/animation/animation.h"
@@ -38,7 +41,10 @@
 #include "ui/gfx/geometry/point3_f.h"
 #include "ui/gfx/geometry/point_conversions.h"
 #include "ui/gfx/geometry/rect_conversions.h"
+#include "ui/gfx/geometry/rounded_corners_f.h"
 #include "ui/gfx/geometry/size_conversions.h"
+#include "ui/gfx/geometry/transform.h"
+#include "ui/gfx/image/image_skia_rep.h"
 #include "ui/gfx/interpolated_transform.h"
 
 namespace ui {
@@ -75,6 +81,9 @@ class Layer::LayerMirror : public LayerDelegate, LayerObserver {
     dest->set_delegate(this);
   }
 
+  LayerMirror(const LayerMirror&) = delete;
+  LayerMirror& operator=(const LayerMirror&) = delete;
+
   ~LayerMirror() override {
     dest_->RemoveObserver(this);
     dest_->set_delegate(nullptr);
@@ -97,10 +106,8 @@ class Layer::LayerMirror : public LayerDelegate, LayerObserver {
   }
 
  private:
-  Layer* const source_;
-  Layer* const dest_;
-
-  DISALLOW_COPY_AND_ASSIGN(LayerMirror);
+  const raw_ptr<Layer> source_;
+  const raw_ptr<Layer> dest_;
 };
 
 // Manages the subpixel offset data for a given set of parameters (device
@@ -108,6 +115,9 @@ class Layer::LayerMirror : public LayerDelegate, LayerObserver {
 class Layer::SubpixelPositionOffsetCache {
  public:
   SubpixelPositionOffsetCache() = default;
+  SubpixelPositionOffsetCache(const SubpixelPositionOffsetCache&) = delete;
+  SubpixelPositionOffsetCache& operator=(const SubpixelPositionOffsetCache&) =
+      delete;
   ~SubpixelPositionOffsetCache() = default;
 
   gfx::Vector2dF GetSubpixelOffset(float device_scale_factor,
@@ -173,8 +183,6 @@ class Layer::SubpixelPositionOffsetCache {
 
   // True if the subpixel offset was computed and set by an external source.
   bool has_explicit_subpixel_offset_ = false;
-
-  DISALLOW_COPY_AND_ASSIGN(SubpixelPositionOffsetCache);
 };
 
 Layer::Layer(LayerType type)
@@ -213,6 +221,9 @@ Layer::~Layer() {
 
   // Destroying the animator may cause observers to use the layer. Destroy the
   // animator first so that the layer is still around.
+#if defined(ADDRESS_SANITIZER)
+  destroyed_ = true;
+#endif
   SetAnimator(nullptr);
   if (compositor_)
     compositor_->SetRootLayer(nullptr);
@@ -229,7 +240,7 @@ Layer::~Layer() {
     content_layer_->ClearClient();
   cc_layer_->RemoveFromParent();
   if (transfer_release_callback_)
-    transfer_release_callback_->Run(gpu::SyncToken(), false);
+    std::move(transfer_release_callback_).Run(gpu::SyncToken(), false);
 
   ResetSubtreeReflectedLayer();
 }
@@ -278,6 +289,7 @@ std::unique_ptr<Layer> Layer::Clone() const {
   clone->SetFillsBoundsOpaquely(fills_bounds_opaquely_);
   clone->SetFillsBoundsCompletely(fills_bounds_completely_);
   clone->SetRoundedCornerRadius(rounded_corner_radii());
+  clone->SetGradientMask(gradient_mask());
   clone->SetIsFastRoundedCorner(is_fast_rounded_corner());
   clone->SetName(name_);
 
@@ -296,8 +308,7 @@ std::unique_ptr<Layer> Layer::Mirror() {
     // freed up until the original layer releases it.
     mirror->SetTransferableResource(
         transfer_resource_,
-        viz::SingleReleaseCallback::Create(base::BindOnce(
-            [](const gpu::SyncToken& sync_token, bool is_lost) {})),
+        base::BindOnce([](const gpu::SyncToken& sync_token, bool is_lost) {}),
         frame_size_in_dip_);
   }
 
@@ -312,7 +323,7 @@ void Layer::SetShowReflectedLayerSubtree(Layer* subtree_reflected_layer) {
     return;
 
   scoped_refptr<cc::MirrorLayer> new_layer =
-      cc::MirrorLayer::Create(subtree_reflected_layer->cc_layer_);
+      cc::MirrorLayer::Create(subtree_reflected_layer->cc_layer_.get());
   if (!SwitchToLayer(new_layer))
     return;
 
@@ -348,7 +359,7 @@ void Layer::SetCompositor(Compositor* compositor,
   compositor_ = compositor;
   OnDeviceScaleFactorChanged(compositor->device_scale_factor());
 
-  root_layer->AddChild(cc_layer_);
+  root_layer->AddChild(cc_layer_.get());
   SetCompositorForAnimatorsInTree(compositor);
 }
 
@@ -374,10 +385,10 @@ void Layer::Add(Layer* child) {
     child->parent_->Remove(child);
   child->parent_ = this;
   children_.push_back(child);
-  cc_layer_->AddChild(child->cc_layer_);
+  cc_layer_->AddChild(child->cc_layer_.get());
   child->OnDeviceScaleFactorChanged(device_scale_factor_);
   Compositor* compositor = GetCompositor();
-  if (compositor)
+  if (compositor && compositor->animations_are_enabled())
     child->SetCompositorForAnimatorsInTree(compositor);
 }
 
@@ -389,7 +400,7 @@ void Layer::Remove(Layer* child) {
   // Stop (and complete) an ongoing animation to update the bounds immediately.
   LayerAnimator* child_animator = child->animator_.get();
   if (child_animator)
-    child_animator->StopAnimatingProperty(ui::LayerAnimationElement::BOUNDS);
+    child_animator->StopAnimatingProperty(LayerAnimationElement::BOUNDS);
 
   // Do not proceed if |this| or |child| is released by an animation observer
   // of |child|'s bounds animation.
@@ -397,7 +408,7 @@ void Layer::Remove(Layer* child) {
     return;
 
   Compositor* compositor = GetCompositor();
-  if (compositor)
+  if (compositor && compositor->animations_are_enabled())
     child->ResetCompositorForAnimatorsInTree(compositor);
 
   auto i = std::find(children_.begin(), children_.end(), child);
@@ -436,10 +447,14 @@ bool Layer::Contains(const Layer* other) const {
 }
 
 void Layer::SetAnimator(LayerAnimator* animator) {
+#if defined(ADDRESS_SANITIZER)
+  CHECK(!destroyed_ || !animator);
+#endif
   Compositor* compositor = GetCompositor();
 
   if (animator_) {
-    if (compositor && !layer_mask_back_link())
+    if (compositor && compositor->animations_are_enabled() &&
+        !layer_mask_back_link())
       animator_->DetachLayerAndTimeline(compositor);
     animator_->SetDelegate(nullptr);
   }
@@ -448,7 +463,8 @@ void Layer::SetAnimator(LayerAnimator* animator) {
 
   if (animator_) {
     animator_->SetDelegate(this);
-    if (compositor && !layer_mask_back_link())
+    if (compositor && compositor->animations_are_enabled() &&
+        !layer_mask_back_link())
       animator_->AttachLayerAndTimeline(compositor);
   }
 }
@@ -702,6 +718,10 @@ void Layer::SetRoundedCornerRadius(const gfx::RoundedCornersF& corner_radii) {
   GetAnimator()->SetRoundedCorners(corner_radii);
 }
 
+void Layer::SetGradientMask(const gfx::LinearGradient& gradient_mask) {
+  GetAnimator()->SetGradientMask(gradient_mask);
+}
+
 void Layer::SetIsFastRoundedCorner(bool enable) {
   cc_layer_->SetIsFastRoundedCorner(enable);
   ScheduleDraw();
@@ -710,9 +730,22 @@ void Layer::SetIsFastRoundedCorner(bool enable) {
     mirror->dest()->SetIsFastRoundedCorner(enable);
 }
 
+bool Layer::GetTargetTransformRelativeTo(const Layer* ancestor,
+                                         gfx::Transform* transform) const {
+  return GetTransformRelativeToImpl(ancestor, /*is_target_transform=*/true,
+                                    transform);
+}
+
+bool Layer::GetTransformRelativeTo(const Layer* ancestor,
+                                   gfx::Transform* transform) const {
+  return GetTransformRelativeToImpl(ancestor, /*is_target_transform=*/false,
+                                    transform);
+}
+
 // static
 void Layer::ConvertPointToLayer(const Layer* source,
                                 const Layer* target,
+                                bool use_target_transform,
                                 gfx::PointF* point) {
   if (source == target)
     return;
@@ -721,25 +754,9 @@ void Layer::ConvertPointToLayer(const Layer* source,
   CHECK_EQ(root_layer, GetRoot(target));
 
   if (source != root_layer)
-    source->ConvertPointForAncestor(root_layer, point);
+    source->ConvertPointForAncestor(root_layer, use_target_transform, point);
   if (target != root_layer)
-    target->ConvertPointFromAncestor(root_layer, point);
-}
-
-bool Layer::GetTargetTransformRelativeTo(const Layer* ancestor,
-                                         gfx::Transform* transform) const {
-  const Layer* p = this;
-  for (; p && p != ancestor; p = p->parent()) {
-    gfx::Transform translation;
-    translation.Translate(static_cast<float>(p->bounds().x()),
-                          static_cast<float>(p->bounds().y()));
-    // Use target transform so that result will be correct once animation is
-    // finished.
-    if (!p->GetTargetTransform().IsIdentity())
-      transform->ConcatTransform(p->GetTargetTransform());
-    transform->ConcatTransform(translation);
-  }
-  return p == ancestor;
+    target->ConvertPointFromAncestor(root_layer, use_target_transform, point);
 }
 
 void Layer::SetFillsBoundsOpaquely(bool fills_bounds_opaquely) {
@@ -779,7 +796,7 @@ bool Layer::SwitchToLayer(scoped_refptr<cc::Layer> new_layer) {
 
   cc_layer_->RemoveAllChildren();
   if (cc_layer_->parent()) {
-    cc_layer_->parent()->ReplaceChild(cc_layer_, new_layer);
+    cc_layer_->mutable_parent()->ReplaceChild(cc_layer_, new_layer);
   }
   cc_layer_->ClearDebugInfo();
 
@@ -795,6 +812,7 @@ bool Layer::SwitchToLayer(scoped_refptr<cc::Layer> new_layer) {
   new_layer->SetRoundedCorner(cc_layer_->corner_radii());
   new_layer->SetIsFastRoundedCorner(cc_layer_->is_fast_rounded_corner());
   new_layer->SetMasksToBounds(cc_layer_->masks_to_bounds());
+  new_layer->SetGradientMask(cc_layer_->gradient_mask());
 
   cc_layer_ = new_layer.get();
   if (content_layer_) {
@@ -808,7 +826,7 @@ bool Layer::SwitchToLayer(scoped_refptr<cc::Layer> new_layer) {
 
   for (auto* child : children_) {
     DCHECK(child->cc_layer_);
-    cc_layer_->AddChild(child->cc_layer_);
+    cc_layer_->AddChild(child->cc_layer_.get());
   }
   cc_layer_->SetTransformOrigin(gfx::Point3F());
   cc_layer_->SetContentsOpaque(fills_bounds_opaquely_);
@@ -834,7 +852,7 @@ bool Layer::SwitchCCLayerForTest() {
 }
 
 // Note: The code that sets this flag would be responsible to unset it on that
-// ui::Layer. We do not want to clone this flag to a cloned layer by accident,
+// Layer. We do not want to clone this flag to a cloned layer by accident,
 // which could be a supprise. But we want to preserve it after switching to a
 // new cc::Layer. There could be a whole subtree and the root changed, but does
 // not mean we want to treat the cache all different.
@@ -877,7 +895,7 @@ void Layer::RemoveDeferredPaintRequest() {
 }
 
 // Note: The code that sets this flag would be responsible to unset it on that
-// ui::Layer. We do not want to clone this flag to a cloned layer by accident,
+// Layer. We do not want to clone this flag to a cloned layer by accident,
 // which could be a supprise. But we want to preserve it after switching to a
 // new cc::Layer. There could be a whole subtree and the root changed, but does
 // not mean we want to treat the trilinear filtering all different.
@@ -921,10 +939,9 @@ bool Layer::ContainsMirrorForTest(Layer* mirror) const {
   return it != mirrors_.end();
 }
 
-void Layer::SetTransferableResource(
-    const viz::TransferableResource& resource,
-    std::unique_ptr<viz::SingleReleaseCallback> release_callback,
-    gfx::Size texture_size_in_dip) {
+void Layer::SetTransferableResource(const viz::TransferableResource& resource,
+                                    viz::ReleaseCallback release_callback,
+                                    gfx::Size texture_size_in_dip) {
   DCHECK(type_ == LAYER_TEXTURED || type_ == LAYER_SOLID_COLOR);
   DCHECK(!resource.mailbox_holder.mailbox.IsZero());
   DCHECK(release_callback);
@@ -942,7 +959,7 @@ void Layer::SetTransferableResource(
     frame_size_in_dip_ = gfx::Size();
   }
   if (transfer_release_callback_)
-    transfer_release_callback_->Run(gpu::SyncToken(), false);
+    std::move(transfer_release_callback_).Run(gpu::SyncToken(), false);
   transfer_release_callback_ = std::move(release_callback);
   transfer_resource_ = resource;
   SetTextureSize(texture_size_in_dip);
@@ -952,8 +969,7 @@ void Layer::SetTransferableResource(
     // should be able to release the texture resource.
     mirror->dest()->SetTransferableResource(
         transfer_resource_,
-        viz::SingleReleaseCallback::Create(base::BindOnce(
-            [](const gpu::SyncToken& sync_token, bool is_lost) {})),
+        base::BindOnce([](const gpu::SyncToken& sync_token, bool is_lost) {}),
         frame_size_in_dip_);
   }
 }
@@ -1062,8 +1078,7 @@ void Layer::SetShowSolidColorContent() {
 
   transfer_resource_ = viz::TransferableResource();
   if (transfer_release_callback_) {
-    transfer_release_callback_->Run(gpu::SyncToken(), false);
-    transfer_release_callback_.reset();
+    std::move(transfer_release_callback_).Run(gpu::SyncToken(), false);
   }
   RecomputeDrawsContentAndUVRect();
 
@@ -1188,7 +1203,7 @@ void Layer::StackChildrenAtBottom(
     DCHECK_EQ(leading_child->parent(), this);
     new_children_order.emplace_back(leading_child);
     new_cc_children_order.emplace_back(
-        scoped_refptr<cc::Layer>(leading_child->cc_layer_));
+        scoped_refptr<cc::Layer>(leading_child->cc_layer_.get()));
   }
 
   base::flat_set<Layer*> reordered_children(new_children_order);
@@ -1272,8 +1287,8 @@ void Layer::OnDeviceScaleFactorChanged(float device_scale_factor) {
 }
 
 void Layer::SetDidScrollCallback(
-    base::RepeatingCallback<void(const gfx::ScrollOffset&,
-                                 const cc::ElementId&)> callback) {
+    base::RepeatingCallback<void(const gfx::PointF&, const cc::ElementId&)>
+        callback) {
   cc_layer_->SetDidScrollCallback(std::move(callback));
 }
 
@@ -1282,16 +1297,16 @@ void Layer::SetScrollable(const gfx::Size& container_bounds) {
   cc_layer_->SetUserScrollable(true, true);
 }
 
-gfx::ScrollOffset Layer::CurrentScrollOffset() const {
+gfx::PointF Layer::CurrentScrollOffset() const {
   const Compositor* compositor = GetCompositor();
-  gfx::ScrollOffset offset;
+  gfx::PointF offset;
   if (compositor &&
       compositor->GetScrollOffsetForLayer(cc_layer_->element_id(), &offset))
     return offset;
   return cc_layer_->scroll_offset();
 }
 
-void Layer::SetScrollOffset(const gfx::ScrollOffset& offset) {
+void Layer::SetScrollOffset(const gfx::PointF& offset) {
   Compositor* compositor = GetCompositor();
   bool scrolled_on_impl_side =
       compositor && compositor->ScrollLayerTo(cc_layer_->element_id(), offset);
@@ -1299,8 +1314,9 @@ void Layer::SetScrollOffset(const gfx::ScrollOffset& offset) {
   if (!scrolled_on_impl_side)
     cc_layer_->SetScrollOffset(offset);
 
-  DCHECK_EQ(offset.x(), CurrentScrollOffset().x());
-  DCHECK_EQ(offset.y(), CurrentScrollOffset().y());
+  // TODO(crbug.com/1219662): If this layer was also resized since the last
+  // commit synchronizing |cc_layer_| with the cc::LayerImpl backing
+  // |compositor|, the scroll might not be completed.
 }
 
 void Layer::RequestCopyOfOutput(
@@ -1336,7 +1352,7 @@ bool Layer::FillsBoundsCompletely() const { return fills_bounds_completely_; }
 bool Layer::PrepareTransferableResource(
     cc::SharedBitmapIdRegistrar* bitmap_registar,
     viz::TransferableResource* resource,
-    std::unique_ptr<viz::SingleReleaseCallback>* release_callback) {
+    viz::ReleaseCallback* release_callback) {
   if (!transfer_release_callback_)
     return false;
   *resource = transfer_resource_;
@@ -1372,14 +1388,16 @@ void Layer::StackRelativeTo(Layer* child, Layer* other, bool above) {
   children_.erase(children_.begin() + child_i);
   children_.insert(children_.begin() + dest_i, child);
 
-  child->cc_layer_->RemoveFromParent();
-  cc_layer_->InsertChild(child->cc_layer_, dest_i);
+  cc_layer_->InsertChild(child->cc_layer_.get(), dest_i);
 }
 
 bool Layer::ConvertPointForAncestor(const Layer* ancestor,
+                                    bool use_target_transform,
                                     gfx::PointF* point) const {
   gfx::Transform transform;
-  bool result = GetTargetTransformRelativeTo(ancestor, &transform);
+  bool result = use_target_transform
+                    ? GetTargetTransformRelativeTo(ancestor, &transform)
+                    : GetTransformRelativeTo(ancestor, &transform);
   auto p = gfx::Point3F(*point);
   transform.TransformPoint(&p);
   *point = p.AsPointF();
@@ -1387,9 +1405,12 @@ bool Layer::ConvertPointForAncestor(const Layer* ancestor,
 }
 
 bool Layer::ConvertPointFromAncestor(const Layer* ancestor,
+                                     bool use_target_transform,
                                      gfx::PointF* point) const {
   gfx::Transform transform;
-  bool result = GetTargetTransformRelativeTo(ancestor, &transform);
+  bool result = use_target_transform
+                    ? GetTargetTransformRelativeTo(ancestor, &transform)
+                    : GetTransformRelativeTo(ancestor, &transform);
   auto p = gfx::Point3F(*point);
   transform.TransformPointReverse(&p);
   *point = p.AsPointF();
@@ -1498,7 +1519,13 @@ void Layer::SetColorFromAnimation(SkColor color, PropertyChangeReason reason) {
 
 void Layer::SetClipRectFromAnimation(const gfx::Rect& clip_rect,
                                      PropertyChangeReason reason) {
+  const gfx::Rect old_rect = cc_layer_->clip_rect();
+  if (old_rect == clip_rect)
+    return;
   cc_layer_->SetClipRect(clip_rect);
+
+  if (delegate_)
+    delegate_->OnLayerClipRectChanged(old_rect, reason);
 }
 
 void Layer::SetRoundedCornersFromAnimation(
@@ -1508,6 +1535,15 @@ void Layer::SetRoundedCornersFromAnimation(
 
   for (const auto& mirror : mirrors_)
     mirror->dest()->SetRoundedCornersFromAnimation(rounded_corners, reason);
+}
+
+void Layer::SetGradientMaskFromAnimation(
+    const gfx::LinearGradient& gradient_mask,
+    PropertyChangeReason reason) {
+  cc_layer_->SetGradientMask(gradient_mask);
+
+  for (const auto& mirror : mirrors_)
+    mirror->dest()->SetGradientMaskFromAnimation(gradient_mask, reason);
 }
 
 void Layer::ScheduleDrawForAnimation() {
@@ -1555,6 +1591,10 @@ gfx::RoundedCornersF Layer::GetRoundedCornersForAnimation() const {
   return rounded_corner_radii();
 }
 
+gfx::LinearGradient Layer::GetGradientMaskForAnimation() const {
+  return gradient_mask();
+}
+
 float Layer::GetDeviceScaleFactor() const {
   return device_scale_factor_;
 }
@@ -1564,12 +1604,12 @@ LayerAnimatorCollection* Layer::GetLayerAnimatorCollection() {
   return compositor ? compositor->layer_animator_collection() : nullptr;
 }
 
-base::Optional<int> Layer::GetFrameNumber() const {
+absl::optional<int> Layer::GetFrameNumber() const {
   if (const Compositor* compositor = GetCompositor()) {
     return compositor->activated_frame_count();
   }
 
-  return base::nullopt;
+  return absl::nullopt;
 }
 
 float Layer::GetRefreshRate() const {
@@ -1577,7 +1617,7 @@ float Layer::GetRefreshRate() const {
   return compositor ? compositor->refresh_rate() : 60.0;
 }
 
-ui::Layer* Layer::GetLayer() {
+Layer* Layer::GetLayer() {
   return this;
 }
 
@@ -1716,6 +1756,23 @@ void Layer::SetFillsBoundsOpaquelyWithReason(bool fills_bounds_opaquely,
 
   if (delegate_)
     delegate_->OnLayerFillsBoundsOpaquelyChanged(reason);
+}
+
+bool Layer::GetTransformRelativeToImpl(const Layer* ancestor,
+                                       bool is_target_transform,
+                                       gfx::Transform* transform) const {
+  const Layer* p = this;
+  for (; p && p != ancestor; p = p->parent()) {
+    gfx::Transform translation;
+    translation.Translate(static_cast<float>(p->bounds().x()),
+                          static_cast<float>(p->bounds().y()));
+    const gfx::Transform& layer_transform =
+        is_target_transform ? p->GetTargetTransform() : p->transform();
+    if (!layer_transform.IsIdentity())
+      transform->ConcatTransform(layer_transform);
+    transform->ConcatTransform(translation);
+  }
+  return p == ancestor;
 }
 
 }  // namespace ui

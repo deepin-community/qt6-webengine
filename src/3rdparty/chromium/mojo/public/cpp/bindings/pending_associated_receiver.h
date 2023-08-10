@@ -9,14 +9,16 @@
 
 #include <utility>
 
-#include "base/macros.h"
+#include "base/compiler_specific.h"
 #include "build/build_config.h"
-#include "mojo/public/cpp/bindings/associated_interface_request.h"
 #include "mojo/public/cpp/bindings/lib/multiplex_router.h"
 #include "mojo/public/cpp/bindings/scoped_interface_endpoint_handle.h"
 #include "mojo/public/cpp/system/message_pipe.h"
 
 namespace mojo {
+
+template <typename T>
+class PendingAssociatedRemote;
 
 template <typename T>
 struct PendingAssociatedReceiverConverter;
@@ -34,26 +36,25 @@ class PendingAssociatedReceiver {
   explicit PendingAssociatedReceiver(ScopedInterfaceEndpointHandle handle)
       : handle_(std::move(handle)) {}
 
-  // Temporary implicit move constructor to aid in converting from use of
-  // InterfaceRequest<Interface> to PendingReceiver.
-  PendingAssociatedReceiver(AssociatedInterfaceRequest<Interface>&& request)
-      : PendingAssociatedReceiver(request.PassHandle()) {}
-
   // Disabled on NaCl since it crashes old version of clang.
-#if !defined(OS_NACL)
+#if !BUILDFLAG(IS_NACL)
   // Move conversion operator for custom receiver types. Only participates in
   // overload resolution if a typesafe conversion is supported.
   template <typename T,
             std::enable_if_t<std::is_same<
                 PendingAssociatedReceiver<Interface>,
-                std::result_of_t<decltype (&PendingAssociatedReceiverConverter<
+                absl::result_of_t<decltype (&PendingAssociatedReceiverConverter<
                                            T>::template To<Interface>)(T&&)>>::
                                  value>* = nullptr>
   PendingAssociatedReceiver(T&& other)
       : PendingAssociatedReceiver(
             PendingAssociatedReceiverConverter<T>::template To<Interface>(
                 std::move(other))) {}
-#endif  // !defined(OS_NACL)
+#endif  // !BUILDFLAG(IS_NACL)
+
+  PendingAssociatedReceiver(const PendingAssociatedReceiver&) = delete;
+  PendingAssociatedReceiver& operator=(const PendingAssociatedReceiver&) =
+      delete;
 
   ~PendingAssociatedReceiver() = default;
 
@@ -64,13 +65,6 @@ class PendingAssociatedReceiver {
 
   bool is_valid() const { return handle_.is_valid(); }
   explicit operator bool() const { return is_valid(); }
-
-  // Temporary implicit conversion operator to
-  // AssociatedInterfaceRequest<Interface> to aid in converting usage to
-  // PendingAssociatedReceiver.
-  operator AssociatedInterfaceRequest<Interface>() {
-    return AssociatedInterfaceRequest<Interface>(PassHandle());
-  }
 
   ScopedInterfaceEndpointHandle PassHandle() { return std::move(handle_); }
   const ScopedInterfaceEndpointHandle& handle() const { return handle_; }
@@ -87,6 +81,9 @@ class PendingAssociatedReceiver {
     handle_.ResetWithReason(custom_reason, description);
   }
 
+  [[nodiscard]] REINITIALIZES_AFTER_MOVE PendingAssociatedRemote<Interface>
+  InitWithNewEndpointAndPassRemote();
+
   // Associates this endpoint with a dedicated message pipe. This allows the
   // entangled AssociatedReceiver/AssociatedRemote endpoints to be used without
   // ever being associated with any other mojom interfaces.
@@ -100,11 +97,11 @@ class PendingAssociatedReceiver {
 
     MessagePipe pipe;
     scoped_refptr<internal::MultiplexRouter> router0 =
-        new internal::MultiplexRouter(
+        internal::MultiplexRouter::CreateAndStartReceiving(
             std::move(pipe.handle0), internal::MultiplexRouter::MULTI_INTERFACE,
             false, base::SequencedTaskRunnerHandle::Get());
     scoped_refptr<internal::MultiplexRouter> router1 =
-        new internal::MultiplexRouter(
+        internal::MultiplexRouter::CreateAndStartReceiving(
             std::move(pipe.handle1), internal::MultiplexRouter::MULTI_INTERFACE,
             true, base::SequencedTaskRunnerHandle::Get());
 
@@ -114,8 +111,6 @@ class PendingAssociatedReceiver {
 
  private:
   ScopedInterfaceEndpointHandle handle_;
-
-  DISALLOW_COPY_AND_ASSIGN(PendingAssociatedReceiver);
 };
 
 // Constructs an invalid PendingAssociatedReceiver of any arbitrary interface
@@ -127,6 +122,21 @@ class COMPONENT_EXPORT(MOJO_CPP_BINDINGS) NullAssociatedReceiver {
     return PendingAssociatedReceiver<Interface>();
   }
 };
+
+}  // namespace mojo
+
+#include "mojo/public/cpp/bindings/pending_associated_remote.h"
+
+namespace mojo {
+
+template <typename Interface>
+PendingAssociatedRemote<Interface>
+PendingAssociatedReceiver<Interface>::InitWithNewEndpointAndPassRemote() {
+  ScopedInterfaceEndpointHandle remote_handle;
+  ScopedInterfaceEndpointHandle::CreatePairPendingAssociation(&handle_,
+                                                              &remote_handle);
+  return PendingAssociatedRemote<Interface>(std::move(remote_handle), 0u);
+}
 
 }  // namespace mojo
 

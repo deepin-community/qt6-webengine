@@ -82,8 +82,13 @@ network::mojom::CookieManager* ParseStoreCookieManager(
     *store_id = cookies_helpers::GetStoreIdFromProfile(store_profile);
   }
 
-  return content::BrowserContext::GetDefaultStoragePartition(store_profile)
+  return store_profile->GetDefaultStoragePartition()
       ->GetCookieManagerForBrowserProcess();
+}
+
+template <typename T>
+T OrDefault(const std::unique_ptr<T>& ptr, T fallback) {
+  return ptr.get() ? *ptr : fallback;
 }
 
 }  // namespace
@@ -114,15 +119,16 @@ void CookiesEventRouter::OnCookieChange(bool otr,
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
   std::unique_ptr<base::ListValue> args(new base::ListValue());
-  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
-  dict->SetBoolean(cookies_api_constants::kRemovedKey,
-                   change.cause != net::CookieChangeCause::INSERTED);
+  base::Value dict(base::Value::Type::DICTIONARY);
+  dict.SetBoolKey(cookies_api_constants::kRemovedKey,
+                  change.cause != net::CookieChangeCause::INSERTED);
 
   Profile* profile =
-      otr ? profile_->GetPrimaryOTRProfile() : profile_->GetOriginalProfile();
+      otr ? profile_->GetPrimaryOTRProfile(/*create_if_needed=*/true)
+          : profile_->GetOriginalProfile();
   api::cookies::Cookie cookie = cookies_helpers::CreateCookie(
       change.cookie, cookies_helpers::GetStoreIdFromProfile(profile));
-  dict->Set(cookies_api_constants::kCookieKey, cookie.ToValue());
+  dict.SetKey(cookies_api_constants::kCookieKey, std::move(*cookie.ToValue()));
 
   // Map the internal cause to an external string.
   std::string cause_dict_entry;
@@ -153,7 +159,7 @@ void CookiesEventRouter::OnCookieChange(bool otr,
     case net::CookieChangeCause::UNKNOWN_DELETION:
       NOTREACHED();
   }
-  dict->SetString(cookies_api_constants::kCauseKey, cause_dict_entry);
+  dict.SetStringKey(cookies_api_constants::kCauseKey, cause_dict_entry);
 
   args->Append(std::move(dict));
 
@@ -175,9 +181,10 @@ void CookiesEventRouter::MaybeStartListening() {
   DCHECK(profile_);
 
   Profile* original_profile = profile_->GetOriginalProfile();
-  Profile* otr_profile = original_profile->HasPrimaryOTRProfile()
-                             ? original_profile->GetPrimaryOTRProfile()
-                             : nullptr;
+  Profile* otr_profile =
+      original_profile->HasPrimaryOTRProfile()
+          ? original_profile->GetPrimaryOTRProfile(/*create_if_needed=*/true)
+          : nullptr;
 
   if (!receiver_.is_bound())
     BindToCookieManager(&receiver_, original_profile);
@@ -189,7 +196,7 @@ void CookiesEventRouter::BindToCookieManager(
     mojo::Receiver<network::mojom::CookieChangeListener>* receiver,
     Profile* profile) {
   network::mojom::CookieManager* cookie_manager =
-      content::BrowserContext::GetDefaultStoragePartition(profile)
+      profile->GetDefaultStoragePartition()
           ->GetCookieManagerForBrowserProcess();
   if (!cookie_manager)
     return;
@@ -217,8 +224,9 @@ void CookiesEventRouter::DispatchEvent(
   EventRouter* router = context ? EventRouter::Get(context) : NULL;
   if (!router)
     return;
-  auto event = std::make_unique<Event>(histogram_value, event_name,
-                                       std::move(event_args), context);
+  auto event = std::make_unique<Event>(
+      histogram_value, event_name, std::move(*event_args).TakeListDeprecated(),
+      context);
   event->event_url = cookie_domain;
   router->BroadcastEvent(std::move(event));
 }
@@ -227,7 +235,7 @@ CookiesGetFunction::CookiesGetFunction() = default;
 CookiesGetFunction::~CookiesGetFunction() = default;
 
 ExtensionFunction::ResponseAction CookiesGetFunction::Run() {
-  parsed_args_ = api::cookies::Get::Params::Create(*args_);
+  parsed_args_ = api::cookies::Get::Params::Create(args());
   EXTENSION_FUNCTION_VALIDATE(parsed_args_.get());
 
   // Read/validate input parameters.
@@ -236,15 +244,14 @@ ExtensionFunction::ResponseAction CookiesGetFunction::Run() {
     return RespondNow(Error(std::move(error)));
 
   std::string store_id =
-      parsed_args_->details.store_id.get() ? *parsed_args_->details.store_id
-                                           : std::string();
+      OrDefault(parsed_args_->details.store_id, std::string());
   network::mojom::CookieManager* cookie_manager = ParseStoreCookieManager(
       browser_context(), include_incognito_information(), &store_id, &error);
   if (!cookie_manager)
     return RespondNow(Error(std::move(error)));
 
   if (!parsed_args_->details.store_id.get())
-    parsed_args_->details.store_id.reset(new std::string(store_id));
+    parsed_args_->details.store_id = std::make_unique<std::string>(store_id);
 
   DCHECK(!url_.is_empty() && url_.is_valid());
   cookies_helpers::GetCookieListFromManager(
@@ -283,7 +290,7 @@ CookiesGetAllFunction::~CookiesGetAllFunction() {
 }
 
 ExtensionFunction::ResponseAction CookiesGetAllFunction::Run() {
-  parsed_args_ = api::cookies::GetAll::Params::Create(*args_);
+  parsed_args_ = api::cookies::GetAll::Params::Create(args());
   EXTENSION_FUNCTION_VALIDATE(parsed_args_.get());
 
   std::string error;
@@ -294,15 +301,14 @@ ExtensionFunction::ResponseAction CookiesGetAllFunction::Run() {
   }
 
   std::string store_id =
-      parsed_args_->details.store_id.get() ? *parsed_args_->details.store_id
-                                           : std::string();
+      OrDefault(parsed_args_->details.store_id, std::string());
   network::mojom::CookieManager* cookie_manager = ParseStoreCookieManager(
       browser_context(), include_incognito_information(), &store_id, &error);
   if (!cookie_manager)
     return RespondNow(Error(std::move(error)));
 
   if (!parsed_args_->details.store_id.get())
-    parsed_args_->details.store_id.reset(new std::string(store_id));
+    parsed_args_->details.store_id = std::make_unique<std::string>(store_id);
 
   DCHECK(url_.is_empty() || url_.is_valid());
   if (url_.is_empty()) {
@@ -362,7 +368,7 @@ CookiesSetFunction::~CookiesSetFunction() {
 }
 
 ExtensionFunction::ResponseAction CookiesSetFunction::Run() {
-  parsed_args_ = api::cookies::Set::Params::Create(*args_);
+  parsed_args_ = api::cookies::Set::Params::Create(args());
   EXTENSION_FUNCTION_VALIDATE(parsed_args_.get());
 
   // Read/validate input parameters.
@@ -371,16 +377,14 @@ ExtensionFunction::ResponseAction CookiesSetFunction::Run() {
     return RespondNow(Error(std::move(error)));
 
   std::string store_id =
-      parsed_args_->details.store_id.get() ? *parsed_args_->details.store_id
-                                           : std::string();
+      OrDefault(parsed_args_->details.store_id, std::string());
   network::mojom::CookieManager* cookie_manager = ParseStoreCookieManager(
       browser_context(), include_incognito_information(), &store_id, &error);
   if (!cookie_manager)
     return RespondNow(Error(std::move(error)));
 
   if (!parsed_args_->details.store_id.get())
-    parsed_args_->details.store_id.reset(new std::string(store_id));
-
+    parsed_args_->details.store_id = std::make_unique<std::string>(store_id);
 
   base::Time expiration_time;
   if (parsed_args_->details.expiration_date.get()) {
@@ -412,29 +416,22 @@ ExtensionFunction::ResponseAction CookiesSetFunction::Run() {
   }
 
   // TODO(crbug.com/1144181): Add support for SameParty attribute.
-  // clang-format off
   std::unique_ptr<net::CanonicalCookie> cc(
       net::CanonicalCookie::CreateSanitizedCookie(
-          url_, parsed_args_->details.name.get() ? *parsed_args_->details.name
-                                                 : std::string(),
-          parsed_args_->details.value.get() ? *parsed_args_->details.value
-                                                 : std::string(),
-          parsed_args_->details.domain.get() ? *parsed_args_->details.domain
-                                             : std::string(),
-          parsed_args_->details.path.get() ? *parsed_args_->details.path
-                                           : std::string(),
-          base::Time(),
-          expiration_time,
-          base::Time(),
-          parsed_args_->details.secure.get() ? *parsed_args_->details.secure
-                                             : false,
-          parsed_args_->details.http_only.get() ?
-              *parsed_args_->details.http_only :
-              false,
-          same_site,
-          net::COOKIE_PRIORITY_DEFAULT,
-          /*same_party=*/false));
-  // clang-format on
+          url_,                                                    //
+          OrDefault(parsed_args_->details.name, std::string()),    //
+          OrDefault(parsed_args_->details.value, std::string()),   //
+          OrDefault(parsed_args_->details.domain, std::string()),  //
+          OrDefault(parsed_args_->details.path, std::string()),    //
+          base::Time(),                                            //
+          expiration_time,                                         //
+          base::Time(),                                            //
+          OrDefault(parsed_args_->details.secure, false),          //
+          OrDefault(parsed_args_->details.http_only, false),       //
+          same_site,                                               //
+          net::COOKIE_PRIORITY_DEFAULT,                            //
+          /*same_party=*/false,                                    //
+          /*partition_key=*/absl::nullopt));
   if (!cc) {
     // Return error through callbacks so that the proper error message
     // is generated.
@@ -480,9 +477,7 @@ void CookiesSetFunction::GetCookieListCallback(
   state_ = GET_COMPLETED;
 
   if (!success_) {
-    std::string name = parsed_args_->details.name.get()
-                           ? *parsed_args_->details.name
-                           : std::string();
+    std::string name = OrDefault(parsed_args_->details.name, std::string());
     Respond(Error(ErrorUtils::FormatErrorMessage(
         cookies_api_constants::kCookieSetFailedError, name)));
     return;
@@ -494,9 +489,7 @@ void CookiesSetFunction::GetCookieListCallback(
     // Return the first matching cookie. Relies on the fact that the
     // CookieMonster returns them in canonical order (longest path, then
     // earliest creation time).
-    std::string name =
-        parsed_args_->details.name.get() ? *parsed_args_->details.name
-                                         : std::string();
+    std::string name = OrDefault(parsed_args_->details.name, std::string());
     if (cookie_with_access_result.cookie.Name() == name) {
       api::cookies::Cookie api_cookie = cookies_helpers::CreateCookie(
           cookie_with_access_result.cookie, *parsed_args_->details.store_id);
@@ -515,7 +508,7 @@ CookiesRemoveFunction::~CookiesRemoveFunction() {
 }
 
 ExtensionFunction::ResponseAction CookiesRemoveFunction::Run() {
-  parsed_args_ = api::cookies::Remove::Params::Create(*args_);
+  parsed_args_ = api::cookies::Remove::Params::Create(args());
   EXTENSION_FUNCTION_VALIDATE(parsed_args_.get());
 
   // Read/validate input parameters.
@@ -524,15 +517,14 @@ ExtensionFunction::ResponseAction CookiesRemoveFunction::Run() {
     return RespondNow(Error(std::move(error)));
 
   std::string store_id =
-      parsed_args_->details.store_id.get() ? *parsed_args_->details.store_id
-                                           : std::string();
+      OrDefault(parsed_args_->details.store_id, std::string());
   network::mojom::CookieManager* cookie_manager = ParseStoreCookieManager(
       browser_context(), include_incognito_information(), &store_id, &error);
   if (!cookie_manager)
     return RespondNow(Error(std::move(error)));
 
   if (!parsed_args_->details.store_id.get())
-    parsed_args_->details.store_id.reset(new std::string(store_id));
+    parsed_args_->details.store_id = std::make_unique<std::string>(store_id);
 
   network::mojom::CookieDeletionFilterPtr filter(
       network::mojom::CookieDeletionFilter::New());
@@ -566,9 +558,10 @@ ExtensionFunction::ResponseAction CookiesGetAllCookieStoresFunction::Run() {
   std::unique_ptr<base::ListValue> incognito_tab_ids;
   if (include_incognito_information() &&
       original_profile->HasPrimaryOTRProfile()) {
-    incognito_profile = original_profile->GetPrimaryOTRProfile();
+    incognito_profile =
+        original_profile->GetPrimaryOTRProfile(/*create_if_needed=*/true);
     if (incognito_profile)
-      incognito_tab_ids.reset(new base::ListValue());
+      incognito_tab_ids = std::make_unique<base::ListValue>();
   }
   DCHECK(original_profile != incognito_profile);
 
@@ -585,12 +578,12 @@ ExtensionFunction::ResponseAction CookiesGetAllCookieStoresFunction::Run() {
   }
   // Return a list of all cookie stores with at least one open tab.
   std::vector<api::cookies::CookieStore> cookie_stores;
-  if (original_tab_ids->GetSize() > 0) {
+  if (original_tab_ids->GetListDeprecated().size() > 0) {
     cookie_stores.push_back(cookies_helpers::CreateCookieStore(
         original_profile, std::move(original_tab_ids)));
   }
-  if (incognito_tab_ids.get() && incognito_tab_ids->GetSize() > 0 &&
-      incognito_profile) {
+  if (incognito_tab_ids.get() &&
+      incognito_tab_ids->GetListDeprecated().size() > 0 && incognito_profile) {
     cookie_stores.push_back(cookies_helpers::CreateCookieStore(
         incognito_profile, std::move(incognito_tab_ids)));
   }
@@ -619,7 +612,8 @@ BrowserContextKeyedAPIFactory<CookiesAPI>* CookiesAPI::GetFactoryInstance() {
 }
 
 void CookiesAPI::OnListenerAdded(const EventListenerInfo& details) {
-  cookies_event_router_.reset(new CookiesEventRouter(browser_context_));
+  cookies_event_router_ =
+      std::make_unique<CookiesEventRouter>(browser_context_);
   EventRouter::Get(browser_context_)->UnregisterObserver(this);
 }
 

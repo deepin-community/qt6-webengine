@@ -9,13 +9,18 @@
 
 #include "base/callback.h"
 #include "base/callback_list.h"
-#include "base/time/time.h"
 #include "build/build_config.h"
+#include "build/chromeos_buildflags.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/signin/public/base/account_consistency_method.h"
 #include "components/signin/public/base/signin_metrics.h"
 #include "google_apis/gaia/gaia_auth_fetcher.h"
 #include "url/gurl.h"
+
+#if BUILDFLAG(IS_CHROMEOS_LACROS)
+#include "components/account_manager_core/account.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
+#endif
 
 class PrefService;
 
@@ -85,13 +90,23 @@ class SigninClient : public KeyedService {
       GaiaAuthConsumer* consumer,
       gaia::GaiaSource source) = 0;
 
-  // Marks the DICE migration completed.
-  virtual void SetDiceMigrationCompleted() {}
-
   // Checks whether a user is known to be non-enterprise. Domains such as
   // gmail.com and googlemail.com are known to not be managed. Also returns
   // false if the username is empty.
   virtual bool IsNonEnterpriseUser(const std::string& username);
+
+#if BUILDFLAG(IS_CHROMEOS_LACROS)
+  // Returns an account used to sign into Chrome OS session if available.
+  virtual absl::optional<account_manager::Account>
+  GetInitialPrimaryAccount() = 0;
+
+  // Returns whether account used to sign into Chrome OS is a child account.
+  // Returns nullopt for secondary / non-main profiles in LaCrOS.
+  virtual absl::optional<bool> IsInitialPrimaryAccountChild() const = 0;
+
+  // Removes all accounts.
+  virtual void RemoveAllAccounts() = 0;
+#endif
 };
 
 #endif  // COMPONENTS_SIGNIN_PUBLIC_BASE_SIGNIN_CLIENT_H_

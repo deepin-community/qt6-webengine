@@ -17,7 +17,7 @@
 #include "testing/gtest/include/gtest/gtest.h"
 
 #if BUILDFLAG(ENABLE_MEDIA_REMOTING_RPC)
-#include "media/remoting/proto_utils.h"  // nogncheck
+#include "components/cast_streaming/public/remoting_proto_utils.h"  // nogncheck
 #endif
 
 namespace media {
@@ -52,7 +52,8 @@ bool FakeRemotingDataStreamSender::ValidateFrameBuffer(size_t index,
 #if BUILDFLAG(ENABLE_MEDIA_REMOTING_RPC)
   const std::vector<uint8_t>& data = received_frame_list[index];
   scoped_refptr<DecoderBuffer> media_buffer =
-      ByteArrayToDecoderBuffer(data.data(), data.size());
+      cast_streaming::remoting::ByteArrayToDecoderBuffer(data.data(),
+                                                         data.size());
 
   // Checks if pts is correct or not
   if (media_buffer->timestamp().InMilliseconds() != pts_ms) {
@@ -138,14 +139,14 @@ void FakeRemoter::StartDataStreams(
     mojo::PendingReceiver<mojom::RemotingDataStreamSender> video_sender) {
   if (audio_pipe.is_valid()) {
     VLOG(2) << "Has audio";
-    audio_stream_sender_.reset(new FakeRemotingDataStreamSender(
-        std::move(audio_sender), std::move(audio_pipe)));
+    audio_stream_sender_ = std::make_unique<FakeRemotingDataStreamSender>(
+        std::move(audio_sender), std::move(audio_pipe));
   }
 
   if (video_pipe.is_valid()) {
     VLOG(2) << "Has video";
-    video_stream_sender_.reset(new FakeRemotingDataStreamSender(
-        std::move(video_sender), std::move(video_pipe)));
+    video_stream_sender_ = std::make_unique<FakeRemotingDataStreamSender>(
+        std::move(video_sender), std::move(video_pipe));
   }
 }
 

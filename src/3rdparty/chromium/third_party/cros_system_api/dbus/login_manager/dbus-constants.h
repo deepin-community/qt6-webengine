@@ -24,6 +24,7 @@ const char kSessionManagerLoginScreenStorageDelete[] =
 const char kSessionManagerStartSession[] = "StartSession";
 const char kSessionManagerStopSession[] = "StopSession";
 const char kSessionManagerStopSessionWithReason[] = "StopSessionWithReason";
+const char kSessionManagerLoadShillProfile[] = "LoadShillProfile";
 const char kSessionManagerRestartJob[] = "RestartJob";
 const char kSessionManagerStorePolicyEx[] = "StorePolicyEx";
 const char kSessionManagerStoreUnsignedPolicyEx[] = "StoreUnsignedPolicyEx";
@@ -51,6 +52,8 @@ const char kSessionManagerSetFlagsForUser[] = "SetFlagsForUser";
 const char kSessionManagerSetFeatureFlagsForUser[] = "SetFeatureFlagsForUser";
 const char kSessionManagerGetServerBackedStateKeys[] =
     "GetServerBackedStateKeys";
+const char kSessionManagerGetPsmDeviceActiveSecret[] =
+    "GetPsmDeviceActiveSecret";
 const char kSessionManagerInitMachineInfo[] = "InitMachineInfo";
 const char kSessionManagerCheckArcAvailability[] = "CheckArcAvailability";
 const char kSessionManagerStartArcMiniContainer[] = "StartArcMiniContainer";
@@ -63,6 +66,8 @@ const char kSessionManagerStartContainer[] = "StartContainer";
 const char kSessionManagerStopContainer[] = "StopContainer";
 const char kSessionManagerEnableAdbSideload[] = "EnableAdbSideload";
 const char kSessionManagerQueryAdbSideload[] = "QueryAdbSideload";
+const char kSessionManagerStartBrowserDataMigration[] =
+    "StartBrowserDataMigration";
 // Signals
 const char kLoginPromptVisibleSignal[] = "LoginPromptVisible";
 const char kSessionStateChangedSignal[] = "SessionStateChanged";
@@ -87,6 +92,7 @@ const char kArcInstanceRunning[] = INTERFACE ".ArcInstanceRunning";
 const char kArcContainerNotFound[] = INTERFACE ".ArcContainerNotFound";
 const char kContainerStartupFail[] = INTERFACE ".ContainerStartupFail";
 const char kContainerShutdownFail[] = INTERFACE ".ContainerShutdownFail";
+const char kGetPeerCredsFailed[] = INTERFACE ".GetPeerCredsFailed";
 const char kDeleteFail[] = INTERFACE ".DeleteFail";
 const char kEmitFailed[] = INTERFACE ".EmitFailed";
 const char kGetServiceFail[] = INTERFACE ".kGetServiceFail";

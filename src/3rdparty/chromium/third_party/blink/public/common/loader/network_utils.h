@@ -8,7 +8,6 @@
 #include "base/memory/scoped_refptr.h"
 #include "net/http/http_response_headers.h"
 #include "third_party/blink/public/common/common_export.h"
-#include "url/gurl.h"
 
 namespace blink {
 namespace network_utils {
@@ -18,14 +17,8 @@ namespace network_utils {
 BLINK_COMMON_EXPORT bool AlwaysAccessNetwork(
     const scoped_refptr<net::HttpResponseHeaders>& headers);
 
-// Helper function to determine if a request for |url| refers to a network
-// resource (as opposed to a local browser resource like files or blobs). Used
-// when the Network Service is enabled.
-//
-// Note that this is not equivalent to the
-// content::IsURLHandledByNetworkStack(), as several non-network schemes are
-// handled by the network stack when the Network Service is disabled.
-BLINK_COMMON_EXPORT bool IsURLHandledByNetworkService(const GURL& url);
+// Returns the accept header for image resources.
+BLINK_COMMON_EXPORT const char* ImageAcceptHeader();
 
 }  // namespace network_utils
 }  // namespace blink

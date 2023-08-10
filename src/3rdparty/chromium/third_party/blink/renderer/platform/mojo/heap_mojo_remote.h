@@ -9,8 +9,7 @@
 
 #include "mojo/public/cpp/bindings/remote.h"
 #include "third_party/blink/renderer/platform/context_lifecycle_observer.h"
-#include "third_party/blink/renderer/platform/heap/heap.h"
-#include "third_party/blink/renderer/platform/mojo/features.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/mojo/heap_mojo_wrapper_mode.h"
 #include "third_party/blink/renderer/platform/mojo/mojo_binding_context.h"
 
@@ -55,8 +54,8 @@ class HeapMojoRemote {
       mojo::ConnectionErrorWithReasonCallback handler) {
     wrapper_->remote().set_disconnect_with_reason_handler(std::move(handler));
   }
-  mojo::PendingReceiver<Interface> BindNewPipeAndPassReceiver(
-      scoped_refptr<base::SequencedTaskRunner> task_runner) WARN_UNUSED_RESULT {
+  [[nodiscard]] mojo::PendingReceiver<Interface> BindNewPipeAndPassReceiver(
+      scoped_refptr<base::SequencedTaskRunner> task_runner) {
     DCHECK(task_runner);
     return wrapper_->remote().BindNewPipeAndPassReceiver(
         std::move(task_runner));
@@ -95,9 +94,7 @@ class HeapMojoRemote {
 
     // ContextLifecycleObserver methods
     void ContextDestroyed() override {
-      if (Mode == HeapMojoWrapperMode::kWithContextObserver ||
-          (Mode == HeapMojoWrapperMode::kWithoutContextObserver &&
-           base::FeatureList::IsEnabled(kHeapMojoUseContextObserver)))
+      if (Mode == HeapMojoWrapperMode::kWithContextObserver)
         remote_.reset();
     }
 

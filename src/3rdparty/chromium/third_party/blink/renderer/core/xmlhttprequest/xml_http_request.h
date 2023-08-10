@@ -26,22 +26,24 @@
 #include <memory>
 
 #include "base/memory/scoped_refptr.h"
+#include "base/time/time.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "services/network/public/mojom/trust_tokens.mojom-blink.h"
 #include "services/network/public/mojom/url_loader_factory.mojom-blink.h"
 #include "third_party/blink/renderer/bindings/core/v8/active_script_wrappable.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_trust_token.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_typedefs.h"
 #include "third_party/blink/renderer/core/dom/document_parser_client.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
 #include "third_party/blink/renderer/core/loader/threadable_loader_client.h"
-#include "third_party/blink/renderer/core/probe/async_task_id.h"
+#include "third_party/blink/renderer/core/probe/async_task_context.h"
 #include "third_party/blink/renderer/core/xmlhttprequest/xml_http_request_event_target.h"
 #include "third_party/blink/renderer/core/xmlhttprequest/xml_http_request_progress_event_throttle.h"
 #include "third_party/blink/renderer/platform/bindings/exception_code.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/bindings/trace_wrapper_v8_string.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_response.h"
 #include "third_party/blink/renderer/platform/network/encoded_form_data.h"
 #include "third_party/blink/renderer/platform/network/http_header_map.h"
@@ -54,8 +56,6 @@
 
 namespace blink {
 
-class
-    DocumentOrBlobOrArrayBufferOrArrayBufferViewOrFormDataOrURLSearchParamsOrUSVString;
 class Blob;
 class BlobDataHandle;
 class DOMArrayBuffer;
@@ -134,9 +134,8 @@ class XMLHttpRequest final : public XMLHttpRequestEventTarget,
             const KURL&,
             bool async,
             ExceptionState&);
-  void send(
-      const DocumentOrBlobOrArrayBufferOrArrayBufferViewOrFormDataOrURLSearchParamsOrUSVString&,
-      ExceptionState&);
+  void send(const V8UnionDocumentOrXMLHttpRequestBodyInit* body,
+            ExceptionState& exception_state);
   void abort();
   void Dispose();
   void setRequestHeader(const AtomicString& name,
@@ -170,7 +169,7 @@ class XMLHttpRequest final : public XMLHttpRequestEventTarget,
   XMLHttpRequestUpload* upload();
   bool IsAsync() { return async_; }
 
-  probe::AsyncTaskId* async_task_id() { return &async_task_id_; }
+  probe::AsyncTaskContext* async_task_context() { return &async_task_context_; }
 
   DEFINE_ATTRIBUTE_EVENT_LISTENER(readystatechange, kReadystatechange)
 
@@ -190,8 +189,8 @@ class XMLHttpRequest final : public XMLHttpRequestEventTarget,
   void DidDownloadData(uint64_t data_length) override;
   void DidDownloadToBlob(scoped_refptr<BlobDataHandle>) override;
   void DidFinishLoading(uint64_t identifier) override;
-  void DidFail(const ResourceError&) override;
-  void DidFailRedirectCheck() override;
+  void DidFail(uint64_t, const ResourceError&) override;
+  void DidFailRedirectCheck(uint64_t) override;
 
   // BlobLoader notifications.
   void DidFinishLoadingInternal();
@@ -275,10 +274,7 @@ class XMLHttpRequest final : public XMLHttpRequestEventTarget,
   // Handles didFail() call for timeout.
   void HandleDidTimeout();
 
-  void HandleRequestError(DOMExceptionCode,
-                          const AtomicString&,
-                          int64_t,
-                          int64_t);
+  void HandleRequestError(DOMExceptionCode, const AtomicString&);
 
   void UpdateContentTypeAndCharset(const AtomicString& content_type,
                                    const String& charset);
@@ -320,9 +316,13 @@ class XMLHttpRequest final : public XMLHttpRequestEventTarget,
 
   std::unique_ptr<TextResourceDecoder> decoder_;
 
+  // TODO(crbug.com/1226775): Remove these on M96.
+  static constexpr size_t kResponseBodyHeadSize = 2;
+  Vector<uint8_t, kResponseBodyHeadSize> response_body_head_;
+
   // Avoid using a flat WTF::String here and rather use a traced v8::String
   // which internally builds a string rope.
-  GC_PLUGIN_IGNORE("crbug.com/841830") TraceWrapperV8String response_text_;
+  TraceWrapperV8String response_text_;
   Member<Document> response_document_;
   Member<DocumentParser> response_document_parser_;
 
@@ -380,7 +380,7 @@ class XMLHttpRequest final : public XMLHttpRequestEventTarget,
   bool send_flag_ = false;
   bool response_array_buffer_failure_ = false;
 
-  probe::AsyncTaskId async_task_id_;
+  probe::AsyncTaskContext async_task_context_;
 };
 
 std::ostream& operator<<(std::ostream&, const XMLHttpRequest*);

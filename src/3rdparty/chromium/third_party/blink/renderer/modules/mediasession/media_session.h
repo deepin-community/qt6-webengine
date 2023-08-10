@@ -5,13 +5,13 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_MEDIASESSION_MEDIA_SESSION_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_MEDIASESSION_MEDIA_SESSION_H_
 
-#include <memory>
 #include "mojo/public/cpp/bindings/remote.h"
 #include "third_party/blink/public/mojom/mediasession/media_session.mojom-blink.h"
 #include "third_party/blink/renderer/core/frame/navigator.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_map.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/mojo/heap_mojo_receiver.h"
 #include "third_party/blink/renderer/platform/mojo/heap_mojo_wrapper_mode.h"
 #include "third_party/blink/renderer/platform/supplementable.h"
@@ -52,6 +52,10 @@ class MODULES_EXPORT MediaSession final
 
   void setPositionState(MediaPositionState*, ExceptionState&);
 
+  void setMicrophoneActive(bool active);
+
+  void setCameraActive(bool active);
+
   // Called by the MediaMetadata owned by |this| when it has updates. Also used
   // internally when a new MediaMetadata object is set.
   void OnMetadataChanged();
@@ -88,9 +92,7 @@ class MODULES_EXPORT MediaSession final
   Member<MediaMetadata> metadata_;
   HeapHashMap<String, Member<V8MediaSessionActionHandler>> action_handlers_;
   mojo::Remote<mojom::blink::MediaSessionService> service_;
-  HeapMojoReceiver<blink::mojom::blink::MediaSessionClient,
-                   MediaSession,
-                   HeapMojoWrapperMode::kWithoutContextObserver>
+  HeapMojoReceiver<blink::mojom::blink::MediaSessionClient, MediaSession>
       client_receiver_;
 };
 

@@ -5,14 +5,13 @@
 #include "third_party/blink/renderer/core/loader/modulescript/installed_service_worker_module_script_fetcher.h"
 
 #include "third_party/blink/public/common/features.h"
-#include "third_party/blink/public/mojom/appcache/appcache.mojom-blink.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_source_location_type.h"
 #include "third_party/blink/renderer/core/dom/dom_implementation.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
 #include "third_party/blink/renderer/core/workers/installed_scripts_manager.h"
 #include "third_party/blink/renderer/core/workers/worker_global_scope.h"
 #include "third_party/blink/renderer/core/workers/worker_thread.h"
-#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/network/mime/mime_type_registry.h"
 #include "third_party/blink/renderer/platform/weborigin/security_policy.h"
 
@@ -69,24 +68,16 @@ void InstalledServiceWorkerModuleScriptFetcher::Fetch(
     global_scope_->Initialize(
         response_url, response_referrer_policy,
         script_data->GetResponseAddressSpace(),
-        ContentSecurityPolicy::ParseHeaders(
+        ParseContentSecurityPolicyHeaders(
             script_data->GetContentSecurityPolicyResponseHeaders()),
-        script_data->CreateOriginTrialTokens().get(),
-        mojom::blink::kAppCacheNoCacheId);
+        script_data->CreateOriginTrialTokens().get());
   }
 
   // TODO(sasebree) De-duplicate similar logic that lives in
   // ModuleScriptFetcher::WasModuleLoadSuccessful
-  const bool fetched_javascript_module =
-      expected_module_type_ == ModuleType::kJavaScript &&
-      MIMETypeRegistry::IsSupportedJavaScriptMIMEType(
-          script_data->GetHttpContentType());
-  const bool fetched_json_module =
-      base::FeatureList::IsEnabled(blink::features::kJSONModules) &&
-      expected_module_type_ == ModuleType::kJSON &&
-      MIMETypeRegistry::IsJSONMimeType(script_data->GetHttpContentType());
-
-  if (!fetched_javascript_module && !fetched_json_module) {
+  if (expected_module_type_ != ModuleType::kJavaScript ||
+      !MIMETypeRegistry::IsSupportedJavaScriptMIMEType(
+          script_data->GetHttpContentType())) {
     // This should never happen.
     // If we reach here, we know we received an incompatible mime type from the
     // network

@@ -1,50 +1,18 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: http://www.qt.io/licensing/
-**
-** This file is part of the QtPDF module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL3$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see http://www.qt.io/terms-conditions. For further
-** information use the contact form at http://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPLv3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or later as published by the Free
-** Software Foundation and appearing in the file LICENSE.GPL included in
-** the packaging of this file. Please review the following information to
-** ensure the GNU General Public License version 2.0 requirements will be
-** met: http://www.gnu.org/licenses/gpl-2.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR BSD-3-Clause
 
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
 
-#include "pageselector.h"
 #include "zoomselector.h"
 
 #include <QFileDialog>
 #include <QMessageBox>
+#include <QSpinBox>
 #include <QPdfBookmarkModel>
 #include <QPdfDocument>
-#include <QPdfPageNavigation>
+#include <QPdfPageNavigator>
+#include <QStandardPaths>
 #include <QtMath>
 
 const qreal zoomMultiplier = qSqrt(2.0);
@@ -55,7 +23,7 @@ MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , ui(new Ui::MainWindow)
     , m_zoomSelector(new ZoomSelector(this))
-    , m_pageSelector(new PageSelector(this))
+    , m_pageSelector(new QSpinBox(this))
     , m_document(new QPdfDocument(this))
 {
     ui->setupUi(this);
@@ -63,10 +31,12 @@ MainWindow::MainWindow(QWidget *parent)
     m_zoomSelector->setMaximumWidth(150);
     ui->mainToolBar->insertWidget(ui->actionZoom_In, m_zoomSelector);
 
-    m_pageSelector->setMaximumWidth(150);
-    ui->mainToolBar->addWidget(m_pageSelector);
-
-    m_pageSelector->setPageNavigation(ui->pdfView->pageNavigation());
+    ui->mainToolBar->insertWidget(ui->actionForward, m_pageSelector);
+    connect(m_pageSelector, &QSpinBox::valueChanged, this, &MainWindow::pageSelected);
+    auto nav = ui->pdfView->pageNavigator();
+    connect(nav, &QPdfPageNavigator::currentPageChanged, m_pageSelector, &QSpinBox::setValue);
+    connect(nav, &QPdfPageNavigator::backAvailableChanged, ui->actionBack, &QAction::setEnabled);
+    connect(nav, &QPdfPageNavigator::forwardAvailableChanged, ui->actionForward, &QAction::setEnabled);
 
     connect(m_zoomSelector, &ZoomSelector::zoomModeChanged, ui->pdfView, &QPdfView::setZoomMode);
     connect(m_zoomSelector, &ZoomSelector::zoomFactorChanged, ui->pdfView, &QPdfView::setZoomFactor);
@@ -76,7 +46,7 @@ MainWindow::MainWindow(QWidget *parent)
     bookmarkModel->setDocument(m_document);
 
     ui->bookmarkView->setModel(bookmarkModel);
-    connect(ui->bookmarkView, SIGNAL(activated(QModelIndex)), this, SLOT(bookmarkSelected(QModelIndex)));
+    connect(ui->bookmarkView, &QAbstractItemView::activated, this, &MainWindow::bookmarkSelected);
 
     ui->tabWidget->setTabEnabled(1, false); // disable 'Pages' tab for now
 
@@ -95,11 +65,14 @@ void MainWindow::open(const QUrl &docLocation)
 {
     if (docLocation.isLocalFile()) {
         m_document->load(docLocation.toLocalFile());
-        const auto documentTitle = m_document->metaData(QPdfDocument::Title).toString();
+        const auto documentTitle = m_document->metaData(QPdfDocument::MetaDataField::Title).toString();
         setWindowTitle(!documentTitle.isEmpty() ? documentTitle : QStringLiteral("PDF Viewer"));
+        pageSelected(0);
+        m_pageSelector->setMaximum(m_document->pageCount() - 1);
     } else {
-        qCDebug(lcExample) << docLocation << "is not a valid local file";
-        QMessageBox::critical(this, tr("Failed to open"), tr("%1 is not a valid local file").arg(docLocation.toString()));
+        const QString message = tr("%1 is not a valid local file").arg(docLocation.toString());
+        qCDebug(lcExample).noquote() << message;
+        QMessageBox::critical(this, tr("Failed to open"), message);
     }
     qCDebug(lcExample) << docLocation;
 }
@@ -109,15 +82,31 @@ void MainWindow::bookmarkSelected(const QModelIndex &index)
     if (!index.isValid())
         return;
 
-    const int page = index.data(QPdfBookmarkModel::PageNumberRole).toInt();
-    ui->pdfView->pageNavigation()->setCurrentPage(page);
+    const int page = index.data(int(QPdfBookmarkModel::Role::Page)).toInt();
+    const qreal zoomLevel = index.data(int(QPdfBookmarkModel::Role::Level)).toReal();
+    ui->pdfView->pageNavigator()->jump(page, {}, zoomLevel);
+}
+
+void MainWindow::pageSelected(int page)
+{
+    auto nav = ui->pdfView->pageNavigator();
+    nav->jump(page, {}, nav->currentZoom());
 }
 
 void MainWindow::on_actionOpen_triggered()
 {
-    QUrl toOpen = QFileDialog::getOpenFileUrl(this, tr("Choose a PDF"), QUrl(), "Portable Documents (*.pdf)");
-    if (toOpen.isValid())
-        open(toOpen);
+    if (m_fileDialog == nullptr) {
+        m_fileDialog = new QFileDialog(this, tr("Choose a PDF"),
+                                       QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation));
+        m_fileDialog->setAcceptMode(QFileDialog::AcceptOpen);
+        m_fileDialog->setMimeTypeFilters({"application/pdf"});
+    }
+
+    if (m_fileDialog->exec() == QDialog::Accepted) {
+        const QUrl toOpen = m_fileDialog->selectedUrls().constFirst();
+        if (toOpen.isValid())
+            open(toOpen);
+    }
 }
 
 void MainWindow::on_actionQuit_triggered()
@@ -148,15 +137,29 @@ void MainWindow::on_actionZoom_Out_triggered()
 
 void MainWindow::on_actionPrevious_Page_triggered()
 {
-    ui->pdfView->pageNavigation()->goToPreviousPage();
+    auto nav = ui->pdfView->pageNavigator();
+    nav->jump(nav->currentPage() - 1, {}, nav->currentZoom());
 }
 
 void MainWindow::on_actionNext_Page_triggered()
 {
-    ui->pdfView->pageNavigation()->goToNextPage();
+    auto nav = ui->pdfView->pageNavigator();
+    nav->jump(nav->currentPage() + 1, {}, nav->currentZoom());
 }
 
 void MainWindow::on_actionContinuous_triggered()
 {
-    ui->pdfView->setPageMode(ui->actionContinuous->isChecked() ? QPdfView::MultiPage : QPdfView::SinglePage);
+    ui->pdfView->setPageMode(ui->actionContinuous->isChecked() ?
+                                 QPdfView::PageMode::MultiPage :
+                                 QPdfView::PageMode::SinglePage);
+}
+
+void MainWindow::on_actionBack_triggered()
+{
+    ui->pdfView->pageNavigator()->back();
+}
+
+void MainWindow::on_actionForward_triggered()
+{
+    ui->pdfView->pageNavigator()->forward();
 }

@@ -31,12 +31,14 @@ llvm_bindir = os.path.join(os.path.dirname(sys.argv[0]), '..', '..',
 def ExtractAllowlistFromFile(path, resource_ids):
   with open(path, 'rb') as f:
     data = f.read()
-  prefix = b'AllowlistedResource<'
+  # When symbol_level=0, only mangled names exist.
+  # E.g.: _ZN2ui19AllowlistedResourceILi22870EEEvv
+  prefix = b'AllowlistedResourceILi'
   start_idx = 0
   while start_idx != -1:
     start_idx = data.find(prefix, start_idx)
     if start_idx != -1:
-      end_idx = data.find(b'>', start_idx)
+      end_idx = data.find(b'E', start_idx)
       resource_ids.add(int(data[start_idx + len(prefix):end_idx]))
       start_idx = end_idx
 
@@ -61,6 +63,7 @@ def GetResourceAllowlistPDB(path):
       stdout=subprocess.PIPE)
   names = ''
   for line in pdbutil.stdout:
+    line = line.decode('utf8')
     # Read a line of the form
     # "733352 | S_PUB32 [size = 56] `??$AllowlistedResource@$0BFGM@@ui@@YAXXZ`".
     if '`' not in line:
@@ -80,9 +83,10 @@ def GetResourceAllowlistPDB(path):
   undname = subprocess.Popen([os.path.join(llvm_bindir, 'llvm-undname')],
                              stdin=subprocess.PIPE,
                              stdout=subprocess.PIPE)
-  stdout, _ = undname.communicate(names)
+  stdout, _ = undname.communicate(names.encode('utf8'))
   resource_ids = set()
-  for line in stdout.split('\n'):
+  for line in stdout.split(b'\n'):
+    line = line.decode('utf8')
     # Read a line of the form
     # "void __cdecl ui::AllowlistedResource<5484>(void)".
     prefix = ' ui::AllowlistedResource<'
@@ -116,14 +120,14 @@ def GetResourceAllowlistFileList(file_list_path):
 def WriteResourceAllowlist(args):
   resource_ids = set()
   for input in args.inputs:
-    with open(input, 'r') as f:
+    with open(input, 'rb') as f:
       magic = f.read(4)
       chunk = f.read(60)
-    if magic == '\x7fELF':
+    if magic == b'\x7fELF':
       func = GetResourceAllowlistELF
-    elif magic == 'Micr':
+    elif magic == b'Micr':
       func = GetResourceAllowlistPDB
-    elif magic == 'obj/' or '/obj/' in chunk:
+    elif magic == b'obj/' or b'/obj/' in chunk:
       # For secondary toolchain, path will look like android_clang_arm/obj/...
       func = GetResourceAllowlistFileList
     else:
@@ -131,9 +135,11 @@ def WriteResourceAllowlist(args):
 
     resource_ids.update(func(input))
 
-  if len(resource_ids) == 0:
-    raise Exception('No debug info was dumped. Ensure GN arg "symbol_level" '
-                    '!= 0 and that the file is not stripped.')
+  # The last time this broke, exactly two resources were still being found.
+  if len(resource_ids) < 100:
+    raise Exception('Suspiciously few resources found. Likely an issue with '
+                    'the regular expression in this script. Found: ' +
+                    ','.join(sorted(resource_ids)))
   for id in sorted(resource_ids):
     args.output.write(str(id) + '\n')
 

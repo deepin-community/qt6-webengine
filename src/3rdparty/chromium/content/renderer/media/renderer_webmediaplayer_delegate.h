@@ -11,20 +11,16 @@
 
 #include "base/containers/flat_set.h"
 #include "base/containers/id_map.h"
-#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/metrics/single_sample_metrics.h"
-#include "base/single_thread_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/time/default_tick_clock.h"
+#include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "content/common/content_export.h"
 #include "content/public/renderer/render_frame_observer.h"
 #include "third_party/blink/public/platform/media/webmediaplayer_delegate.h"
-
-#if defined(OS_ANDROID)
-#include "base/time/time.h"
-#endif  // OS_ANDROID
 
 namespace blink {
 enum class WebFullscreenVideoStatus;
@@ -42,6 +38,12 @@ class CONTENT_EXPORT RendererWebMediaPlayerDelegate
       public base::SupportsWeakPtr<RendererWebMediaPlayerDelegate> {
  public:
   explicit RendererWebMediaPlayerDelegate(content::RenderFrame* render_frame);
+
+  RendererWebMediaPlayerDelegate(const RendererWebMediaPlayerDelegate&) =
+      delete;
+  RendererWebMediaPlayerDelegate& operator=(
+      const RendererWebMediaPlayerDelegate&) = delete;
+
   ~RendererWebMediaPlayerDelegate() override;
 
   // Returns true if this RenderFrame has ever seen media playback before.
@@ -49,7 +51,6 @@ class CONTENT_EXPORT RendererWebMediaPlayerDelegate
 
   // blink::WebMediaPlayerDelegate implementation.
   bool IsFrameHidden() override;
-  bool IsFrameClosed() override;
   int AddObserver(Observer* observer) override;
   void RemoveObserver(int player_id) override;
   void DidMediaMetadataChange(int player_id,
@@ -67,8 +68,11 @@ class CONTENT_EXPORT RendererWebMediaPlayerDelegate
   // content::RenderFrameObserver overrides.
   void WasHidden() override;
   void WasShown() override;
-  bool OnMessageReceived(const IPC::Message& msg) override;
   void OnDestruct() override;
+
+  // Returns the number of WebMediaPlayers that are associated with this
+  // delegate.
+  size_t web_media_player_count() const { return id_map_.size(); }
 
   // Zeros out |idle_cleanup_interval_|, sets |idle_timeout_| to |idle_timeout|,
   // and |is_low_end_| to |is_low_end|. A zero cleanup interval
@@ -85,19 +89,11 @@ class CONTENT_EXPORT RendererWebMediaPlayerDelegate
   friend class RendererWebMediaPlayerDelegateTest;
 
  private:
-  void OnMediaDelegateSuspendAllMediaPlayers();
-  void OnMediaDelegateVolumeMultiplierUpdate(int player_id, double multiplier);
-  void OnMediaDelegateBecamePersistentVideo(int player_id, bool value);
-  void OnMediaDelegatePowerExperimentState(int player_id, bool state);
-
   // Schedules UpdateTask() to run soon.
   void ScheduleUpdateTask();
 
   // Processes state changes, dispatches CleanupIdlePlayers().
   void UpdateTask();
-
-  // Records UMAs about background playback.
-  void RecordBackgroundVideoPlayback();
 
   // Runs periodically to notify stale players in |idle_player_map_| which
   // have been idle for longer than |timeout|.
@@ -107,7 +103,6 @@ class CONTENT_EXPORT RendererWebMediaPlayerDelegate
   // autoplay logic in RenderFrameImpl.
   bool has_played_media_ = false;
 
-  bool is_frame_closed_ = false;
   bool is_frame_hidden_for_testing_ = false;
 
   // State related to scheduling UpdateTask(). These are cleared each time
@@ -139,13 +134,6 @@ class CONTENT_EXPORT RendererWebMediaPlayerDelegate
   // overridden for testing.
   const base::TickClock* tick_clock_;
 
-#if defined(OS_ANDROID)
-  bool was_playing_background_video_ = false;
-
-  // Keeps track of when the background video playback started for metrics.
-  base::TimeTicks background_video_start_time_;
-#endif  // OS_ANDROID
-
   // Players with a video track.
   base::flat_set<int> players_with_video_;
 
@@ -161,8 +149,6 @@ class CONTENT_EXPORT RendererWebMediaPlayerDelegate
   // Records the peak player count for this render frame.
   size_t peak_player_count_ = 0u;
   std::unique_ptr<base::SingleSampleMetric> peak_player_count_uma_;
-
-  DISALLOW_COPY_AND_ASSIGN(RendererWebMediaPlayerDelegate);
 };
 
 }  // namespace media

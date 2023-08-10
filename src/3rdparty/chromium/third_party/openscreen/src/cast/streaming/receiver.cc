@@ -14,6 +14,7 @@
 #include "util/chrono_helpers.h"
 #include "util/osp_logging.h"
 #include "util/std_util.h"
+#include "util/trace_logging.h"
 
 namespace openscreen {
 namespace cast {
@@ -22,8 +23,6 @@ namespace cast {
 // to help distinguish one out of multiple instances in a Cast Streaming
 // session.
 //
-// TODO(miu): Replace RECEIVER_VLOG's with trace event logging once the tracing
-// infrastructure is ready.
 #define RECEIVER_LOG(level) OSP_LOG_##level << "[SSRC:" << ssrc() << "] "
 #define RECEIVER_VLOG OSP_VLOG << "[SSRC:" << ssrc() << "] "
 
@@ -63,6 +62,16 @@ Receiver::~Receiver() {
   packet_router_->OnReceiverDestroyed(rtcp_session_.sender_ssrc());
 }
 
+const SessionConfig& Receiver::config() const {
+  return config_;
+}
+int Receiver::rtp_timebase() const {
+  return rtp_timebase_;
+}
+Ssrc Receiver::ssrc() const {
+  return rtcp_session_.receiver_ssrc();
+}
+
 void Receiver::SetConsumer(Consumer* consumer) {
   consumer_ = consumer;
   ScheduleFrameReadyCheck();
@@ -85,6 +94,7 @@ void Receiver::RequestKeyFrame() {
 }
 
 int Receiver::AdvanceToNextFrame() {
+  TRACE_DEFAULT_SCOPED(TraceCategory::kReceiver);
   const FrameId immediate_next_frame = last_frame_consumed_ + 1;
 
   // Scan the queue for the next frame that should be consumed. Typically, this
@@ -96,13 +106,11 @@ int Receiver::AdvanceToNextFrame() {
       const EncryptedFrame& encrypted_frame =
           entry.collector.PeekAtAssembledFrame();
       if (f == immediate_next_frame) {  // Typical case.
-        RECEIVER_VLOG << "AdvanceToNextFrame: Next in sequence (" << f << ')';
         return FrameCrypto::GetPlaintextSize(encrypted_frame);
       }
       if (encrypted_frame.dependency != EncodedFrame::DEPENDS_ON_ANOTHER) {
         // Found a frame after skipping past some frames. Drop the ones being
         // skipped, advancing |last_frame_consumed_| before returning.
-        RECEIVER_VLOG << "AdvanceToNextFrame: Skipping-ahead → " << f;
         DropAllFramesBefore(f);
         return FrameCrypto::GetPlaintextSize(encrypted_frame);
       }
@@ -120,22 +128,21 @@ int Receiver::AdvanceToNextFrame() {
 
     // If this incomplete frame is not yet late for playout, simply wait for the
     // rest of its packets to come in. However, do schedule a check to
-    // re-examine things at the time it would become a late frame, to possibly
-    // skip-over it.
-    const auto playout_time =
-        *entry.estimated_capture_time + ResolveTargetPlayoutDelay(f);
-    if (playout_time > (now_() + player_processing_time_)) {
-      ScheduleFrameReadyCheck(playout_time);
+    // re-examine things at the time it should be processed.
+    const auto process_time = *entry.estimated_capture_time +
+                              ResolveTargetPlayoutDelay(f) -
+                              player_processing_time_;
+    if (process_time > now_()) {
+      ScheduleFrameReadyCheck(process_time);
       break;
     }
   }
 
-  RECEIVER_VLOG << "AdvanceToNextFrame: No frames ready. Last consumed was "
-                << last_frame_consumed_ << '.';
   return kNoFramesReady;
 }
 
 EncodedFrame Receiver::ConsumeNextFrame(absl::Span<uint8_t> buffer) {
+  TRACE_DEFAULT_SCOPED(TraceCategory::kReceiver);
   // Assumption: The required call to AdvanceToNextFrame() ensures that
   // |last_frame_consumed_| is set to one before the frame to be consumed here.
   const FrameId frame_id = last_frame_consumed_ + 1;
@@ -195,8 +202,6 @@ void Receiver::OnReceivedRtpPacket(Clock::time_point arrival_time,
     const FrameId max_allowed_frame_id =
         last_frame_consumed_ + kMaxUnackedFrames;
     if (part->frame_id > max_allowed_frame_id) {
-      RECEIVER_VLOG << "Dropping RTP packet for " << part->frame_id
-                    << ": Too many frames are already in-flight.";
       return;
     }
     do {
@@ -204,8 +209,6 @@ void Receiver::OnReceivedRtpPacket(Clock::time_point arrival_time,
       GetQueueEntry(latest_frame_expected_)
           .collector.set_frame_id(latest_frame_expected_);
     } while (latest_frame_expected_ < part->frame_id);
-    RECEIVER_VLOG << "Advanced latest frame expected to "
-                  << latest_frame_expected_;
   }
 
   // Start-up edge case: Blatantly drop the first packet of all frames until the
@@ -253,9 +256,6 @@ void Receiver::OnReceivedRtpPacket(Clock::time_point arrival_time,
 
     // If a target playout delay change was included in this packet, record it.
     if (part->new_playout_delay > milliseconds::zero()) {
-      RECEIVER_VLOG << "Target playout delay changes to "
-                    << part->new_playout_delay.count() << " ms, as of "
-                    << part->frame_id;
       RecordNewTargetPlayoutDelay(part->frame_id, part->new_playout_delay);
     }
 
@@ -289,6 +289,7 @@ void Receiver::OnReceivedRtpPacket(Clock::time_point arrival_time,
 
 void Receiver::OnReceivedRtcpPacket(Clock::time_point arrival_time,
                                     std::vector<uint8_t> packet) {
+  TRACE_DEFAULT_SCOPED(TraceCategory::kReceiver);
   absl::optional<SenderReportParser::SenderReportWithId> parsed_report =
       rtcp_parser_.Parse(packet);
   if (!parsed_report) {
@@ -311,10 +312,6 @@ void Receiver::OnReceivedRtcpPacket(Clock::time_point arrival_time,
   const Clock::duration measured_offset =
       arrival_time - last_sender_report_->reference_time;
   smoothed_clock_offset_.Update(arrival_time, measured_offset);
-  RECEIVER_VLOG
-      << "Received Sender Report: Local clock is ahead of Sender's by "
-      << to_microseconds(smoothed_clock_offset_.Current()).count()
-      << " µs (minus one-way network transit time).";
 
   RtcpReportBlock report;
   report.ssrc = rtcp_session_.sender_ssrc();
@@ -347,7 +344,6 @@ void Receiver::SendRtcp() {
   packet_router_->SendRtcpPacket(rtcp_builder_.BuildPacket(
       last_rtcp_send_time_,
       absl::Span<uint8_t>(rtcp_buffer_.get(), rtcp_buffer_capacity_)));
-  RECEIVER_VLOG << "Sent RTCP packet.";
 
   // Schedule the automatic sending of another RTCP packet, if this method is
   // not called within some bounded amount of time. While incomplete frames
@@ -413,6 +409,7 @@ milliseconds Receiver::ResolveTargetPlayoutDelay(FrameId frame_id) const {
 }
 
 void Receiver::AdvanceCheckpoint(FrameId new_checkpoint) {
+  TRACE_DEFAULT_SCOPED(TraceCategory::kReceiver);
   OSP_DCHECK_GT(new_checkpoint, checkpoint_frame());
   OSP_DCHECK_LE(new_checkpoint, latest_frame_expected_);
 
@@ -424,7 +421,6 @@ void Receiver::AdvanceCheckpoint(FrameId new_checkpoint) {
     new_checkpoint = next;
   }
 
-  RECEIVER_VLOG << "Advancing checkpoint to " << new_checkpoint;
   set_checkpoint_frame(new_checkpoint);
   rtcp_builder_.SetPlayoutDelay(ResolveTargetPlayoutDelay(new_checkpoint));
   SendRtcp();
@@ -464,8 +460,6 @@ void Receiver::ScheduleFrameReadyCheck(Clock::time_point when) {
       },
       when);
 }
-
-Receiver::Consumer::~Consumer() = default;
 
 Receiver::PendingFrame::PendingFrame() = default;
 Receiver::PendingFrame::~PendingFrame() = default;

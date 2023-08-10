@@ -9,6 +9,7 @@
 
 #include "base/bind.h"
 #include "base/callback_internal.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/notreached.h"
 #include "base/strings/string_number_conversions.h"
@@ -230,6 +231,47 @@ TEST_F(CallbackTest, ThenCanConvertRepeatingToOnce) {
         base::BindOnce([](int i) { return i * 2; });
     EXPECT_EQ(
         3, std::move(once_callback).Then(std::move(repeating_callback)).Run(1));
+  }
+}
+
+// `Then()` should should allow a return value of type `R` to be passed to a
+// callback with one parameter of type `const R&` or type `R&&`.
+TEST_F(CallbackTest, ThenWithCompatibleButNotSameType) {
+  {
+    OnceCallback<std::string()> once_callback =
+        BindOnce([] { return std::string("hello"); });
+    EXPECT_EQ("hello",
+              std::move(once_callback)
+                  .Then(BindOnce([](const std::string& s) { return s; }))
+                  .Run());
+  }
+
+  class NotCopied {
+   public:
+    NotCopied() = default;
+    NotCopied(NotCopied&&) = default;
+    NotCopied& operator=(NotCopied&&) = default;
+
+    NotCopied(const NotCopied&) {
+      ADD_FAILURE() << "should not have been copied";
+    }
+
+    NotCopied& operator=(const NotCopied&) {
+      ADD_FAILURE() << "should not have been copied";
+      return *this;
+    }
+  };
+
+  {
+    OnceCallback<NotCopied()> once_callback =
+        BindOnce([] { return NotCopied(); });
+    std::move(once_callback).Then(BindOnce([](const NotCopied&) {})).Run();
+  }
+
+  {
+    OnceCallback<NotCopied()> once_callback =
+        BindOnce([] { return NotCopied(); });
+    std::move(once_callback).Then(BindOnce([](NotCopied&&) {})).Run();
   }
 }
 
@@ -708,7 +750,7 @@ class CallbackOwner : public base::RefCounted<CallbackOwner> {
   }
 
   RepeatingClosure callback_;
-  bool* deleted_;
+  raw_ptr<bool> deleted_;
 };
 
 TEST_F(CallbackTest, CallbackHasLastRefOnContainingObject) {

@@ -8,6 +8,7 @@
 #include <utility>
 
 #include "base/command_line.h"
+#include "base/logging.h"
 #include "ui/gl/gl_surface.h"
 #include "ui/gl/init/gl_factory.h"
 #include "ui/ozone/demo/skia/skia_gl_renderer.h"
@@ -37,7 +38,7 @@ SkiaRendererFactory::SkiaRendererFactory() {}
 SkiaRendererFactory::~SkiaRendererFactory() {}
 
 bool SkiaRendererFactory::Initialize() {
-  if (!gl::init::InitializeGLOneOff()) {
+  if (!gl::init::InitializeGLOneOff(/*system_device_id=*/0)) {
     LOG(FATAL) << "Failed to initialize GL";
   }
 

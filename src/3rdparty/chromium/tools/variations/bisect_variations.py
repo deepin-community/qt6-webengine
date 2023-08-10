@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # Copyright 2019 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
@@ -24,8 +25,6 @@ chrome://version/?show-variations-cmd.
 Run with --help to get a complete list of options this script runs with.
 """
 
-from __future__ import print_function
-
 import logging
 import optparse
 import os
@@ -37,13 +36,13 @@ import tempfile
 import split_variations_cmd
 
 _CHROME_PATH_WIN = {
-  # The following three paths are relative to %ProgramFiles(x86)%
-  "stable": r"Google\Chrome\Application\chrome.exe",
-  "beta": r"Google\Chrome\Application\chrome.exe",
-  "dev": r"Google\Chrome Dev\Application\chrome.exe",
-  # The following two paths are relative to %LOCALAPPDATA%
-  "canary": r"Google\Chrome SxS\Application\chrome.exe",
-  "chromium": r"Chromium\Application\chrome.exe",
+    # The following three paths are relative to %ProgramFiles(x86)%
+    "stable": r"Google\Chrome\Application\chrome.exe",
+    "beta": r"Google\Chrome Beta\Application\chrome.exe",
+    "dev": r"Google\Chrome Dev\Application\chrome.exe",
+    # The following two paths are relative to %LOCALAPPDATA%
+    "canary": r"Google\Chrome SxS\Application\chrome.exe",
+    "chromium": r"Chromium\Application\chrome.exe",
 }
 
 _CHROME_PATH_MAC = {
@@ -223,8 +222,8 @@ def _AskCanReproduce(exit_status, stdout, stderr):
   """
   # Loop until we get a response that we can parse.
   while True:
-    response = raw_input('Can we reproduce with given variations file '
-                         '[(y)es/(n)o/(r)etry/(s)tdout/(q)uit]: ').lower()
+    response = input('Can we reproduce with given variations file '
+                     '[(y)es/(n)o/(r)etry/(s)tdout/(q)uit]: ').lower()
     if response in ('y', 'n', 'r'):
       return response
     if response == 'q':

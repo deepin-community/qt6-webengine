@@ -8,20 +8,19 @@
 #include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/json/json_reader.h"
-#include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/test/bind.h"
 #include "base/test/scoped_feature_list.h"
-#include "base/test/task_environment.h"
 #include "base/test/test_simple_task_runner.h"
 #include "base/threading/thread.h"
+#include "base/threading/thread_restrictions.h"
+#include "base/trace_event/trace_config.h"
 #include "build/build_config.h"
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "services/tracing/perfetto/test_utils.h"
 #include "services/tracing/public/cpp/perfetto/perfetto_config.h"
-#include "services/tracing/public/cpp/perfetto/perfetto_platform.h"
 #include "services/tracing/public/cpp/perfetto/perfetto_traced_process.h"
 #include "services/tracing/public/cpp/perfetto/trace_packet_tokenizer.h"
 #include "services/tracing/public/cpp/traced_process_impl.h"
@@ -41,35 +40,20 @@
 #include "third_party/perfetto/protos/perfetto/trace/trace_packet.pbzero.h"
 
 namespace tracing {
-namespace {
 
-RebindableTaskRunner* GetPerfettoTaskRunner() {
-  static base::NoDestructor<RebindableTaskRunner> task_runner;
-  return task_runner.get();
-}
-
-}  // namespace
-
-class TracingServiceTest : public testing::Test {
+class TracingServiceTest : public TracingUnitTest {
  public:
-  TracingServiceTest() : service_(&perfetto_service_) {
-    // Since Perfetto's platform backend can only be initialized once in a
-    // process, we give it a task runner that can outlive the per-test task
-    // environment.
-    auto* perfetto_task_runner = GetPerfettoTaskRunner();
-    auto* perfetto_platform =
-        PerfettoTracedProcess::Get()->perfetto_platform_for_testing();
-    if (!perfetto_platform->did_start_task_runner())
-      perfetto_platform->StartTaskRunner(perfetto_task_runner);
-    perfetto_task_runner->set_task_runner(base::ThreadTaskRunnerHandle::Get());
+  TracingServiceTest() : service_(&perfetto_service_) {}
 
-    // Also tell PerfettoTracedProcess to use the current task environment.
-    PerfettoTracedProcess::ResetTaskRunnerForTesting(
-        base::ThreadTaskRunnerHandle::Get());
-    PerfettoTracedProcess::Get()->SetupClientLibrary();
+  TracingServiceTest(const TracingServiceTest&) = delete;
+  TracingServiceTest& operator=(const TracingServiceTest&) = delete;
+
+  void SetUp() override {
+    TracingUnitTest::SetUp();
     perfetto_service()->SetActiveServicePidsInitialized();
   }
-  ~TracingServiceTest() override = default;
+
+  void TearDown() override { TracingUnitTest::TearDown(); }
 
  protected:
   PerfettoService* perfetto_service() { return &perfetto_service_; }
@@ -131,14 +115,11 @@ class TracingServiceTest : public testing::Test {
   }
 
  private:
-  base::test::TaskEnvironment task_environment_;
   PerfettoService perfetto_service_;
   TracingService service_;
 
   std::unique_ptr<mojo::Receiver<tracing::mojom::TracedProcess>>
       traced_process_receiver_;
-
-  DISALLOW_COPY_AND_ASSIGN(TracingServiceTest);
 };
 
 class TestTracingClient : public mojom::TracingSessionClient {
@@ -210,7 +191,8 @@ TEST_F(TracingServiceTest, PerfettoClientConsumer) {
   wait_for_registration.Run();
 
   // Start a tracing session using the client API.
-  auto session = perfetto::Tracing::NewTrace();
+  auto session =
+      perfetto::Tracing::NewTrace(perfetto::BackendType::kCustomBackend);
   perfetto::TraceConfig perfetto_config;
   perfetto_config.add_buffers()->set_size_kb(1024);
   auto* ds_cfg = perfetto_config.add_data_sources()->mutable_config();
@@ -253,7 +235,8 @@ TEST_F(TracingServiceTest, PerfettoClientConsumerLegacyJson) {
   EnableClientApiConsumer();
 
   // Start a tracing session with legacy JSON exporting.
-  auto session = perfetto::Tracing::NewTrace();
+  auto session =
+      perfetto::Tracing::NewTrace(perfetto::BackendType::kCustomBackend);
   perfetto::TraceConfig perfetto_config = GetDefaultPerfettoConfig(
       base::trace_event::TraceConfig(), /*privacy_filtering_enabled=*/false,
       /*convert_to_legacy_json=*/true);
@@ -290,9 +273,9 @@ TEST_F(TracingServiceTest, PerfettoClientConsumerLegacyJson) {
   wait_for_data_loop.Run();
   DCHECK(!tokenizer.has_more());
 
-  auto result = base::DictionaryValue::From(
-      base::Value::ToUniquePtrValue(*base::JSONReader::Read(json)));
-  EXPECT_TRUE(result->HasKey("traceEvents"));
+  absl::optional<base::Value> result = base::JSONReader::Read(json);
+  ASSERT_TRUE(result.has_value());
+  EXPECT_TRUE(result->FindKey("traceEvents"));
 }
 
 class CustomDataSource : public perfetto::DataSource<CustomDataSource> {
@@ -337,7 +320,8 @@ TEST_F(TracingServiceTest, PerfettoClientProducer) {
   CustomDataSource::Register(dsd);
 
   // Start a tracing session using the client API.
-  auto session = perfetto::Tracing::NewTrace();
+  auto session =
+      perfetto::Tracing::NewTrace(perfetto::BackendType::kCustomBackend);
   perfetto::TraceConfig perfetto_config;
   perfetto_config.add_buffers()->set_size_kb(1024);
   auto* ds_cfg = perfetto_config.add_data_sources()->mutable_config();
@@ -388,7 +372,7 @@ TEST_F(TracingServiceTest, PerfettoClientProducer) {
   EXPECT_EQ(kNumPackets, ReadAndCountTestPackets(*session));
 }
 
-#if !defined(OS_WIN)
+#if !BUILDFLAG(IS_WIN)
 // TODO(crbug.com/1158482): Support tracing to file on Windows.
 TEST_F(TracingServiceTest, TraceToFile) {
   // Set up API bindings.
@@ -414,7 +398,8 @@ TEST_F(TracingServiceTest, TraceToFile) {
                          base::File::FLAG_OPEN | base::File::FLAG_WRITE);
 
   // Start a tracing session using the client API.
-  auto session = perfetto::Tracing::NewTrace();
+  auto session =
+      perfetto::Tracing::NewTrace(perfetto::BackendType::kCustomBackend);
   perfetto::TraceConfig perfetto_config;
   perfetto_config.add_buffers()->set_size_kb(1024);
   auto* ds_cfg = perfetto_config.add_data_sources()->mutable_config();

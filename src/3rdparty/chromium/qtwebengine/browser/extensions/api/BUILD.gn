@@ -1,3 +1,4 @@
+import("//chrome/common/features.gni")
 import("//extensions/buildflags/buildflags.gni")
 import("//qtwebengine/common/extensions/api/schema.gni")
 import("//tools/json_schema_compiler/json_schema_api.gni")
@@ -13,8 +14,11 @@ source_set("resources_private") {
 
   deps = [
     "//content/public/browser",
-    "//qtwebengine/browser/pdf"
   ]
+
+  if (enable_pdf) {
+    deps += [ "//qtwebengine/browser/pdf" ]
+  }
 }
 
 source_set("tabs") {
@@ -24,7 +28,12 @@ source_set("tabs") {
   ]
 
   deps = [
+    "//chrome/common:buildflags",
     "//content/public/browser",
+    "//extensions/browser",
+    "//extensions/common",
+    "//extensions/common:mojom",
+    "//extensions/common/api",
   ]
 }
 

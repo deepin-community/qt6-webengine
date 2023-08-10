@@ -7,7 +7,7 @@
 #include <utility>
 
 #include "base/bind.h"
-#include "base/sequenced_task_runner.h"
+#include "base/task/sequenced_task_runner.h"
 #include "net/base/upload_data_stream.h"
 #include "net/url_request/url_fetcher_core.h"
 #include "net/url_request/url_fetcher_factory.h"
@@ -90,7 +90,7 @@ void URLFetcherImpl::SetRequestContext(
 }
 
 void URLFetcherImpl::SetInitiator(
-    const base::Optional<url::Origin>& initiator) {
+    const absl::optional<url::Origin>& initiator) {
   core_->SetInitiator(initiator);
 }
 

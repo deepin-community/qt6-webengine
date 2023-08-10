@@ -41,13 +41,13 @@ bool CBC_QRCode::Encode(WideStringView contents) {
 }
 
 bool CBC_QRCode::RenderDevice(CFX_RenderDevice* device,
-                              const CFX_Matrix* matrix) {
+                              const CFX_Matrix& matrix) {
   GetQRCodeWriter()->RenderDeviceResult(device, matrix);
   return true;
 }
 
 BC_TYPE CBC_QRCode::GetType() {
-  return BC_QR_CODE;
+  return BC_TYPE::kQRCode;
 }
 
 CBC_QRCodeWriter* CBC_QRCode::GetQRCodeWriter() {

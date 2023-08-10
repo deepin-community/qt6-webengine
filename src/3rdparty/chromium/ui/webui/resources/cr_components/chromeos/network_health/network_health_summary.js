@@ -2,6 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'chrome://resources/mojo/mojo/public/js/mojo_bindings_lite.js';
+import 'chrome://resources/mojo/chromeos/services/network_config/public/mojom/network_types.mojom-lite.js';
+import 'chrome://resources/mojo/chromeos/services/network_health/public/mojom/network_health.mojom-lite.js';
+import '../../../cr_elements/shared_style_css.m.js';
+import '../network/network_shared_css.m.js';
+
+import {html, Polymer} from '//resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+
+import {I18nBehavior} from '../../../js/i18n_behavior.m.js';
+import {OncMojo} from '../network/onc_mojo.m.js';
+
 const TechnologyIcons = {
   CELLULAR: 'cellular_0.svg',
   ETHERNET: 'ethernet.svg',
@@ -13,6 +24,7 @@ const TechnologyIcons = {
  * @fileoverview Polymer element for displaying NetworkHealth properties.
  */
 Polymer({
+  _template: html`{__html_template__}`,
   is: 'network-health-summary',
 
   behaviors: [
@@ -32,6 +44,13 @@ Polymer({
    * @type {?chromeos.networkHealth.mojom.NetworkHealthServiceRemote}
    */
   networkHealth_: null,
+
+  /**
+   * Expanded state per network type.
+   * @private
+   * @type {!Array<boolean>}
+   */
+  typeExpanded_: [],
 
   /** @override */
   created() {
@@ -206,5 +225,30 @@ Polymer({
    */
   joinAddresses_(addresses) {
     return addresses.join(', ');
+  },
+
+  /**
+   * Returns a boolean flag if the routine type should be expanded.
+   * @param {chromeos.networkConfig.mojom.NetworkType} type
+   * @private
+   */
+  getTypeExpanded_(type) {
+    if (this.typeExpanded_[type] === undefined) {
+      this.set('typeExpanded_.' + type, false);
+      return false;
+    }
+
+    return this.typeExpanded_[type];
+  },
+
+  /**
+   * Helper function to toggle the expanded properties when the network
+   * container is toggled.
+   * @param {!Event} event
+   * @private
+   */
+  onToggleExpanded_(event) {
+    const type = event.model.network.type;
+    this.set('typeExpanded_.' + type, !this.typeExpanded_[type]);
   },
 });

@@ -10,16 +10,18 @@
 #include <utility>
 
 #include "base/bind.h"
+#include "base/callback.h"
 #include "base/callback_helpers.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/simple_test_clock.h"
+#include "base/time/time.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/history/web_history_service_factory.h"
-#include "chrome/browser/sync/profile_sync_service_factory.h"
+#include "chrome/browser/sync/sync_service_factory.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/history/core/browser/browsing_history_service.h"
@@ -30,7 +32,20 @@
 #include "content/public/test/test_web_ui.h"
 #include "net/http/http_status_code.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "url/gurl.h"
+
+namespace history {
+
+class MockBrowsingHistoryService : public BrowsingHistoryService {
+ public:
+  MOCK_METHOD(void,
+              QueryHistory,
+              (const std::u16string& search_text, const QueryOptions& options),
+              (override));
+};
+
+}  // namespace history
 
 namespace {
 
@@ -58,9 +73,18 @@ class BrowsingHistoryHandlerWithWebUIForTesting
     set_clock(&test_clock_);
     set_web_ui(web_ui);
     test_clock_.SetNow(PretendNow());
+    auto service = std::make_unique<
+        testing::StrictMock<history::MockBrowsingHistoryService>>();
+    mock_service_ = service.get();
+    set_browsing_history_service_for_testing(std::move(service));
   }
 
-  void SendHistoryQuery(int count, const base::string16& query) override {
+  BrowsingHistoryHandlerWithWebUIForTesting(
+      const BrowsingHistoryHandlerWithWebUIForTesting&) = delete;
+  BrowsingHistoryHandlerWithWebUIForTesting& operator=(
+      const BrowsingHistoryHandlerWithWebUIForTesting&) = delete;
+
+  void SendHistoryQuery(int count, const std::u16string& query) override {
     if (postpone_query_results_) {
       return;
     }
@@ -70,12 +94,12 @@ class BrowsingHistoryHandlerWithWebUIForTesting
   void PostponeResults() { postpone_query_results_ = true; }
 
   base::SimpleTestClock* test_clock() { return &test_clock_; }
+  history::MockBrowsingHistoryService* mock_service() { return mock_service_; }
 
  private:
   base::SimpleTestClock test_clock_;
   bool postpone_query_results_ = false;
-
-  DISALLOW_COPY_AND_ASSIGN(BrowsingHistoryHandlerWithWebUIForTesting);
+  raw_ptr<history::MockBrowsingHistoryService> mock_service_;
 };
 
 }  // namespace
@@ -86,7 +110,7 @@ class BrowsingHistoryHandlerTest : public ChromeRenderViewHostTestHarness {
     ChromeRenderViewHostTestHarness::SetUp();
 
     sync_service_ = static_cast<syncer::TestSyncService*>(
-        ProfileSyncServiceFactory::GetForProfile(profile()));
+        SyncServiceFactory::GetForProfile(profile()));
     web_history_service_ = static_cast<history::FakeWebHistoryService*>(
         WebHistoryServiceFactory::GetForProfile(profile()));
     ASSERT_TRUE(web_history_service_);
@@ -102,7 +126,7 @@ class BrowsingHistoryHandlerTest : public ChromeRenderViewHostTestHarness {
 
   TestingProfile::TestingFactories GetTestingFactories() const override {
     return {
-        {ProfileSyncServiceFactory::GetInstance(),
+        {SyncServiceFactory::GetInstance(),
          base::BindRepeating(&BuildTestSyncService)},
         {WebHistoryServiceFactory::GetInstance(),
          base::BindRepeating(&BuildFakeWebHistoryService)},
@@ -113,9 +137,8 @@ class BrowsingHistoryHandlerTest : public ChromeRenderViewHostTestHarness {
 
   void VerifyHistoryDeletedFired(content::TestWebUI::CallData& data) {
     EXPECT_EQ("cr.webUIListenerCallback", data.function_name());
-    std::string event_fired;
-    ASSERT_TRUE(data.arg1()->GetAsString(&event_fired));
-    EXPECT_EQ("history-deleted", event_fired);
+    ASSERT_TRUE(data.arg1()->is_string());
+    EXPECT_EQ("history-deleted", data.arg1()->GetString());
   }
 
   void InitializeWebUI(BrowsingHistoryHandlerWithWebUIForTesting& handler) {
@@ -147,8 +170,8 @@ class BrowsingHistoryHandlerTest : public ChromeRenderViewHostTestHarness {
     return service;
   }
 
-  syncer::TestSyncService* sync_service_ = nullptr;
-  history::FakeWebHistoryService* web_history_service_ = nullptr;
+  raw_ptr<syncer::TestSyncService> sync_service_ = nullptr;
+  raw_ptr<history::FakeWebHistoryService> web_history_service_ = nullptr;
   std::unique_ptr<content::TestWebUI> web_ui_;
 };
 
@@ -243,12 +266,10 @@ TEST_F(BrowsingHistoryHandlerTest, ObservingWebHistoryDeletions) {
     EXPECT_EQ(11U, web_ui()->call_data().size());
     const content::TestWebUI::CallData& data = *web_ui()->call_data().back();
     EXPECT_EQ("cr.webUIResponse", data.function_name());
-    std::string callback_id;
-    ASSERT_TRUE(data.arg1()->GetAsString(&callback_id));
-    EXPECT_EQ("remove-visits-callback-id", callback_id);
-    bool success = false;
-    ASSERT_TRUE(data.arg2()->GetAsBoolean(&success));
-    ASSERT_TRUE(success);
+    ASSERT_TRUE(data.arg1()->is_string());
+    EXPECT_EQ("remove-visits-callback-id", data.arg1()->GetString());
+    ASSERT_TRUE(data.arg2()->is_bool());
+    ASSERT_TRUE(data.arg2()->GetBool());
   }
 
   // When history sync is not active, we don't listen to WebHistoryService
@@ -270,7 +291,73 @@ TEST_F(BrowsingHistoryHandlerTest, ObservingWebHistoryDeletions) {
   }
 }
 
-#if !defined(OS_ANDROID)
+TEST_F(BrowsingHistoryHandlerTest, HostPrefixParameter) {
+  BrowsingHistoryHandlerWithWebUIForTesting handler(web_ui());
+  ASSERT_TRUE(web_ui()->call_data().empty());
+
+  std::u16string query = u"www.chromium.org";
+  EXPECT_CALL(
+      *handler.mock_service(),
+      QueryHistory(query,
+                   ::testing::Field(&history::QueryOptions::host_only, true)));
+
+  base::Value init_args(base::Value::Type::LIST);
+  init_args.Append("query-history-callback-id");
+  init_args.Append("host:www.chromium.org");
+  init_args.Append(150);
+  handler.HandleQueryHistory(&base::Value::AsListValue(init_args));
+}
+
+TEST_F(BrowsingHistoryHandlerTest, WithoutHostPrefixParameter) {
+  BrowsingHistoryHandlerWithWebUIForTesting handler(web_ui());
+  ASSERT_TRUE(web_ui()->call_data().empty());
+
+  std::u16string query = u"www.chromium.org";
+  EXPECT_CALL(
+      *handler.mock_service(),
+      QueryHistory(query,
+                   ::testing::Field(&history::QueryOptions::host_only, false)));
+
+  base::Value init_args(base::Value::Type::LIST);
+  init_args.Append("query-history-callback-id");
+  init_args.Append("www.chromium.org");
+  init_args.Append(150);
+  handler.HandleQueryHistory(&base::Value::AsListValue(init_args));
+}
+
+TEST_F(BrowsingHistoryHandlerTest, MisplacedHostPrefixParameter) {
+  BrowsingHistoryHandlerWithWebUIForTesting handler(web_ui());
+  ASSERT_TRUE(web_ui()->call_data().empty());
+  {
+    std::u16string query = u"whost:ww.chromium.org";
+    EXPECT_CALL(
+        *handler.mock_service(),
+        QueryHistory(
+            query, ::testing::Field(&history::QueryOptions::host_only, false)));
+
+    base::Value init_args(base::Value::Type::LIST);
+    init_args.Append("query-history-callback-id");
+    init_args.Append("whost:ww.chromium.org");
+    init_args.Append(150);
+    handler.HandleQueryHistory(&base::Value::AsListValue(init_args));
+  }
+
+  {
+    std::u16string query = u"www.chromium.orghost:";
+    EXPECT_CALL(
+        *handler.mock_service(),
+        QueryHistory(
+            query, ::testing::Field(&history::QueryOptions::host_only, false)));
+
+    base::Value init_args(base::Value::Type::LIST);
+    init_args.Append("query-history-callback-id");
+    init_args.Append("www.chromium.orghost:");
+    init_args.Append(150);
+    handler.HandleQueryHistory(&base::Value::AsListValue(init_args));
+  }
+}
+
+#if !BUILDFLAG(IS_ANDROID)
 TEST_F(BrowsingHistoryHandlerTest, MdTruncatesTitles) {
   history::BrowsingHistoryService::HistoryEntry long_url_entry;
   long_url_entry.url = GURL(
@@ -299,7 +386,7 @@ TEST_F(BrowsingHistoryHandlerTest, MdTruncatesTitles) {
   const base::Value* list = arg3->FindListKey("value");
   ASSERT_TRUE(list->is_list());
 
-  const base::Value& first_entry = list->GetList()[0];
+  const base::Value& first_entry = list->GetListDeprecated()[0];
   ASSERT_TRUE(first_entry.is_dict());
 
   const std::string* title = first_entry.FindStringKey("title");

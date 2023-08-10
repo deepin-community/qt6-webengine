@@ -143,7 +143,6 @@
           {
             "name": "callback",
             "type": "function",
-            "optional": false,
             "description": "Callback which is called with the config object.",
             "parameters": [
               {
@@ -161,18 +160,17 @@
       }, {
         "name": "getInputMethods",
         "type": "function",
-        "description": "Gets all whitelisted input methods.",
+        "description": "Gets all enabled input methods, sorted in ascending order of their localized full display names, according to the lexicographical order defined by the current system locale aka. display language.",
         "parameters": [
           {
             "name": "callback",
             "type": "function",
-            "optional": false,
             "description": "Callback which is called with the input method objects.",
             "parameters": [
               {
                 "name": "inputMethods",
                 "type": "array",
-                "description": "Whitelisted input method objects.",
+                "description": "Enabled input method objects, sorted in ascending order of their localized full display names, according to the lexicographical order defined by the current system locale aka. display language.",
                 "items": {
                   "type": "object",
                   "properties": {
@@ -193,7 +191,6 @@
           {
             "name": "callback",
             "type": "function",
-            "optional": false,
             "description": "Callback which is called with the current input method.",
             "parameters": [
               {
@@ -212,7 +209,6 @@
           {
             "name": "inputMethodId",
             "type": "string",
-            "optional": false,
             "description": "The input method ID to be set as current input method."
           },
           {
@@ -223,6 +219,19 @@
             "parameters": []
           }
         ]
+        }, {
+          "name": "switchToLastUsedInputMethod",
+          "type": "function",
+          "description": "Switches to the last used input method. If no last used input method, this is a no-op.",
+          "parameters": [
+            {
+              "name": "callback",
+              "type": "function",
+              "optional": true,
+              "description": "Callback which is called once the input method is swapped (if applicable). If unsuccessful $(ref:runtime.lastError) is set.",
+              "parameters": []
+            }
+          ]
       }, {
         "name": "fetchAllDictionaryWords",
         "type": "function",
@@ -231,7 +240,6 @@
           {
             "name": "callback",
             "type": "function",
-            "optional": false,
             "description": "Callback which is called once the list of dictionary words are ready.",
             "parameters": [
               {
@@ -253,7 +261,6 @@
           {
             "name": "word",
             "type": "string",
-            "optional": false,
             "description": "A new word to add to the dictionary."
           },
           {
@@ -278,7 +285,6 @@
               {
                 "name": "enabled",
                 "type": "boolean",
-                "optional": false,
                 "description": "The result of whether enabled."
               }
             ]
@@ -446,7 +452,7 @@
       }, {
         "name": "getSurroundingText",
         "type": "function",
-        "description": "Gets the surrounding text of the current selection",
+        "description": "Gets the surrounding text of the current selection. WARNING: This could return a stale cache that doesn't reflect reality, due to async between IMF and TextInputClient.",
         "parameters": [
           {
             "name": "beforeLength",
@@ -695,19 +701,19 @@
                 "type": "object",
                 "properties": {
                   "x": {
-                    "description": "The x-coordinate of the autocorrected word's bounds.",
+                    "description": "The x-coordinate of the autocorrected word's bounds in px.",
                     "type": "integer"
                   },
                   "y": {
-                    "description": "The y-coordinate of the autocorrected word's bounds.",
+                    "description": "The y-coordinate of the autocorrected word's bounds in px.",
                     "type": "integer"
                   },
                   "width": {
-                    "description": "The width of the autocorrected word's bounds.",
+                    "description": "The width of the autocorrected word's bounds in px.",
                     "type": "integer"
                   },
                   "height":{
-                    "description": "The height of the autocorrected word's bounds.",
+                    "description": "The height of the autocorrected word's bounds in px.",
                     "type": "integer"
                   }
                 }
@@ -775,7 +781,7 @@
                 },
                 "correctedWord": {
                     "type": "string",
-                    "description": "Needed to know the length of the autocorrected text to show the correct length of underline."
+                    "description": "Needed primarily to know the length of the autocorrected text to show the correct length of underline. String content technically redundant; required however, as what IMF knows may be stale due to async."
                 },
                 "startIndex": {
                     "type": "integer",
@@ -783,6 +789,52 @@
                 }
             }
         }]
+    },
+    {
+      "name" : "getTextFieldBounds",
+      "type" : "function",
+      "description" : "Get the bounds of the current text field",
+      "parameters" :[
+        {
+            "name": "parameters",
+            "type": "object",
+            "properties": {
+              "contextID": {
+                "description": "ID of the context.",
+                "type": "integer"
+              }
+            }
+        },
+        {
+            "type": "function",
+            "name": "callback",
+            "description": "Called with screen coordinates of the text field when the operation completes. On failure, $(ref:runtime.lastError) is set.",
+            "parameters": [
+              {
+                "name": "textFieldBounds",
+                "type": "object",
+                "properties": {
+                  "x": {
+                    "description": "The x-coordinate of the text field's bounds.",
+                    "type": "integer"
+                  },
+                  "y": {
+                    "description": "The y-coordinate of the text field's bounds.",
+                    "type": "integer"
+                  },
+                  "width": {
+                    "description": "The width of the text field's bounds.",
+                    "type": "integer"
+                  },
+                  "height":{
+                    "description": "The height of the  bounds.",
+                    "type": "integer"
+                  }
+                }
+              }
+            ]
+          }
+        ]
     }
     ],
     "events": [
@@ -897,6 +949,17 @@
             "$ref": "InputContext",
             "name": "context",
             "description": "Describes the text field that has acquired focus."
+          }
+        ]
+      }, {
+        "name": "onTouch",
+        "type": "function",
+        "description": "This event is sent when a touch occurs in a text field. Should only happen after onFocus()",
+        "parameters": [
+          {
+            "$ref": "FocusReason",
+            "name": "pointerType",
+            "description": "Pointer type used to touch the text field"
           }
         ]
       }, {

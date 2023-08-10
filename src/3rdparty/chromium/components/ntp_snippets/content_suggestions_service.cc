@@ -11,11 +11,10 @@
 
 #include "base/bind.h"
 #include "base/containers/contains.h"
+#include "base/containers/cxx20_erase.h"
 #include "base/location.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/strings/stringprintf.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/default_clock.h"
 #include "base/values.h"
@@ -119,11 +118,11 @@ CategoryStatus ContentSuggestionsService::GetCategoryStatus(
   return iterator->second->GetCategoryStatus(category);
 }
 
-base::Optional<CategoryInfo> ContentSuggestionsService::GetCategoryInfo(
+absl::optional<CategoryInfo> ContentSuggestionsService::GetCategoryInfo(
     Category category) const {
   auto iterator = providers_by_category_.find(category);
   if (iterator == providers_by_category_.end()) {
-    return base::Optional<CategoryInfo>();
+    return absl::optional<CategoryInfo>();
   }
   return iterator->second->GetCategoryInfo(category);
 }
@@ -674,24 +673,23 @@ void ContentSuggestionsService::RestoreDismissedCategoriesFromPrefs() {
   DCHECK(dismissed_providers_by_category_.empty());
   DCHECK(providers_by_category_.empty());
 
-  const base::ListValue* list =
-      pref_service_->GetList(prefs::kDismissedCategories);
-  for (const base::Value& entry : *list) {
-    int id = 0;
-    if (!entry.GetAsInteger(&id)) {
+  const base::Value* list = pref_service_->GetList(prefs::kDismissedCategories);
+  for (const base::Value& entry : list->GetListDeprecated()) {
+    if (!entry.is_int()) {
       DLOG(WARNING) << "Invalid category pref value: " << entry;
       continue;
     }
 
     // When the provider is registered, it will be stored in this map.
-    dismissed_providers_by_category_[Category::FromIDValue(id)] = nullptr;
+    dismissed_providers_by_category_[Category::FromIDValue(entry.GetInt())] =
+        nullptr;
   }
 }
 
 void ContentSuggestionsService::StoreDismissedCategoriesToPrefs() {
   base::ListValue list;
   for (const auto& category_provider_pair : dismissed_providers_by_category_) {
-    list.AppendInteger(category_provider_pair.first.id());
+    list.Append(category_provider_pair.first.id());
   }
 
   pref_service_->Set(prefs::kDismissedCategories, list);

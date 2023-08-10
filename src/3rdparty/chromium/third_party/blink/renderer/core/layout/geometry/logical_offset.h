@@ -5,6 +5,8 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_GEOMETRY_LOGICAL_OFFSET_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_GEOMETRY_LOGICAL_OFFSET_H_
 
+#include <tuple>
+
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/platform/geometry/layout_unit.h"
 #include "third_party/blink/renderer/platform/text/writing_direction_mode.h"
@@ -18,7 +20,7 @@ struct PhysicalSize;
 // LogicalOffset is the position of a rect (typically a fragment) relative to
 // its parent rect in the logical coordinate system.
 // For more information about physical and logical coordinate systems, see:
-// https://chromium.googlesource.com/chromium/src/+/master/third_party/blink/renderer/core/layout/README.md#coordinate-spaces
+// https://chromium.googlesource.com/chromium/src/+/main/third_party/blink/renderer/core/layout/README.md#coordinate-spaces
 struct CORE_EXPORT LogicalOffset {
   constexpr LogicalOffset() = default;
   constexpr LogicalOffset(LayoutUnit inline_offset, LayoutUnit block_offset)

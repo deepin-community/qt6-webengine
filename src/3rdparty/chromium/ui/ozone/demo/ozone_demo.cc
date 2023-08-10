@@ -8,6 +8,7 @@
 #include "base/at_exit.h"
 #include "base/command_line.h"
 #include "base/debug/stack_trace.h"
+#include "base/logging.h"
 #include "base/message_loop/message_pump_type.h"
 #include "base/run_loop.h"
 #include "base/task/single_thread_task_executor.h"
@@ -35,7 +36,7 @@ int main(int argc, char** argv) {
   logging::LoggingSettings settings;
 
 // Logs to system debug by default on POSIX.
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   settings.log_file_path = FILE_PATH_LITERAL("ozone_demo.log");
 #endif
 

@@ -5,9 +5,7 @@
 #ifndef CHROME_COMMON_MAC_APP_MODE_CHROME_LOCATOR_H_
 #define CHROME_COMMON_MAC_APP_MODE_CHROME_LOCATOR_H_
 
-#include <CoreFoundation/CoreFoundation.h>
-
-#include "base/strings/string16.h"
+#include <string>
 
 @class NSString;
 
@@ -17,9 +15,9 @@ class FilePath;
 
 namespace app_mode {
 
-// Given a bundle id, return the path of the corresponding bundle.
-// Returns true if the bundle was found, false otherwise.
-bool FindBundleById(NSString* bundle_id, base::FilePath* out_bundle);
+// Given a bundle id, return the path of the corresponding bundle path. Returns
+// true if the bundle was found, false otherwise.
+bool FindChromeBundle(NSString* bundle_id, base::FilePath* out_bundle);
 
 // Given the path to the Chrome bundle, and an optional framework version, read
 // the following information:

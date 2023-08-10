@@ -9,10 +9,14 @@
 #include <algorithm>
 #include <map>
 #include <memory>
+#include <numeric>
+#include <sstream>
 #include <utility>
 #include <vector>
 
 #include "constants/page_object.h"
+#include "core/fpdfapi/page/cpdf_form.h"
+#include "core/fpdfapi/page/cpdf_formobject.h"
 #include "core/fpdfapi/page/cpdf_page.h"
 #include "core/fpdfapi/page/cpdf_pageobject.h"
 #include "core/fpdfapi/parser/cpdf_array.h"
@@ -25,13 +29,21 @@
 #include "core/fpdfapi/parser/cpdf_stream.h"
 #include "core/fpdfapi/parser/cpdf_stream_acc.h"
 #include "core/fpdfapi/parser/cpdf_string.h"
+#include "core/fpdfapi/parser/fpdf_parser_utility.h"
 #include "core/fpdfapi/render/cpdf_pagerendercache.h"
 #include "core/fxcrt/fx_safe_types.h"
+#include "core/fxcrt/fx_string_wrappers.h"
 #include "core/fxcrt/retain_ptr.h"
 #include "core/fxcrt/unowned_ptr.h"
 #include "fpdfsdk/cpdfsdk_helpers.h"
 #include "public/cpp/fpdf_scopers.h"
 #include "third_party/base/check.h"
+#include "third_party/base/span.h"
+
+struct XObjectContext {
+  CPDF_Document* dest_doc;
+  RetainPtr<CPDF_Stream> xobject;
+};
 
 namespace {
 
@@ -146,11 +158,9 @@ const CPDF_Object* PageDictGetInheritableTag(const CPDF_Dictionary* pDict,
     return nullptr;
   }
 
-  const CPDF_Object* pType =
-      pDict->GetObjectFor(pdfium::page_object::kType)->GetDirect();
-  if (!ToName(pType))
-    return nullptr;
-  if (pType->GetString().Compare("Page"))
+  const CPDF_Name* pName =
+      ToName(pDict->GetObjectFor(pdfium::page_object::kType)->GetDirect());
+  if (!pName || pName->GetString() != "Page")
     return nullptr;
 
   const CPDF_Dictionary* pp = ToDictionary(
@@ -172,21 +182,6 @@ const CPDF_Object* PageDictGetInheritableTag(const CPDF_Dictionary* pDict,
   return nullptr;
 }
 
-CFX_FloatRect GetMediaBox(const CPDF_Dictionary* pPageDict) {
-  const CPDF_Object* pMediaBox =
-      PageDictGetInheritableTag(pPageDict, pdfium::page_object::kMediaBox);
-  const CPDF_Array* pArray = ToArray(pMediaBox->GetDirect());
-  if (!pArray)
-    return CFX_FloatRect();
-  return pArray->GetRect();
-}
-
-CFX_FloatRect GetCropBox(const CPDF_Dictionary* pPageDict) {
-  if (pPageDict->KeyExist(pdfium::page_object::kCropBox))
-    return pPageDict->GetRectFor(pdfium::page_object::kCropBox);
-  return GetMediaBox(pPageDict);
-}
-
 bool CopyInheritable(CPDF_Dictionary* pDestPageDict,
                      const CPDF_Dictionary* pSrcPageDict,
                      const ByteString& key) {
@@ -202,74 +197,15 @@ bool CopyInheritable(CPDF_Dictionary* pDestPageDict,
   return true;
 }
 
-bool ParsePageRangeString(const ByteString& bsPageRange,
-                          uint32_t nCount,
-                          std::vector<uint32_t>* pageArray) {
-  ByteString bsStrippedPageRange = bsPageRange;
-  bsStrippedPageRange.Remove(' ');
-  size_t nLength = bsStrippedPageRange.GetLength();
-  if (nLength == 0)
-    return true;
-
-  static const ByteString cbCompareString("0123456789-,");
-  for (size_t i = 0; i < nLength; ++i) {
-    if (!cbCompareString.Contains(bsStrippedPageRange[i]))
-      return false;
-  }
-
-  ByteString cbMidRange;
-  size_t nStringFrom = 0;
-  size_t nStringTo = 0;
-  while (nStringTo < nLength) {
-    nStringTo = bsStrippedPageRange.Find(',', nStringFrom).value_or(nLength);
-    cbMidRange =
-        bsStrippedPageRange.Substr(nStringFrom, nStringTo - nStringFrom);
-    Optional<size_t> nDashPosition = cbMidRange.Find('-');
-    if (nDashPosition) {
-      size_t nMid = nDashPosition.value();
-      uint32_t nStartPageNum = pdfium::base::checked_cast<uint32_t>(
-          atoi(cbMidRange.First(nMid).c_str()));
-      if (nStartPageNum == 0)
-        return false;
-
-      ++nMid;
-      size_t nEnd = cbMidRange.GetLength() - nMid;
-      if (nEnd == 0)
-        return false;
-
-      uint32_t nEndPageNum = pdfium::base::checked_cast<uint32_t>(
-          atoi(cbMidRange.Substr(nMid, nEnd).c_str()));
-      if (nStartPageNum < 0 || nStartPageNum > nEndPageNum ||
-          nEndPageNum > nCount) {
-        return false;
-      }
-      for (uint32_t i = nStartPageNum; i <= nEndPageNum; ++i) {
-        pageArray->push_back(i);
-      }
-    } else {
-      uint32_t nPageNum =
-          pdfium::base::checked_cast<uint32_t>(atoi(cbMidRange.c_str()));
-      if (nPageNum <= 0 || nPageNum > nCount)
-        return false;
-      pageArray->push_back(nPageNum);
-    }
-    nStringFrom = nStringTo + 1;
-  }
-  return true;
-}
-
-std::vector<uint32_t> GetPageNumbers(const CPDF_Document& doc,
+std::vector<uint32_t> GetPageIndices(const CPDF_Document& doc,
                                      const ByteString& bsPageRange) {
-  std::vector<uint32_t> page_numbers;
   uint32_t nCount = doc.GetPageCount();
-  if (bsPageRange.IsEmpty()) {
-    for (uint32_t i = 1; i <= nCount; ++i)
-      page_numbers.push_back(i);
-  } else {
-    if (!ParsePageRangeString(bsPageRange, nCount, &page_numbers))
-      page_numbers.clear();
-  }
-  return page_numbers;
+  if (!bsPageRange.IsEmpty())
+    return ParsePageRangeString(bsPageRange, nCount);
+
+  std::vector<uint32_t> page_indices(nCount);
+  std::iota(page_indices.begin(), page_indices.end(), 0);
+  return page_indices;
 }
 
 class CPDF_PageOrganizer {
@@ -369,8 +305,6 @@ bool CPDF_PageOrganizer::UpdateReference(CPDF_Object* pObj) {
           if (key == "Parent" || key == "Prev" || key == "First")
             continue;
           CPDF_Object* pNextObj = it.second.Get();
-          if (!pNextObj)
-            return false;
           if (!UpdateReference(pNextObj))
             bad_keys.push_back(key);
         }
@@ -382,8 +316,7 @@ bool CPDF_PageOrganizer::UpdateReference(CPDF_Object* pObj) {
     case CPDF_Object::kArray: {
       CPDF_Array* pArray = pObj->AsArray();
       for (size_t i = 0; i < pArray->size(); ++i) {
-        CPDF_Object* pNextObj = pArray->GetObjectAt(i);
-        if (!pNextObj || !UpdateReference(pNextObj))
+        if (!UpdateReference(pArray->GetObjectAt(i)))
           return false;
       }
       return true;
@@ -418,9 +351,9 @@ uint32_t CPDF_PageOrganizer::GetNewObjId(CPDF_Reference* pRef) {
   if (CPDF_Dictionary* pDictClone = pClone->AsDictionary()) {
     if (pDictClone->KeyExist("Type")) {
       ByteString strType = pDictClone->GetStringFor("Type");
-      if (!FXSYS_stricmp(strType.c_str(), "Pages"))
+      if (strType.EqualNoCase("Pages"))
         return 4;
-      if (!FXSYS_stricmp(strType.c_str(), "Page"))
+      if (strType.EqualNoCase("Page"))
         return 0;
     }
   }
@@ -440,11 +373,10 @@ class CPDF_PageExporter final : public CPDF_PageOrganizer {
   CPDF_PageExporter(CPDF_Document* pDestDoc, CPDF_Document* pSrcDoc);
   ~CPDF_PageExporter();
 
-  // For the pages from the source document with |pageNums| as their page
-  // numbers, insert them into the destination document at page |nIndex|.
-  // |pageNums| is 1-based.
-  // |nIndex| is 0-based.
-  bool ExportPage(const std::vector<uint32_t>& pageNums, int nIndex);
+  // For the pages from the source document with |pageIndices| as their page
+  // indices, insert them into the destination document at page |nIndex|.
+  // |pageIndices| and |nIndex| are 0-based.
+  bool ExportPage(pdfium::span<const uint32_t> pageIndices, int nIndex);
 };
 
 CPDF_PageExporter::CPDF_PageExporter(CPDF_Document* pDestDoc,
@@ -453,15 +385,15 @@ CPDF_PageExporter::CPDF_PageExporter(CPDF_Document* pDestDoc,
 
 CPDF_PageExporter::~CPDF_PageExporter() = default;
 
-bool CPDF_PageExporter::ExportPage(const std::vector<uint32_t>& pageNums,
+bool CPDF_PageExporter::ExportPage(pdfium::span<const uint32_t> pageIndices,
                                    int nIndex) {
   if (!Init())
     return false;
 
   int curpage = nIndex;
-  for (size_t i = 0; i < pageNums.size(); ++i) {
+  for (uint32_t pageIndex : pageIndices) {
     CPDF_Dictionary* pDestPageDict = dest()->CreateNewPage(curpage);
-    auto* pSrcPageDict = src()->GetPageDictionary(pageNums[i] - 1);
+    auto* pSrcPageDict = src()->GetPageDictionary(pageIndex);
     if (!pSrcPageDict || !pDestPageDict)
       return false;
 
@@ -531,32 +463,37 @@ class CPDF_NPageToOneExporter final : public CPDF_PageOrganizer {
   CPDF_NPageToOneExporter(CPDF_Document* pDestDoc, CPDF_Document* pSrcDoc);
   ~CPDF_NPageToOneExporter();
 
-  // For the pages from the source document with |pageNums| as their page
-  // numbers, insert them into the destination document, starting at page 0.
-  // |pageNums| is 1-based.
+  // For the pages from the source document with |pageIndices| as their page
+  // indices, insert them into the destination document, starting at page index
+  // 0.
+  // |pageIndices| is 0-based.
   // |destPageSize| is the destination document page dimensions, measured in
   // PDF "user space" units.
   // |nPagesOnXAxis| and |nPagesOnXAxis| together defines how many source
   // pages fit on one destination page.
-  bool ExportNPagesToOne(const std::vector<uint32_t>& pageNums,
+  bool ExportNPagesToOne(pdfium::span<const uint32_t> pageIndices,
                          const CFX_SizeF& destPageSize,
                          size_t nPagesOnXAxis,
                          size_t nPagesOnYAxis);
+
+  std::unique_ptr<XObjectContext> CreateXObjectContextFromPage(
+      int src_page_index);
 
  private:
   // Map page object number to XObject object name.
   using PageXObjectMap = std::map<uint32_t, ByteString>;
 
-  // Creates an XObject from |pSrcPageDict|, or find an existing XObject that
-  // represents |pSrcPageDict|. The transformation matrix is specified in
+  // Creates an XObject from |pSrcPage|, or find an existing XObject that
+  // represents |pSrcPage|. The transformation matrix is specified in
   // |settings|.
   // Returns the XObject reference surrounded by the transformation matrix.
-  ByteString AddSubPage(const CPDF_Dictionary* pSrcPageDict,
+  ByteString AddSubPage(const RetainPtr<CPDF_Page>& pSrcPage,
                         const NupPageSettings& settings);
 
-  // Creates an XObject from |pSrcPageDict|. Updates mapping as needed.
+  // Creates an XObject from |pSrcPage|. Updates mapping as needed.
   // Returns the name of the newly created XObject.
-  ByteString MakeXObjectFromPage(const CPDF_Dictionary* pSrcPageDict);
+  ByteString MakeXObjectFromPage(const RetainPtr<CPDF_Page>& pSrcPage);
+  CPDF_Stream* MakeXObjectFromPageRaw(const RetainPtr<CPDF_Page>& pSrcPage);
 
   // Adds |bsContent| as the Contents key in |pDestPageDict|.
   // Adds the objects in |m_XObjectNameToNumberMap| to the XObject dictionary in
@@ -583,7 +520,7 @@ CPDF_NPageToOneExporter::CPDF_NPageToOneExporter(CPDF_Document* pDestDoc,
 CPDF_NPageToOneExporter::~CPDF_NPageToOneExporter() = default;
 
 bool CPDF_NPageToOneExporter::ExportNPagesToOne(
-    const std::vector<uint32_t>& pageNums,
+    pdfium::span<const uint32_t> pageIndices,
     const CFX_SizeF& destPageSize,
     size_t nPagesOnXAxis,
     size_t nPagesOnYAxis) {
@@ -600,24 +537,24 @@ bool CPDF_NPageToOneExporter::ExportNPagesToOne(
   size_t nPagesPerSheet = nSafePagesPerSheet.ValueOrDie();
   NupState nupState(destPageSize, nPagesOnXAxis, nPagesOnYAxis);
 
-  size_t curpage = 0;
+  FX_SAFE_INT32 curpage = 0;
   const CFX_FloatRect destPageRect(0, 0, destPageSize.width,
                                    destPageSize.height);
-  for (size_t iOuterPage = 0; iOuterPage < pageNums.size();
+  for (size_t iOuterPage = 0; iOuterPage < pageIndices.size();
        iOuterPage += nPagesPerSheet) {
     m_XObjectNameToNumberMap.clear();
 
-    // Create a new page
-    CPDF_Dictionary* pDestPageDict = dest()->CreateNewPage(curpage);
+    CPDF_Dictionary* pDestPageDict =
+        dest()->CreateNewPage(curpage.ValueOrDie());
     if (!pDestPageDict)
       return false;
 
     pDestPageDict->SetRectFor(pdfium::page_object::kMediaBox, destPageRect);
     ByteString bsContent;
     size_t iInnerPageMax =
-        std::min(iOuterPage + nPagesPerSheet, pageNums.size());
+        std::min(iOuterPage + nPagesPerSheet, pageIndices.size());
     for (size_t i = iOuterPage; i < iInnerPageMax; ++i) {
-      auto* pSrcPageDict = src()->GetPageDictionary(pageNums[i] - 1);
+      auto* pSrcPageDict = src()->GetPageDictionary(pageIndices[i]);
       if (!pSrcPageDict)
         return false;
 
@@ -626,7 +563,7 @@ bool CPDF_NPageToOneExporter::ExportNPagesToOne(
           std::make_unique<CPDF_PageRenderCache>(pSrcPage.Get()));
       NupPageSettings settings =
           nupState.CalculateNewPagePosition(pSrcPage->GetPageSize());
-      bsContent += AddSubPage(pSrcPageDict, settings);
+      bsContent += AddSubPage(pSrcPage, settings);
     }
 
     FinishPage(pDestPageDict, bsContent);
@@ -637,19 +574,19 @@ bool CPDF_NPageToOneExporter::ExportNPagesToOne(
 }
 
 ByteString CPDF_NPageToOneExporter::AddSubPage(
-    const CPDF_Dictionary* pSrcPageDict,
+    const RetainPtr<CPDF_Page>& pSrcPage,
     const NupPageSettings& settings) {
-  uint32_t dwSrcPageObjnum = pSrcPageDict->GetObjNum();
+  uint32_t dwSrcPageObjnum = pSrcPage->GetDict()->GetObjNum();
   const auto it = m_SrcPageXObjectMap.find(dwSrcPageObjnum);
   ByteString bsXObjectName = it != m_SrcPageXObjectMap.end()
                                  ? it->second
-                                 : MakeXObjectFromPage(pSrcPageDict);
+                                 : MakeXObjectFromPage(pSrcPage);
 
   CFX_Matrix matrix;
   matrix.Scale(settings.scale, settings.scale);
   matrix.Translate(settings.subPageStartPoint.x, settings.subPageStartPoint.y);
 
-  std::ostringstream contentStream;
+  fxcrt::ostringstream contentStream;
   contentStream << "q\n"
                 << matrix.a << " " << matrix.b << " " << matrix.c << " "
                 << matrix.d << " " << matrix.e << " " << matrix.f << " cm\n"
@@ -657,10 +594,9 @@ ByteString CPDF_NPageToOneExporter::AddSubPage(
   return ByteString(contentStream);
 }
 
-ByteString CPDF_NPageToOneExporter::MakeXObjectFromPage(
-    const CPDF_Dictionary* pSrcPageDict) {
-  DCHECK(pSrcPageDict);
-
+CPDF_Stream* CPDF_NPageToOneExporter::MakeXObjectFromPageRaw(
+    const RetainPtr<CPDF_Page>& pSrcPage) {
+  const CPDF_Dictionary* pSrcPageDict = pSrcPage->GetDict();
   const CPDF_Object* pSrcContentObj =
       pSrcPageDict->GetDirectObjectFor(pdfium::page_object::kContents);
 
@@ -680,8 +616,8 @@ ByteString CPDF_NPageToOneExporter::MakeXObjectFromPage(
   pNewXObjectDict->SetNewFor<CPDF_Name>("Type", "XObject");
   pNewXObjectDict->SetNewFor<CPDF_Name>("Subtype", "Form");
   pNewXObjectDict->SetNewFor<CPDF_Number>("FormType", 1);
-  pNewXObjectDict->SetRectFor("BBox", GetCropBox(pSrcPageDict));
-  // TODO(xlou): add matrix field to pNewXObjectDict.
+  pNewXObjectDict->SetRectFor("BBox", pSrcPage->GetBBox());
+  pNewXObjectDict->SetMatrixFor("Matrix", pSrcPage->GetPageMatrix());
 
   if (pSrcContentObj) {
     ByteString bsSrcContentStream;
@@ -702,12 +638,31 @@ ByteString CPDF_NPageToOneExporter::MakeXObjectFromPage(
     }
     pNewXObject->SetDataAndRemoveFilter(bsSrcContentStream.raw_span());
   }
+  return pNewXObject;
+}
+
+ByteString CPDF_NPageToOneExporter::MakeXObjectFromPage(
+    const RetainPtr<CPDF_Page>& pSrcPage) {
+  CPDF_Stream* pNewXObject = MakeXObjectFromPageRaw(pSrcPage);
 
   // TODO(xlou): A better name schema to avoid possible object name collision.
   ByteString bsXObjectName = ByteString::Format("X%d", ++m_nObjectNumber);
   m_XObjectNameToNumberMap[bsXObjectName] = pNewXObject->GetObjNum();
-  m_SrcPageXObjectMap[pSrcPageDict->GetObjNum()] = bsXObjectName;
+  m_SrcPageXObjectMap[pSrcPage->GetDict()->GetObjNum()] = bsXObjectName;
   return bsXObjectName;
+}
+
+std::unique_ptr<XObjectContext>
+CPDF_NPageToOneExporter::CreateXObjectContextFromPage(int src_page_index) {
+  CPDF_Dictionary* src_page_dict = src()->GetPageDictionary(src_page_index);
+  if (!src_page_dict)
+    return nullptr;
+
+  auto src_page = pdfium::MakeRetain<CPDF_Page>(src(), src_page_dict);
+  auto xobject = std::make_unique<XObjectContext>();
+  xobject->dest_doc = dest();
+  xobject->xobject = MakeXObjectFromPageRaw(src_page);
+  return xobject;
 }
 
 void CPDF_NPageToOneExporter::FinishPage(CPDF_Dictionary* pDestPageDict,
@@ -715,16 +670,8 @@ void CPDF_NPageToOneExporter::FinishPage(CPDF_Dictionary* pDestPageDict,
   DCHECK(pDestPageDict);
 
   CPDF_Dictionary* pRes =
-      pDestPageDict->GetDictFor(pdfium::page_object::kResources);
-  if (!pRes) {
-    pRes = pDestPageDict->SetNewFor<CPDF_Dictionary>(
-        pdfium::page_object::kResources);
-  }
-
-  CPDF_Dictionary* pPageXObject = pRes->GetDictFor("XObject");
-  if (!pPageXObject)
-    pPageXObject = pRes->SetNewFor<CPDF_Dictionary>("XObject");
-
+      GetOrCreateDict(pDestPageDict, pdfium::page_object::kResources);
+  CPDF_Dictionary* pPageXObject = GetOrCreateDict(pRes, "XObject");
   for (auto& it : m_XObjectNameToNumberMap)
     pPageXObject->SetNewFor<CPDF_Reference>(it.first, dest(), it.second);
 
@@ -738,6 +685,37 @@ void CPDF_NPageToOneExporter::FinishPage(CPDF_Dictionary* pDestPageDict,
 
 }  // namespace
 
+FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
+FPDF_ImportPagesByIndex(FPDF_DOCUMENT dest_doc,
+                        FPDF_DOCUMENT src_doc,
+                        const int* page_indices,
+                        unsigned long length,
+                        int index) {
+  CPDF_Document* pDestDoc = CPDFDocumentFromFPDFDocument(dest_doc);
+  if (!dest_doc)
+    return false;
+
+  CPDF_Document* pSrcDoc = CPDFDocumentFromFPDFDocument(src_doc);
+  if (!pSrcDoc)
+    return false;
+
+  CPDF_PageExporter exporter(pDestDoc, pSrcDoc);
+
+  if (!page_indices) {
+    std::vector<uint32_t> page_indices_vec(pSrcDoc->GetPageCount());
+    std::iota(page_indices_vec.begin(), page_indices_vec.end(), 0);
+    return exporter.ExportPage(page_indices_vec, index);
+  }
+
+  if (length == 0)
+    return false;
+
+  return exporter.ExportPage(
+      pdfium::make_span(reinterpret_cast<const uint32_t*>(page_indices),
+                        length),
+      index);
+}
+
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV FPDF_ImportPages(FPDF_DOCUMENT dest_doc,
                                                      FPDF_DOCUMENT src_doc,
                                                      FPDF_BYTESTRING pagerange,
@@ -750,12 +728,12 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV FPDF_ImportPages(FPDF_DOCUMENT dest_doc,
   if (!pSrcDoc)
     return false;
 
-  std::vector<uint32_t> page_numbers = GetPageNumbers(*pSrcDoc, pagerange);
-  if (page_numbers.empty())
+  std::vector<uint32_t> page_indices = GetPageIndices(*pSrcDoc, pagerange);
+  if (page_indices.empty())
     return false;
 
   CPDF_PageExporter exporter(pDestDoc, pSrcDoc);
-  return exporter.ExportPage(page_numbers, index);
+  return exporter.ExportPage(page_indices, index);
 }
 
 FPDF_EXPORT FPDF_DOCUMENT FPDF_CALLCONV
@@ -780,24 +758,63 @@ FPDF_ImportNPagesToOne(FPDF_DOCUMENT src_doc,
   CPDF_Document* pDestDoc = CPDFDocumentFromFPDFDocument(output_doc.get());
   DCHECK(pDestDoc);
 
-  std::vector<uint32_t> page_numbers = GetPageNumbers(*pSrcDoc, ByteString());
-  if (page_numbers.empty())
+  std::vector<uint32_t> page_indices = GetPageIndices(*pSrcDoc, ByteString());
+  if (page_indices.empty())
     return nullptr;
 
   if (num_pages_on_x_axis == 1 && num_pages_on_y_axis == 1) {
     CPDF_PageExporter exporter(pDestDoc, pSrcDoc);
-    if (!exporter.ExportPage(page_numbers, 0))
+    if (!exporter.ExportPage(page_indices, 0))
       return nullptr;
     return output_doc.release();
   }
 
   CPDF_NPageToOneExporter exporter(pDestDoc, pSrcDoc);
-  if (!exporter.ExportNPagesToOne(page_numbers,
+  if (!exporter.ExportNPagesToOne(page_indices,
                                   CFX_SizeF(output_width, output_height),
                                   num_pages_on_x_axis, num_pages_on_y_axis)) {
     return nullptr;
   }
   return output_doc.release();
+}
+
+FPDF_EXPORT FPDF_XOBJECT FPDF_CALLCONV
+FPDF_NewXObjectFromPage(FPDF_DOCUMENT dest_doc,
+                        FPDF_DOCUMENT src_doc,
+                        int src_page_index) {
+  CPDF_Document* dest = CPDFDocumentFromFPDFDocument(dest_doc);
+  if (!dest)
+    return nullptr;
+
+  CPDF_Document* src = CPDFDocumentFromFPDFDocument(src_doc);
+  if (!src)
+    return nullptr;
+
+  CPDF_NPageToOneExporter exporter(dest, src);
+  std::unique_ptr<XObjectContext> xobject =
+      exporter.CreateXObjectContextFromPage(src_page_index);
+  return FPDFXObjectFromXObjectContext(xobject.release());
+}
+
+FPDF_EXPORT void FPDF_CALLCONV FPDF_CloseXObject(FPDF_XOBJECT xobject) {
+  std::unique_ptr<XObjectContext> xobject_deleter(
+      XObjectContextFromFPDFXObject(xobject));
+}
+
+FPDF_EXPORT FPDF_PAGEOBJECT FPDF_CALLCONV
+FPDF_NewFormObjectFromXObject(FPDF_XOBJECT xobject) {
+  XObjectContext* xobj = XObjectContextFromFPDFXObject(xobject);
+  if (!xobj)
+    return nullptr;
+
+  // If used directly with std::make_unique(), linking fails.
+  // Build toolchain bug?
+  constexpr int kNoContentStream = CPDF_PageObject::kNoContentStream;
+  auto form = std::make_unique<CPDF_Form>(xobj->dest_doc, nullptr,
+                                          xobj->xobject.Get(), nullptr);
+  auto form_object = std::make_unique<CPDF_FormObject>(
+      kNoContentStream, std::move(form), CFX_Matrix());
+  return FPDFPageObjectFromCPDFPageObject(form_object.release());
 }
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV

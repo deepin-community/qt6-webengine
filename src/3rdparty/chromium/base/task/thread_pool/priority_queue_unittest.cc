@@ -40,11 +40,11 @@ class PriorityQueueWithSequencesTest : public testing::Test {
       const TaskTraits& traits) {
     // FastForward time to ensure that queue order between task sources is well
     // defined.
-    task_environment.FastForwardBy(TimeDelta::FromMicroseconds(1));
+    task_environment.FastForwardBy(Microseconds(1));
     scoped_refptr<Sequence> sequence = MakeRefCounted<Sequence>(
         traits, nullptr, TaskSourceExecutionMode::kParallel);
     sequence->BeginTransaction().PushTask(
-        Task(FROM_HERE, DoNothing(), TimeDelta()));
+        Task(FROM_HERE, DoNothing(), TimeTicks::Now(), TimeDelta()));
     return sequence;
   }
 

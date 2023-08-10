@@ -6,6 +6,7 @@
 
 #include <memory>
 
+#include "base/notreached.h"
 #include "base/values.h"
 #include "chrome/common/extensions/api/developer_private.h"
 #include "extensions/browser/extension_error.h"
@@ -66,14 +67,14 @@ api::developer_private::ItemInfo MangleExtensionInfo(
       info.state == api::developer_private::EXTENSION_STATE_TERMINATED;
 
   if (info.path)
-    result.path.reset(new std::string(*info.path));
+    result.path = std::make_unique<std::string>(*info.path);
   if (info.options_page)
-    result.options_url.reset(new std::string(info.options_page->url));
+    result.options_url = std::make_unique<std::string>(info.options_page->url);
   if (info.launch_url)
-    result.app_launch_url.reset(new std::string(*info.launch_url));
+    result.app_launch_url = std::make_unique<std::string>(*info.launch_url);
   if (!info.home_page.url.empty())
-    result.homepage_url.reset(new std::string(info.home_page.url));
-  result.update_url.reset(new std::string(info.update_url));
+    result.homepage_url = std::make_unique<std::string>(info.home_page.url);
+  result.update_url = std::make_unique<std::string>(info.update_url);
   for (const std::string& str_warning : info.install_warnings) {
     api::developer_private::InstallWarning warning;
     warning.message = str_warning;
@@ -82,20 +83,20 @@ api::developer_private::ItemInfo MangleExtensionInfo(
   for (const api::developer_private::ManifestError& error :
        info.manifest_errors) {
     std::unique_ptr<base::DictionaryValue> value = error.ToValue();
-    value->SetInteger("type", static_cast<int>(ExtensionError::MANIFEST_ERROR));
-    value->SetInteger("level", static_cast<int>(logging::LOG_WARNING));
+    value->SetIntKey("type", static_cast<int>(ExtensionError::MANIFEST_ERROR));
+    value->SetIntKey("level", static_cast<int>(logging::LOG_WARNING));
     result.manifest_errors.push_back(std::move(value));
   }
   for (const api::developer_private::RuntimeError& error :
        info.runtime_errors) {
     std::unique_ptr<base::DictionaryValue> value = error.ToValue();
-    value->SetInteger("type", static_cast<int>(ExtensionError::RUNTIME_ERROR));
+    value->SetIntKey("type", static_cast<int>(ExtensionError::RUNTIME_ERROR));
     logging::LogSeverity severity = logging::LOG_INFO;
     if (error.severity == api::developer_private::ERROR_LEVEL_WARN)
       severity = logging::LOG_WARNING;
     else if (error.severity == api::developer_private::ERROR_LEVEL_ERROR)
       severity = logging::LOG_ERROR;
-    value->SetInteger("level", static_cast<int>(severity));
+    value->SetIntKey("level", static_cast<int>(severity));
     result.runtime_errors.push_back(std::move(value));
   }
   result.offline_enabled = info.offline_enabled;

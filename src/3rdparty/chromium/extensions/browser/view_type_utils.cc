@@ -6,6 +6,7 @@
 
 #include "base/lazy_instance.h"
 #include "content/public/browser/web_contents.h"
+#include "extensions/browser/extension_web_contents_observer.h"
 #include "extensions/browser/extensions_browser_client.h"
 
 using content::WebContents;
@@ -18,31 +19,42 @@ const char kViewTypeUserDataKey[] = "ViewTypeUserData";
 
 class ViewTypeUserData : public base::SupportsUserData::Data {
  public:
-  explicit ViewTypeUserData(ViewType type) : type_(type) {}
+  explicit ViewTypeUserData(mojom::ViewType type) : type_(type) {}
   ~ViewTypeUserData() override {}
-  ViewType type() { return type_; }
+  mojom::ViewType type() { return type_; }
 
  private:
-  ViewType type_;
+  mojom::ViewType type_;
 };
 
 }  // namespace
 
-ViewType GetViewType(WebContents* tab) {
+mojom::ViewType GetViewType(WebContents* tab) {
   if (!tab)
-    return VIEW_TYPE_INVALID;
+    return mojom::ViewType::kInvalid;
 
   ViewTypeUserData* user_data = static_cast<ViewTypeUserData*>(
       tab->GetUserData(&kViewTypeUserDataKey));
 
-  return user_data ? user_data->type() : VIEW_TYPE_INVALID;
+  return user_data ? user_data->type() : mojom::ViewType::kInvalid;
 }
 
-void SetViewType(WebContents* tab, ViewType type) {
+void SetViewType(WebContents* tab, mojom::ViewType type) {
   tab->SetUserData(&kViewTypeUserDataKey,
                    std::make_unique<ViewTypeUserData>(type));
 
   ExtensionsBrowserClient::Get()->AttachExtensionTaskManagerTag(tab, type);
+
+  auto send_view_type_to_renderer = [](ExtensionWebContentsObserver* ewco,
+                                       mojom::ViewType type,
+                                       content::RenderFrameHost* frame_host) {
+    if (mojom::LocalFrame* local_frame = ewco->GetLocalFrame(frame_host))
+      local_frame->NotifyRenderViewType(type);
+  };
+  if (auto* ewco = ExtensionWebContentsObserver::GetForWebContents(tab)) {
+    tab->ForEachRenderFrameHost(
+        base::BindRepeating(send_view_type_to_renderer, ewco, type));
+  }
 }
 
 }  // namespace extensions

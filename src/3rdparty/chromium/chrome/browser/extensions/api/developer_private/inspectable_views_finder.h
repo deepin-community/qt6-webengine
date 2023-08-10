@@ -7,9 +7,8 @@
 
 #include <vector>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "chrome/common/extensions/api/developer_private.h"
-#include "extensions/common/view_type.h"
 
 class Profile;
 class GURL;
@@ -32,6 +31,10 @@ class InspectableViewsFinder {
   using ViewList = std::vector<View>;
 
   explicit InspectableViewsFinder(Profile* profile);
+
+  InspectableViewsFinder(const InspectableViewsFinder&) = delete;
+  InspectableViewsFinder& operator=(const InspectableViewsFinder&) = delete;
+
   ~InspectableViewsFinder();
 
   // Construct a view from the given parameters.
@@ -64,9 +67,7 @@ class InspectableViewsFinder {
   void GetAppWindowViewsForExtension(const Extension& extension,
                                      ViewList* result);
 
-  Profile* profile_;
-
-  DISALLOW_COPY_AND_ASSIGN(InspectableViewsFinder);
+  raw_ptr<Profile> profile_;
 };
 
 }  // namespace extensions

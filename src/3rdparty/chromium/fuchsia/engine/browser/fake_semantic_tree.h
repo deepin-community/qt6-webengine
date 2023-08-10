@@ -11,6 +11,7 @@
 #include <unordered_map>
 
 #include "base/callback.h"
+#include "base/strings/string_piece_forward.h"
 
 class FakeSemanticTree
     : public fuchsia::accessibility::semantics::testing::SemanticTree_TestBase {
@@ -36,7 +37,9 @@ class FakeSemanticTree
   void Disconnect();
 
   void RunUntilNodeCountAtLeast(size_t count);
+  void RunUntilNodeWithLabelIsInTree(base::StringPiece label);
   void RunUntilCommitCountIs(size_t count);
+  void RunUntilConditionIsTrue(base::RepeatingCallback<bool()> condition);
   void SetNodeUpdatedCallback(uint32_t node_id,
                               base::OnceClosure node_updated_callback);
   fuchsia::accessibility::semantics::Node* GetNodeWithId(uint32_t id);

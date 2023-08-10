@@ -126,6 +126,9 @@ class DragDropView : public View {
  public:
   DragDropView() = default;
 
+  DragDropView(const DragDropView&) = delete;
+  DragDropView& operator=(const DragDropView&) = delete;
+
   void set_formats(int formats) { formats_ = formats; }
 
   // View:
@@ -142,20 +145,25 @@ class DragDropView : public View {
     return ui::DragDropTypes::DRAG_COPY;
   }
 
-  DragOperation OnPerformDrop(const ui::DropTargetEvent& event) override {
-    return DragOperation::kMove;
+  views::View::DropCallback GetDropCallback(
+      const ui::DropTargetEvent& event) override {
+    return base::BindOnce([](const ui::DropTargetEvent& event,
+                             ui::mojom::DragOperation& output_drag_op) {
+      output_drag_op = DragOperation::kMove;
+    });
   }
 
  private:
   // Drop formats accepted by this View object.
   int formats_ = 0;
-
-  DISALLOW_COPY_AND_ASSIGN(DragDropView);
 };
 
 class DragDropClientMacTest : public WidgetTest {
  public:
   DragDropClientMacTest() : widget_(new Widget) {}
+
+  DragDropClientMacTest(const DragDropClientMacTest&) = delete;
+  DragDropClientMacTest& operator=(const DragDropClientMacTest&) = delete;
 
   DragDropClientMac* drag_drop_client() {
     return ns_window_host_->drag_drop_client();
@@ -195,7 +203,7 @@ class DragDropClientMacTest : public WidgetTest {
     widget_->Show();
 
     target_ = new DragDropView();
-    widget_->GetContentsView()->AddChildView(target_);
+    widget_->non_client_view()->frame_view()->AddChildView(target_);
     target_->SetBoundsRect(bounds);
 
     drag_drop_client()->source_operation_ = ui::DragDropTypes::DRAG_COPY;
@@ -213,16 +221,13 @@ class DragDropClientMacTest : public WidgetTest {
   NativeWidgetMacNSWindowHost* ns_window_host_ = nullptr;
   DragDropView* target_ = nullptr;
   base::scoped_nsobject<MockDraggingInfo> dragging_info_;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(DragDropClientMacTest);
 };
 
 // Tests if the drag and drop target receives the dropped data.
 TEST_F(DragDropClientMacTest, BasicDragDrop) {
   // Create the drop data
   OSExchangeData data;
-  const base::string16& text = ASCIIToUTF16("text");
+  const std::u16string& text = u"text";
   data.SetString(text);
   SetData(data);
 
@@ -246,7 +251,7 @@ TEST_F(DragDropClientMacTest, ReleaseCapture) {
 
   // Create the drop data
   std::unique_ptr<OSExchangeData> data(std::make_unique<OSExchangeData>());
-  const base::string16& text = ASCIIToUTF16("text");
+  const std::u16string& text = u"text";
   data->SetString(text);
   data->provider().SetDragImage(gfx::test::CreateImageSkia(100, 100),
                                 gfx::Vector2d());
@@ -275,7 +280,7 @@ TEST_F(DragDropClientMacTest, ReleaseCapture) {
 // incorrect format.
 TEST_F(DragDropClientMacTest, InvalidFormatDragDrop) {
   OSExchangeData data;
-  const base::string16& text = ASCIIToUTF16("text");
+  const std::u16string& text = u"text";
   data.SetString(text);
   SetData(data);
 
@@ -311,32 +316,41 @@ class DragDropCloseView : public DragDropView {
  public:
   DragDropCloseView() {}
 
-  // View:
-  DragOperation OnPerformDrop(const ui::DropTargetEvent& event) override {
-    GetWidget()->CloseNow();
-    return DragOperation::kMove;
+  DragDropCloseView(const DragDropCloseView&) = delete;
+  DragDropCloseView& operator=(const DragDropCloseView&) = delete;
+
+  views::View::DropCallback GetDropCallback(
+      const ui::DropTargetEvent& event) override {
+    // base::Unretained is safe here because in the tests the view isn't deleted
+    // before the drop callback is run.
+    return base::BindOnce(&DragDropCloseView::PerformDrop,
+                          base::Unretained(this));
   }
 
  private:
-  DISALLOW_COPY_AND_ASSIGN(DragDropCloseView);
+  void PerformDrop(const ui::DropTargetEvent& event,
+                   ui::mojom::DragOperation& output_drag_op) {
+    GetWidget()->CloseNow();
+    output_drag_op = DragOperation::kMove;
+  }
 };
 
-// Tests that closing Widget on OnPerformDrop does not crash.
+// Tests that closing Widget on drop does not crash.
 TEST_F(DragDropClientMacTest, CloseWidgetOnDrop) {
   OSExchangeData data;
-  const base::string16& text = ASCIIToUTF16("text");
+  const std::u16string& text = u"text";
   data.SetString(text);
   SetData(data);
 
   target_ = new DragDropCloseView();
-  widget_->GetContentsView()->AddChildView(target_);
+  widget_->non_client_view()->frame_view()->AddChildView(target_);
   target_->SetBoundsRect(gfx::Rect(0, 0, 100, 100));
   target_->set_formats(ui::OSExchangeData::STRING | ui::OSExchangeData::URL);
 
   EXPECT_EQ(DragUpdate(nil), NSDragOperationCopy);
   EXPECT_EQ(Drop(), NSDragOperationMove);
 
-  // OnPerformDrop() will have deleted the widget.
+  // Drop callback will have deleted the widget.
   widget_ = nullptr;
 }
 

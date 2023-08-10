@@ -116,7 +116,7 @@ class Printer(object):
         self._print_default('Using %s build' % self._options.configuration)
         self._print_default(
             'Regular timeout: %s, slow test timeout: %s' %
-            (self._options.time_out_ms, self._options.slow_time_out_ms))
+            (self._options.timeout_ms, self._options.slow_timeout_ms))
 
         self._print_default('Command line: ' +
                             ' '.join(port.driver_cmd_line()))
@@ -320,7 +320,7 @@ class Printer(object):
     def _result_message(self, result_type, failures, expected, timing,
                         test_run_time):
         exp_string = ' unexpectedly' if not expected else ''
-        timing_string = ' %.4fs' % test_run_time if timing else ''
+        timing_string = ' %.4fs' % test_run_time if timing or test_run_time > 1 else ''
         if result_type == ResultType.Pass:
             return ' passed%s%s' % (exp_string, timing_string)
         else:

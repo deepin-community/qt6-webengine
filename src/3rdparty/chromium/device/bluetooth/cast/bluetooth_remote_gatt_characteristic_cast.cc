@@ -8,10 +8,8 @@
 
 #include "base/bind.h"
 #include "base/callback.h"
-#include "base/callback_forward.h"
 #include "base/containers/queue.h"
 #include "base/logging.h"
-#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "chromecast/device/bluetooth/le/remote_characteristic.h"
 #include "chromecast/device/bluetooth/le/remote_descriptor.h"
@@ -135,12 +133,10 @@ BluetoothRemoteGattService* BluetoothRemoteGattCharacteristicCast::GetService()
 }
 
 void BluetoothRemoteGattCharacteristicCast::ReadRemoteCharacteristic(
-    ValueCallback callback,
-    ErrorCallback error_callback) {
+    ValueCallback callback) {
   remote_characteristic_->Read(base::BindOnce(
       &BluetoothRemoteGattCharacteristicCast::OnReadRemoteCharacteristic,
-      weak_factory_.GetWeakPtr(), std::move(callback),
-      std::move(error_callback)));
+      weak_factory_.GetWeakPtr(), std::move(callback)));
 }
 
 void BluetoothRemoteGattCharacteristicCast::WriteRemoteCharacteristic(
@@ -182,15 +178,14 @@ void BluetoothRemoteGattCharacteristicCast::DeprecatedWriteRemoteCharacteristic(
 }
 
 void BluetoothRemoteGattCharacteristicCast::SubscribeToNotifications(
-    BluetoothRemoteGattDescriptor* ccc_descriptor,
+    [[maybe_unused]] BluetoothRemoteGattDescriptor* ccc_descriptor,
     base::OnceClosure callback,
     ErrorCallback error_callback) {
   DVLOG(2) << __func__ << " " << GetIdentifier();
 
   // |remote_characteristic_| exposes a method which writes the CCCD after
   // subscribing the GATT client to the notification. This is syntactically
-  // nicer and saves us a thread-hop, so we can ignore |ccc_descriptor|.
-  (void)ccc_descriptor;
+  // nicer and saves us a thread-hop, so we ignore |ccc_descriptor|.
 
   remote_characteristic_->SetRegisterNotification(
       true, base::BindOnce(&OnSubscribeOrUnsubscribe, std::move(callback),
@@ -198,15 +193,14 @@ void BluetoothRemoteGattCharacteristicCast::SubscribeToNotifications(
 }
 
 void BluetoothRemoteGattCharacteristicCast::UnsubscribeFromNotifications(
-    BluetoothRemoteGattDescriptor* ccc_descriptor,
+    [[maybe_unused]] BluetoothRemoteGattDescriptor* ccc_descriptor,
     base::OnceClosure callback,
     ErrorCallback error_callback) {
   DVLOG(2) << __func__ << " " << GetIdentifier();
 
   // |remote_characteristic_| exposes a method which writes the CCCD after
   // unsubscribing the GATT client from the notification. This is syntactically
-  // nicer and saves us a thread-hop, so we can ignore |ccc_descriptor|.
-  (void)ccc_descriptor;
+  // nicer and saves us a thread-hop, so we ignore |ccc_descriptor|.
 
   remote_characteristic_->SetRegisterNotification(
       false, base::BindOnce(&OnSubscribeOrUnsubscribe, std::move(callback),
@@ -215,15 +209,15 @@ void BluetoothRemoteGattCharacteristicCast::UnsubscribeFromNotifications(
 
 void BluetoothRemoteGattCharacteristicCast::OnReadRemoteCharacteristic(
     ValueCallback callback,
-    ErrorCallback error_callback,
     bool success,
     const std::vector<uint8_t>& result) {
   if (success) {
     value_ = result;
-    std::move(callback).Run(result);
+    std::move(callback).Run(/*error_code=*/absl::nullopt, result);
     return;
   }
-  std::move(error_callback).Run(BluetoothGattService::GATT_ERROR_FAILED);
+  std::move(callback).Run(BluetoothGattService::GATT_ERROR_FAILED,
+                          /*value=*/std::vector<uint8_t>());
 }
 
 void BluetoothRemoteGattCharacteristicCast::OnWriteRemoteCharacteristic(

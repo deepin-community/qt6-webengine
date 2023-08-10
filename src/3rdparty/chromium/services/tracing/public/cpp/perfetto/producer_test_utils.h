@@ -9,13 +9,18 @@
 #include <vector>
 
 #include "base/callback_forward.h"
-#include "base/optional.h"
+#include "base/memory/raw_ptr.h"
+#include "base/memory/ref_counted_memory.h"
+#include "base/test/scoped_feature_list.h"
+#include "base/tracing/perfetto_task_runner.h"
+#include "services/tracing/public/cpp/perfetto/perfetto_config.h"
 #include "services/tracing/public/cpp/perfetto/producer_client.h"
-#include "services/tracing/public/cpp/perfetto/task_runner.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/perfetto/include/perfetto/ext/tracing/core/trace_writer.h"
 #include "third_party/perfetto/include/perfetto/protozero/root_message.h"
 #include "third_party/perfetto/include/perfetto/protozero/scattered_stream_null_delegate.h"
 #include "third_party/perfetto/protos/perfetto/trace/chrome/chrome_trace_event.pb.h"
+#include "third_party/perfetto/protos/perfetto/trace/trace.pb.h"
 #include "third_party/perfetto/protos/perfetto/trace/trace_packet.pb.h"
 #include "third_party/perfetto/protos/perfetto/trace/trace_packet.pbzero.h"
 
@@ -24,9 +29,9 @@ namespace tracing {
 // Test producer client for data source tests.
 class TestProducerClient : public ProducerClient {
  public:
-  explicit TestProducerClient(
-      std::unique_ptr<PerfettoTaskRunner> main_thread_task_runner,
-      bool log_only_main_thread = true);
+  explicit TestProducerClient(std::unique_ptr<base::tracing::PerfettoTaskRunner>
+                                  main_thread_task_runner,
+                              bool log_only_main_thread = true);
   ~TestProducerClient() override;
 
   // ProducerClient implementation:
@@ -55,20 +60,28 @@ class TestProducerClient : public ProducerClient {
     return finalized_packets_;
   }
 
+  int empty_finalized_packets_count() const {
+    return empty_finalized_packets_count_;
+  }
+
   TestProducerClient(TestProducerClient&&) = delete;
   TestProducerClient& operator=(TestProducerClient&&) = delete;
 
  private:
   std::vector<std::unique_ptr<perfetto::protos::TracePacket>>
       finalized_packets_;
+  // A count of finalized packets not added to |finalized_packets_| per being
+  // empty.
+  int empty_finalized_packets_count_ = 0;
   std::vector<std::unique_ptr<perfetto::protos::TracePacket>>
       legacy_metadata_packets_;
   std::vector<std::unique_ptr<perfetto::protos::TracePacket>>
       proto_metadata_packets_;
-  protozero::RootMessage<perfetto::protos::pbzero::TracePacket> trace_packet_;
+  absl::optional<protozero::RootMessage<perfetto::protos::pbzero::TracePacket>>
+      trace_packet_;
   protozero::ScatteredStreamWriterNullDelegate delegate_;
   protozero::ScatteredStreamWriter stream_;
-  std::unique_ptr<PerfettoTaskRunner> main_thread_task_runner_;
+  std::unique_ptr<base::tracing::PerfettoTaskRunner> main_thread_task_runner_;
   bool log_only_main_thread_;
 };
 
@@ -87,7 +100,50 @@ class TestTraceWriter : public perfetto::TraceWriter {
   TestTraceWriter& operator=(TestTraceWriter&&) = delete;
 
  private:
-  TestProducerClient* producer_client_;
+  raw_ptr<TestProducerClient> producer_client_;
+};
+
+// Wrapper class around TestProducerClient useful for testing a trace data
+// source.
+//
+// Usage:
+//  DataSourceTester tester(source);
+//  tester.BeginTrace();
+//  source.WriteTracePackets();
+//  tester.EndTracing();
+//
+//  EXPECT_TRUE(tester.GetFinalizedPacket());
+class DataSourceTester {
+ public:
+  explicit DataSourceTester(
+      tracing::PerfettoTracedProcess::DataSourceBase* data_source);
+  ~DataSourceTester();
+
+  void BeginTrace(const base::trace_event::TraceConfig& trace_config = {});
+  void EndTracing();
+  size_t GetFinalizedPacketCount();
+  const perfetto::protos::TracePacket* GetFinalizedPacket(
+      size_t packet_index = 0);
+
+#if !BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
+  TestProducerClient* GetProducerClient() { return producer_.get(); }
+#endif  // !BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
+
+ private:
+#if BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
+  void OnTraceData(base::RepeatingClosure quit_closure,
+                   const scoped_refptr<base::RefCountedString>& chunk,
+                   bool has_more_events);
+#endif  // BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
+
+  base::test::ScopedFeatureList features_;
+#if BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
+  std::vector<std::unique_ptr<perfetto::protos::TracePacket>>
+      finalized_packets_;
+#else   // !BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
+  std::unique_ptr<tracing::TestProducerClient> producer_;
+  raw_ptr<tracing::PerfettoTracedProcess::DataSourceBase> data_source_;
+#endif  // !BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
 };
 
 }  // namespace tracing

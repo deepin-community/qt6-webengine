@@ -10,10 +10,12 @@
 #define BASE_CALLBACK_H_
 
 #include <stddef.h>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/callback_forward.h"
 #include "base/callback_internal.h"
+#include "base/check.h"
 #include "base/notreached.h"
 
 // -----------------------------------------------------------------------------
@@ -48,12 +50,23 @@
 // will be a no-op. Note that |IsCancelled()| and |is_null()| are distinct:
 // simply cancelling a callback will not also make it null.
 //
-// base::Callback is currently a type alias for base::RepeatingCallback. In the
-// future, we expect to flip this to default to base::OnceCallback.
-//
 // See //docs/callback.md for the full documentation.
 
 namespace base {
+
+namespace internal {
+
+struct NullCallbackTag {
+  template <typename Signature>
+  struct WithSignature {};
+};
+
+struct DoNothingCallbackTag {
+  template <typename Signature>
+  struct WithSignature {};
+};
+
+}  // namespace internal
 
 template <typename R, typename... Args>
 class OnceCallback<R(Args...)> : public internal::CallbackBase {
@@ -65,6 +78,35 @@ class OnceCallback<R(Args...)> : public internal::CallbackBase {
 
   constexpr OnceCallback() = default;
   OnceCallback(std::nullptr_t) = delete;
+
+  constexpr OnceCallback(internal::NullCallbackTag) : OnceCallback() {}
+  constexpr OnceCallback& operator=(internal::NullCallbackTag) {
+    *this = OnceCallback();
+    return *this;
+  }
+
+  constexpr OnceCallback(internal::NullCallbackTag::WithSignature<RunType>)
+      : OnceCallback(internal::NullCallbackTag()) {}
+  constexpr OnceCallback& operator=(
+      internal::NullCallbackTag::WithSignature<RunType>) {
+    *this = internal::NullCallbackTag();
+    return *this;
+  }
+
+  constexpr OnceCallback(internal::DoNothingCallbackTag)
+      : OnceCallback(BindOnce([](Args... args) {})) {}
+  constexpr OnceCallback& operator=(internal::DoNothingCallbackTag) {
+    *this = BindOnce([](Args... args) {});
+    return *this;
+  }
+
+  constexpr OnceCallback(internal::DoNothingCallbackTag::WithSignature<RunType>)
+      : OnceCallback(internal::DoNothingCallbackTag()) {}
+  constexpr OnceCallback& operator=(
+      internal::DoNothingCallbackTag::WithSignature<RunType>) {
+    *this = internal::DoNothingCallbackTag();
+    return *this;
+  }
 
   explicit OnceCallback(internal::BindStateBase* bind_state)
       : internal::CallbackBase(bind_state) {}
@@ -111,26 +153,27 @@ class OnceCallback<R(Args...)> : public internal::CallbackBase {
   // Since this method generates a callback that is a replacement for `this`,
   // `this` will be consumed and reset to a null callback to ensure the
   // originally-bound functor can be run at most once.
-  template <typename U, typename R2 = internal::ExtractReturnType<U>>
-  OnceCallback<R2(Args...)> Then(OnceCallback<U> then) && {
-    using ThenCallbackArgs = internal::ExtractArgs<U>;
-    static_assert(
-        (std::is_void<R>::value &&
-         std::is_same<internal::TypeList<>, ThenCallbackArgs>::value) ||
-            std::is_same<internal::TypeList<R>, ThenCallbackArgs>::value,
-        "The |then| callback must accept the return value from the original "
-        "callback as its only parameter.");
+  template <typename ThenR, typename... ThenArgs>
+  OnceCallback<ThenR(Args...)> Then(OnceCallback<ThenR(ThenArgs...)> then) && {
     CHECK(then);
     return BindOnce(
-        internal::ThenHelper<OnceCallback, OnceCallback<U>, R, Args...>(),
+        internal::ThenHelper<
+            OnceCallback, OnceCallback<ThenR(ThenArgs...)>>::CreateTrampoline(),
         std::move(*this), std::move(then));
   }
-  template <typename U, typename R2 = internal::ExtractReturnType<U>>
-  OnceCallback<R2(Args...)> Then(RepeatingCallback<U> then) && {
-    // RepeatingCallback can convert to OnceCallback, but it does not implicitly
-    // convert to OnceCallback<U> for the above method, so we have to do that
-    // explicitly here.
-    return std::move(*this).Then(static_cast<OnceCallback<U>>(std::move(then)));
+
+  // This overload is required; even though RepeatingCallback is implicitly
+  // convertible to OnceCallback, that conversion will not used when matching
+  // for template argument deduction.
+  template <typename ThenR, typename... ThenArgs>
+  OnceCallback<ThenR(Args...)> Then(
+      RepeatingCallback<ThenR(ThenArgs...)> then) && {
+    CHECK(then);
+    return BindOnce(
+        internal::ThenHelper<
+            OnceCallback,
+            RepeatingCallback<ThenR(ThenArgs...)>>::CreateTrampoline(),
+        std::move(*this), std::move(then));
   }
 };
 
@@ -144,6 +187,37 @@ class RepeatingCallback<R(Args...)> : public internal::CallbackBaseCopyable {
 
   constexpr RepeatingCallback() = default;
   RepeatingCallback(std::nullptr_t) = delete;
+
+  constexpr RepeatingCallback(internal::NullCallbackTag)
+      : RepeatingCallback() {}
+  constexpr RepeatingCallback& operator=(internal::NullCallbackTag) {
+    *this = RepeatingCallback();
+    return *this;
+  }
+
+  constexpr RepeatingCallback(internal::NullCallbackTag::WithSignature<RunType>)
+      : RepeatingCallback(internal::NullCallbackTag()) {}
+  constexpr RepeatingCallback& operator=(
+      internal::NullCallbackTag::WithSignature<RunType>) {
+    *this = internal::NullCallbackTag();
+    return *this;
+  }
+
+  constexpr RepeatingCallback(internal::DoNothingCallbackTag)
+      : RepeatingCallback(BindRepeating([](Args... args) {})) {}
+  constexpr RepeatingCallback& operator=(internal::DoNothingCallbackTag) {
+    *this = BindRepeating([](Args... args) {});
+    return *this;
+  }
+
+  constexpr RepeatingCallback(
+      internal::DoNothingCallbackTag::WithSignature<RunType>)
+      : RepeatingCallback(internal::DoNothingCallbackTag()) {}
+  constexpr RepeatingCallback& operator=(
+      internal::DoNothingCallbackTag::WithSignature<RunType>) {
+    *this = internal::DoNothingCallbackTag();
+    return *this;
+  }
 
   explicit RepeatingCallback(internal::BindStateBase* bind_state)
       : internal::CallbackBaseCopyable(bind_state) {}
@@ -190,35 +264,26 @@ class RepeatingCallback<R(Args...)> : public internal::CallbackBaseCopyable {
   // If called on an rvalue (e.g. std::move(cb).Then(...)), this method
   // generates a callback that is a replacement for `this`. Therefore, `this`
   // will be consumed and reset to a null callback to ensure the
-  // originally-bound functor can be run at most once.
-  template <typename U, typename R2 = internal::ExtractReturnType<U>>
-  RepeatingCallback<R2(Args...)> Then(RepeatingCallback<U> then) const& {
-    using ThenCallbackArgs = internal::ExtractArgs<U>;
-    static_assert(
-        (std::is_void<R>::value &&
-         std::is_same<internal::TypeList<>, ThenCallbackArgs>::value) ||
-            std::is_same<internal::TypeList<R>, ThenCallbackArgs>::value,
-        "The |then| callback must accept the return value from the original "
-        "callback as its only parameter.");
+  // originally-bound functor will be run at most once.
+  template <typename ThenR, typename... ThenArgs>
+  RepeatingCallback<ThenR(Args...)> Then(
+      RepeatingCallback<ThenR(ThenArgs...)> then) const& {
     CHECK(then);
     return BindRepeating(
-        internal::ThenHelper<RepeatingCallback, RepeatingCallback<U>, R,
-                             Args...>(),
+        internal::ThenHelper<
+            RepeatingCallback,
+            RepeatingCallback<ThenR(ThenArgs...)>>::CreateTrampoline(),
         *this, std::move(then));
   }
-  template <typename U, typename R2 = internal::ExtractReturnType<U>>
-  RepeatingCallback<R2(Args...)> Then(RepeatingCallback<U> then) && {
-    using ThenCallbackArgs = internal::ExtractArgs<U>;
-    static_assert(
-        (std::is_void<R>::value &&
-         std::is_same<internal::TypeList<>, ThenCallbackArgs>::value) ||
-            std::is_same<internal::TypeList<R>, ThenCallbackArgs>::value,
-        "The |then| callback must accept the return value from the original "
-        "callback as its only parameter.");
+
+  template <typename ThenR, typename... ThenArgs>
+  RepeatingCallback<ThenR(Args...)> Then(
+      RepeatingCallback<ThenR(ThenArgs...)> then) && {
     CHECK(then);
     return BindRepeating(
-        internal::ThenHelper<RepeatingCallback, RepeatingCallback<U>, R,
-                             Args...>(),
+        internal::ThenHelper<
+            RepeatingCallback,
+            RepeatingCallback<ThenR(ThenArgs...)>>::CreateTrampoline(),
         std::move(*this), std::move(then));
   }
 };

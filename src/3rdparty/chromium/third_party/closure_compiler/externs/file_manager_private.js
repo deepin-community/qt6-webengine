@@ -21,6 +21,8 @@ chrome.fileManagerPrivate.VolumeType = {
   DOCUMENTS_PROVIDER: 'documents_provider',
   TESTING: 'testing',
   SMB: 'smb',
+  SYSTEM_INTERNAL: 'system_internal',
+  GUEST_OS: 'guest_os',
 };
 
 /** @enum {string} */
@@ -107,10 +109,12 @@ chrome.fileManagerPrivate.TransferState = {
 };
 
 /** @enum {string} */
-chrome.fileManagerPrivate.CopyProgressStatusType = {
-  BEGIN_COPY_ENTRY: 'begin_copy_entry',
-  END_COPY_ENTRY: 'end_copy_entry',
+chrome.fileManagerPrivate.CopyOrMoveProgressStatusType = {
+  BEGIN: 'begin',
   PROGRESS: 'progress',
+  END_COPY: 'end_copy',
+  END_MOVE: 'end_move',
+  END_REMOVE_SOURCE: 'end_remove_source',
   SUCCESS: 'success',
   ERROR: 'error',
 };
@@ -229,6 +233,15 @@ chrome.fileManagerPrivate.EntryPropertyName = {
   EXTERNAL_FILE_URL: 'externalFileUrl',
   ALTERNATE_URL: 'alternateUrl',
   SHARE_URL: 'shareUrl',
+  CAN_COPY: 'canCopy',
+  CAN_DELETE: 'canDelete',
+  CAN_RENAME: 'canRename',
+  CAN_ADD_CHILDREN: 'canAddChildren',
+  CAN_SHARE: 'canShare',
+  CAN_PIN: 'canPin',
+  IS_MACHINE_ROOT: 'isMachineRoot',
+  IS_EXTERNAL_MEDIA: 'isExternalMedia',
+  IS_ARBITRARY_SYNC_FOLDER: 'isArbitrarySyncFolder',
 };
 
 /** @enum {string} */
@@ -265,6 +278,7 @@ chrome.fileManagerPrivate.RecentFileType = {
   AUDIO: 'audio',
   IMAGE: 'image',
   VIDEO: 'video',
+  DOCUMENT: 'document',
 };
 
 /** @enum {string} */
@@ -291,9 +305,36 @@ chrome.fileManagerPrivate.SharesheetLaunchSource = {
   UNKNOWN: 'unknown',
 };
 
+/** @enum {string} */
+chrome.fileManagerPrivate.IOTaskState = {
+  QUEUED: 'queued',
+  IN_PROGRESS: 'in_progress',
+  SUCCESS: 'success',
+  ERROR: 'error',
+  CANCELLED: 'cancelled',
+};
+
+/** @enum {string} */
+chrome.fileManagerPrivate.IOTaskType = {
+  COPY: 'copy',
+  DELETE: 'delete',
+  EXTRACT: 'extract',
+  MOVE: 'move',
+  ZIP: 'zip',
+};
+
 /**
  * @typedef {{
- *   taskId: string,
+ *   appId: string,
+ *   taskType: string,
+ *   actionId: string
+ * }}
+ */
+chrome.fileManagerPrivate.FileTaskDescriptor;
+
+/**
+ * @typedef {{
+ *   descriptor: !chrome.fileManagerPrivate.FileTaskDescriptor,
  *   title: string,
  *   verb: (!chrome.fileManagerPrivate.Verb|undefined),
  *   iconUrl: (string|undefined),
@@ -332,6 +373,7 @@ chrome.fileManagerPrivate.FileTask;
  *   canRename: (boolean|undefined),
  *   canAddChildren: (boolean|undefined),
  *   canShare: (boolean|undefined),
+ *   canPin: (boolean|undefined),
  *   isMachineRoot: (boolean|undefined),
  *   isExternalMedia: (boolean|undefined),
  *   isArbitrarySyncFolder: (boolean|undefined)
@@ -432,14 +474,14 @@ chrome.fileManagerPrivate.DriveConfirmDialogEvent;
 
 /**
  * @typedef {{
- *   type: !chrome.fileManagerPrivate.CopyProgressStatusType,
+ *   type: !chrome.fileManagerPrivate.CopyOrMoveProgressStatusType,
  *   sourceUrl: (string|undefined),
  *   destinationUrl: (string|undefined),
  *   size: (number|undefined),
  *   error: (string|undefined)
  * }}
  */
-chrome.fileManagerPrivate.CopyProgressStatus;
+chrome.fileManagerPrivate.CopyOrMoveProgressStatus;
 
 /**
  * @typedef {{
@@ -466,7 +508,8 @@ chrome.fileManagerPrivate.FileWatchEvent;
  *   use24hourClock: boolean,
  *   timezone: string,
  *   arcEnabled: boolean,
- *   arcRemovableMediaAccessEnabled: boolean
+ *   arcRemovableMediaAccessEnabled: boolean,
+ *   folderShortcuts: !Array<string>
  * }}
  */
 chrome.fileManagerPrivate.Preferences;
@@ -475,7 +518,8 @@ chrome.fileManagerPrivate.Preferences;
  * @typedef {{
  *   cellularDisabled: (boolean|undefined),
  *   arcEnabled: (boolean|undefined),
- *   arcRemovableMediaAccessEnabled: (boolean|undefined)
+ *   arcRemovableMediaAccessEnabled: (boolean|undefined),
+ *   folderShortcuts: (!Array<string>|undefined)
  * }}
  */
 chrome.fileManagerPrivate.PreferencesChange;
@@ -550,6 +594,14 @@ chrome.fileManagerPrivate.LinuxPackageInfo;
 
 /**
  * @typedef {{
+ * id: number,
+ * displayName: string,
+ * }}
+ */
+chrome.fileManagerPrivate.MountableGuest;
+
+/**
+ * @typedef {{
  * eventType: chrome.fileManagerPrivate.CrostiniEventType,
  * vmName: string,
  * entries: !Array<!Entry>,
@@ -614,11 +666,43 @@ chrome.fileManagerPrivate.HoldingSpaceState;
 
 /**
  * @typedef {{
+ *   currentDirectoryURL: (string|undefined),
+ *   selectionURL: (string|undefined)
+ * }}
+ */
+chrome.fileManagerPrivate.OpenWindowParams;
+
+/**
+ * @typedef {{
  *   volumeId: string,
  *   writable: boolean,
  * }}
  */
 chrome.fileManagerPrivate.GetVolumeRootOptions;
+
+/**
+ * @typedef {{
+ *   destinationFolder: (DirectoryEntry|undefined),
+ * }}
+ */
+chrome.fileManagerPrivate.IOTaskParams;
+
+/**
+ * @typedef {{
+ *   type: !chrome.fileManagerPrivate.IOTaskType,
+ *   state: !chrome.fileManagerPrivate.IOTaskState,
+ *   numRemainingItems: number,
+ *   itemCount: number,
+ *   bytesTransferred: number,
+ *   sourceName: string,
+ *   destinationName: string,
+ *   totalBytes: number,
+ *   taskId: number,
+ *   remainingSeconds: number,
+ *   errorName: string,
+ * }}
+ */
+chrome.fileManagerPrivate.ProgressStatus;
 
 /**
  * Logout the current user for navigating to the re-authentication screen for
@@ -632,27 +716,27 @@ chrome.fileManagerPrivate.logoutUserForReauthentication = function() {};
 chrome.fileManagerPrivate.cancelDialog = function() {};
 
 /**
- * Executes file browser task over selected files. |taskId| The unique
+ * Executes file browser task over selected files. |descriptor| The unique
  * identifier of task to execute. |entries| Array of file entries |callback|
- * @param {string} taskId
+ * @param {!chrome.fileManagerPrivate.FileTaskDescriptor} descriptor
  * @param {!Array<!Entry>} entries
  * @param {function(!chrome.fileManagerPrivate.TaskResult)} callback |result|
  *     Result of the task execution.
  */
-chrome.fileManagerPrivate.executeTask = function(taskId, entries, callback) {};
+chrome.fileManagerPrivate.executeTask = function(descriptor, entries, callback) {};
 
 /**
- * Sets the default task for the supplied MIME types and path extensions.
- * Lists of MIME types and entries may contain duplicates.
- * |taskId| The unique identifier of task to mark as default. |entries| Array
- * of selected file entries to extract path extensions from. |mimeTypes| Array
- * of selected file MIME types. |callback|
- * @param {string} taskId
+ * Sets the default task for the supplied MIME types and path extensions. Lists
+ * of MIME types and entries may contain duplicates. |descriptor| The unique
+ * identifier of task to mark as default. |entries| Array of selected file
+ * entries to extract path extensions from. |mimeTypes| Array of selected file
+ * MIME types. |callback|
+ * @param {!chrome.fileManagerPrivate.FileTaskDescriptor} descriptor
  * @param {!Array<!Entry>} entries
  * @param {!Array<string>} mimeTypes
  * @param {!function()} callback Callback that does not take arguments.
  */
-chrome.fileManagerPrivate.setDefaultTask = function(taskId, entries, mimeTypes,
+chrome.fileManagerPrivate.setDefaultTask = function(descriptor, entries, mimeTypes,
     callback) {};
 
 /**
@@ -814,6 +898,19 @@ chrome.fileManagerPrivate.removeMount = function(volumeId) {};
 chrome.fileManagerPrivate.getVolumeMetadataList = function(callback) {};
 
 /**
+ * Returns a list of files not allowed to be transferred. |entries| list of
+ * source entries to be transferred. If any of |entries| is a directory, it will
+ * check all its files recursively. |destinationEntry| Entry of the destination
+ * directory.
+ * @param {!Array<!Entry>} entries
+ * @param {!DirectoryEntry} destinationEntry
+ * @param {!Array<!Entry>} callback Entries of the files not allowed to be
+ *     transferred.
+ */
+chrome.fileManagerPrivate.getDisallowedTransfers = function(
+    entries, destinationEntry, callback) {};
+
+/**
  * Starts to copy an entry. If the source is a directory, the copy is done
  * recursively. |entry| Entry of the source entry to be copied. |parent| Entry
  * of the destination directory. |newName| Name of the new entry. It must not
@@ -826,14 +923,6 @@ chrome.fileManagerPrivate.getVolumeMetadataList = function(callback) {};
  */
 chrome.fileManagerPrivate.startCopy = function(entry, parentEntry, newName,
     callback) {};
-
-/**
- * Copies an image to the system clipboard. |entry| Entry of the image to copy
- * to the system clipboard.
- * @param {!Entry} entry
- * @param {function((boolean|undefined))} callback
- */
-chrome.fileManagerPrivate.copyImageToClipboard = function(entry, callback) {};
 
 /**
  * Cancels the running copy task. |copyId| ID of the copy task to be cancelled.
@@ -928,18 +1017,40 @@ chrome.fileManagerPrivate.searchFilesByHashes = function(volumeId, hashes,
 chrome.fileManagerPrivate.searchFiles = function(searchParams, callback) {};
 
 /**
- * Create a zip file for the selected files. |parentEntry| Entry of the
- * directory containing the selected files. |entries| Selected entries.
- * The files must be under the directory specified by |parentEntry|. |destName|
- * Name of the destination zip file. The zip file will be created under the
- * directory specified by |parentEntry|.
- * @param {!Array<!Entry>} entries
- * @param {!DirectoryEntry} parentEntry
- * @param {string} destName
- * @param {function((boolean|undefined))} callback
+ * Creates a ZIP file for the selected files and folders. Folders are
+ * recursively explored and zipped. Hidden files and folders (with names
+ * starting with a dot) found during recursive exploration are included too.
+ * @param {!Array<!Entry>} entries Entries of the selected files and folders to
+ *     zip. They must be under the |parentEntry| directory.
+ * @param {!DirectoryEntry} parentEntry Entry of the directory containing the
+ *     selected files and folders. This is where the ZIP file will be created,
+ *     too.
+ * @param {string} destName Name of the destination ZIP file. The ZIP file will
+ *     be created in the directory specified by |parentEntry|.
+ * @param {function(number, number)} callback called with (zipId, totalBytes)
+ *     where |zipId| is the ID of the ZIP operation, and |totalBytes| is the
+ *     total number of bytes in all the files that are going to be zipped.
  */
-chrome.fileManagerPrivate.zipSelection = function(entries, parentEntry,
-    destName, callback) {};
+chrome.fileManagerPrivate.zipSelection = function(
+    entries, parentEntry, destName, callback) {};
+
+/**
+ * Cancels an ongoing ZIP operation.
+ * Does nothing if there is no matching ongoing ZIP operation.
+ * @param {number} zipId ID of the ZIP operation.
+ */
+chrome.fileManagerPrivate.cancelZip = function(zipId) {};
+
+/**
+ * Gets the progress of an ongoing ZIP operation.
+ * @param {number} zipId ID of the ZIP operation.
+ * @param {function(number, number)} callback called with progress information
+ *     (result, bytes), where |result| is less than 0 if the operation is still
+ *     in progress, 0 if the operation finished successfully, or greater than 0
+ *     if the operation finished with an error, and |bytes| is the total number
+ *     of bytes having been zipped so far.
+ */
+chrome.fileManagerPrivate.getZipProgress = function(zipId, callback) {};
 
 /**
  * Retrieves the state of the current drive connection. |callback|
@@ -1086,6 +1197,22 @@ chrome.fileManagerPrivate.getVolumeRoot = function(options, callback) {};
 chrome.fileManagerPrivate.mountCrostini = function(callback) {};
 
 /**
+ * Lists guests
+ * @param {function((!Array<!chrome.fileManagerPrivate.MountableGuest>))} callback
+ *     chrome.runtime.lastError will be set if there was an error.
+ */
+chrome.fileManagerPrivate.listMountableGuests = function(callback) {};
+
+/**
+ * Starts and mounts target guest
+ * @param {!number} id Id of the mount provider to use
+ * @param {function()} callback Callback called after the requests completes
+ * (either successfully or with an error).
+ *     chrome.runtime.lastError will be set if there was an error.
+ */
+chrome.fileManagerPrivate.mountGuest = function(id, callback) {};
+
+/**
  * Shares paths with crostini container.
  * @param {string} vmName VM to share path with.
  * @param {!Array<!Entry>} entries Entries of the files and directories to
@@ -1144,18 +1271,6 @@ chrome.fileManagerPrivate.installLinuxPackage = function(entry, callback) {};
  * @param {!Entry} entry
  */
 chrome.fileManagerPrivate.importCrostiniImage = function(entry) {};
-
-/**
- * Detect character encoding.
- *
- * @param {!string} bytes a hex-encoded string. Every 2 characters represent
- *     one byte by 2-digit hexadecimal number.
- * @param {function((string|undefined))} callback |mime_name| Preferred MIME
- *     name of the detected character encoding system. Slightly different from
- *     IANA name. See third_party/ced/src/util/encodings/encodings.cc
- */
-chrome.fileManagerPrivate.detectCharacterEncoding = function(bytes, callback) {
-};
 
 /**
  * For a file in DriveFS, retrieves its thumbnail. If |cropToSquare| is true,
@@ -1256,6 +1371,48 @@ chrome.fileManagerPrivate.isTabletModeEnabled = function(callback) {};
  */
 chrome.fileManagerPrivate.notifyDriveDialogResult = function(result) {};
 
+/**
+ * Opens a new browser tab and navigates to `URL`.
+ * @param {!string} URL
+ */
+chrome.fileManagerPrivate.openURL = function(URL) {};
+
+/**
+ * Creates a new Files app window in the directory provided in `params`.
+ * @param {!chrome.fileManagerPrivate.OpenWindowParams} params
+ * @param {function(boolean): void} callback |result| Boolean result returned by
+ *     the invoked function.
+ */
+chrome.fileManagerPrivate.openWindow = function(params, callback) {};
+
+/**
+ * Starts an I/O task of type |type| on |entries|. Task type specific parameters
+ * passed via |params|.
+ * @param {!chrome.fileManagerPrivate.IOTaskType} type
+ * @param {!Array<!Entry>} entries
+ * @param {!chrome.fileManagerPrivate.IOTaskParams} params
+ */
+chrome.fileManagerPrivate.startIOTask = function(type, entries, params) {};
+
+/**
+ * Cancels an I/O task by id. Task ids are communicated to the Files App in
+ * each I/O task's progress status.
+ * @param {number} taskId
+ */
+chrome.fileManagerPrivate.cancelIOTask = function (taskId) { };
+
+/**
+ * Tells DriveFS to update its cached pin states of hosted files (once).
+ */
+chrome.fileManagerPrivate.pollDriveHostedFilePinStates = function() {};
+
+/**
+ * Returns color via `callback` for Files app foreground window frame.
+ * @param {function(string): void} callback |color| String containing the color
+ *     of the title bar.
+ */
+chrome.fileManagerPrivate.getFrameColor = function(callback) {};
+
 /** @type {!ChromeEvent} */
 chrome.fileManagerPrivate.onMountCompleted;
 
@@ -1294,3 +1451,9 @@ chrome.fileManagerPrivate.onCrostiniChanged;
 
 /** @type {!ChromeEvent} */
 chrome.fileManagerPrivate.onTabletModeChanged;
+
+/** @type {!ChromeEvent} */
+chrome.fileManagerPrivate.onIOTaskProgressStatus;
+
+/** @type {!ChromeEvent} */
+chrome.fileManagerPrivate.onMountableGuestsChanged;

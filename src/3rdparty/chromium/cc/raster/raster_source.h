@@ -8,8 +8,12 @@
 #include <stddef.h>
 
 #include <memory>
+#include <string>
 #include <vector>
 
+#include "base/containers/flat_map.h"
+#include "base/memory/raw_ptr.h"
+#include "base/memory/ref_counted.h"
 #include "cc/cc_export.h"
 #include "cc/debug/rendering_stats_instrumentation.h"
 #include "cc/layers/recording_source.h"
@@ -17,6 +21,12 @@
 #include "gpu/command_buffer/client/raster_interface.h"
 #include "third_party/skia/include/core/SkPicture.h"
 #include "ui/gfx/color_space.h"
+
+namespace base {
+namespace trace_event {
+class TracedValue;
+}  // namespace trace_event
+}  // namespace base
 
 namespace gfx {
 class AxisTransform2d;
@@ -42,7 +52,10 @@ class CC_EXPORT RasterSource : public base::RefCountedThreadSafe<RasterSource> {
     // Specifies the sample count if MSAA is enabled for this tile.
     int msaa_sample_count = 0;
 
-    ImageProvider* image_provider = nullptr;
+    // Visible hint, GPU may use it as a hint to schedule raster tasks.
+    bool visible = false;
+
+    raw_ptr<ImageProvider> image_provider = nullptr;
   };
 
   RasterSource(const RasterSource&) = delete;
@@ -80,7 +93,7 @@ class CC_EXPORT RasterSource : public base::RefCountedThreadSafe<RasterSource> {
   gfx::Size GetSize() const;
 
   // Returns the content size of this raster source at a particular scale.
-  gfx::Size GetContentSize(float content_scale) const;
+  gfx::Size GetContentSize(const gfx::Vector2dF& content_scale) const;
 
   // Populate the given list with all images that may overlap the given
   // rect in layer space.
@@ -116,6 +129,9 @@ class CC_EXPORT RasterSource : public base::RefCountedThreadSafe<RasterSource> {
   TakeDecodingModeMap();
 
   size_t* max_op_size_hint() { return &max_op_size_hint_; }
+
+  void set_debug_name(const std::string& name) { debug_name_ = name; }
+  const std::string& debug_name() const { return debug_name_; }
 
  protected:
   // RecordingSource is the only class that can create a raster source.
@@ -155,6 +171,8 @@ class CC_EXPORT RasterSource : public base::RefCountedThreadSafe<RasterSource> {
   const gfx::Size size_;
   const int slow_down_raster_scale_factor_for_debug_;
   const float recording_scale_factor_;
+  // Used for debugging and tracing.
+  std::string debug_name_;
 };
 
 }  // namespace cc

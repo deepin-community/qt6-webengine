@@ -8,10 +8,11 @@
 
 #include "base/check_op.h"
 #include "base/containers/circular_deque.h"
-#include "base/macros.h"
 #include "base/memory/ptr_util.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace base {
 
@@ -34,6 +35,9 @@ class TestMockTimeTaskRunner::NonOwningProxyTaskRunner
       : target_(target) {
     DCHECK(target_);
   }
+
+  NonOwningProxyTaskRunner(const NonOwningProxyTaskRunner&) = delete;
+  NonOwningProxyTaskRunner& operator=(const NonOwningProxyTaskRunner&) = delete;
 
   // Detaches this NonOwningProxyTaskRunner instance from its |target_|. It is
   // invalid to post tasks after this point but RunsTasksInCurrentSequence()
@@ -80,12 +84,10 @@ class TestMockTimeTaskRunner::NonOwningProxyTaskRunner
   ~NonOwningProxyTaskRunner() override = default;
 
   mutable Lock lock_;
-  SingleThreadTaskRunner* target_;  // guarded by lock_
+  raw_ptr<SingleThreadTaskRunner> target_;  // guarded by lock_
 
   // Used to implement RunsTasksInCurrentSequence, without relying on |target_|.
   ThreadCheckerImpl thread_checker_;
-
-  DISALLOW_COPY_AND_ASSIGN(NonOwningProxyTaskRunner);
 };
 
 // TestMockTimeTaskRunner::TestOrderedPendingTask -----------------------------
@@ -102,15 +104,17 @@ struct TestMockTimeTaskRunner::TestOrderedPendingTask
                          TimeDelta delay,
                          size_t ordinal,
                          TestNestability nestability);
+
+  TestOrderedPendingTask(const TestOrderedPendingTask&) = delete;
+  TestOrderedPendingTask& operator=(const TestOrderedPendingTask&) = delete;
+
   TestOrderedPendingTask(TestOrderedPendingTask&&);
+
   ~TestOrderedPendingTask();
 
   TestOrderedPendingTask& operator=(TestOrderedPendingTask&&);
 
   size_t ordinal;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(TestOrderedPendingTask);
 };
 
 TestMockTimeTaskRunner::TestOrderedPendingTask::TestOrderedPendingTask()
@@ -188,7 +192,7 @@ void TestMockTimeTaskRunner::FastForwardBy(TimeDelta delta) {
   DCHECK_GE(delta, TimeDelta());
 
   const TimeTicks original_now_ticks = NowTicks();
-  ProcessAllTasksNoLaterThan(delta);
+  ProcessTasksNoLaterThan(delta);
   ForwardClocksUntilTickTime(original_now_ticks + delta);
 }
 
@@ -203,12 +207,17 @@ void TestMockTimeTaskRunner::AdvanceWallClock(TimeDelta delta) {
 
 void TestMockTimeTaskRunner::RunUntilIdle() {
   DCHECK(thread_checker_.CalledOnValidThread());
-  ProcessAllTasksNoLaterThan(TimeDelta());
+  ProcessTasksNoLaterThan(TimeDelta());
+}
+
+void TestMockTimeTaskRunner::ProcessNextNTasks(int n) {
+  DCHECK(thread_checker_.CalledOnValidThread());
+  ProcessTasksNoLaterThan(TimeDelta::Max(), n);
 }
 
 void TestMockTimeTaskRunner::FastForwardUntilNoTasksRemain() {
   DCHECK(thread_checker_.CalledOnValidThread());
-  ProcessAllTasksNoLaterThan(TimeDelta::Max());
+  ProcessTasksNoLaterThan(TimeDelta::Max());
 }
 
 void TestMockTimeTaskRunner::ClearPendingTasks() {
@@ -319,6 +328,17 @@ bool TestMockTimeTaskRunner::PostDelayedTask(const Location& from_here,
   return true;
 }
 
+bool TestMockTimeTaskRunner::PostDelayedTaskAt(
+    subtle::PostDelayedTaskPassKey,
+    const Location& from_here,
+    OnceClosure task,
+    TimeTicks delayed_run_time,
+    subtle::DelayPolicy deadline_policy) {
+  return PostDelayedTask(
+      from_here, std::move(task),
+      delayed_run_time.is_null() ? TimeDelta() : delayed_run_time - now_ticks_);
+}
+
 bool TestMockTimeTaskRunner::PostNonNestableDelayedTask(
     const Location& from_here,
     OnceClosure task,
@@ -338,20 +358,21 @@ void TestMockTimeTaskRunner::OnAfterTaskRun() {
   // Empty default implementation.
 }
 
-void TestMockTimeTaskRunner::ProcessAllTasksNoLaterThan(TimeDelta max_delta) {
+void TestMockTimeTaskRunner::ProcessTasksNoLaterThan(TimeDelta max_delta,
+                                                     int limit) {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK_GE(max_delta, TimeDelta());
 
   // Multiple test task runners can share the same thread for determinism in
   // unit tests. Make sure this TestMockTimeTaskRunner's tasks run in its scope.
-  base::Optional<ThreadTaskRunnerHandleOverrideForTesting> ttrh_override;
+  absl::optional<ThreadTaskRunnerHandleOverrideForTesting> ttrh_override;
   if (!ThreadTaskRunnerHandle::IsSet() ||
       ThreadTaskRunnerHandle::Get() != proxy_task_runner_.get()) {
     ttrh_override.emplace(proxy_task_runner_.get());
   }
 
   const TimeTicks original_now_ticks = NowTicks();
-  while (!quit_run_loop_) {
+  for (int i = 0; !quit_run_loop_ && (limit < 0 || i < limit); i++) {
     OnBeforeSelectingTask();
     TestPendingTask task_info;
     if (!DequeueNextTask(original_now_ticks, max_delta, &task_info))

@@ -12,10 +12,10 @@
 #include <string>
 #include <vector>
 
-#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "base/single_thread_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
+#include "mojo/public/cpp/base/big_buffer.h"
 #include "mojo/public/cpp/system/data_pipe.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/net_errors.h"
@@ -24,13 +24,12 @@
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/network/public/mojom/fetch_api.mojom-forward.h"
 #include "services/network/public/mojom/url_response_head.mojom-forward.h"
-#include "third_party/blink/public/common/loader/previews_state.h"
 #include "third_party/blink/public/common/loader/url_loader_throttle.h"
 #include "third_party/blink/public/mojom/blob/blob_registry.mojom-forward.h"
 #include "third_party/blink/public/mojom/loader/resource_load_info.mojom-shared.h"
 #include "third_party/blink/public/mojom/loader/resource_load_info.mojom.h"
 #include "third_party/blink/public/platform/web_common.h"
-#include "third_party/blink/public/platform/web_url_loader.h"
+#include "third_party/blink/public/platform/web_loader_freeze_mode.h"
 #include "third_party/blink/public/platform/web_url_request.h"
 #include "third_party/blink/public/platform/web_vector.h"
 #include "url/gurl.h"
@@ -87,15 +86,12 @@ class BLINK_PLATFORM_EXPORT WebResourceRequestSender {
   // interrupt this method. Errors are reported via the status field of the
   // response parameter.
   //
-  // |routing_id| is used to associated the bridge with a frame's network
-  // context.
   // |timeout| is used to abort the sync request on timeouts. TimeDelta::Max()
   // is interpreted as no-timeout.
   // If |download_to_blob_registry| is not null, it is used to redirect the
   // download to a blob.
   virtual void SendSync(
       std::unique_ptr<network::ResourceRequest> request,
-      int routing_id,
       const net::NetworkTrafficAnnotationTag& traffic_annotation,
       uint32_t loader_options,
       SyncLoadResponse* response,
@@ -107,21 +103,16 @@ class BLINK_PLATFORM_EXPORT WebResourceRequestSender {
       mojo::PendingRemote<mojom::BlobRegistry> download_to_blob_registry,
       scoped_refptr<WebRequestPeer> peer,
       std::unique_ptr<ResourceLoadInfoNotifierWrapper>
-          resource_load_info_notifier_wrapper,
-      WebBackForwardCacheLoaderHelper back_forward_cache_loader_helper);
+          resource_load_info_notifier_wrapper);
 
   // Call this method to initiate the request. If this method succeeds, then
   // the peer's methods will be called asynchronously to report various events.
   // Returns the request id. |url_loader_factory| must be non-null.
   //
-  // |routing_id| is used to associated the bridge with a frame's network
-  // context.
-  //
   // You need to pass a non-null |loading_task_runner| to specify task queue to
   // execute loading tasks on.
   virtual int SendAsync(
       std::unique_ptr<network::ResourceRequest> request,
-      int routing_id,
       scoped_refptr<base::SingleThreadTaskRunner> loading_task_runner,
       const net::NetworkTrafficAnnotationTag& traffic_annotation,
       uint32_t loader_options,
@@ -136,8 +127,10 @@ class BLINK_PLATFORM_EXPORT WebResourceRequestSender {
   // Cancels the current request and `request_info_` will be released.
   virtual void Cancel(scoped_refptr<base::SingleThreadTaskRunner> task_runner);
 
-  // Toggles the is_deferred attribute for the specified request.
-  virtual void SetDefersLoading(WebURLLoader::DeferType value);
+  // Freezes the loader. See blink/renderer/platform/loader/README.md for the
+  // general concept of "freezing" in the loading module. See
+  // blink/public/platform/web_loader_freezing_mode.h for `mode`.
+  virtual void Freeze(WebLoaderFreezeMode mode);
 
   // Indicates the priority of the specified request changed.
   void DidChangePriority(net::RequestPriority new_priority,
@@ -180,7 +173,6 @@ class BLINK_PLATFORM_EXPORT WebResourceRequestSender {
   struct PendingRequestInfo {
     PendingRequestInfo(scoped_refptr<WebRequestPeer> peer,
                        network::mojom::RequestDestination request_destination,
-                       int render_frame_id,
                        const GURL& request_url,
                        std::unique_ptr<ResourceLoadInfoNotifierWrapper>
                            resource_load_info_notifier_wrapper);
@@ -189,8 +181,7 @@ class BLINK_PLATFORM_EXPORT WebResourceRequestSender {
 
     scoped_refptr<WebRequestPeer> peer;
     network::mojom::RequestDestination request_destination;
-    int render_frame_id;
-    WebURLLoader::DeferType is_deferred = WebURLLoader::DeferType::kNotDeferred;
+    WebLoaderFreezeMode freeze_mode = WebLoaderFreezeMode::kNone;
     // Original requested url.
     GURL url;
     // The url, method and referrer of the latest response even in case of
@@ -207,9 +198,7 @@ class BLINK_PLATFORM_EXPORT WebResourceRequestSender {
     // it's not completed. Used both to distinguish completion from
     // cancellation, and to log histograms.
     int net_error = net::ERR_IO_PENDING;
-    PreviewsState previews_state = PreviewsTypes::PREVIEWS_UNSPECIFIED;
 
-    // For mojo loading.
     std::unique_ptr<ThrottlingURLLoader> url_loader;
     std::unique_ptr<MojoURLLoaderClient> url_loader_client;
 
@@ -224,7 +213,9 @@ class BLINK_PLATFORM_EXPORT WebResourceRequestSender {
   // Follows redirect, if any, for the given request.
   void FollowPendingRedirect(PendingRequestInfo* request_info);
 
-  void ToLocalURLResponseHead(
+  // Converts remote times in the response head to local times. Returns the
+  // converted response start time.
+  base::TimeTicks ToLocalURLResponseHead(
       const PendingRequestInfo& request_info,
       network::mojom::URLResponseHead& response_head) const;
 

@@ -9,6 +9,7 @@
 
 #include "include/core/SkCanvas.h"
 #include "include/core/SkRect.h"
+#include "include/effects/SkImageFilters.h"
 #include "src/core/SkReadBuffer.h"
 #include "src/core/SkSamplingPriv.h"
 #include "src/core/SkSpecialImage.h"
@@ -21,6 +22,8 @@ SkMatrixImageFilter::SkMatrixImageFilter(const SkMatrix& transform,
     : INHERITED(&input, 1, nullptr)
     , fTransform(transform)
     , fSampling(sampling) {
+    // Pre-cache so future calls to fTransform.getType() are threadsafe.
+    (void)fTransform.getType();
 }
 
 sk_sp<SkImageFilter> SkMatrixImageFilter::Make(const SkMatrix& transform,
@@ -31,6 +34,11 @@ sk_sp<SkImageFilter> SkMatrixImageFilter::Make(const SkMatrix& transform,
                                                         std::move(input)));
 }
 
+sk_sp<SkImageFilter> SkImageFilters::MatrixTransform(
+        const SkMatrix& transform, const SkSamplingOptions& sampling, sk_sp<SkImageFilter> input) {
+    return SkMatrixImageFilter::Make(transform, sampling, std::move(input));
+}
+
 sk_sp<SkFlattenable> SkMatrixImageFilter::CreateProc(SkReadBuffer& buffer) {
     SK_IMAGEFILTER_UNFLATTEN_COMMON(common, 1);
     SkMatrix matrix;
@@ -38,10 +46,9 @@ sk_sp<SkFlattenable> SkMatrixImageFilter::CreateProc(SkReadBuffer& buffer) {
 
     auto sampling = [&]() {
         if (buffer.isVersionLT(SkPicturePriv::kMatrixImageFilterSampling_Version)) {
-            return SkSamplingOptions(buffer.read32LE(kLast_SkFilterQuality),
-                                     SkSamplingOptions::kMedium_asMipmapLinear);
+            return SkSamplingPriv::FromFQ(buffer.read32LE(kLast_SkLegacyFQ), kLinear_SkMediumAs);
         } else {
-            return SkSamplingPriv::Read(buffer);
+            return buffer.readSampling();
         }
     }();
     return Make(matrix, sampling, common.getInput(0));
@@ -50,8 +57,10 @@ sk_sp<SkFlattenable> SkMatrixImageFilter::CreateProc(SkReadBuffer& buffer) {
 void SkMatrixImageFilter::flatten(SkWriteBuffer& buffer) const {
     this->INHERITED::flatten(buffer);
     buffer.writeMatrix(fTransform);
-    SkSamplingPriv::Write(buffer, fSampling);
+    buffer.writeSampling(fSampling);
 }
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
 
 sk_sp<SkSpecialImage> SkMatrixImageFilter::onFilterImage(const Context& ctx,
                                                          SkIPoint* offset) const {

@@ -10,6 +10,7 @@ from .blink_v8_bridge import blink_type_info
 from .blink_v8_bridge import make_blink_to_v8_value
 from .blink_v8_bridge import native_value_tag
 from .code_node import EmptyNode
+from .code_node import FormatNode
 from .code_node import ListNode
 from .code_node import SequenceNode
 from .code_node import SymbolNode
@@ -49,9 +50,10 @@ def bind_local_vars(code_node, cg_context, is_construct_call=False):
     local_vars = []
 
     local_vars.extend([
-        S("exception_state", ("ExceptionState ${exception_state}("
-                              "${isolate}, ExceptionState::kExecutionContext,"
-                              "${class_like_name}, ${property_name});")),
+        S("exception_state",
+          ("ExceptionState ${exception_state}("
+           "${isolate}, ExceptionContext::Context::kOperationInvoke,"
+           "${class_like_name}, ${property_name});")),
         S("isolate", "v8::Isolate* ${isolate} = GetIsolate();"),
         S("script_state",
           "ScriptState* ${script_state} = CallbackRelevantScriptState();"),
@@ -163,7 +165,7 @@ def make_callback_invocation_function(cg_context,
     assert isinstance(is_construct_call, bool)
 
     T = TextNode
-    F = lambda *args, **kwargs: T(_format(*args, **kwargs))
+    F = FormatNode
 
     func_like = cg_context.function_like
     return_type = ("void" if func_like.return_type.unwrap().is_void else
@@ -184,22 +186,22 @@ def make_callback_invocation_function(cg_context,
     func_decl = CxxFuncDeclNode(name=function_name,
                                 arg_decls=arg_decls,
                                 return_type=maybe_return_type,
-                                warn_unused_result=True)
+                                nodiscard=True)
     if cg_context.callback_function:
         if is_construct_call:
             comment = T("""\
 // Performs "construct".
-// https://heycam.github.io/webidl/#construct-a-callback-function\
+// https://webidl.spec.whatwg.org/#construct-a-callback-function\
 """)
         else:
             comment = T("""\
 // Performs "invoke".
-// https://heycam.github.io/webidl/#invoke-a-callback-function\
+// https://webidl.spec.whatwg.org/#invoke-a-callback-function\
 """)
     elif cg_context.callback_interface:
         comment = T("""\
 // Performs "call a user object's operation".
-// https://heycam.github.io/webidl/#call-a-user-objects-operation\
+// https://webidl.spec.whatwg.org/#call-a-user-objects-operation\
 """)
     decls.extend([
         comment,
@@ -249,7 +251,7 @@ if (!callback_relevant_script_state) {
                 body=[
                     T("v8::HandleScope handle_scope(${isolate});"),
                     T("v8::Context::Scope context_scope("
-                      "CallbackObject()->CreationContext());"),
+                      "callback_relevant_script_state->GetContext());"),
                     T("${exception_state}.ThrowException("
                       "static_cast<ExceptionCode>(ESErrorType::kError), "
                       "\"The provided callback is no longer runnable.\");"),
@@ -362,7 +364,7 @@ def make_invoke_and_report_function(cg_context, function_name, api_func_name):
     assert isinstance(api_func_name, str)
 
     T = TextNode
-    F = lambda *args, **kwargs: T(_format(*args, **kwargs))
+    F = FormatNode
 
     func_like = cg_context.function_like
     if not (func_like.return_type.unwrap().is_void
@@ -412,7 +414,7 @@ def make_invoke_and_report_function(cg_context, function_name, api_func_name):
         T("v8::TryCatch try_catch(${isolate});"),
         T("try_catch.SetVerbose(true);"),
         EmptyNode(),
-        F("ignore_result({api_func_name}({arg_names}));",
+        F("std::ignore = {api_func_name}({arg_names});",
           api_func_name=api_func_name,
           arg_names=", ".join(arg_names)),
     ])
@@ -595,6 +597,9 @@ def generate_callback_function(callback_function_identifier):
         component_export_header(api_component, for_testing),
         "third_party/blink/renderer/platform/bindings/callback_function_base.h",
         "third_party/blink/renderer/platform/bindings/v8_value_or_script_wrappable_adapter.h",
+    ])
+    source_node.accumulator.add_stdcpp_include_headers([
+        "tuple",
     ])
     source_node.accumulator.add_include_headers([
         "third_party/blink/renderer/bindings/core/v8/callback_invoke_helper.h",

@@ -5,11 +5,8 @@
 #ifndef COMPONENTS_INFOBARS_ANDROID_INFOBAR_ANDROID_H_
 #define COMPONENTS_INFOBARS_ANDROID_INFOBAR_ANDROID_H_
 
-#include <string>
-
 #include "base/android/scoped_java_ref.h"
 #include "base/callback.h"
-#include "base/macros.h"
 #include "components/infobars/core/infobar.h"
 
 namespace infobars {
@@ -33,6 +30,10 @@ class InfoBarAndroid : public InfoBar {
   using ResourceIdMapper = base::RepeatingCallback<int(int)>;
 
   explicit InfoBarAndroid(std::unique_ptr<InfoBarDelegate> delegate);
+
+  InfoBarAndroid(const InfoBarAndroid&) = delete;
+  InfoBarAndroid& operator=(const InfoBarAndroid&) = delete;
+
   ~InfoBarAndroid() override;
 
   // InfoBar:
@@ -70,8 +71,6 @@ class InfoBarAndroid : public InfoBar {
 
  private:
   base::android::ScopedJavaGlobalRef<jobject> java_info_bar_;
-
-  DISALLOW_COPY_AND_ASSIGN(InfoBarAndroid);
 };
 
 }  // namespace infobars

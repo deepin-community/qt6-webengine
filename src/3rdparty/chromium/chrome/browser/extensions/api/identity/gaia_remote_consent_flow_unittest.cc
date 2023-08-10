@@ -4,14 +4,14 @@
 
 #include "chrome/browser/extensions/api/identity/gaia_remote_consent_flow.h"
 
+#include <memory>
 #include <vector>
 
 #include "base/run_loop.h"
 #include "base/test/metrics/histogram_tester.h"
-#include "chrome/browser/signin/identity_test_environment_profile_adaptor.h"
-#include "chrome/test/base/testing_profile.h"
-#include "components/signin/public/identity_manager/identity_test_environment.h"
-#include "components/signin/public/identity_manager/set_accounts_in_cookie_result.h"
+#include "base/test/scoped_feature_list.h"
+#include "build/chromeos_buildflags.h"
+#include "components/signin/public/base/signin_switches.h"
 #include "content/public/test/browser_task_environment.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -102,9 +102,8 @@ class IdentityGaiaRemoteConsentFlowTest : public testing::Test {
                                 std::set<std::string>());
     RemoteConsentResolutionData resolution_data;
     resolution_data.url = GURL("https://example.com/auth/");
-    return std::unique_ptr<TestGaiaRemoteConsentFlow>(
-        new TestGaiaRemoteConsentFlow(delegate, token_key, resolution_data,
-                                      window_key));
+    return std::make_unique<TestGaiaRemoteConsentFlow>(
+        delegate, token_key, resolution_data, window_key);
   }
 
   base::HistogramTester* histogram_tester() { return &histogram_tester_; }
@@ -113,6 +112,11 @@ class IdentityGaiaRemoteConsentFlowTest : public testing::Test {
   base::test::TaskEnvironment task_env_;
   base::HistogramTester histogram_tester_;
   testing::StrictMock<MockGaiaRemoteConsentFlowDelegate> delegate_;
+
+#if BUILDFLAG(IS_CHROMEOS_LACROS)
+  base::test::ScopedFeatureList scoped_feature_list_{
+      switches::kLacrosNonSyncingProfiles};
+#endif
 };
 
 TEST_F(IdentityGaiaRemoteConsentFlowTest, ConsentResult) {

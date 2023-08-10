@@ -28,6 +28,7 @@
 
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_get_inner_html_options.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_observable_array_css_style_sheet.h"
 #include "third_party/blink/renderer/core/css/resolver/style_resolver.h"
 #include "third_party/blink/renderer/core/css/style_change_reason.h"
 #include "third_party/blink/renderer/core/css/style_engine.h"
@@ -40,7 +41,6 @@
 #include "third_party/blink/renderer/core/dom/whitespace_attacher.h"
 #include "third_party/blink/renderer/core/editing/serializers/serialization.h"
 #include "third_party/blink/renderer/core/html/html_slot_element.h"
-#include "third_party/blink/renderer/core/layout/layout_object.h"
 #include "third_party/blink/renderer/core/trustedtypes/trusted_types_util.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/wtf/size_assertions.h"
@@ -56,13 +56,19 @@ ASSERT_SIZE(ShadowRoot, SameSizeAsShadowRoot);
 
 ShadowRoot::ShadowRoot(Document& document, ShadowRootType type)
     : DocumentFragment(nullptr, kCreateShadowRoot),
-      TreeScope(*this, document),
+      TreeScope(
+          *this,
+          document,
+          static_cast<V8ObservableArrayCSSStyleSheet::SetAlgorithmCallback>(
+              &ShadowRoot::OnAdoptedStyleSheetSet),
+          static_cast<V8ObservableArrayCSSStyleSheet::DeleteAlgorithmCallback>(
+              &ShadowRoot::OnAdoptedStyleSheetDelete)),
       style_sheet_list_(nullptr),
       child_shadow_root_count_(0),
       type_(static_cast<unsigned>(type)),
       registered_with_parent_shadow_root_(false),
       delegates_focus_(false),
-      slot_assignment_mode_(static_cast<unsigned>(SlotAssignmentMode::kAuto)),
+      slot_assignment_mode_(static_cast<unsigned>(SlotAssignmentMode::kNamed)),
       needs_dir_auto_attribute_update_(false),
       unused_(0) {}
 
@@ -104,9 +110,28 @@ String ShadowRoot::innerHTML() const {
   return CreateMarkup(this, kChildrenOnly);
 }
 
+// This forwards to the TreeScope implementation.
+void ShadowRoot::OnAdoptedStyleSheetSet(
+    ScriptState* script_state,
+    V8ObservableArrayCSSStyleSheet& observable_array,
+    uint32_t index,
+    Member<CSSStyleSheet>& sheet,
+    ExceptionState& exception_state) {
+  TreeScope::OnAdoptedStyleSheetSet(script_state, observable_array, index,
+                                    sheet, exception_state);
+}
+
+// This forwards to the TreeScope implementation.
+void ShadowRoot::OnAdoptedStyleSheetDelete(
+    ScriptState* script_state,
+    V8ObservableArrayCSSStyleSheet& observable_array,
+    uint32_t index,
+    ExceptionState& exception_state) {
+  TreeScope::OnAdoptedStyleSheetDelete(script_state, observable_array, index,
+                                       exception_state);
+}
+
 String ShadowRoot::getInnerHTML(const GetInnerHTMLOptions* options) const {
-  DCHECK(RuntimeEnabledFeatures::DeclarativeShadowDOMEnabled(
-      GetExecutionContext()));
   ClosedRootsSet include_closed_roots;
   if (options->hasClosedRoots()) {
     for (auto& shadow_root : options->closedRoots()) {
@@ -125,9 +150,8 @@ void ShadowRoot::setInnerHTML(const String& html,
           html, &host(), kAllowScriptingContent, "innerHTML",
           /*include_shadow_roots=*/false, exception_state)) {
     ReplaceChildrenWithFragment(this, fragment, exception_state);
-    auto* element = DynamicTo<HTMLElement>(host());
-    if (element && !element->NeedsInheritDirectionalityFromParent())
-      element->UpdateDescendantDirectionality(element->CachedDirectionality());
+    if (auto* element = DynamicTo<HTMLElement>(host()))
+      element->AdjustDirectionalityIfNeededAfterShadowRootChanged();
   }
 }
 
@@ -176,6 +200,14 @@ Node::InsertionNotificationRequest ShadowRoot::InsertedInto(
   }
 
   return kInsertionDone;
+}
+
+void ShadowRoot::UpdateType(ShadowRootType type) {
+  DCHECK(GetType() == ShadowRootType::kUserAgent);
+  DCHECK(RuntimeEnabledFeatures::HTMLSelectMenuElementEnabled());
+  DCHECK(IsA<HTMLSelectMenuElement>(host()))
+      << "Updating the type is only supported for <selectmenu> elements";
+  type_ = static_cast<unsigned>(type);
 }
 
 void ShadowRoot::RemovedFrom(ContainerNode& insertion_point) {

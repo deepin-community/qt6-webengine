@@ -8,7 +8,7 @@
 #include <memory>
 #include <utility>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
@@ -17,6 +17,7 @@
 #include "net/base/proxy_server.h"
 #include "net/base/request_priority.h"
 #include "net/dns/public/resolve_error_info.h"
+#include "net/dns/public/secure_dns_policy.h"
 #include "net/http/bidirectional_stream_impl.h"
 #include "net/http/http_auth.h"
 #include "net/http/http_auth_controller.h"
@@ -33,6 +34,7 @@
 #include "net/spdy/spdy_session_key.h"
 #include "net/spdy/spdy_session_pool.h"
 #include "net/ssl/ssl_config_service.h"
+#include "url/scheme_host_port.h"
 
 namespace net {
 
@@ -155,13 +157,17 @@ class HttpStreamFactory::Job
       const ProxyInfo& proxy_info,
       const SSLConfig& server_ssl_config,
       const SSLConfig& proxy_ssl_config,
-      HostPortPair destination,
+      url::SchemeHostPort destination,
       GURL origin_url,
       NextProto alternative_protocol,
       quic::ParsedQuicVersion quic_version,
       bool is_websocket,
       bool enable_ip_based_pooling,
       NetLog* net_log);
+
+  Job(const Job&) = delete;
+  Job& operator=(const Job&) = delete;
+
   ~Job() override;
 
   // Start initiates the process of creating a new HttpStream.
@@ -199,12 +205,7 @@ class HttpStreamFactory::Job
     return std::move(bidirectional_stream_impl_);
   }
 
-  // Returns the estimated memory usage in bytes.
-  size_t EstimateMemoryUsage() const;
-
   bool is_waiting() const { return next_state_ == STATE_WAIT_COMPLETE; }
-  const SSLConfig& server_ssl_config() const;
-  const SSLConfig& proxy_ssl_config() const;
   const ProxyInfo& proxy_info() const;
   ResolveErrorInfo resolve_error_info() const;
 
@@ -245,12 +246,8 @@ class HttpStreamFactory::Job
     STATE_WAITING_USER_ACTION,
     STATE_CREATE_STREAM,
     STATE_CREATE_STREAM_COMPLETE,
-    STATE_DRAIN_BODY_FOR_AUTH_RESTART,
-    STATE_DRAIN_BODY_FOR_AUTH_RESTART_COMPLETE,
     STATE_DONE,
     STATE_NONE,
-    // Used for UMA.
-    STATE_MAX,
   };
 
   void OnStreamReadyCallback();
@@ -313,20 +310,18 @@ class HttpStreamFactory::Job
 
   // Called in Job constructor: should Job be forced to use QUIC.
   static bool ShouldForceQuic(HttpNetworkSession* session,
-                              const HostPortPair& destination,
-                              const GURL& origin_url,
+                              const url::SchemeHostPort& destination,
                               const ProxyInfo& proxy_info,
                               bool using_ssl);
 
   // Called in Job constructor. Use |spdy_session_key_| after construction.
   static SpdySessionKey GetSpdySessionKey(
-      bool spdy_session_direct,
       const ProxyServer& proxy_server,
       const GURL& origin_url,
       PrivacyMode privacy_mode,
       const SocketTag& socket_tag,
       const NetworkIsolationKey& network_isolation_key,
-      bool disable_secure_dns);
+      SecureDnsPolicy secure_dns_policy);
 
   // Returns true if the current request can use an existing spdy session.
   bool CanUseExistingSpdySession() const;
@@ -338,8 +333,6 @@ class HttpStreamFactory::Job
   // available synchronously or asynchronously.  Otherwise, the given error
   // code is simply returned.
   int ReconsiderProxyAfterError(int error);
-
-  ClientSocketPoolManager::SocketGroupType GetSocketGroup() const;
 
   void MaybeCopyConnectionAttemptsFromSocketOrHandle();
 
@@ -356,13 +349,13 @@ class HttpStreamFactory::Job
 
   const CompletionRepeatingCallback io_callback_;
   std::unique_ptr<ClientSocketHandle> connection_;
-  HttpNetworkSession* const session_;
+  const raw_ptr<HttpNetworkSession> session_;
 
   State next_state_;
 
   // The server we are trying to reach, could be that of the origin or of the
   // alternative service (after applying host mapping rules).
-  const HostPortPair destination_;
+  const url::SchemeHostPort destination_;
 
   // The origin url we're trying to reach. This url may be different from the
   // original request when host mapping rules are set-up.
@@ -381,14 +374,19 @@ class HttpStreamFactory::Job
   const bool enable_ip_based_pooling_;
 
   // Unowned. |this| job is owned by |delegate_|.
-  Delegate* const delegate_;
+  const raw_ptr<Delegate> delegate_;
 
   const JobType job_type_;
 
-  // True if handling a HTTPS request.
+  // True if handling a HTTPS request. Note this only describes the origin URL.
+  // If false (an HTTP request), the request may still be sent over an HTTPS
+  // proxy. This differs from `using_quic_` and `using_spdy_`, which also
+  // describe some proxy cases.
   const bool using_ssl_;
 
-  // True if Job uses QUIC.
+  // True if Job actually uses HTTP/2. Note this describes both using QUIC
+  // with an HTTPS origin, and proxying a cleartext HTTP request over an QUIC
+  // proxy. This differs from `using_ssl_`, which only describes the origin.
   const bool using_quic_;
 
   // quic::ParsedQuicVersion that should be used to connect to the QUIC
@@ -400,7 +398,9 @@ class HttpStreamFactory::Job
   // the server does not negotiate HTTP/2 on a new socket.
   const bool expect_spdy_;
 
-  // True if Job actually uses HTTP/2.
+  // True if Job actually uses HTTP/2. Note this describes both using HTTP/2
+  // with an HTTPS origin, and proxying a cleartext HTTP request over an HTTP/2
+  // proxy. This differs from `using_ssl_`, which only describes the origin.
   bool using_spdy_;
 
   // True if this job might succeed with a different proxy config.
@@ -442,9 +442,8 @@ class HttpStreamFactory::Job
   // (but |existing_spdy_session_| can still be non-null).
   spdy::SpdyStreamId pushed_stream_id_;
 
-  // True if not connecting to an Https proxy for an Http url.
-  const bool spdy_session_direct_;
-
+  // Which SpdySessions in the pool to use. Note that, if requesting an HTTP URL
+  // through an HTTPS proxy, this key matches the proxy, not the origin server.
   const SpdySessionKey spdy_session_key_;
 
   // Type of stream that is requested.
@@ -462,8 +461,6 @@ class HttpStreamFactory::Job
   std::unique_ptr<SpdySessionPool::SpdySessionRequest> spdy_session_request_;
 
   base::WeakPtrFactory<Job> ptr_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(Job);
 };
 
 // Factory for creating Jobs.
@@ -482,7 +479,7 @@ class HttpStreamFactory::JobFactory {
       const ProxyInfo& proxy_info,
       const SSLConfig& server_ssl_config,
       const SSLConfig& proxy_ssl_config,
-      HostPortPair destination,
+      url::SchemeHostPort destination,
       GURL origin_url,
       bool is_websocket,
       bool enable_ip_based_pooling,
@@ -497,7 +494,7 @@ class HttpStreamFactory::JobFactory {
       const ProxyInfo& proxy_info,
       const SSLConfig& server_ssl_config,
       const SSLConfig& proxy_ssl_config,
-      HostPortPair destination,
+      url::SchemeHostPort destination,
       GURL origin_url,
       NextProto alternative_protocol,
       quic::ParsedQuicVersion quic_version,

@@ -73,7 +73,7 @@ PasswordFormMetricsRecorder::BubbleDismissalReason GetBubbleDismissalReason(
 }
 
 bool HasGeneratedPassword(
-    base::Optional<PasswordFormMetricsRecorder::GeneratedPasswordStatus>
+    absl::optional<PasswordFormMetricsRecorder::GeneratedPasswordStatus>
         status) {
   return status.has_value() &&
          (status == PasswordFormMetricsRecorder::GeneratedPasswordStatus::
@@ -104,14 +104,14 @@ struct UsernamePasswordsState {
 // |submitted_form|.
 UsernamePasswordsState CalculateUsernamePasswordsState(
     const FormData& submitted_form,
-    const std::set<std::pair<base::string16, PasswordForm::Store>>&
+    const std::set<std::pair<std::u16string, PasswordForm::Store>>&
         saved_usernames,
-    const std::set<std::pair<base::string16, PasswordForm::Store>>&
+    const std::set<std::pair<std::u16string, PasswordForm::Store>>&
         saved_passwords) {
   UsernamePasswordsState result;
 
   for (const FormFieldData& field : submitted_form.fields) {
-    const base::string16& value =
+    const std::u16string& value =
         field.user_input.empty() ? field.value : field.user_input;
 
     bool user_typed = field.properties_mask & FieldPropertiesFlags::kUserTyped;
@@ -177,7 +177,7 @@ bool BlocklistedBySmartBubble(
   const int show_threshold =
       password_bubble_experiment::GetSmartBubbleDismissalThreshold();
   for (const FormFieldData& field : submitted_form.fields) {
-    const base::string16& value =
+    const std::u16string& value =
         field.user_input.empty() ? field.value : field.user_input;
     for (const InteractionsStats& stat : interactions_stats) {
       if (stat.username_value == value &&
@@ -229,12 +229,6 @@ PasswordFormMetricsRecorder::~PasswordFormMetricsRecorder() {
   if (submitted_form_type_ != SubmittedFormType::kUnspecified) {
     UMA_HISTOGRAM_ENUMERATION("PasswordManager.SubmittedFormType",
                               submitted_form_type_, SubmittedFormType::kCount);
-    if (!is_main_frame_secure_) {
-      UMA_HISTOGRAM_ENUMERATION("PasswordManager.SubmittedNonSecureFormType",
-                                submitted_form_type_,
-                                SubmittedFormType::kCount);
-    }
-
     ukm_entry_builder_.SetSubmission_SubmittedFormType(
         static_cast<int64_t>(submitted_form_type_));
   }
@@ -349,18 +343,18 @@ PasswordFormMetricsRecorder::~PasswordFormMetricsRecorder() {
           pref_service_->GetTime(prefs::kAccountStoreDateLastUsedForFilling);
 
       bool was_profile_store_used_in_last_7_days =
-          (now - profile_store_last_use) < base::TimeDelta::FromDays(7);
+          (now - profile_store_last_use) < base::Days(7);
       bool was_account_store_used_in_last_7_days =
-          (now - account_store_last_use) < base::TimeDelta::FromDays(7);
+          (now - account_store_last_use) < base::Days(7);
       base::UmaHistogramEnumeration(
           "PasswordManager.StoresUsedForFillingInLast7Days",
           ComputeFillingSource(was_profile_store_used_in_last_7_days,
                                was_account_store_used_in_last_7_days));
 
       bool was_profile_store_used_in_last_28_days =
-          (now - profile_store_last_use) < base::TimeDelta::FromDays(28);
+          (now - profile_store_last_use) < base::Days(28);
       bool was_account_store_used_in_last_28_days =
-          (now - account_store_last_use) < base::TimeDelta::FromDays(28);
+          (now - account_store_last_use) < base::Days(28);
       base::UmaHistogramEnumeration(
           "PasswordManager.StoresUsedForFillingInLast28Days",
           ComputeFillingSource(was_profile_store_used_in_last_28_days,
@@ -371,15 +365,6 @@ PasswordFormMetricsRecorder::~PasswordFormMetricsRecorder() {
   if (submit_result_ == SubmitResult::kPassed && js_only_input_) {
     UMA_HISTOGRAM_ENUMERATION(
         "PasswordManager.JavaScriptOnlyValueInSubmittedForm", *js_only_input_);
-  }
-
-  if (user_typed_password_on_chrome_sign_in_page_ ||
-      password_hash_saved_on_chrome_sing_in_page_) {
-    auto value = password_hash_saved_on_chrome_sing_in_page_
-                     ? ChromeSignInPageHashSaved::kHashSaved
-                     : ChromeSignInPageHashSaved::kPasswordTypedHashNotSaved;
-    UMA_HISTOGRAM_ENUMERATION("PasswordManager.ChromeSignInPageHashSaved",
-                              value);
   }
 
   ukm_entry_builder_.Record(ukm::UkmRecorder::Get());
@@ -510,11 +495,17 @@ void PasswordFormMetricsRecorder::RecordFirstWaitForUsernameReason(
   recorded_wait_for_username_reason_ = true;
 }
 
+void PasswordFormMetricsRecorder::RecordMatchedFormType(MatchedFormType type) {
+  if (!std::exchange(recorded_preferred_matched_password_type, true)) {
+    UMA_HISTOGRAM_ENUMERATION("PasswordManager.MatchedFormType", type);
+  }
+}
+
 void PasswordFormMetricsRecorder::CalculateFillingAssistanceMetric(
     const FormData& submitted_form,
-    const std::set<std::pair<base::string16, PasswordForm::Store>>&
+    const std::set<std::pair<std::u16string, PasswordForm::Store>>&
         saved_usernames,
-    const std::set<std::pair<base::string16, PasswordForm::Store>>&
+    const std::set<std::pair<std::u16string, PasswordForm::Store>>&
         saved_passwords,
     bool is_blocklisted,
     const std::vector<InteractionsStats>& interactions_stats,
@@ -527,7 +518,7 @@ void PasswordFormMetricsRecorder::CalculateFillingAssistanceMetric(
     is_mixed_content_form_ = true;
   }
 
-#if !defined(OS_IOS)
+#if !BUILDFLAG(IS_IOS)
   filling_source_ = FillingSource::kNotFilled;
 #endif
   account_storage_usage_level_ = account_storage_usage_level;
@@ -566,7 +557,7 @@ void PasswordFormMetricsRecorder::CalculateFillingAssistanceMetric(
     return;
   }
 
-#if !defined(OS_IOS)
+#if !BUILDFLAG(IS_IOS)
   // At this point, the password was filled from at least one of the two stores,
   // so compute the filling source now.
   filling_source_ = ComputeFillingSource(

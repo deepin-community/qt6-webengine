@@ -6,7 +6,6 @@
 
 #include "base/check.h"
 #include "base/notreached.h"
-#include "base/stl_util.h"
 
 namespace ProxyPrefs {
 
@@ -20,7 +19,7 @@ const char* kProxyModeNames[] = { kDirectProxyModeName,
                                   kFixedServersProxyModeName,
                                   kSystemProxyModeName };
 
-static_assert(base::size(kProxyModeNames) == kModeCount,
+static_assert(std::size(kProxyModeNames) == kModeCount,
               "kProxyModeNames must have kModeCount elements");
 
 }  // namespace

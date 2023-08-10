@@ -10,12 +10,10 @@
 #include "base/containers/flat_map.h"
 #include "base/files/file.h"
 #include "base/files/file_path.h"
-#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
-#include "base/optional.h"
 #include "base/sequence_checker.h"
-#include "base/sequenced_task_runner.h"
+#include "base/task/sequenced_task_runner.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/browser_context.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
@@ -24,7 +22,12 @@
 #include "net/base/net_errors.h"
 #include "services/data_decoder/public/cpp/safe_web_bundle_parser.h"
 #include "services/network/public/mojom/url_loader.mojom.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/gurl.h"
+
+namespace network {
+struct ResourceRequest;
+}
 
 namespace content {
 
@@ -47,6 +50,9 @@ class CONTENT_EXPORT WebBundleReader final
                   network::mojom::URLLoaderClientEndpointsPtr endpoints,
                   BrowserContext::BlobContextGetter blob_context_getter);
 
+  WebBundleReader(const WebBundleReader&) = delete;
+  WebBundleReader& operator=(const WebBundleReader&) = delete;
+
   // Starts parsing, and runs |callback| when meta data gets to be available.
   // |error| is set only on failures.
   // Other methods below are only available after this |callback| invocation.
@@ -61,7 +67,6 @@ class CONTENT_EXPORT WebBundleReader final
       base::OnceCallback<void(web_package::mojom::BundleResponsePtr,
                               web_package::mojom::BundleResponseParseErrorPtr)>;
   void ReadResponse(const network::ResourceRequest& resource_request,
-                    const std::string& accept_langs,
                     ResponseCallback callback);
 
   // Starts loading response body. |response| should be obtained by
@@ -96,6 +101,10 @@ class CONTENT_EXPORT WebBundleReader final
   class SharedFile final : public base::RefCountedThreadSafe<SharedFile> {
    public:
     explicit SharedFile(std::unique_ptr<WebBundleSource> source);
+
+    SharedFile(const SharedFile&) = delete;
+    SharedFile& operator=(const SharedFile&) = delete;
+
     void DuplicateFile(base::OnceCallback<void(base::File)> callback);
     base::File* operator->();
 
@@ -108,8 +117,6 @@ class CONTENT_EXPORT WebBundleReader final
     base::FilePath file_path_;
     std::unique_ptr<base::File> file_;
     base::OnceCallback<void(base::File)> duplicate_callback_;
-
-    DISALLOW_COPY_AND_ASSIGN(SharedFile);
   };
   class SharedFileDataSource;
 
@@ -135,7 +142,7 @@ class CONTENT_EXPORT WebBundleReader final
   void OnParserDisconnected();
   void Reconnect();
   void ReconnectForFile(base::File file);
-  void DidReconnect(base::Optional<std::string> error);
+  void DidReconnect(absl::optional<std::string> error);
 
   SEQUENCE_CHECKER(sequence_checker_);
 
@@ -149,15 +156,13 @@ class CONTENT_EXPORT WebBundleReader final
   std::unique_ptr<WebBundleBlobDataSource> blob_data_source_;
 
   GURL primary_url_;
-  base::flat_map<GURL, web_package::mojom::BundleIndexValuePtr> entries_;
+  base::flat_map<GURL, web_package::mojom::BundleResponseLocationPtr> entries_;
   // Accumulates ReadResponse() requests while the parser is disconnected.
   std::vector<std::pair<web_package::mojom::BundleResponseLocationPtr,
                         ResponseCallback>>
       pending_read_responses_;
 
   base::WeakPtrFactory<WebBundleReader> weak_ptr_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(WebBundleReader);
 };
 
 }  // namespace content

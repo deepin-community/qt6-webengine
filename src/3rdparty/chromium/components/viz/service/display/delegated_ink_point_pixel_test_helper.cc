@@ -2,9 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <memory>
-
 #include "components/viz/service/display/delegated_ink_point_pixel_test_helper.h"
+
+#include <memory>
+#include <utility>
 
 #include "components/viz/service/display/direct_renderer.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -18,18 +19,19 @@ DelegatedInkPointPixelTestHelper::~DelegatedInkPointPixelTestHelper() = default;
 DelegatedInkPointPixelTestHelper::DelegatedInkPointPixelTestHelper(
     DirectRenderer* renderer)
     : renderer_(renderer) {
-  renderer_->CreateDelegatedInkPointRenderer();
+  CreateInkRenderer();
 }
 
 void DelegatedInkPointPixelTestHelper::SetRendererAndCreateInkRenderer(
     DirectRenderer* renderer) {
   renderer_ = renderer;
-  renderer_->CreateDelegatedInkPointRenderer();
+  CreateInkRenderer();
 }
 
-DelegatedInkPointRendererBase*
-DelegatedInkPointPixelTestHelper::GetInkRenderer() {
-  return renderer_->GetDelegatedInkPointRenderer();
+void DelegatedInkPointPixelTestHelper::CreateInkRenderer() {
+  auto ink_renderer = std::make_unique<DelegatedInkPointRendererSkia>();
+  ink_renderer_ = ink_renderer.get();
+  renderer_->SetDelegatedInkPointRendererSkiaForTest(std::move(ink_renderer));
 }
 
 void DelegatedInkPointPixelTestHelper::CreateAndSendMetadata(
@@ -39,11 +41,11 @@ void DelegatedInkPointPixelTestHelper::CreateAndSendMetadata(
     base::TimeTicks timestamp,
     const gfx::RectF& presentation_area) {
   DCHECK(renderer_);
-  metadata_ =
-      DelegatedInkMetadata(point, diameter, color, timestamp, presentation_area,
-                           base::TimeTicks::Now(), /*hovering*/ false);
-  GetInkRenderer()->SetDelegatedInkMetadata(
-      std::make_unique<DelegatedInkMetadata>(metadata_));
+  metadata_ = gfx::DelegatedInkMetadata(
+      point, diameter, color, timestamp, presentation_area,
+      base::TimeTicks::Now(), /*hovering*/ false);
+  ink_renderer_->SetDelegatedInkMetadata(
+      std::make_unique<gfx::DelegatedInkMetadata>(metadata_));
 }
 
 void DelegatedInkPointPixelTestHelper::CreateAndSendMetadataFromLastPoint() {
@@ -72,7 +74,7 @@ void DelegatedInkPointPixelTestHelper::CreateAndSendPoint(
     int32_t pointer_id) {
   DCHECK(renderer_);
   ink_points_[pointer_id].emplace_back(point, timestamp, pointer_id);
-  GetInkRenderer()->StoreDelegatedInkPoint(ink_points_[pointer_id].back());
+  ink_renderer_->StoreDelegatedInkPoint(ink_points_[pointer_id].back());
 }
 
 void DelegatedInkPointPixelTestHelper::CreateAndSendPointFromLastPoint(
@@ -86,10 +88,10 @@ void DelegatedInkPointPixelTestHelper::CreateAndSendPointFromLastPoint(
     const gfx::PointF& point) {
   DCHECK(ink_points_.find(pointer_id) != ink_points_.end());
   EXPECT_GT(static_cast<int>(ink_points_[pointer_id].size()), 0);
-  CreateAndSendPoint(point,
-                     ink_points_[pointer_id].back().timestamp() +
-                         base::TimeDelta::FromMicroseconds(10),
-                     pointer_id);
+  CreateAndSendPoint(
+      point,
+      ink_points_[pointer_id].back().timestamp() + base::Microseconds(10),
+      pointer_id);
 }
 
 gfx::Rect DelegatedInkPointPixelTestHelper::GetDelegatedInkDamageRect() {
@@ -107,8 +109,7 @@ gfx::Rect DelegatedInkPointPixelTestHelper::GetDelegatedInkDamageRect(
     ink_damage_rect_f.Union(
         gfx::RectF(ink_points_[pointer_id][i].point(), gfx::SizeF(1, 1)));
   }
-  ink_damage_rect_f.Inset(-metadata().diameter() / 2.f,
-                          -metadata().diameter() / 2.f);
+  ink_damage_rect_f.Inset(-metadata().diameter() / 2.f);
 
   return gfx::ToEnclosingRect(ink_damage_rect_f);
 }

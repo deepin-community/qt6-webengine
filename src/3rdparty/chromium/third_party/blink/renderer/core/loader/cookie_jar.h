@@ -7,7 +7,7 @@
 
 #include "services/network/public/mojom/restricted_cookie_manager.mojom-blink.h"
 
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/mojo/heap_mojo_remote.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
@@ -23,9 +23,12 @@ class CookieJar : public GarbageCollected<CookieJar> {
   void SetCookie(const String& value);
   String Cookies();
   bool CookiesEnabled();
+  void SetCookieManager(
+      mojo::PendingRemote<network::mojom::blink::RestrictedCookieManager>
+          cookie_manager);
 
  private:
-  void RequestRestrictedCookieManagerIfNeeded();
+  bool RequestRestrictedCookieManagerIfNeeded();
 
   HeapMojoRemote<network::mojom::blink::RestrictedCookieManager> backend_;
   Member<blink::Document> document_;

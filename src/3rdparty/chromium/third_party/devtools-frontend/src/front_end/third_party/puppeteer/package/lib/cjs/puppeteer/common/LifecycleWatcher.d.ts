@@ -14,14 +14,19 @@
  * limitations under the License.
  */
 /// <reference types="node" />
-import { TimeoutError } from './Errors.js';
-import { Frame , FrameManager} from './FrameManager.js';
 import { PuppeteerEventListener } from './helper.js';
+import { TimeoutError } from './Errors.js';
+import { FrameManager, Frame } from './FrameManager.js';
 import { HTTPRequest } from './HTTPRequest.js';
 import { HTTPResponse } from './HTTPResponse.js';
-
+/**
+ * @public
+ */
 export declare type PuppeteerLifeCycleEvent = 'load' | 'domcontentloaded' | 'networkidle0' | 'networkidle2';
-declare type ProtocolLifeCycleEvent = 'load' | 'DOMContentLoaded' | 'networkIdle' | 'networkAlmostIdle';
+/**
+ * @public
+ */
+export declare type ProtocolLifeCycleEvent = 'load' | 'DOMContentLoaded' | 'networkIdle' | 'networkAlmostIdle';
 /**
  * @internal
  */
@@ -44,10 +49,11 @@ export declare class LifecycleWatcher {
     _timeoutPromise: Promise<TimeoutError | null>;
     _maximumTimer?: NodeJS.Timeout;
     _hasSameDocumentNavigation?: boolean;
+    _swapped?: boolean;
     constructor(frameManager: FrameManager, frame: Frame, waitUntil: PuppeteerLifeCycleEvent | PuppeteerLifeCycleEvent[], timeout: number);
     _onRequest(request: HTTPRequest): void;
     _onFrameDetached(frame: Frame): void;
-    navigationResponse(): HTTPResponse | null;
+    navigationResponse(): Promise<HTTPResponse | null>;
     _terminate(error: Error): void;
     sameDocumentNavigationPromise(): Promise<Error | null>;
     newDocumentNavigationPromise(): Promise<Error | null>;
@@ -55,8 +61,8 @@ export declare class LifecycleWatcher {
     timeoutOrTerminationPromise(): Promise<Error | TimeoutError | null>;
     _createTimeoutPromise(): Promise<TimeoutError | null>;
     _navigatedWithinDocument(frame: Frame): void;
+    _frameSwapped(frame: Frame): void;
     _checkLifecycleComplete(): void;
     dispose(): void;
 }
-export {};
 //# sourceMappingURL=LifecycleWatcher.d.ts.map

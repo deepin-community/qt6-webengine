@@ -7,6 +7,7 @@
 #include <cmath>
 
 #include "base/numerics/math_constants.h"
+#include "base/time/time.h"
 #include "base/win/core_winrt_util.h"
 #include "services/device/generic_sensor/generic_sensor_consts.h"
 #include "services/device/public/mojom/sensor.mojom.h"
@@ -210,7 +211,7 @@ base::TimeDelta PlatformSensorReaderWinrtBase<
     return base::TimeDelta();
   }
 
-  return base::TimeDelta::FromMilliseconds(minimum_report_interval_ms);
+  return base::Milliseconds(minimum_report_interval_ms);
 }
 
 template <wchar_t const* runtime_class_id,
@@ -295,7 +296,7 @@ void PlatformSensorReaderWinrtBase<
                   << logging::SystemErrorCodeToString(hr);
     }
 
-    reading_callback_token_ = base::nullopt;
+    reading_callback_token_ = absl::nullopt;
   }
 }
 

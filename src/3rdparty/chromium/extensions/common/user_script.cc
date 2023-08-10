@@ -41,14 +41,16 @@ namespace extensions {
 // The bitmask for valid user script injectable schemes used by URLPattern.
 enum {
   kValidUserScriptSchemes = URLPattern::SCHEME_CHROMEUI |
-                            URLPattern::SCHEME_HTTP |
-                            URLPattern::SCHEME_HTTPS |
-                            URLPattern::SCHEME_FILE |
-                            URLPattern::SCHEME_FTP
+                            URLPattern::SCHEME_HTTP | URLPattern::SCHEME_HTTPS |
+                            URLPattern::SCHEME_FILE | URLPattern::SCHEME_FTP |
+                            URLPattern::SCHEME_UUID_IN_PACKAGE
 };
 
 // static
 const char UserScript::kFileExtension[] = ".user.js";
+
+// static
+const char UserScript::kGeneratedIDPrefix = '_';
 
 // static
 std::string UserScript::GenerateUserScriptID() {
@@ -65,8 +67,8 @@ bool UserScript::IsURLUserScript(const GURL& url,
 }
 
 // static
-int UserScript::ValidUserScriptSchemes(bool canExecuteScriptEverywhere) {
-  if (canExecuteScriptEverywhere)
+int UserScript::ValidUserScriptSchemes(bool can_execute_script_everywhere) {
+  if (can_execute_script_everywhere)
     return URLPattern::SCHEME_ALL;
   int valid_schemes = kValidUserScriptSchemes;
   if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
@@ -74,6 +76,11 @@ int UserScript::ValidUserScriptSchemes(bool canExecuteScriptEverywhere) {
     valid_schemes &= ~URLPattern::SCHEME_CHROMEUI;
   }
   return valid_schemes;
+}
+
+// static
+bool UserScript::IsIDGenerated(const std::string& id) {
+  return !id.empty() && id[0] == kGeneratedIDPrefix;
 }
 
 UserScript::File::File(const base::FilePath& extension_root,
@@ -127,6 +134,7 @@ std::unique_ptr<UserScript> UserScript::CopyMetadataFrom(
   script->match_all_frames_ = other.match_all_frames_;
   script->match_origin_as_fallback_ = other.match_origin_as_fallback_;
   script->incognito_enabled_ = other.incognito_enabled_;
+  script->execution_world_ = other.execution_world_;
 
   return script;
 }
@@ -187,12 +195,13 @@ void UserScript::File::Unpickle(const base::Pickle& pickle,
 
 void UserScript::Pickle(base::Pickle* pickle) const {
   // Write the simple types to the pickle.
-  pickle->WriteInt(run_location());
+  pickle->WriteInt(static_cast<int>(run_location()));
   pickle->WriteString(user_script_id_);
   pickle->WriteBool(emulate_greasemonkey());
   pickle->WriteBool(match_all_frames());
   pickle->WriteInt(static_cast<int>(match_origin_as_fallback()));
   pickle->WriteBool(is_incognito_enabled());
+  pickle->WriteInt(static_cast<int>(execution_world()));
 
   PickleHostID(pickle, host_id_);
   pickle->WriteInt(consumer_instance_type());
@@ -213,9 +222,9 @@ void UserScript::PickleGlobs(base::Pickle* pickle,
 }
 
 void UserScript::PickleHostID(base::Pickle* pickle,
-                              const HostID& host_id) const {
-  pickle->WriteInt(host_id.type());
-  pickle->WriteString(host_id.id());
+                              const mojom::HostID& host_id) const {
+  pickle->WriteInt(static_cast<int>(host_id.type));
+  pickle->WriteString(host_id.id);
 }
 
 void UserScript::PickleURLPatternSet(base::Pickle* pickle,
@@ -240,8 +249,9 @@ void UserScript::Unpickle(const base::Pickle& pickle,
   // Read the run location.
   int run_location = 0;
   CHECK(iter->ReadInt(&run_location));
-  CHECK(run_location >= 0 && run_location < RUN_LOCATION_LAST);
-  run_location_ = static_cast<RunLocation>(run_location);
+  CHECK(run_location >= static_cast<int>(mojom::RunLocation::kUndefined) &&
+        run_location <= static_cast<int>(mojom::RunLocation::kMaxValue));
+  run_location_ = static_cast<mojom::RunLocation>(run_location);
 
   CHECK(iter->ReadString(&user_script_id_));
   CHECK(iter->ReadBool(&emulate_greasemonkey_));
@@ -251,6 +261,13 @@ void UserScript::Unpickle(const base::Pickle& pickle,
   match_origin_as_fallback_ =
       static_cast<MatchOriginAsFallbackBehavior>(match_origin_as_fallback_int);
   CHECK(iter->ReadBool(&incognito_enabled_));
+
+  // Read the execution world.
+  int execution_world = 0;
+  CHECK(iter->ReadInt(&execution_world));
+  CHECK(execution_world >= static_cast<int>(mojom::ExecutionWorld::kIsolated) &&
+        execution_world <= static_cast<int>(mojom::ExecutionWorld::kMaxValue));
+  execution_world_ = static_cast<mojom::ExecutionWorld>(execution_world);
 
   UnpickleHostID(pickle, iter, &host_id_);
 
@@ -265,6 +282,11 @@ void UserScript::Unpickle(const base::Pickle& pickle,
   UnpickleURLPatternSet(pickle, iter, &exclude_url_set_);
   UnpickleScripts(pickle, iter, &js_scripts_);
   UnpickleScripts(pickle, iter, &css_scripts_);
+}
+
+bool UserScript::IsIDGenerated() const {
+  CHECK(!user_script_id_.empty());
+  return IsIDGenerated(user_script_id_);
 }
 
 void UserScript::UnpickleGlobs(const base::Pickle& pickle,
@@ -282,12 +304,12 @@ void UserScript::UnpickleGlobs(const base::Pickle& pickle,
 
 void UserScript::UnpickleHostID(const base::Pickle& pickle,
                                 base::PickleIterator* iter,
-                                HostID* host_id) {
+                                mojom::HostID* host_id) {
   int type = 0;
   std::string id;
   CHECK(iter->ReadInt(&type));
   CHECK(iter->ReadString(&id));
-  *host_id = HostID(static_cast<HostID::HostType>(type), id);
+  *host_id = mojom::HostID(static_cast<mojom::HostID::HostType>(type), id);
 }
 
 void UserScript::UnpickleURLPatternSet(const base::Pickle& pickle,
@@ -326,16 +348,6 @@ void UserScript::UnpickleScripts(const base::Pickle& pickle,
     file->Unpickle(pickle, iter);
     scripts->push_back(std::move(file));
   }
-}
-
-UserScriptIDPair::UserScriptIDPair(std::string id, const HostID& host_id)
-    : id(std::move(id)), host_id(host_id) {}
-
-UserScriptIDPair::UserScriptIDPair(std::string id)
-    : id(std::move(id)), host_id(HostID()) {}
-
-bool operator<(const UserScriptIDPair& a, const UserScriptIDPair& b) {
-  return a.id < b.id;
 }
 
 }  // namespace extensions

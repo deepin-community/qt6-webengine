@@ -8,10 +8,10 @@
 #ifndef SKSL_PREFIXEXPRESSION
 #define SKSL_PREFIXEXPRESSION
 
-#include "src/sksl/SkSLIRGenerator.h"
-#include "src/sksl/SkSLLexer.h"
-#include "src/sksl/SkSLOperators.h"
+#include "include/sksl/SkSLOperator.h"
 #include "src/sksl/ir/SkSLExpression.h"
+
+#include <memory>
 
 namespace SkSL {
 
@@ -20,12 +20,21 @@ namespace SkSL {
  */
 class PrefixExpression final : public Expression {
 public:
-    static constexpr Kind kExpressionKind = Kind::kPrefix;
+    inline static constexpr Kind kExpressionKind = Kind::kPrefix;
 
-    PrefixExpression(Operator op, std::unique_ptr<Expression> operand)
-        : INHERITED(operand->fOffset, kExpressionKind, &operand->type())
+    // Use PrefixExpression::Make to automatically simplify various prefix expression types.
+    PrefixExpression(Position pos, Operator op, std::unique_ptr<Expression> operand)
+        : INHERITED(pos, kExpressionKind, &operand->type())
         , fOperator(op)
         , fOperand(std::move(operand)) {}
+
+    // Creates an SkSL prefix expression; uses the ErrorReporter to report errors.
+    static std::unique_ptr<Expression> Convert(const Context& context, Position pos, Operator op,
+                                               std::unique_ptr<Expression> base);
+
+    // Creates an SkSL prefix expression; reports errors via ASSERT.
+    static std::unique_ptr<Expression> Make(const Context& context, Position pos, Operator op,
+                                            std::unique_ptr<Expression> base);
 
     Operator getOperator() const {
         return fOperator;
@@ -41,22 +50,19 @@ public:
 
     bool hasProperty(Property property) const override {
         if (property == Property::kSideEffects &&
-            (this->getOperator().kind() == Token::Kind::TK_PLUSPLUS ||
-             this->getOperator().kind() == Token::Kind::TK_MINUSMINUS)) {
+            (this->getOperator().kind() == Operator::Kind::PLUSPLUS ||
+             this->getOperator().kind() == Operator::Kind::MINUSMINUS)) {
             return true;
         }
         return this->operand()->hasProperty(property);
     }
 
-    std::unique_ptr<Expression> constantPropagate(const IRGenerator& irGenerator,
-                                                  const DefinitionMap& definitions) override;
-
     std::unique_ptr<Expression> clone() const override {
-        return std::unique_ptr<Expression>(new PrefixExpression(this->getOperator(),
-                                                                this->operand()->clone()));
+        return std::make_unique<PrefixExpression>(fPosition, this->getOperator(),
+                this->operand()->clone());
     }
 
-    String description() const override {
+    std::string description() const override {
         return this->getOperator().operatorName() + this->operand()->description();
     }
 

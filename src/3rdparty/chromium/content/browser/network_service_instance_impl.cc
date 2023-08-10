@@ -4,7 +4,6 @@
 
 #include "content/browser/network_service_instance_impl.h"
 
-#include <map>
 #include <memory>
 #include <string>
 #include <utility>
@@ -13,27 +12,36 @@
 #include "base/environment.h"
 #include "base/feature_list.h"
 #include "base/files/file.h"
+#include "base/files/file_enumerator.h"
+#include "base/files/file_util.h"
 #include "base/message_loop/message_pump_type.h"
+#include "base/metrics/field_trial_params.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/no_destructor.h"
-#include "base/sequenced_task_runner.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/waitable_event.h"
+#include "base/task/sequenced_task_runner.h"
+#include "base/task/thread_pool.h"
 #include "base/threading/sequence_local_storage_slot.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_restrictions.h"
+#include "base/time/time.h"
+#include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
 #include "content/browser/browser_main_loop.h"
+#include "content/browser/first_party_sets/first_party_sets_handler_impl.h"
+#include "content/browser/network_sandbox_grant_result.h"
 #include "content/browser/network_service_client.h"
-#include "content/browser/service_sandbox_type.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/network_service_instance.h"
 #include "content/public/browser/service_process_host.h"
 #include "content/public/common/content_client.h"
+#include "content/public/common/content_features.h"
 #include "content/public/common/network_service_util.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
@@ -45,25 +53,23 @@
 #include "services/network/public/cpp/network_switches.h"
 #include "services/network/public/mojom/net_log.mojom.h"
 #include "services/network/public/mojom/network_change_manager.mojom.h"
+#include "services/network/public/mojom/network_context.mojom.h"
 #include "services/network/public/mojom/network_service.mojom.h"
 #include "services/network/public/mojom/network_service_test.mojom.h"
 
-#if defined(TOOLKIT_QT) || !defined(OS_MAC)
-#include "sandbox/policy/features.h"
-#endif
+#if BUILDFLAG(IS_ANDROID)
+#include "content/common/android/cpu_affinity_setter.h"
+#endif  // BUILDFLAG(IS_ANDROID)
 
-#if defined(OS_WIN)
-#include "base/metrics/histogram_functions.h"
-#include "base/strings/string16.h"
-#include "base/win/registry.h"
-#include "base/win/windows_version.h"
-#endif  // defined(OS_WIN)
+#if !BUILDFLAG(IS_ANDROID)
+#include "content/browser/network_sandbox.h"
+#endif
 
 namespace content {
 
 namespace {
 
-#if defined(OS_POSIX)
+#if BUILDFLAG(IS_POSIX)
 // Environment variable pointing to credential cache file.
 constexpr char kKrb5CCEnvName[] = "KRB5CCNAME";
 // Environment variable pointing to Kerberos config file.
@@ -77,11 +83,19 @@ network::NetworkConnectionTracker* g_network_connection_tracker;
 bool g_network_service_is_responding = false;
 base::Time g_last_network_service_crash;
 
+// A directory name that is created below the http cache path and passed to the
+// network context when creating a network context with cache enabled.
+// This must be a directory below the main cache path so operations such as
+// resetting the cache via HttpCacheParams.reset_cache can function correctly
+// as they rely on having access to the parent directory of the cache.
+const base::FilePath::CharType kCacheDataDirectoryName[] =
+    FILE_PATH_LITERAL("Cache_Data");
+
 std::unique_ptr<network::NetworkService>& GetLocalNetworkService() {
-  static base::NoDestructor<
-      base::SequenceLocalStorageSlot<std::unique_ptr<network::NetworkService>>>
+  static base::SequenceLocalStorageSlot<
+      std::unique_ptr<network::NetworkService>>
       service;
-  return service->GetOrCreateValue();
+  return service.GetOrCreateValue();
 }
 
 // If this feature is enabled, the Network Service will run on its own thread
@@ -92,7 +106,7 @@ std::unique_ptr<network::NetworkService>& GetLocalNetworkService() {
 // called from the IO thread.
 const base::Feature kNetworkServiceDedicatedThread {
   "NetworkServiceDedicatedThread",
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
       base::FEATURE_DISABLED_BY_DEFAULT
 #else
       base::FEATURE_ENABLED_BY_DEFAULT
@@ -110,8 +124,18 @@ base::Thread& GetNetworkServiceDedicatedThread() {
 // |ShutDownNetworkService()|.
 network::NetworkService* g_in_process_instance = nullptr;
 
+static NetworkServiceClient* g_client = nullptr;
+
 void CreateInProcessNetworkServiceOnThread(
     mojo::PendingReceiver<network::mojom::NetworkService> receiver) {
+#if BUILDFLAG(IS_ANDROID)
+  if (base::GetFieldTrialParamByFeatureAsBool(
+          features::kBigLittleScheduling,
+          features::kBigLittleSchedulingNetworkMainBigParam, false)) {
+    SetCpuAffinityForCurrentThread(base::CpuAffinityMode::kBigCoresOnly);
+  }
+#endif
+
   // The test interface doesn't need to be implemented in the in-process case.
   auto registry = std::make_unique<service_manager::BinderRegistry>();
   registry->AddInterface(base::BindRepeating(
@@ -121,6 +145,153 @@ void CreateInProcessNetworkServiceOnThread(
       true /* delay_initialization_until_set_client */);
 }
 
+// A utility function to make it clear what behavior is expected by the network
+// context instance depending on the various errors that can happen during data
+// migration.
+//
+// If this function returns 'true' then the `data_directory` should be used (if
+// specified in the network context params). If this function returns 'false'
+// then the `unsandboxed_data_path` should be used.
+bool IsSafeToUseDataPath(SandboxGrantResult result) {
+  switch (result) {
+    case SandboxGrantResult::kSuccess:
+      // A migration occurred, and it was successful.
+      return true;
+    case SandboxGrantResult::kFailedToGrantSandboxAccessToCache:
+    case SandboxGrantResult::kFailedToCreateCacheDirectory:
+      // A failure to grant create or grant access to the cache dir does not
+      // affect the providence of the data contained in `data_directory` as the
+      // migration could have still occurred.
+      //
+      // These cases are handled internally and so this case should never be
+      // hit. It is undefined behavior to proceed in this case so CHECK here.
+      IMMEDIATE_CRASH();
+      return false;
+    case SandboxGrantResult::kFailedToCreateDataDirectory:
+      // A failure to create the `data_directory` is fatal, and the
+      // `unsandboxed_data_path` should be used.
+      return false;
+    case SandboxGrantResult::kFailedToCopyData:
+      // A failure to copy the data from `unsandboxed_data_path` to the
+      // `data_directory` is fatal, and the `unsandboxed_data_path` should be
+      // used.
+      return false;
+    case SandboxGrantResult::kFailedToDeleteOldData:
+      // This is not fatal, as the new data has been correctly migrated, and the
+      // deletion will be retried at a later time.
+      return true;
+    case SandboxGrantResult::kFailedToGrantSandboxAccessToData:
+      // If the sandbox could not be granted access to the new data dir, then
+      // don't attempt to migrate. This means that the old
+      // `unsandboxed_data_path` should be used.
+      return false;
+    case SandboxGrantResult::kDidNotAttemptToGrantSandboxAccess:
+      // No migration was attempted either because of platform constraints or
+      // because the network context had no valid data paths (e.g. in-memory or
+      // incognito), or `unsandboxed_data_path` was not specified.
+      // `data_directory` should be used in this case (if present).
+      return true;
+    case SandboxGrantResult::kFailedToCreateCheckpointFile:
+      // This is fatal, as a failure to create the checkpoint file means that
+      // the next time the same network context is used, the data in
+      // `unsandboxed_data_path` will be re-copied to the new `data_directory`
+      // and thus any changes to the data will be discarded. So in this case,
+      // `unsandboxed_data_path` should be used.
+      return false;
+    case SandboxGrantResult::kNoMigrationRequested:
+      // The caller supplied an `unsandboxed_data_path` but did not trigger a
+      // migration so the data should be read from the `unsandboxed_data_path`.
+      return false;
+    case SandboxGrantResult::kMigrationAlreadySucceeded:
+      // Migration has already taken place, so `data_directory` contains the
+      // valid data.
+      return true;
+    case SandboxGrantResult::kMigrationAlreadySucceededWithNoAccess:
+      // If the sandbox could not be granted access to the new data dir, but the
+      // migration has already happened to `data_directory`. This means that the
+      // sandbox might not have access to the data but `data_directory` should
+      // still be used because it's been migrated.
+      return true;
+  }
+}
+
+// Takes a cache dir and deletes all files in it except those in 'Cache_Data'
+// directory. This can be removed once all caches have been moved to the new
+// sub-directory, around M99.
+void MaybeDeleteOldCache(const base::FilePath& cache_dir) {
+  bool deleted_old_files = false;
+  base::FileEnumerator enumerator(
+      cache_dir, /*recursive=*/false,
+      base::FileEnumerator::FILES | base::FileEnumerator::DIRECTORIES);
+
+  for (auto name = enumerator.Next(); !name.empty(); name = enumerator.Next()) {
+    base::FileEnumerator::FileInfo info = enumerator.GetInfo();
+    DCHECK_EQ(info.GetName(), name.BaseName());
+
+    if (info.IsDirectory()) {
+      if (name.BaseName().value() == kCacheDataDirectoryName)
+        continue;
+    }
+    base::DeletePathRecursively(name);
+    deleted_old_files = true;
+  }
+
+  base::UmaHistogramBoolean("NetworkService.DeletedOldCacheData",
+                            deleted_old_files);
+}
+
+void CreateNetworkContextInternal(
+    mojo::PendingReceiver<network::mojom::NetworkContext> context,
+    network::mojom::NetworkContextParamsPtr params,
+    SandboxGrantResult grant_access_result) {
+  TRACE_EVENT0("loading", "CreateNetworkContextInternal");
+  // These two histograms are logged from elsewhere, so don't log them twice.
+  DCHECK(grant_access_result !=
+         SandboxGrantResult::kFailedToCreateCacheDirectory);
+  DCHECK(grant_access_result !=
+         SandboxGrantResult::kFailedToGrantSandboxAccessToCache);
+  base::UmaHistogramEnumeration("NetworkService.GrantSandboxResult",
+                                grant_access_result);
+
+  if (grant_access_result != SandboxGrantResult::kSuccess &&
+      grant_access_result !=
+          SandboxGrantResult::kDidNotAttemptToGrantSandboxAccess &&
+      grant_access_result != SandboxGrantResult::kNoMigrationRequested &&
+      grant_access_result != SandboxGrantResult::kMigrationAlreadySucceeded) {
+    PLOG(ERROR) << "Encountered error while migrating network context data or "
+                   "granting sandbox access for "
+                << (params->file_paths
+                        ? params->file_paths->data_directory.path()
+                        : base::FilePath())
+                << ". Result: " << static_cast<int>(grant_access_result);
+  }
+
+  if (!IsSafeToUseDataPath(grant_access_result)) {
+    // Unsafe to use new `data_directory`. This means that a migration was
+    // attempted, and `unsandboxed_data_path` contains the still-valid set of
+    // data. Swap the parameters to instruct the network service to use this
+    // path for the network context. This of course will mean that if the
+    // network service is running sandboxed then this data might not be
+    // accessible, but does provide a pathway to user recovery, as the sandbox
+    // can just be disabled in this case.
+    DCHECK(params->file_paths->unsandboxed_data_path.has_value());
+    params->file_paths->data_directory =
+        *params->file_paths->unsandboxed_data_path;
+  }
+
+  if (network::TransferableDirectory::IsOpenForTransferRequired()) {
+    if (params->file_paths) {
+      params->file_paths->data_directory.OpenForTransfer();
+    }
+    if (params->http_cache_directory) {
+      params->http_cache_directory->OpenForTransfer();
+    }
+  }
+
+  GetNetworkService()->CreateNetworkContext(std::move(context),
+                                            std::move(params));
+}
+
 scoped_refptr<base::SequencedTaskRunner>& GetNetworkTaskRunnerStorage() {
   static base::NoDestructor<scoped_refptr<base::SequencedTaskRunner>> storage;
   return *storage;
@@ -128,10 +299,11 @@ scoped_refptr<base::SequencedTaskRunner>& GetNetworkTaskRunnerStorage() {
 
 void CreateInProcessNetworkService(
     mojo::PendingReceiver<network::mojom::NetworkService> receiver) {
+  TRACE_EVENT0("loading", "CreateInProcessNetworkService");
   scoped_refptr<base::SingleThreadTaskRunner> task_runner;
   if (base::FeatureList::IsEnabled(kNetworkServiceDedicatedThread)) {
     base::Thread::Options options(base::MessagePumpType::IO, 0);
-    GetNetworkServiceDedicatedThread().StartWithOptions(options);
+    GetNetworkServiceDedicatedThread().StartWithOptions(std::move(options));
     task_runner = GetNetworkServiceDedicatedThread().task_runner();
   } else {
     task_runner = GetIOThreadTaskRunner({});
@@ -153,8 +325,12 @@ network::mojom::NetworkServiceParamsPtr CreateNetworkServiceParams() {
   network_service_params->initial_connection_subtype =
       network::mojom::ConnectionSubtype(
           net::NetworkChangeNotifier::GetConnectionSubtype());
+  network_service_params->default_observer =
+      g_client->BindURLLoaderNetworkServiceObserver();
+  network_service_params->first_party_sets_enabled =
+      GetContentClient()->browser()->IsFirstPartySetsEnabled();
 
-#if defined(OS_POSIX)
+#if BUILDFLAG(IS_POSIX)
   // Send Kerberos environment variables to the network service.
   if (IsOutOfProcessNetworkService()) {
     std::unique_ptr<base::Environment> env(base::Environment::Create());
@@ -185,7 +361,6 @@ void CreateNetworkServiceOnIOForTesting(
   GetLocalNetworkService() = std::make_unique<network::NetworkService>(
       nullptr /* registry */, std::move(receiver),
       true /* delay_initialization_until_set_client */);
-  GetLocalNetworkService()->StopMetricsTimerForTesting();
   GetLocalNetworkService()->Initialize(
       network::mojom::NetworkServiceParams::New(),
       true /* mock_network_change_notifier */);
@@ -198,8 +373,8 @@ void BindNetworkChangeManagerReceiver(
   GetNetworkService()->GetNetworkChangeManager(std::move(receiver));
 }
 
-base::CallbackList<void()>& GetCrashHandlersList() {
-  static base::NoDestructor<base::CallbackList<void()>> s_list;
+base::RepeatingClosureList& GetCrashHandlersList() {
+  static base::NoDestructor<base::RepeatingClosureList> s_list;
   return *s_list;
 }
 
@@ -245,41 +420,6 @@ net::NetLogCaptureMode GetNetCaptureModeFromCommandLine(
 
   return net::NetLogCaptureMode::kDefault;
 }
-
-#if defined(OS_WIN)
-// This enum is used to record a histogram and should not be renumbered.
-enum class ServiceStatus {
-  kUnknown = 0,
-  kNotFound = 1,
-  kFound = 2,
-  kMaxValue = kFound
-};
-
-ServiceStatus DetectSecurityProviders() {
-  // https://docs.microsoft.com/en-us/windows/win32/secauthn/writing-and-installing-a-security-support-provider
-  base::win::RegKey key(HKEY_LOCAL_MACHINE,
-                        L"SYSTEM\\CurrentControlSet\\Control\\Lsa", KEY_READ);
-  if (!key.Valid())
-    return ServiceStatus::kUnknown;
-
-  std::vector<std::wstring> packages;
-  if (key.ReadValues(L"Security Packages", &packages) != ERROR_SUCCESS)
-    return ServiceStatus::kUnknown;
-
-  for (const auto& package : packages) {
-    // Security Packages can be empty or just "". Anything else indicates
-    // there is potentially a third party SSP/APs DLL installed, and network
-    // sandbox should not be engaged.
-    if (package.empty())
-      continue;
-    if (package != L"\"\"")
-      return ServiceStatus::kFound;
-  }
-  return ServiceStatus::kNotFound;
-}
-#endif  // defined(OS_WIN)
-
-static NetworkServiceClient* g_client = nullptr;
 
 }  // namespace
 
@@ -328,11 +468,10 @@ network::mojom::NetworkService* GetNetworkService() {
         } else {
           if (service_was_bound)
             LOG(ERROR) << "Network service crashed, restarting service.";
-          ServiceProcessHost::Launch(
-              std::move(receiver),
-              ServiceProcessHost::Options()
-                  .WithDisplayName(base::UTF8ToUTF16("Network Service"))
-                  .Pass());
+          ServiceProcessHost::Launch(std::move(receiver),
+                                     ServiceProcessHost::Options()
+                                         .WithDisplayName(u"Network Service")
+                                         .Pass());
         }
       } else {
         // This should only be reached in unit tests.
@@ -352,12 +491,14 @@ network::mojom::NetworkService* GetNetworkService() {
         }
       }
 
-      mojo::PendingRemote<network::mojom::NetworkServiceClient> client_remote;
-      auto client_receiver = client_remote.InitWithNewPipeAndPassReceiver();
+      delete g_client;  // In case we're recreating the network service.
+      g_client = new NetworkServiceClient();
+
       // Call SetClient before creating NetworkServiceClient, as the latter
       // might make requests to NetworkService that depend on initialization.
-      (*g_network_service_remote)
-          ->SetClient(std::move(client_remote), CreateNetworkServiceParams());
+      (*g_network_service_remote)->SetParams(CreateNetworkServiceParams());
+      g_client->OnNetworkServiceInitialized(g_network_service_remote->get());
+
       g_network_service_is_responding = false;
       g_network_service_remote->QueryVersion(base::BindOnce(
           [](base::Time start_time, uint32_t) {
@@ -375,14 +516,16 @@ network::mojom::NetworkService* GetNetworkService() {
           },
           base::Time::Now()));
 
-      delete g_client;  // In case we're recreating the network service.
-      g_client = new NetworkServiceClient(std::move(client_receiver));
-
       const base::CommandLine* command_line =
           base::CommandLine::ForCurrentProcess();
       if (command_line->HasSwitch(network::switches::kLogNetLog)) {
         base::FilePath log_path =
             command_line->GetSwitchValuePath(network::switches::kLogNetLog);
+        if (log_path.empty()) {
+          log_path = GetContentClient()->browser()->GetNetLogDefaultDirectory();
+          if (!log_path.empty())
+            log_path = log_path.Append(FILE_PATH_LITERAL("netlog.json"));
+        }
 
         base::File file = NetworkServiceInstancePrivate::BlockingOpenFile(
             log_path, base::File::FLAG_CREATE_ALWAYS | base::File::FLAG_WRITE);
@@ -411,7 +554,7 @@ network::mojom::NetworkService* GetNetworkService() {
         if (env->GetVar("SSLKEYLOGFILE", &env_str)) {
           UMA_HISTOGRAM_ENUMERATION(kSSLKeyLogFileHistogram,
                                     SSLKeyLogFileAction::kEnvVarFound);
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
           // base::Environment returns environment variables in UTF-8 on
           // Windows.
           ssl_key_log_path = base::FilePath(base::UTF8ToWide(env_str));
@@ -433,6 +576,13 @@ network::mojom::NetworkService* GetNetworkService() {
                                     SSLKeyLogFileAction::kLogFileEnabled);
           (*g_network_service_remote)->SetSSLKeyLogFile(std::move(file));
         }
+      }
+
+      if (absl::optional<FirstPartySetsHandlerImpl::FlattenedSets> sets =
+              FirstPartySetsHandlerImpl::GetInstance()
+                  ->GetSetsIfEnabledAndReady();
+          sets.has_value()) {
+        g_network_service_remote->get()->SetFirstPartySets(*sets);
       }
 
       GetContentClient()->browser()->OnNetworkServiceCreated(
@@ -464,8 +614,8 @@ void FlushNetworkServiceInstanceForTesting() {
 }
 
 network::NetworkConnectionTracker* GetNetworkConnectionTracker() {
-  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI) ||
-         !BrowserThread::IsThreadInitialized(BrowserThread::UI));
+  DCHECK(!BrowserThread::IsThreadInitialized(BrowserThread::UI) ||
+         BrowserThread::CurrentlyOn(BrowserThread::UI));
   if (!g_network_connection_tracker) {
     g_network_connection_tracker = new network::NetworkConnectionTracker(
         base::BindRepeating(&BindNetworkChangeManagerReceiver));
@@ -488,6 +638,8 @@ CreateNetworkConnectionTrackerAsyncGetter() {
 
 void SetNetworkConnectionTrackerForTesting(
     network::NetworkConnectionTracker* network_connection_tracker) {
+  DCHECK(!BrowserThread::IsThreadInitialized(BrowserThread::UI) ||
+         BrowserThread::CurrentlyOn(BrowserThread::UI));
   if (g_network_connection_tracker != network_connection_tracker) {
     DCHECK(!g_network_connection_tracker || !network_connection_tracker);
     g_network_connection_tracker = network_connection_tracker;
@@ -570,17 +722,19 @@ GetNewCertVerifierServiceRemote(
 void RunInProcessCertVerifierServiceFactory(
     mojo::PendingReceiver<cert_verifier::mojom::CertVerifierServiceFactory>
         receiver) {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
+  // See the comment in GetCertVerifierServiceFactory() for the thread-affinity
+  // of the CertVerifierService.
   DCHECK(!BrowserThread::IsThreadInitialized(BrowserThread::IO) ||
          BrowserThread::CurrentlyOn(BrowserThread::IO));
 #else
   DCHECK(!BrowserThread::IsThreadInitialized(BrowserThread::UI) ||
          BrowserThread::CurrentlyOn(BrowserThread::UI));
 #endif
-  static base::NoDestructor<base::SequenceLocalStorageSlot<
-      std::unique_ptr<cert_verifier::CertVerifierServiceFactoryImpl>>>
+  static base::SequenceLocalStorageSlot<
+      std::unique_ptr<cert_verifier::CertVerifierServiceFactoryImpl>>
       service_factory_slot;
-  service_factory_slot->GetOrCreateValue() =
+  service_factory_slot.GetOrCreateValue() =
       std::make_unique<cert_verifier::CertVerifierServiceFactoryImpl>(
           std::move(receiver));
 }
@@ -589,10 +743,10 @@ void RunInProcessCertVerifierServiceFactory(
 // Lives on the UI thread.
 mojo::Remote<cert_verifier::mojom::CertVerifierServiceFactory>&
 GetCertVerifierServiceFactoryRemoteStorage() {
-  static base::NoDestructor<base::SequenceLocalStorageSlot<
-      mojo::Remote<cert_verifier::mojom::CertVerifierServiceFactory>>>
+  static base::SequenceLocalStorageSlot<
+      mojo::Remote<cert_verifier::mojom::CertVerifierServiceFactory>>
       cert_verifier_service_factory_remote;
-  return cert_verifier_service_factory_remote->GetOrCreateValue();
+  return cert_verifier_service_factory_remote.GetOrCreateValue();
 }
 
 // Returns a pointer to a CertVerifierServiceFactory usable on the UI thread.
@@ -606,10 +760,11 @@ GetCertVerifierServiceFactory() {
   if (!factory_remote_storage.is_bound() ||
       !factory_remote_storage.is_connected()) {
     factory_remote_storage.reset();
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-    // ChromeOS's in-process CertVerifierService should run on the IO thread
-    // because it interacts with IO-bound NSS and ChromeOS user slots.
-    // See for example InitializeNSSForChromeOSUser().
+#if BUILDFLAG(IS_CHROMEOS)
+    // In-process CertVerifierService in Ash and Lacros should run on the IO
+    // thread because it interacts with IO-bound NSS and ChromeOS user slots.
+    // See for example InitializeNSSForChromeOSUser() or
+    // CertDbInitializerIOImpl.
     GetIOThreadTaskRunner({})->PostTask(
         FROM_HERE,
         base::BindOnce(&RunInProcessCertVerifierServiceFactory,
@@ -638,27 +793,68 @@ void SetCertVerifierServiceFactoryForTesting(
   g_cert_verifier_service_factory_for_testing = service_factory;
 }
 
-bool IsNetworkSandboxEnabled() {
-#if (defined(OS_MAC) || defined(OS_FUCHSIA)) && !defined(TOOLKIT_QT)
-  return true;
-#else
-#if defined(OS_WIN)
-  if (base::win::GetVersion() < base::win::Version::WIN10)
-    return false;
-  auto ssp_status = DetectSecurityProviders();
-  base::UmaHistogramEnumeration("Windows.ServiceStatus.SSP", ssp_status);
-  switch (ssp_status) {
-    case ServiceStatus::kUnknown:
-      return false;
-    case ServiceStatus::kNotFound:
-      break;
-    case ServiceStatus::kFound:
-      return false;
+void MaybeCleanCacheDirectory(network::mojom::NetworkContextParams* params) {
+  if (params->http_cache_enabled && params->http_cache_directory) {
+    // Delete any old data except for the "Cache_Data" directory.
+    base::ThreadPool::PostTask(
+        FROM_HERE,
+        {base::TaskPriority::BEST_EFFORT, base::MayBlock(),
+         base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
+        base::BindOnce(MaybeDeleteOldCache,
+                       params->http_cache_directory->path()));
+
+    params->http_cache_directory =
+        params->http_cache_directory->path().Append(kCacheDataDirectoryName);
   }
-#endif  // defined(OS_WIN)
-  return base::FeatureList::IsEnabled(
-      sandbox::policy::features::kNetworkServiceSandbox);
-#endif  // defined(OS_MAC) || defined(OS_FUCHSIA)
+}
+
+void CreateNetworkContextInNetworkService(
+    mojo::PendingReceiver<network::mojom::NetworkContext> context,
+    network::mojom::NetworkContextParamsPtr params) {
+  TRACE_EVENT0("loading", "CreateNetworkContextInNetworkService");
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
+
+  MaybeCleanCacheDirectory(params.get());
+
+#if BUILDFLAG(IS_ANDROID)
+  // On Android, if a cookie_manager pending receiver was passed then migration
+  // should not be attempted as the cookie file is already being accessed by the
+  // browser instance.
+  if (params->cookie_manager) {
+    if (params->file_paths) {
+      // No migration should ever be attempted under this configuration.
+      DCHECK(!params->file_paths->unsandboxed_data_path);
+    }
+    CreateNetworkContextInternal(
+        std::move(context), std::move(params),
+        SandboxGrantResult::kDidNotAttemptToGrantSandboxAccess);
+    return;
+  }
+
+  // Note: This logic is duplicated from MaybeGrantAccessToDataPath to this fast
+  // path. This should be kept in sync if there are any changes to the logic.
+  SandboxGrantResult grant_result = SandboxGrantResult::kNoMigrationRequested;
+  if (!params->file_paths) {
+    // No file paths (e.g. in-memory context) so nothing to do.
+    grant_result = SandboxGrantResult::kDidNotAttemptToGrantSandboxAccess;
+  } else {
+    // If no `unsandboxed_data_path` is supplied, it means this is network
+    // context has been created by Android Webview, which does not understand
+    // the concept of `unsandboxed_data_path`. In this case, `data_directory`
+    // should always be used, if present.
+    if (!params->file_paths->unsandboxed_data_path)
+      grant_result = SandboxGrantResult::kDidNotAttemptToGrantSandboxAccess;
+  }
+  // Create network context immediately without thread hops.
+  CreateNetworkContextInternal(std::move(context), std::move(params),
+                               grant_result);
+#else
+  // Restrict disk access to a certain path (on another thread) and continue
+  // with network context creation.
+  GrantSandboxAccessOnThreadPool(
+      std::move(params),
+      base::BindOnce(&CreateNetworkContextInternal, std::move(context)));
+#endif  // BUILDFLAG(IS_ANDROID)
 }
 
 }  // namespace content

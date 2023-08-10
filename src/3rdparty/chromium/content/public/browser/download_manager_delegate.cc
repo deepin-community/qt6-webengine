@@ -66,7 +66,7 @@ void DownloadManagerDelegate::CheckDownloadAllowed(
     const WebContents::Getter& web_contents_getter,
     const GURL& url,
     const std::string& request_method,
-    base::Optional<url::Origin> request_initiator,
+    absl::optional<url::Origin> request_initiator,
     bool from_download_cross_origin_redirect,
     bool content_initiated,
     CheckDownloadAllowedCallback check_download_allowed_cb) {
@@ -110,6 +110,18 @@ std::unique_ptr<download::DownloadItemRenameHandler>
 DownloadManagerDelegate::GetRenameHandlerForDownload(
     download::DownloadItem* download_item) {
   return nullptr;
+}
+
+download::DownloadItem* DownloadManagerDelegate::GetDownloadByGuid(
+    const std::string& guid) {
+  return nullptr;
+}
+
+void DownloadManagerDelegate::CheckSavePackageAllowed(
+    download::DownloadItem* download_item,
+    base::flat_map<base::FilePath, base::FilePath> save_package_files,
+    SavePackageAllowedCallback callback) {
+  std::move(callback).Run(true);
 }
 
 }  // namespace content

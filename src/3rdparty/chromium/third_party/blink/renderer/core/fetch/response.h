@@ -16,7 +16,7 @@
 #include "third_party/blink/renderer/core/fetch/headers.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/blob/blob_data.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
@@ -69,6 +69,8 @@ class CORE_EXPORT Response final : public ScriptWrappable,
   explicit Response(ExecutionContext*);
   Response(ExecutionContext*, FetchResponseData*);
   Response(ExecutionContext*, FetchResponseData*, Headers*);
+  Response(const Response&) = delete;
+  Response& operator=(const Response&) = delete;
 
   const FetchResponseData* GetResponse() const { return response_; }
 
@@ -128,7 +130,6 @@ class CORE_EXPORT Response final : public ScriptWrappable,
  private:
   const Member<FetchResponseData> response_;
   const Member<Headers> headers_;
-  DISALLOW_COPY_AND_ASSIGN(Response);
 };
 
 }  // namespace blink

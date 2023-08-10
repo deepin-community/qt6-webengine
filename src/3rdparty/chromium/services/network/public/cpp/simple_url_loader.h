@@ -14,9 +14,9 @@
 
 #include "base/callback_forward.h"
 #include "base/component_export.h"
-#include "base/macros.h"
-#include "base/optional.h"
-#include "services/network/public/mojom/url_response_head.mojom.h"
+#include "services/network/public/cpp/url_loader_completion_status.h"
+#include "services/network/public/mojom/url_response_head.mojom-forward.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 class GURL;
 
@@ -45,6 +45,7 @@ class URLLoaderFactory;
 namespace network {
 
 class SimpleURLLoaderStreamConsumer;
+class SimpleURLLoaderThrottle;
 
 // Creates and wraps a URLLoader, and runs it to completion. It's recommended
 // that consumers use this class instead of URLLoader directly, due to the
@@ -151,6 +152,9 @@ class COMPONENT_EXPORT(NETWORK_CPP) SimpleURLLoader {
   // is completed. When null, the timer falls back to base::TimeTicks::Now().
   static void SetTimeoutTickClockForTest(
       const base::TickClock* timeout_tick_clock);
+
+  SimpleURLLoader(const SimpleURLLoader&) = delete;
+  SimpleURLLoader& operator=(const SimpleURLLoader&) = delete;
 
   virtual ~SimpleURLLoader();
 
@@ -340,6 +344,13 @@ class COMPONENT_EXPORT(NETWORK_CPP) SimpleURLLoader {
   // as much time as it wants.
   virtual void SetTimeoutDuration(base::TimeDelta timeout_duration) = 0;
 
+  // Allows this SimpleURLLoader to be batched when sending a network request
+  // impacts on battery consumption. This should be called before the request
+  // is started.
+  // NOTE: This is for an experimental use. Please contact bashi@chromium.org
+  // before starting using this function.
+  virtual void SetAllowBatching() = 0;
+
   // Returns the net::Error representing the final status of the request. May
   // only be called once the loader has informed the caller of completion.
   virtual int NetError() const = 0;
@@ -352,7 +363,7 @@ class COMPONENT_EXPORT(NETWORK_CPP) SimpleURLLoader {
   // The URLLoaderCompletionStatus for the request. Will be nullopt if the
   // response never completed. May only be called once the loader has informed
   // the caller of completion.
-  virtual const base::Optional<URLLoaderCompletionStatus>& CompletionStatus()
+  virtual const absl::optional<URLLoaderCompletionStatus>& CompletionStatus()
       const = 0;
 
   // Returns the URL that this loader is processing. May only be called once the
@@ -376,11 +387,13 @@ class COMPONENT_EXPORT(NETWORK_CPP) SimpleURLLoader {
   // occurred.
   virtual int64_t GetContentSize() const = 0;
 
+  // Returns the number of times retry has been attempted.
+  virtual int GetNumRetries() const = 0;
+
+  virtual SimpleURLLoaderThrottle* GetThrottleForTesting() = 0;
+
  protected:
   SimpleURLLoader();
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(SimpleURLLoader);
 };
 
 }  // namespace network

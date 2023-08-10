@@ -20,7 +20,8 @@
 
 namespace media {
 class VideoFrame;
-struct VideoFrameFeedback;
+class VideoFramePool;
+struct VideoCaptureFeedback;
 }  // namespace media
 
 namespace mirroring {
@@ -34,6 +35,10 @@ class COMPONENT_EXPORT(MIRRORING_SERVICE) VideoCaptureClient
  public:
   VideoCaptureClient(const media::VideoCaptureParams& params,
                      mojo::PendingRemote<media::mojom::VideoCaptureHost> host);
+
+  VideoCaptureClient(const VideoCaptureClient&) = delete;
+  VideoCaptureClient& operator=(const VideoCaptureClient&) = delete;
+
   ~VideoCaptureClient() override;
 
   using FrameDeliverCallback = base::RepeatingCallback<void(
@@ -49,14 +54,14 @@ class COMPONENT_EXPORT(MIRRORING_SERVICE) VideoCaptureClient
   void Resume(FrameDeliverCallback deliver_callback);
 
   // Feedback callback.
-  void ProcessFeedback(const media::VideoFrameFeedback& feedback);
+  void ProcessFeedback(const media::VideoCaptureFeedback& feedback);
 
   // Requests to receive a refreshed captured video frame. Do nothing if the
   // capturing device is not started or the capturing is paused.
   void RequestRefreshFrame();
 
   // media::mojom::VideoCaptureObserver implementations.
-  void OnStateChanged(media::mojom::VideoCaptureState state) override;
+  void OnStateChanged(media::mojom::VideoCaptureResultPtr result) override;
   void OnNewBuffer(int32_t buffer_id,
                    media::mojom::VideoBufferHandlePtr buffer_handle) override;
   void OnBufferReady(
@@ -106,13 +111,17 @@ class COMPONENT_EXPORT(MIRRORING_SERVICE) VideoCaptureClient
   MappingMap mapped_buffers_;
 
   // Latest received feedback.
-  media::VideoFrameFeedback feedback_;
+  media::VideoCaptureFeedback feedback_;
+
+  // Cast Streaming does not support NV12 frames. When NV12 frames are received,
+  // these structures are used to convert them to I420 on the CPU.
+  // https://crbug.com/1206325
+  std::unique_ptr<media::VideoFramePool> nv12_to_i420_pool_;
+  std::vector<uint8_t> nv12_to_i420_tmp_buf_;
 
   SEQUENCE_CHECKER(sequence_checker_);
 
   base::WeakPtrFactory<VideoCaptureClient> weak_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(VideoCaptureClient);
 };
 
 }  // namespace mirroring

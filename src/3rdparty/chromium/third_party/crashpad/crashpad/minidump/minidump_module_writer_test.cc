@@ -17,10 +17,10 @@
 #include <stddef.h>
 #include <string.h>
 
+#include <iterator>
 #include <utility>
 
 #include "base/format_macros.h"
-#include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "gtest/gtest.h"
@@ -170,9 +170,9 @@ void ExpectMiscellaneousDebugRecord(
 
     size_t bytes_used;
     if (misc_debug_record->Unicode) {
-      base::string16 observed_data_utf16(
-          reinterpret_cast<const base::char16*>(misc_debug_record->Data));
-      bytes_used = (observed_data_utf16.size() + 1) * sizeof(base::char16);
+      std::u16string observed_data_utf16(
+          reinterpret_cast<const char16_t*>(misc_debug_record->Data));
+      bytes_used = (observed_data_utf16.size() + 1) * sizeof(char16_t);
       observed_data = base::UTF16ToUTF8(observed_data_utf16);
     } else {
       observed_data = reinterpret_cast<const char*>(misc_debug_record->Data);
@@ -256,9 +256,9 @@ void ExpectModule(const MINIDUMP_MODULE* expected,
   EXPECT_EQ(reserved1, 0u);
 
   EXPECT_NE(observed_module.ModuleNameRva, 0u);
-  base::string16 observed_module_name_utf16 =
+  std::u16string observed_module_name_utf16 =
       MinidumpStringAtRVAAsString(file_contents, observed_module.ModuleNameRva);
-  base::string16 expected_module_name_utf16 =
+  std::u16string expected_module_name_utf16 =
       base::UTF8ToUTF16(expected_module_name);
   EXPECT_EQ(observed_module_name_utf16, expected_module_name_utf16);
 
@@ -321,9 +321,9 @@ void ExpectModuleWithBuildIDCv(const MINIDUMP_MODULE* expected,
   EXPECT_EQ(reserved1, 0u);
 
   EXPECT_NE(observed->ModuleNameRva, 0u);
-  base::string16 observed_module_name_utf16 =
+  std::u16string observed_module_name_utf16 =
       MinidumpStringAtRVAAsString(file_contents, observed->ModuleNameRva);
-  base::string16 expected_module_name_utf16 =
+  std::u16string expected_module_name_utf16 =
       base::UTF8ToUTF16(expected_module_name);
   EXPECT_EQ(observed_module_name_utf16, expected_module_name_utf16);
 
@@ -793,10 +793,10 @@ void InitializeTestModuleSnapshotFromMinidumpModule(
 
 TEST(MinidumpModuleWriter, InitializeFromSnapshot) {
   MINIDUMP_MODULE expect_modules[3] = {};
-  const char* module_paths[base::size(expect_modules)] = {};
-  const char* module_pdbs[base::size(expect_modules)] = {};
-  UUID uuids[base::size(expect_modules)] = {};
-  uint32_t ages[base::size(expect_modules)] = {};
+  const char* module_paths[std::size(expect_modules)] = {};
+  const char* module_pdbs[std::size(expect_modules)] = {};
+  UUID uuids[std::size(expect_modules)] = {};
+  uint32_t ages[std::size(expect_modules)] = {};
 
   expect_modules[0].BaseOfImage = 0x100101000;
   expect_modules[0].SizeOfImage = 0xf000;
@@ -887,7 +887,7 @@ TEST(MinidumpModuleWriter, InitializeFromSnapshot) {
 
   std::vector<std::unique_ptr<TestModuleSnapshot>> module_snapshots_owner;
   std::vector<const ModuleSnapshot*> module_snapshots;
-  for (size_t index = 0; index < base::size(expect_modules); ++index) {
+  for (size_t index = 0; index < std::size(expect_modules); ++index) {
     module_snapshots_owner.push_back(std::make_unique<TestModuleSnapshot>());
     TestModuleSnapshot* module_snapshot = module_snapshots_owner.back().get();
     InitializeTestModuleSnapshotFromMinidumpModule(module_snapshot,

@@ -9,7 +9,6 @@
 #include "media/gpu/media_gpu_export.h"
 
 namespace media {
-class MediaCodecBridge;
 
 // Info about the current platform and device with caching of the results that
 // don't change. Virtual for testing.
@@ -23,9 +22,8 @@ struct MEDIA_GPU_EXPORT DeviceInfo {
   virtual bool IsDecoderKnownUnaccelerated(VideoCodec codec);
   virtual bool IsSetOutputSurfaceSupported();
   virtual bool SupportsOverlaySurfaces();
-  virtual bool CodecNeedsFlushWorkaround(MediaCodecBridge* codec);
   virtual bool IsAsyncApiSupported();
-  virtual bool AddSupportedCodecProfileLevels(
+  virtual void AddSupportedCodecProfileLevels(
       std::vector<CodecProfileLevel>* result);
 };
 

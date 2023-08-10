@@ -5,7 +5,6 @@
 #include <memory>
 
 #include "base/run_loop.h"
-#include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
@@ -35,15 +34,15 @@
 namespace extensions {
 
 namespace {
-#if defined(OS_WIN) || defined(OS_MAC)
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
 // Prepopulated id hardcoded in test_extension.
 const int kTestExtensionPrepopulatedId = 3;
 // TemplateURLData with search engines settings from test extension manifest.
 // chrome/test/data/extensions/settings_override/manifest.json
 std::unique_ptr<TemplateURLData> TestExtensionSearchEngine(PrefService* prefs) {
   auto result = std::make_unique<TemplateURLData>();
-  result->SetShortName(base::ASCIIToUTF16("name.de"));
-  result->SetKeyword(base::ASCIIToUTF16("keyword.de"));
+  result->SetShortName(u"name.de");
+  result->SetKeyword(u"keyword.de");
   result->SetURL("http://www.foo.de/s?q={searchTerms}&id=10");
   result->favicon_url = GURL("http://www.foo.de/favicon.ico?id=10");
   result->suggestions_url = "http://www.foo.de/suggest?q={searchTerms}&id=10";
@@ -97,7 +96,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionBrowserTest, OverrideStartupPagesSettings) {
   ASSERT_TRUE(prefs);
   const GURL urls[] = {GURL("http://foo"), GURL("http://bar")};
   SessionStartupPref startup_pref(SessionStartupPref::LAST);
-  startup_pref.urls.assign(urls, urls + base::size(urls));
+  startup_pref.urls.assign(urls, urls + std::size(urls));
   SessionStartupPref::SetStartupPref(prefs, startup_pref);
 
   const extensions::Extension* extension = LoadExtension(
@@ -110,8 +109,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionBrowserTest, OverrideStartupPagesSettings) {
   UnloadExtension(extension->id());
   startup_pref = SessionStartupPref::GetStartupPref(prefs);
   EXPECT_EQ(SessionStartupPref::LAST, startup_pref.type);
-  EXPECT_EQ(std::vector<GURL>(urls, urls + base::size(urls)),
-            startup_pref.urls);
+  EXPECT_EQ(std::vector<GURL>(urls, urls + std::size(urls)), startup_pref.urls);
 }
 
 IN_PROC_BROWSER_TEST_F(ExtensionBrowserTest, OverrideDSE) {
@@ -152,8 +150,8 @@ IN_PROC_BROWSER_TEST_F(ExtensionBrowserTest, PRE_OverridenDSEPersists) {
   // Check that default provider is normal before extension is
   // installed and loaded.
   EXPECT_EQ(TemplateURL::NORMAL, default_provider->type());
-  EXPECT_NE(base::ASCIIToUTF16("name.de"), default_provider->short_name());
-  EXPECT_NE(base::ASCIIToUTF16("keyword.de"), default_provider->keyword());
+  EXPECT_NE(u"name.de", default_provider->short_name());
+  EXPECT_NE(u"keyword.de", default_provider->keyword());
 
   // Install extension that overrides DSE.
   const extensions::Extension* extension = LoadExtension(
@@ -185,7 +183,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionBrowserTest, OverridenDSEPersists) {
                        TemplateURL::NORMAL_CONTROLLED_BY_EXTENSION);
 
   std::string new_tab_url_ext = ext_turl.new_tab_url_ref().ReplaceSearchTerms(
-      TemplateURLRef::SearchTermsArgs(base::string16()),
+      TemplateURLRef::SearchTermsArgs(std::u16string()),
       UIThreadSearchTermsData());
 
   EXPECT_EQ(new_tab_url_ext, search::GetNewTabPageURL(profile).spec());
@@ -236,6 +234,12 @@ class ExtensionsDisabledWithSettingsOverrideAPI : public ExtensionBrowserTest {
       : prompt_for_external_extensions_(
             FeatureSwitch::prompt_for_external_extensions(),
             false) {}
+
+  ExtensionsDisabledWithSettingsOverrideAPI(
+      const ExtensionsDisabledWithSettingsOverrideAPI&) = delete;
+  ExtensionsDisabledWithSettingsOverrideAPI& operator=(
+      const ExtensionsDisabledWithSettingsOverrideAPI&) = delete;
+
   ~ExtensionsDisabledWithSettingsOverrideAPI() override = default;
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
@@ -252,8 +256,6 @@ class ExtensionsDisabledWithSettingsOverrideAPI : public ExtensionBrowserTest {
 
  private:
   FeatureSwitch::ScopedOverride prompt_for_external_extensions_;
-
-  DISALLOW_COPY_AND_ASSIGN(ExtensionsDisabledWithSettingsOverrideAPI);
 };
 
 // The following test combo is a regression test for https://crbug.com/828295.
@@ -273,7 +275,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionsDisabledWithSettingsOverrideAPI,
   ExtensionRegistry* registry = ExtensionRegistry::Get(profile());
   TestExtensionRegistryObserver observer(registry);
   auto provider = std::make_unique<MockExternalProvider>(
-      extension_service(), Manifest::EXTERNAL_PREF);
+      extension_service(), mojom::ManifestLocation::kExternalPref);
   provider->UpdateOrAddExtension(
       kExternalId, "2.1",
       test_data_dir_.AppendASCII("api_test/settings_overrides/homepage.crx"));

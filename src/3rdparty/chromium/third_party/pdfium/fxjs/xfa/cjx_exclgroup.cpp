@@ -11,6 +11,8 @@
 #include "fxjs/fxv8.h"
 #include "fxjs/js_resources.h"
 #include "fxjs/xfa/cfxjse_engine.h"
+#include "v8/include/v8-object.h"
+#include "v8/include/v8-primitive.h"
 #include "xfa/fxfa/cxfa_eventparam.h"
 #include "xfa/fxfa/cxfa_ffnotify.h"
 #include "xfa/fxfa/fxfa.h"
@@ -102,7 +104,7 @@ CJS_Result CJX_ExclGroup::selectedMember(
     pReturnNode = node->GetSelectedMember();
   } else {
     pReturnNode = node->SetSelectedMember(
-        runtime->ToWideString(params[0]).AsStringView(), true);
+        runtime->ToWideString(params[0]).AsStringView());
   }
   if (!pReturnNode)
     return CJS_Result::Success(runtime->NewNull());
@@ -153,5 +155,5 @@ void CJX_ExclGroup::errorText(v8::Isolate* pIsolate,
                               bool bSetting,
                               XFA_Attribute eAttribute) {
   if (bSetting)
-    ThrowInvalidPropertyException();
+    ThrowInvalidPropertyException(pIsolate);
 }

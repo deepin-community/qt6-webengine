@@ -65,7 +65,9 @@ class ShaderState final : angle::NonCopyable
     const std::string &getLabel() const { return mLabel; }
 
     const std::string &getSource() const { return mSource; }
+    bool isCompiledToBinary() const { return !mCompiledBinary.empty(); }
     const std::string &getTranslatedSource() const { return mTranslatedSource; }
+    const sh::BinaryBlob &getCompiledBinary() const { return mCompiledBinary; }
 
     ShaderType getShaderType() const { return mShaderType; }
     int getShaderVersion() const { return mShaderVersion; }
@@ -118,6 +120,7 @@ class ShaderState final : angle::NonCopyable
     ShaderType mShaderType;
     int mShaderVersion;
     std::string mTranslatedSource;
+    sh::BinaryBlob mCompiledBinary;
     std::string mSource;
 
     sh::WorkGroupSize mLocalSize;
@@ -132,6 +135,7 @@ class ShaderState final : angle::NonCopyable
     std::vector<sh::ShaderVariable> mActiveOutputVariables;
 
     bool mEarlyFragmentTestsOptimization;
+    BlendEquationBitSet mAdvancedBlendEquations;
     rx::SpecConstUsageBits mSpecConstUsageBits;
 
     // ANGLE_multiview.
@@ -185,6 +189,7 @@ class Shader final : angle::NonCopyable, public LabeledObject
     const std::string &getTranslatedSource();
     void getTranslatedSource(GLsizei bufSize, GLsizei *length, char *buffer);
     void getTranslatedSourceWithDebugInfo(GLsizei bufSize, GLsizei *length, char *buffer);
+    const sh::BinaryBlob &getCompiledBinary();
 
     void compile(const Context *context);
     bool isCompiled();
@@ -199,6 +204,7 @@ class Shader final : angle::NonCopyable, public LabeledObject
     {
         return mState.mEarlyFragmentTestsOptimization;
     }
+    BlendEquationBitSet getAdvancedBlendEquations() const { return mState.mAdvancedBlendEquations; }
     rx::SpecConstUsageBits getSpecConstUsageBits() const { return mState.mSpecConstUsageBits; }
 
     int getShaderVersion();
@@ -243,6 +249,8 @@ class Shader final : angle::NonCopyable, public LabeledObject
     unsigned int getMaxComputeSharedMemory() const { return mMaxComputeSharedMemory; }
     bool hasBeenDeleted() const { return mDeleteStatus; }
 
+    void resolveCompile();
+
   private:
     struct CompilingState;
 
@@ -251,8 +259,6 @@ class Shader final : angle::NonCopyable, public LabeledObject
                               GLsizei bufSize,
                               GLsizei *length,
                               char *buffer);
-
-    void resolveCompile();
 
     ShaderState mState;
     std::unique_ptr<rx::ShaderImpl> mImplementation;

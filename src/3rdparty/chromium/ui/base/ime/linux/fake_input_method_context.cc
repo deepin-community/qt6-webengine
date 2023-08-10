@@ -15,6 +15,10 @@ bool FakeInputMethodContext::DispatchKeyEvent(
   return false;
 }
 
+bool FakeInputMethodContext::IsPeekKeyEvent(const ui::KeyEvent& key_event) {
+  return false;
+}
+
 void FakeInputMethodContext::Reset() {
 }
 
@@ -28,8 +32,16 @@ void FakeInputMethodContext::SetCursorLocation(const gfx::Rect& rect) {
 }
 
 void FakeInputMethodContext::SetSurroundingText(
-    const base::string16& text,
-    const gfx::Range& selection_range) {
+    const std::u16string& text,
+    const gfx::Range& selection_range) {}
+
+void FakeInputMethodContext::SetContentType(TextInputType input_type,
+                                            int input_flags,
+                                            bool should_do_learning) {}
+
+VirtualKeyboardController*
+FakeInputMethodContext::GetVirtualKeyboardController() {
+  return nullptr;
 }
 
 }  // namespace ui

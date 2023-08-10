@@ -23,8 +23,7 @@ template("chrome_bundle") {
   _package_id = 126  # == 0x7e.
   _extra_modules = []
   _module_descs = invoker.module_descs
-  _enable_chrome_module =
-      enable_chrome_module && invoker.is_monochrome_or_trichrome
+  _enable_chrome_module = invoker.is_monochrome_or_trichrome
 
   # If enable_chrome_module is true, //chrome Java code and resources will be
   # split out into a chrome DFM in Monochrome and Trichrome bundles. This will
@@ -46,6 +45,7 @@ template("chrome_bundle") {
         java_deps += [
           "//components/webxr/android:ar_java",
           "//third_party/arcore-android-sdk-client:com_google_ar_core_java",
+          "//third_party/arcore-android-sdk-client:com_google_ar_core_java__ignored_manifest",
         ]
       }
       if (defined(invoker.chrome_deps)) {
@@ -55,26 +55,26 @@ template("chrome_bundle") {
     _module_descs += [ chrome_module_desc ]
   }
 
-  _enable_isolated_splits =
-      enable_isolated_splits && invoker.is_monochrome_or_trichrome
-  if (_enable_isolated_splits) {
-    # TODO(crbug.com/1126301): Isolated splits cause various bugs with resource
-    # access. For now, move all resources to the base module.
-    _base_target_name = get_label_info(invoker.base_module_target, "name")
-    android_resources("${_base_target_name}__all_dfm_resources") {
-      recursive_resource_deps = true
-      deps = []
+  # TODO(crbug.com/1126301): Isolated splits cause various bugs with resource
+  # access. For now, move all resources to the base module.
+  # TODO(crbug.com/1278419): Macro resource types only work when all resources
+  # are in the same split. For now, keep all resources in the base module even
+  # in Chrome Modern.
+  _base_target_name = get_label_info(invoker.base_module_target, "name")
+  android_resources("${_base_target_name}__all_dfm_resources") {
+    recursive_resource_deps = true
+    deps = []
 
-      # Java library deps are added to this target because the
-      # recursive_resource_deps arg allows pulling all the android_resources
-      # deps from them. The actual java library targets are not used.
-      foreach(_module_desc, _module_descs) {
-        if (defined(_module_desc.java_deps)) {
-          deps += _module_desc.java_deps
-        }
+    # Java library deps are added to this target because the
+    # recursive_resource_deps arg allows pulling all the android_resources
+    # deps from them. The actual java library targets are not used.
+    foreach(_module_desc, _module_descs) {
+      if (defined(_module_desc.java_deps)) {
+        deps += _module_desc.java_deps
       }
     }
   }
+
   foreach(_tmp_module_desc, _module_descs) {
     assert(_package_id > 2, "Too many modules, ran out of package IDs!")
 
@@ -82,7 +82,7 @@ template("chrome_bundle") {
     # "Replacing nonempty scope" error is thrown.
     _module_desc = {
     }
-    if (_enable_chrome_module && enable_chrome_child_modules) {
+    if (_enable_chrome_module) {
       _module_desc = _tmp_module_desc
     } else {
       # Remove uses_split if child modules are not enabled.
@@ -103,17 +103,39 @@ template("chrome_bundle") {
         "${_bundle_target_name}__${_module_desc.name}_bundle_module") {
       forward_variables_from(invoker,
                              [
+                               "add_view_trace_events",
                                "base_module_target",
                                "is_64_bit_browser",
                                "is_monochrome_or_trichrome",
                                "manifest_package",
                                "min_sdk_version",
+                               "target_sdk_version",
                                "version_code",
                              ])
       module_desc = _module_desc
       version_name = chrome_version_name
       uncompress_shared_libraries =
           invoker.is_monochrome_or_trichrome || chromium_linker_supported
+
+      if (defined(invoker.expected_android_manifest_template)) {
+        expected_android_manifest =
+            string_replace(invoker.expected_android_manifest_template,
+                           "SPLIT_NAME",
+                           _module_desc.name)
+      }
+      if (defined(invoker.expected_android_manifest_base_template)) {
+        if (defined(_module_desc.ignore_base_manifest_expectations) &&
+            _module_desc.ignore_base_manifest_expectations) {
+          # Remove ".diff" since it's not actually a diff.
+          expected_android_manifest =
+              string_replace(expected_android_manifest, ".diff", "")
+        } else {
+          expected_android_manifest_base =
+              string_replace(invoker.expected_android_manifest_base_template,
+                             "SPLIT_NAME",
+                             _module_desc.name)
+        }
+      }
 
       # Each module needs a unique resource package ID so that we don't have ID
       # collisions between feature modules.
@@ -141,6 +163,7 @@ template("chrome_bundle") {
   android_app_bundle(target_name) {
     forward_variables_from(invoker,
                            [
+                             "add_view_trace_events",
                              "base_module_target",
                              "bundle_name",
                              "compress_shared_libraries",
@@ -166,13 +189,27 @@ template("chrome_bundle") {
     proguard_enabled = !is_java_debug
     enable_language_splits = true
     extra_modules = _extra_modules
-    system_image_locale_allowlist = android_apk_locales
+    system_image_locale_allowlist = platform_pak_locales - extended_locales
     is_multi_abi = _is_multi_abi
     validate_services = _enable_chrome_module
+
+    # For this to be respected, it must also be set on the base module target.
+    strip_unused_resources = is_official_build
 
     # List of DFMs that are installed by default by wrapper scripts, to make
     # testing easier. This removes the need to manually specify, e.g.,
     # "-m dev_ui" on every install or run.
     default_modules_for_testing = [ "dev_ui" ]
+  }
+
+  if (defined(invoker.expected_android_manifest_template)) {
+    group("${target_name}_validate_manifests") {
+      deps = [
+        ":${_bundle_target_name}__base_bundle_module_validate_android_manifest",
+      ]
+      foreach(_module_desc, _module_descs) {
+        deps += [ ":${_bundle_target_name}__${_module_desc.name}_bundle_module_validate_android_manifest" ]
+      }
+    }
   }
 }

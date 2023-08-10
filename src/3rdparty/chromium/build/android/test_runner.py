@@ -1,4 +1,4 @@
-#!/usr/bin/env vpython
+#!/usr/bin/env vpython3
 #
 # Copyright 2013 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
@@ -6,6 +6,7 @@
 
 """Runs all types of tests from one unified interface."""
 
+from __future__ import absolute_import
 import argparse
 import collections
 import contextlib
@@ -41,7 +42,6 @@ from pylib.base import base_test_result
 from pylib.base import environment_factory
 from pylib.base import output_manager
 from pylib.base import output_manager_factory
-from pylib.base import result_sink
 from pylib.base import test_instance_factory
 from pylib.base import test_run_factory
 from pylib.results import json_results
@@ -53,6 +53,8 @@ from pylib.utils import logging_utils
 from pylib.utils import test_filter
 
 from py_utils import contextlib_ext
+
+from lib.results import result_sink  # pylint: disable=import-error
 
 _DEVIL_STATIC_CONFIG_FILE = os.path.abspath(os.path.join(
     host_paths.DIR_SOURCE_ROOT, 'build', 'android', 'devil_config.json'))
@@ -240,12 +242,10 @@ def AddCommonOptions(parser):
 def ProcessCommonOptions(args):
   """Processes and handles all common options."""
   run_tests_helper.SetLogLevel(args.verbose_count, add_handler=False)
-  # pylint: disable=redefined-variable-type
   if args.verbose_count > 0:
     handler = logging_utils.ColorStreamHandler()
   else:
     handler = logging.StreamHandler(sys.stdout)
-  # pylint: enable=redefined-variable-type
   handler.setFormatter(run_tests_helper.CustomFormatter())
   logging.getLogger().addHandler(handler)
 
@@ -351,10 +351,6 @@ def AddGTestOptions(parser):
       help='Host directory to which app data files will be'
            ' saved. Used with --app-data-file.')
   parser.add_argument(
-      '--delete-stale-data',
-      dest='delete_stale_data', action='store_true',
-      help='Delete stale test data on the device.')
-  parser.add_argument(
       '--enable-xml-result-parsing',
       action='store_true', help=argparse.SUPPRESS)
   parser.add_argument(
@@ -411,6 +407,12 @@ def AddGTestOptions(parser):
       '--coverage-dir',
       type=os.path.realpath,
       help='Directory in which to place all generated coverage files.')
+  parser.add_argument(
+      '--use-existing-test-data',
+      action='store_true',
+      help='Do not push new files to the device, instead using existing APK '
+      'and test data. Only use when running the same test for multiple '
+      'iterations.')
 
 
 def AddInstrumentationTestOptions(parser):
@@ -460,41 +462,28 @@ def AddInstrumentationTestOptions(parser):
       help='Directory in which to place all generated '
       'Jacoco coverage files.')
   parser.add_argument(
-      '--delete-stale-data',
-      action='store_true', dest='delete_stale_data',
-      help='Delete stale test data on the device.')
-  parser.add_argument(
       '--disable-dalvik-asserts',
       dest='set_asserts', action='store_false', default=True,
       help='Removes the dalvik.vm.enableassertions property')
   parser.add_argument(
-      '--enable-java-deobfuscation',
-      action='store_true',
-      help='Deobfuscate java stack traces in test output and logcat.')
+      '--proguard-mapping-path',
+      help='.mapping file to use to Deobfuscate java stack traces in test '
+      'output and logcat.')
   parser.add_argument(
       '-E', '--exclude-annotation',
       dest='exclude_annotation_str',
       help='Comma-separated list of annotations. Exclude tests with these '
            'annotations.')
-  def package_replacement(arg):
-    split_arg = arg.split(',')
-    if len(split_arg) != 2:
-      raise argparse.ArgumentError(
-          arg,
-          'Expected two comma-separated strings for --replace-system-package, '
-          'received %d' % len(split_arg))
-    PackageReplacement = collections.namedtuple('PackageReplacement',
-                                                ['package', 'replacement_apk'])
-    return PackageReplacement(package=split_arg[0],
-                              replacement_apk=_RealPath(split_arg[1]))
+  parser.add_argument(
+      '--enable-breakpad-dump',
+      action='store_true',
+      help='Stores any breakpad dumps till the end of the test.')
   parser.add_argument(
       '--replace-system-package',
-      type=package_replacement, default=None,
-      help='Specifies a system package to replace with a given APK for the '
-           'duration of the test. Given as a comma-separated pair of strings, '
-           'the first element being the package and the second the path to the '
-           'replacement APK. Only supports replacing one package. Example: '
-           '--replace-system-package com.example.app,path/to/some.apk')
+      type=_RealPath,
+      default=None,
+      help='Use this apk to temporarily replace a system package with the same '
+      'package name.')
   parser.add_argument(
       '--remove-system-package',
       default=[],
@@ -554,6 +543,13 @@ def AddInstrumentationTestOptions(parser):
       '--test-jar',
       help='Path of jar containing test java files.')
   parser.add_argument(
+      '--test-launcher-batch-limit',
+      dest='test_launcher_batch_limit',
+      type=int,
+      help=('Not actually used for instrumentation tests, but can be used as '
+            'a proxy for determining if the current run is a retry without '
+            'patch.'))
+  parser.add_argument(
       '--timeout-scale',
       type=float,
       help='Factor by which timeouts should be scaled.')
@@ -586,6 +582,10 @@ def AddSkiaGoldTestOptions(parser):
   parser.add_argument(
       '--code-review-system',
       help='A non-default code review system to pass to pass to Gold, if '
+      'applicable')
+  parser.add_argument(
+      '--continuous-integration-system',
+      help='A non-default continuous integration system to pass to Gold, if '
       'applicable')
   parser.add_argument(
       '--git-revision', help='The git commit currently being tested.')
@@ -700,10 +700,11 @@ def AddMonkeyTestOptions(parser):
 
   parser = parser.add_argument_group('monkey arguments')
 
-  parser.add_argument(
-      '--browser',
-      required=True, choices=constants.PACKAGE_INFO.keys(),
-      metavar='BROWSER', help='Browser under test.')
+  parser.add_argument('--browser',
+                      required=True,
+                      choices=list(constants.PACKAGE_INFO.keys()),
+                      metavar='BROWSER',
+                      help='Browser under test.')
   parser.add_argument(
       '--category',
       nargs='*', dest='categories', default=[],
@@ -728,11 +729,12 @@ def AddPythonTestOptions(parser):
 
   parser = parser.add_argument_group('python arguments')
 
-  parser.add_argument(
-      '-s', '--suite',
-      dest='suite_name', metavar='SUITE_NAME',
-      choices=constants.PYTHON_UNIT_TEST_SUITES.keys(),
-      help='Name of the test suite to run.')
+  parser.add_argument('-s',
+                      '--suite',
+                      dest='suite_name',
+                      metavar='SUITE_NAME',
+                      choices=list(constants.PYTHON_UNIT_TEST_SUITES.keys()),
+                      help='Name of the test suite to run.')
 
 
 def _CreateClassToFileNameDict(test_apk):
@@ -805,8 +807,43 @@ def RunTestsCommand(args, result_sink_client=None):
 
   if command == 'python':
     return _RunPythonTests(args)
-  else:
-    raise Exception('Unknown test type.')
+  raise Exception('Unknown test type.')
+
+
+def _SinkTestResult(test_result, test_file_name, result_sink_client):
+  """Upload test result to result_sink.
+
+  Args:
+    test_result: A BaseTestResult object
+    test_file_name: A string representing the file location of the test
+    result_sink_client: A ResultSinkClient object
+
+  Returns:
+    N/A
+  """
+  # Some tests put in non utf-8 char as part of the test
+  # which breaks uploads, so need to decode and re-encode.
+  log_decoded = test_result.GetLog()
+  if isinstance(log_decoded, bytes):
+    log_decoded = log_decoded.decode('utf-8', 'replace')
+  html_artifact = ''
+  https_artifacts = []
+  for link_name, link_url in sorted(test_result.GetLinks().items()):
+    if link_url.startswith('https:'):
+      https_artifacts.append('<li><a target="_blank" href=%s>%s</a></li>' %
+                             (link_url, link_name))
+    else:
+      logging.info('Skipping non-https link %r (%s) for test %s.', link_name,
+                   link_url, test_result.GetName())
+  if https_artifacts:
+    html_artifact += '<ul>%s</ul>' % '\n'.join(https_artifacts)
+  result_sink_client.Post(test_result.GetName(),
+                          test_result.GetType(),
+                          test_result.GetDuration(),
+                          log_decoded.encode('utf-8'),
+                          test_file_name,
+                          failure_reason=test_result.GetFailureReason(),
+                          html_artifact=html_artifact)
 
 
 _SUPPORTED_IN_PLATFORM_MODE = [
@@ -904,6 +941,22 @@ def RunTestsInPlatformMode(args, result_sink_client=None):
             global_tags=list(global_results_tags),
             indent=2)
 
+      test_class_to_file_name_dict = {}
+      # Test Location is only supported for instrumentation tests as it
+      # requires the size-info file.
+      if test_instance.TestType() == 'instrumentation':
+        test_class_to_file_name_dict = _CreateClassToFileNameDict(args.test_apk)
+
+      if result_sink_client:
+        for run in all_raw_results:
+          for results in run:
+            for r in results.GetAll():
+              # Matches chrome.page_info.PageInfoViewTest#testChromePage
+              match = re.search(r'^(.+\..+)#', r.GetName())
+              test_file_name = test_class_to_file_name_dict.get(
+                  match.group(1)) if match else None
+              _SinkTestResult(r, test_file_name, result_sink_client)
+
   @contextlib.contextmanager
   def upload_logcats_file():
     try:
@@ -942,8 +995,8 @@ def RunTestsInPlatformMode(args, result_sink_client=None):
   with out_manager, json_finalizer():
     with json_writer(), logcats_uploader, env, test_instance, test_run:
 
-      repetitions = (xrange(args.repeat + 1) if args.repeat >= 0
-                     else itertools.count())
+      repetitions = (range(args.repeat +
+                           1) if args.repeat >= 0 else itertools.count())
       result_counts = collections.defaultdict(
           lambda: collections.defaultdict(int))
       iteration_count = 0
@@ -964,29 +1017,11 @@ def RunTestsInPlatformMode(args, result_sink_client=None):
         for r in reversed(raw_results):
           iteration_results.AddTestRunResults(r)
         all_iteration_results.append(iteration_results)
-
-        test_class_to_file_name_dict = {}
-        # Test Location is only supported for instrumentation tests as it
-        # requires the size-info file.
-        if test_instance.TestType() == 'instrumentation':
-          test_class_to_file_name_dict = _CreateClassToFileNameDict(
-              args.test_apk)
-
         iteration_count += 1
-        for r in iteration_results.GetAll():
-          if result_sink_client:
-            # Matches chrome.page_info.PageInfoViewTest#testChromePage
-            match = re.search(r'^(.+\..+)#', r.GetName())
-            test_file_name = test_class_to_file_name_dict.get(
-                match.group(1)) if match else None
-            # Some tests put in non utf-8 char as part of the test
-            # which breaks uploads, so need to decode and re-encode.
-            result_sink_client.Post(
-                r.GetName(), r.GetType(),
-                r.GetLog().decode('utf-8', 'replace').encode('utf-8'),
-                test_file_name)
 
+        for r in iteration_results.GetAll():
           result_counts[r.GetName()][r.GetType()] += 1
+
         report_results.LogFull(
             results=iteration_results,
             test_type=test_instance.TestType(),
@@ -1033,7 +1068,7 @@ def RunTestsInPlatformMode(args, result_sink_client=None):
             test_name=args.command,
             cs_base_url='http://cs.chromium.org',
             local_output=True)
-        results_detail_file.write(result_html_string.encode('utf-8'))
+        results_detail_file.write(result_html_string)
         results_detail_file.flush()
       logging.critical('TEST RESULTS: %s', results_detail_file.Link())
 

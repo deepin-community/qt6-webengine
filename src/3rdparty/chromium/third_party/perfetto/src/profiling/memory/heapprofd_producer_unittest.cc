@@ -48,6 +48,7 @@ class MockProducerEndpoint : public TracingService::ProducerEndpoint {
   MOCK_METHOD1(ActivateTriggers, void(const std::vector<std::string>&));
 
   MOCK_METHOD1(RegisterDataSource, void(const DataSourceDescriptor&));
+  MOCK_METHOD1(UpdateDataSource, void(const DataSourceDescriptor&));
   MOCK_METHOD2(CommitData, void(const CommitDataRequest&, CommitDataCallback));
   MOCK_METHOD2(RegisterTraceWriter, void(uint32_t, uint32_t));
   MOCK_METHOD1(UnregisterTraceWriter, void(uint32_t));
@@ -200,6 +201,43 @@ TEST(HeapprofdConfigToClientConfigurationTest, AdaptiveSamplingWithMax) {
   EXPECT_EQ(cli_config.adaptive_sampling_shmem_threshold, 1024u);
   EXPECT_EQ(cli_config.adaptive_sampling_max_sampling_interval_bytes,
             4 * 4096u);
+}
+
+TEST(HeapprofdConfigToClientConfigurationTest, AllHeaps) {
+  HeapprofdConfig cfg;
+  cfg.set_all_heaps(true);
+  cfg.set_sampling_interval_bytes(4096);
+  ClientConfiguration cli_config;
+  ASSERT_TRUE(HeapprofdConfigToClientConfiguration(cfg, &cli_config));
+  EXPECT_EQ(cli_config.num_heaps, 0u);
+  EXPECT_EQ(cli_config.default_interval, 4096u);
+}
+
+TEST(HeapprofdConfigToClientConfigurationTest, AllHeapsAndExplicit) {
+  HeapprofdConfig cfg;
+  cfg.set_all_heaps(true);
+  cfg.set_sampling_interval_bytes(4096);
+  cfg.add_heaps("foo");
+  cfg.add_heap_sampling_intervals(1024u);
+  ClientConfiguration cli_config;
+  ASSERT_TRUE(HeapprofdConfigToClientConfiguration(cfg, &cli_config));
+  EXPECT_EQ(cli_config.num_heaps, 1u);
+  EXPECT_STREQ(cli_config.heaps[0].name, "foo");
+  EXPECT_EQ(cli_config.heaps[0].interval, 1024u);
+  EXPECT_EQ(cli_config.default_interval, 4096u);
+}
+
+TEST(HeapprofdConfigToClientConfigurationTest, AllHeapsAndDisabled) {
+  HeapprofdConfig cfg;
+  cfg.set_all_heaps(true);
+  cfg.set_sampling_interval_bytes(4096);
+  cfg.add_exclude_heaps("foo");
+  ClientConfiguration cli_config;
+  ASSERT_TRUE(HeapprofdConfigToClientConfiguration(cfg, &cli_config));
+  EXPECT_EQ(cli_config.num_heaps, 1u);
+  EXPECT_STREQ(cli_config.heaps[0].name, "foo");
+  EXPECT_EQ(cli_config.heaps[0].interval, 0u);
+  EXPECT_EQ(cli_config.default_interval, 4096u);
 }
 
 }  // namespace profiling

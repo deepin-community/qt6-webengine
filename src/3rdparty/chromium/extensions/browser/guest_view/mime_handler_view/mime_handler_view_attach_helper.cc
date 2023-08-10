@@ -5,9 +5,11 @@
 #include "extensions/browser/guest_view/mime_handler_view/mime_handler_view_attach_helper.h"
 
 #include "base/bind.h"
+#include "base/containers/contains.h"
 #include "base/containers/flat_map.h"
 #include "base/memory/ptr_util.h"
 #include "base/no_destructor.h"
+#include "base/strings/stringprintf.h"
 #include "base/unguessable_token.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
@@ -19,7 +21,6 @@
 #include "content/public/common/webplugininfo.h"
 #include "extensions/browser/guest_view/mime_handler_view/mime_handler_view_embedder.h"
 #include "extensions/browser/guest_view/mime_handler_view/mime_handler_view_guest.h"
-#include "extensions/common/guest_view/extensions_guest_view_messages.h"
 #include "mojo/public/cpp/bindings/associated_remote.h"
 #include "ppapi/buildflags/buildflags.h"
 #include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
@@ -103,8 +104,8 @@ bool MimeHandlerViewAttachHelper::OverrideBodyForInterceptedResponse(
   content::GetUIThreadTaskRunner({})->PostTaskAndReply(
       FROM_HERE,
       base::BindOnce(CreateFullPageMimeHandlerView,
-                     navigating_frame_tree_node_id, resource_url, mime_type,
-                     stream_id, token),
+                     navigating_frame_tree_node_id, resource_url, stream_id,
+                     token),
       std::move(resume_load));
   return true;
 }
@@ -134,11 +135,10 @@ void MimeHandlerViewAttachHelper::AttachToOuterWebContents(
 void MimeHandlerViewAttachHelper::CreateFullPageMimeHandlerView(
     int32_t frame_tree_node_id,
     const GURL& resource_url,
-    const std::string& mime_type,
     const std::string& stream_id,
     const std::string& token) {
-  MimeHandlerViewEmbedder::Create(frame_tree_node_id, resource_url, mime_type,
-                                  stream_id, token);
+  MimeHandlerViewEmbedder::Create(frame_tree_node_id, resource_url, stream_id,
+                                  token);
 }
 
 MimeHandlerViewAttachHelper::MimeHandlerViewAttachHelper(
@@ -153,6 +153,14 @@ void MimeHandlerViewAttachHelper::ResumeAttachOrDestroy(
     int32_t element_instance_id,
     bool is_full_page_plugin,
     content::RenderFrameHost* plugin_rfh) {
+  if (resume_attach_callback_for_testing_) {
+    std::move(resume_attach_callback_for_testing_)
+        .Run(base::BindOnce(&MimeHandlerViewAttachHelper::ResumeAttachOrDestroy,
+                            weak_factory_.GetWeakPtr(), element_instance_id,
+                            is_full_page_plugin, plugin_rfh));
+    return;
+  }
+
   DCHECK(!plugin_rfh || (plugin_rfh->GetProcess() == render_process_host_));
   auto guest_view = pending_guests_[element_instance_id];
   pending_guests_.erase(element_instance_id);
@@ -169,6 +177,7 @@ void MimeHandlerViewAttachHelper::ResumeAttachOrDestroy(
     return;
   }
   guest_view->AttachToOuterWebContentsFrame(plugin_rfh, element_instance_id,
-                                            is_full_page_plugin);
+                                            is_full_page_plugin,
+                                            base::NullCallback());
 }
 }  // namespace extensions

@@ -9,10 +9,7 @@
 #include "base/memory/ptr_util.h"
 #include "media/base/bind_to_current_loop.h"
 #include "media/capture/video/chromeos/camera_app_device_bridge_impl.h"
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "media/capture/video/chromeos/ash/camera_hal_dispatcher_impl.h"
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#include "media/capture/video/chromeos/camera_hal_dispatcher_impl.h"
 
 namespace media {
 
@@ -39,15 +36,21 @@ VideoCaptureDeviceFactoryChromeOS::~VideoCaptureDeviceFactoryChromeOS() {
   camera_hal_ipc_thread_.Stop();
 }
 
-std::unique_ptr<VideoCaptureDevice>
-VideoCaptureDeviceFactoryChromeOS::CreateDevice(
+VideoCaptureErrorOrDevice VideoCaptureDeviceFactoryChromeOS::CreateDevice(
     const VideoCaptureDeviceDescriptor& device_descriptor) {
   DCHECK(thread_checker_.CalledOnValidThread());
   if (!initialized_) {
-    return std::unique_ptr<VideoCaptureDevice>();
+    return VideoCaptureErrorOrDevice(
+        VideoCaptureError::
+            kCrosHalV3DeviceDelegateFailedToInitializeCameraDevice);
   }
-  return camera_hal_delegate_->CreateDevice(task_runner_for_screen_observer_,
-                                            device_descriptor);
+  auto device = camera_hal_delegate_->CreateDevice(
+      task_runner_for_screen_observer_, device_descriptor);
+  return device
+             ? VideoCaptureErrorOrDevice(std::move(device))
+             : VideoCaptureErrorOrDevice(
+                   VideoCaptureError::
+                       kVideoCaptureControllerInvalidOrUnsupportedVideoCaptureParametersRequested);
 }
 
 void VideoCaptureDeviceFactoryChromeOS::GetDevicesInfo(
@@ -79,15 +82,13 @@ bool VideoCaptureDeviceFactoryChromeOS::Init() {
     return false;
   }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
   if (!CameraHalDispatcherImpl::GetInstance()->IsStarted()) {
     LOG(ERROR) << "CameraHalDispatcherImpl is not started";
     return false;
   }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+
   camera_hal_delegate_ =
       new CameraHalDelegate(camera_hal_ipc_thread_.task_runner());
-
   if (!camera_hal_delegate_->RegisterCameraClient()) {
     LOG(ERROR) << "Failed to register camera client";
     return false;

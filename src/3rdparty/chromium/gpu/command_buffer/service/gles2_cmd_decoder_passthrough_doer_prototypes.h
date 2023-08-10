@@ -1084,41 +1084,13 @@ error::Error DoSetDrawRectangleCHROMIUM(GLint x,
                                         GLint width,
                                         GLint height);
 error::Error DoSetEnableDCLayersCHROMIUM(GLboolean enable);
-error::Error DoBeginRasterCHROMIUM(GLuint texture_id,
-                                   GLuint sk_color,
-                                   GLuint msaa_sample_count,
-                                   GLboolean can_use_lcd_text,
-                                   GLint color_type);
-error::Error DoRasterCHROMIUM(GLuint raster_shm_id,
-                              GLuint raster_shm_offset,
-                              GLsizeiptr raster_shm_size,
-                              GLuint font_shm_id,
-                              GLuint font_shm_offset,
-                              GLsizeiptr font_shm_size);
-error::Error DoEndRasterCHROMIUM();
-error::Error DoCreateTransferCacheEntryINTERNAL(GLuint entry_type,
-                                                GLuint entry_id,
-                                                GLuint handle_shm_id,
-                                                GLuint handle_shm_offset,
-                                                GLuint data_shm_id,
-                                                GLuint data_shm_offset,
-                                                GLuint data_size);
-error::Error DoUnlockTransferCacheEntryINTERNAL(GLuint entry_type,
-                                                GLuint entry_id);
-error::Error DoDeleteTransferCacheEntryINTERNAL(GLuint entry_type,
-                                                GLuint entry_id);
+
 error::Error DoWindowRectanglesEXT(GLenum mode,
                                    GLsizei n,
                                    const volatile GLint* box);
 error::Error DoCreateGpuFenceINTERNAL(GLuint gpu_fence_id);
 error::Error DoWaitGpuFenceCHROMIUM(GLuint gpu_fence_id);
 error::Error DoDestroyGpuFenceCHROMIUM(GLuint gpu_fence_id);
-error::Error DoUnpremultiplyAndDitherCopyCHROMIUM(GLuint src_texture,
-                                                  GLuint dst_texture,
-                                                  GLint x,
-                                                  GLint y,
-                                                  GLsizei width,
-                                                  GLsizei height);
 error::Error DoSetReadbackBufferShadowAllocationINTERNAL(GLuint buffer_id,
                                                          GLuint shm_id,
                                                          GLuint shm_offset,

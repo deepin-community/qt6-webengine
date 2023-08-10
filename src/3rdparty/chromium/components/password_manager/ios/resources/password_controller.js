@@ -218,7 +218,7 @@ __gCrWeb.passwords['fillPasswordForm'] = function(
 };
 
 /**
- * Fills all password fields in the form identified by |formName|
+ * Finds the form identified by |formIdentifier| and fills its password fields
  * with |password|.
  *
  * @param {number} formIdentifier The name of the form to fill.
@@ -233,7 +233,41 @@ __gCrWeb.passwords['fillPasswordFormWithGeneratedPassword'] = function(
     password) {
   const hasFormTag =
       formIdentifier.toString() !== __gCrWeb.fill.RENDERER_ID_NOT_SET;
-  const form = __gCrWeb.form.getFormElementFromUniqueFormId(formIdentifier);
+  if (fillGeneratedPasswordInWindow(
+          formIdentifier, newPasswordIdentifier, confirmPasswordIdentifier,
+          password, hasFormTag, window)) {
+    return true;
+  }
+  // Try to recursively invoke for same origin iframes.
+  const frames = getSameOriginFrames(window);
+  for (let i = 0; i < frames.length; i++) {
+    if (fillGeneratedPasswordInWindow(
+            formIdentifier, newPasswordIdentifier, confirmPasswordIdentifier,
+            password, hasFormTag, frames[i])) {
+      return true;
+    }
+  }
+  return false;
+};
+
+/**
+ * Fills password fields in the form identified by |formIdentifier|
+ * with |password| in a given window.
+ *
+ * @param {number} formIdentifier The name of the form to fill.
+ * @param {number} newPasswordIdentifier The id of password element to fill.
+ * @param {number} confirmPasswordIdentifier The id of confirm password
+ *     element to fill.
+ * @param {string} password The password to fill.
+ * @param {boolean} hasFormTag Whether the new password field belongs to a
+ *     <form> element.
+ * @param {Window} win A window or a frame containing formData.
+ * @return {boolean} Whether new password field has been filled.
+ */
+const fillGeneratedPasswordInWindow = function(
+    formIdentifier, newPasswordIdentifier, confirmPasswordIdentifier, password,
+    hasFormTag, win) {
+  const form = getPasswordFormElement(win, formIdentifier);
   if (!form && hasFormTag) {
     return false;
   }
@@ -313,8 +347,7 @@ function fillUsernameAndPassword_(inputs, formData, username, password) {
   let usernameInput = null;
   if (usernameIdentifier !== Number(__gCrWeb.fill.RENDERER_ID_NOT_SET)) {
     usernameInput = findInputByUniqueFieldId(inputs, usernameIdentifier);
-    if (!usernameInput || !__gCrWeb.common.isTextField(usernameInput) ||
-        usernameInput.disabled) {
+    if (!usernameInput || !__gCrWeb.common.isTextField(usernameInput)) {
       return false;
     }
   }
@@ -324,19 +357,13 @@ function fillUsernameAndPassword_(inputs, formData, username, password) {
       passwordInput.readOnly || passwordInput.disabled) {
     return false;
   }
-  // If username was provided on a read-only field and it matches the
-  // requested username, fill the form.
-  if (usernameInput && usernameInput.readOnly) {
-    if (usernameInput.value === username) {
-      __gCrWeb.fill.setInputElementValue(password, passwordInput);
-      return true;
-    }
-  } else {
+  // If username was provided on a read-only or disabled field, fill the form.
+  if (!(usernameInput && (usernameInput.readOnly || usernameInput.disabled))) {
     __gCrWeb.fill.setInputElementValue(username, usernameInput);
-    __gCrWeb.fill.setInputElementValue(password, passwordInput);
-    return true;
   }
-  return false;
+
+  __gCrWeb.fill.setInputElementValue(password, passwordInput);
+  return true;
 }
 
 /**

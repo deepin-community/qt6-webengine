@@ -7,8 +7,7 @@
 
 #include "third_party/blink/renderer/bindings/core/v8/v8_custom_layout_constraints_options.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
-#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 
 namespace blink {
 
@@ -50,8 +49,8 @@ class CustomLayoutWorkTask final
   // Runs this work task.
   void Run(const NGConstraintSpace& parent_space,
            const ComputedStyle& parent_style,
-           const LayoutUnit child_percentage_resolution_block_size_for_min_max,
-           bool* child_depends_on_percentage_block_size = nullptr);
+           const LayoutUnit child_available_block_size,
+           bool* child_depends_on_block_constraints = nullptr);
 
  private:
   Member<CustomLayoutChild> child_;
@@ -64,11 +63,11 @@ class CustomLayoutWorkTask final
   void RunLayoutFragmentTask(const NGConstraintSpace& parent_space,
                              const ComputedStyle& parent_style,
                              NGLayoutInputNode child);
-  void RunIntrinsicSizesTask(
-      const ComputedStyle& parent_style,
-      const LayoutUnit child_percentage_resolution_block_size_for_min_max,
-      NGLayoutInputNode child,
-      bool* child_depends_on_percentage_block_size);
+  void RunIntrinsicSizesTask(const NGConstraintSpace& parent_space,
+                             const ComputedStyle& parent_style,
+                             const LayoutUnit child_available_block_size,
+                             NGLayoutInputNode child,
+                             bool* child_depends_on_block_constraints);
 };
 
 }  // namespace blink

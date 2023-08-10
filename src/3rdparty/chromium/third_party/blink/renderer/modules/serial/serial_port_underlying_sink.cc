@@ -4,8 +4,14 @@
 
 #include "third_party/blink/renderer/modules/serial/serial_port_underlying_sink.h"
 
+#include "base/numerics/safe_conversions.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
+#include "third_party/blink/renderer/bindings/core/v8/to_v8_traits.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_union_arraybuffer_arraybufferview.h"
+#include "third_party/blink/renderer/core/dom/abort_signal.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
+#include "third_party/blink/renderer/core/streams/writable_stream_default_controller.h"
+#include "third_party/blink/renderer/core/typed_arrays/dom_array_piece.h"
 #include "third_party/blink/renderer/modules/serial/serial_port.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 
@@ -27,6 +33,26 @@ ScriptPromise SerialPortUnderlyingSink::start(
     ScriptState* script_state,
     WritableStreamDefaultController* controller,
     ExceptionState& exception_state) {
+  controller_ = controller;
+
+  class AbortAlgorithm final : public AbortSignal::Algorithm {
+   public:
+    explicit AbortAlgorithm(SerialPortUnderlyingSink* sink) : sink_(sink) {}
+
+    void Run() override { sink_->OnAborted(); }
+
+    void Trace(Visitor* visitor) const override {
+      visitor->Trace(sink_);
+      Algorithm::Trace(visitor);
+    }
+
+   private:
+    Member<SerialPortUnderlyingSink> sink_;
+  };
+
+  controller->signal()->AddAlgorithm(
+      MakeGarbageCollected<AbortAlgorithm>(this));
+
   return ScriptPromise::CastUndefined(script_state);
 }
 
@@ -36,21 +62,21 @@ ScriptPromise SerialPortUnderlyingSink::write(
     WritableStreamDefaultController* controller,
     ExceptionState& exception_state) {
   // There can only be one call to write() in progress at a time.
-  DCHECK(buffer_source_.IsNull());
+  DCHECK(!buffer_source_);
   DCHECK_EQ(0u, offset_);
   DCHECK(!pending_operation_);
 
   if (pending_exception_) {
-    DOMException* exception = pending_exception_;
+    exception_state.RethrowV8Exception(
+        ToV8Traits<DOMException>::ToV8(script_state, pending_exception_)
+            .ToLocalChecked());
     pending_exception_ = nullptr;
     serial_port_->UnderlyingSinkClosed();
-    exception_state.RethrowV8Exception(ToV8(exception, script_state));
     return ScriptPromise();
   }
 
-  V8ArrayBufferOrArrayBufferView::ToImpl(
-      script_state->GetIsolate(), chunk.V8Value(), buffer_source_,
-      UnionTypeConversionMode::kNotNullable, exception_state);
+  buffer_source_ = V8BufferSource::Create(script_state->GetIsolate(),
+                                          chunk.V8Value(), exception_state);
   if (exception_state.HadException())
     return ScriptPromise();
 
@@ -72,9 +98,10 @@ ScriptPromise SerialPortUnderlyingSink::close(ScriptState* script_state,
   data_pipe_.reset();
 
   if (pending_exception_) {
-    DOMException* exception = pending_exception_;
+    exception_state.RethrowV8Exception(
+        ToV8Traits<DOMException>::ToV8(script_state, pending_exception_)
+            .ToLocalChecked());
     pending_exception_ = nullptr;
-    exception_state.RethrowV8Exception(ToV8(exception, script_state));
     serial_port_->UnderlyingSinkClosed();
     return ScriptPromise();
   }
@@ -97,9 +124,10 @@ ScriptPromise SerialPortUnderlyingSink::abort(ScriptState* script_state,
   data_pipe_.reset();
 
   if (pending_exception_) {
-    DOMException* exception = pending_exception_;
+    exception_state.RethrowV8Exception(
+        ToV8Traits<DOMException>::ToV8(script_state, pending_exception_)
+            .ToLocalChecked());
     pending_exception_ = nullptr;
-    exception_state.RethrowV8Exception(ToV8(exception, script_state));
     serial_port_->UnderlyingSinkClosed();
     return ScriptPromise();
   }
@@ -129,10 +157,23 @@ void SerialPortUnderlyingSink::SignalErrorOnClose(DOMException* exception) {
 
 void SerialPortUnderlyingSink::Trace(Visitor* visitor) const {
   visitor->Trace(serial_port_);
+  visitor->Trace(controller_);
   visitor->Trace(pending_exception_);
   visitor->Trace(buffer_source_);
   visitor->Trace(pending_operation_);
   UnderlyingSinkBase::Trace(visitor);
+}
+
+void SerialPortUnderlyingSink::OnAborted() {
+  watcher_.Cancel();
+
+  // Rejecting |pending_operation_| allows the rest of the process of aborting
+  // the stream to be handled by abort().
+  if (pending_operation_) {
+    ScriptState* script_state = pending_operation_->GetScriptState();
+    pending_operation_->Reject(controller_->signal()->reason(script_state));
+    pending_operation_ = nullptr;
+  }
 }
 
 void SerialPortUnderlyingSink::OnHandleReady(MojoResult result,
@@ -150,61 +191,42 @@ void SerialPortUnderlyingSink::OnHandleReady(MojoResult result,
 }
 
 void SerialPortUnderlyingSink::OnFlushOrDrain() {
-  ScriptPromiseResolver* resolver = pending_operation_;
+  DCHECK(pending_operation_);
+
+  if (pending_exception_) {
+    pending_operation_->Reject(pending_exception_);
+    pending_exception_ = nullptr;
+  } else {
+    pending_operation_->Resolve();
+  }
   pending_operation_ = nullptr;
 
-  DOMException* exception = pending_exception_;
-  pending_exception_ = nullptr;
-
   serial_port_->UnderlyingSinkClosed();
-
-  if (exception) {
-    resolver->Reject(exception);
-  } else {
-    resolver->Resolve();
-  }
 }
 
 void SerialPortUnderlyingSink::WriteData() {
   DCHECK(data_pipe_);
   DCHECK(pending_operation_);
-  DCHECK(!buffer_source_.IsNull());
+  DCHECK(buffer_source_);
 
-  const uint8_t* data = nullptr;
-  uint32_t length = 0;
-  size_t byte_size = 0;
-  if (buffer_source_.IsArrayBuffer()) {
-    DOMArrayBuffer* array = buffer_source_.GetAsArrayBuffer();
-    // From https://webidl.spec.whatwg.org/#dfn-get-buffer-source-copy, if the
-    // buffer source is detached then an empty byte sequence is returned, which
-    // means the write is complete.
-    if (array->IsDetached()) {
-      buffer_source_ = ArrayBufferOrArrayBufferView();
-      offset_ = 0;
-      pending_operation_->Resolve();
-      pending_operation_ = nullptr;
-      return;
-    }
-    byte_size = array->ByteLength();
-    data = static_cast<const uint8_t*>(array->Data());
-  } else {
-    DOMArrayBufferView* view = buffer_source_.GetAsArrayBufferView().Get();
-    byte_size = view->byteLength();
-    data = static_cast<const uint8_t*>(view->BaseAddress());
-  }
-
-  if (byte_size > std::numeric_limits<uint32_t>::max()) {
-    pending_exception_ = MakeGarbageCollected<DOMException>(
-        DOMExceptionCode::kDataError,
-        "Buffer size exceeds maximum heap object size.", "DataError");
-    PipeClosed();
+  DOMArrayPiece array_piece(buffer_source_);
+  // From https://webidl.spec.whatwg.org/#dfn-get-buffer-source-copy, if the
+  // buffer source is detached then an empty byte sequence is returned, which
+  // means the write is complete.
+  if (array_piece.IsDetached()) {
+    buffer_source_ = nullptr;
+    offset_ = 0;
+    pending_operation_->Resolve();
+    pending_operation_ = nullptr;
     return;
   }
-  length = static_cast<uint32_t>(byte_size);
+
+  const uint8_t* data = array_piece.Bytes();
+  const size_t length = array_piece.ByteLength();
 
   DCHECK_LT(offset_, length);
   data += offset_;
-  uint32_t num_bytes = length - offset_;
+  uint32_t num_bytes = base::saturated_cast<uint32_t>(length - offset_);
 
   MojoResult result =
       data_pipe_->WriteData(data, &num_bytes, MOJO_WRITE_DATA_FLAG_NONE);
@@ -212,13 +234,13 @@ void SerialPortUnderlyingSink::WriteData() {
     case MOJO_RESULT_OK:
       offset_ += num_bytes;
       if (offset_ == length) {
-        buffer_source_ = ArrayBufferOrArrayBufferView();
+        buffer_source_ = nullptr;
         offset_ = 0;
         pending_operation_->Resolve();
         pending_operation_ = nullptr;
         break;
       }
-      FALLTHROUGH;
+      [[fallthrough]];
     case MOJO_RESULT_SHOULD_WAIT:
       watcher_.ArmOrNotify();
       break;
@@ -237,11 +259,11 @@ void SerialPortUnderlyingSink::PipeClosed() {
   data_pipe_.reset();
 
   if (pending_exception_) {
-    DOMException* exception = pending_exception_;
-    pending_exception_ = nullptr;
-    serial_port_->UnderlyingSinkClosed();
-    pending_operation_->Reject(exception);
+    pending_operation_->Reject(pending_exception_);
     pending_operation_ = nullptr;
+    pending_exception_ = nullptr;
+
+    serial_port_->UnderlyingSinkClosed();
   }
 }
 

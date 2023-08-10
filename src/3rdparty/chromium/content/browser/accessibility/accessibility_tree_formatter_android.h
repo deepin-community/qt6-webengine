@@ -19,9 +19,10 @@ class CONTENT_EXPORT AccessibilityTreeFormatterAndroid
   ~AccessibilityTreeFormatterAndroid() override;
 
   base::Value BuildTree(ui::AXPlatformNodeDelegate* root) const override;
-  base::Value BuildTreeForWindow(gfx::AcceleratedWidget widget) const override;
   base::Value BuildTreeForSelector(
       const AXTreeSelector& selector) const override;
+
+  base::Value BuildNode(ui::AXPlatformNodeDelegate* node) const override;
 
  protected:
   void AddDefaultFilters(

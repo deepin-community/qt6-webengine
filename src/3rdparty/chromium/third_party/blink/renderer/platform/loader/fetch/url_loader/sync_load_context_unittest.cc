@@ -7,6 +7,7 @@
 #include "base/memory/ptr_util.h"
 #include "base/test/task_environment.h"
 #include "base/threading/thread.h"
+#include "base/time/time.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/system/data_pipe_utils.h"
@@ -29,7 +30,6 @@ class TestSharedURLLoaderFactory : public network::TestURLLoaderFactory,
   // mojom::URLLoaderFactory implementation.
   void CreateLoaderAndStart(
       mojo::PendingReceiver<network::mojom::URLLoader> receiver,
-      int32_t routing_id,
       int32_t request_id,
       uint32_t options,
       const network::ResourceRequest& url_request,
@@ -37,7 +37,7 @@ class TestSharedURLLoaderFactory : public network::TestURLLoaderFactory,
       const net::MutableNetworkTrafficAnnotationTag& traffic_annotation)
       override {
     network::TestURLLoaderFactory::CreateLoaderAndStart(
-        std::move(receiver), routing_id, request_id, options, url_request,
+        std::move(receiver), request_id, options, url_request,
         std::move(client), traffic_annotation);
   }
 
@@ -106,13 +106,12 @@ class SyncLoadContextTest : public testing::Test {
         FROM_HERE,
         base::BindOnce(
             &SyncLoadContext::StartAsyncWithWaitableEvent, std::move(request),
-            MSG_ROUTING_NONE, loading_thread_.task_runner(),
-            TRAFFIC_ANNOTATION_FOR_TESTS, 0 /* loader_options */,
-            std::move(pending_factory),
+            loading_thread_.task_runner(), TRAFFIC_ANNOTATION_FOR_TESTS,
+            0 /* loader_options */, std::move(pending_factory),
             WebVector<std::unique_ptr<URLLoaderThrottle>>(), out_response,
             context_for_redirect, redirect_or_response_event,
             nullptr /* terminate_sync_load_event */,
-            base::TimeDelta::FromSeconds(60) /* timeout */,
+            base::Seconds(60) /* timeout */,
             mojo::NullRemote() /* download_to_blob_registry */,
             WebVector<WebString>() /* cors_exempt_header_list */,
             std::make_unique<ResourceLoadInfoNotifierWrapper>(
@@ -132,7 +131,7 @@ class SyncLoadContextTest : public testing::Test {
         request, std::make_unique<MockPendingSharedURLLoaderFactory>(),
         response, context_for_redirect, redirect_or_response_event,
         nullptr /* terminate_sync_load_event */,
-        base::TimeDelta::FromSeconds(60) /* timeout */,
+        base::Seconds(60) /* timeout */,
         mojo::NullRemote() /* download_to_blob_registry */, task_runner);
 
     auto mock_resource_request_sender =

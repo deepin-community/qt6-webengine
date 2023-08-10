@@ -8,16 +8,16 @@
 #include "build/build_config.h"
 #include "net/base/net_export.h"
 
-#if defined(OS_WIN)
-#include <winsock2.h>
-#endif  // OS_WIN
+#if BUILDFLAG(IS_WIN)
+#include "base/win/windows_types.h"
+#endif
 
 namespace net {
 
-#if defined(OS_WIN)
-typedef SOCKET SocketDescriptor;
-const SocketDescriptor kInvalidSocket = INVALID_SOCKET;
-#elif defined(OS_POSIX) || defined(OS_FUCHSIA)
+#if BUILDFLAG(IS_WIN)
+typedef UINT_PTR SocketDescriptor;
+const SocketDescriptor kInvalidSocket = (SocketDescriptor)(~0);
+#elif BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
 typedef int SocketDescriptor;
 const SocketDescriptor kInvalidSocket = -1;
 #endif

@@ -14,8 +14,6 @@ import org.junit.runner.RunWith;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.BaseJUnit4ClassRunner;
 import org.chromium.components.minidump_uploader.CrashTestRule.MockCrashReportingPermissionManager;
-import org.chromium.components.minidump_uploader.MinidumpUploaderTest.TestHttpURLConnection;
-import org.chromium.components.minidump_uploader.MinidumpUploaderTest.TestHttpURLConnectionFactory;
 import org.chromium.components.minidump_uploader.util.CrashReportingPermissionManager;
 import org.chromium.components.minidump_uploader.util.HttpURLConnectionFactory;
 
@@ -133,7 +131,7 @@ public class MinidumpUploadJobImplTest {
             }
         });
         MinidumpUploadJob minidumpUploadJob = createCallableListMinidumpUploadJob(
-                callables, permManager.isUsageAndCrashReportingPermittedByUser());
+                callables, permManager.isUsageAndCrashReportingPermitted());
 
         File firstFile = createMinidumpFileInCrashDir("firstFile.dmp0.try0");
         File secondFile = createMinidumpFileInCrashDir("secondFile.dmp0.try0");

@@ -6,10 +6,15 @@
 
 #include <algorithm>
 #include <utility>
+#include <vector>
 
 #include "core/fxcodec/scanlinedecoder.h"
+#include "core/fxcrt/fx_memory_wrappers.h"
 #include "core/fxcrt/fx_safe_types.h"
+#include "core/fxcrt/fx_system.h"
+#include "core/fxcrt/span_util.h"
 #include "third_party/base/check.h"
+#include "third_party/base/numerics/safe_conversions.h"
 
 namespace fxcodec {
 
@@ -27,16 +32,16 @@ class RLScanlineDecoder final : public ScanlineDecoder {
               int bpc);
 
   // ScanlineDecoder:
-  bool v_Rewind() override;
-  uint8_t* v_GetNextLine() override;
-  uint32_t GetSrcOffset() override { return m_SrcOffset; }
+  bool Rewind() override;
+  pdfium::span<uint8_t> GetNextLine() override;
+  uint32_t GetSrcOffset() override;
 
  private:
   bool CheckDestSize();
   void GetNextOperator();
   void UpdateOperator(uint8_t used_bytes);
 
-  std::unique_ptr<uint8_t, FxFreeDeleter> m_pScanline;
+  std::vector<uint8_t, FxAllocAllocator<uint8_t>> m_Scanline;
   pdfium::span<const uint8_t> m_SrcBuf;
   size_t m_dwLineBytes = 0;
   size_t m_SrcOffset = 0;
@@ -46,7 +51,10 @@ class RLScanlineDecoder final : public ScanlineDecoder {
 
 RLScanlineDecoder::RLScanlineDecoder() = default;
 
-RLScanlineDecoder::~RLScanlineDecoder() = default;
+RLScanlineDecoder::~RLScanlineDecoder() {
+  // Span in superclass can't outlive our buffer.
+  m_pLastScanline = pdfium::span<uint8_t>();
+}
 
 bool RLScanlineDecoder::CheckDestSize() {
   size_t i = 0;
@@ -101,40 +109,43 @@ bool RLScanlineDecoder::Create(pdfium::span<const uint8_t> src_buf,
   m_Pitch = pitch.ValueOrDie();
   // Overflow should already have been checked before this is called.
   m_dwLineBytes = (static_cast<uint32_t>(width) * nComps * bpc + 7) / 8;
-  m_pScanline.reset(FX_Alloc(uint8_t, m_Pitch));
+  m_Scanline.resize(m_Pitch);
   return CheckDestSize();
 }
 
-bool RLScanlineDecoder::v_Rewind() {
-  memset(m_pScanline.get(), 0, m_Pitch);
+bool RLScanlineDecoder::Rewind() {
+  fxcrt::spanclr(pdfium::make_span(m_Scanline));
   m_SrcOffset = 0;
   m_bEOD = false;
   m_Operator = 0;
   return true;
 }
 
-uint8_t* RLScanlineDecoder::v_GetNextLine() {
+pdfium::span<uint8_t> RLScanlineDecoder::GetNextLine() {
   if (m_SrcOffset == 0) {
     GetNextOperator();
   } else if (m_bEOD) {
-    return nullptr;
+    return pdfium::span<uint8_t>();
   }
-  memset(m_pScanline.get(), 0, m_Pitch);
   uint32_t col_pos = 0;
   bool eol = false;
+  auto scan_span = pdfium::make_span(m_Scanline);
+  fxcrt::spanclr(scan_span);
   while (m_SrcOffset < m_SrcBuf.size() && !eol) {
     if (m_Operator < 128) {
       uint32_t copy_len = m_Operator + 1;
       if (col_pos + copy_len >= m_dwLineBytes) {
-        copy_len = m_dwLineBytes - col_pos;
+        copy_len =
+            pdfium::base::checked_cast<uint32_t>(m_dwLineBytes - col_pos);
         eol = true;
       }
       if (copy_len >= m_SrcBuf.size() - m_SrcOffset) {
-        copy_len = m_SrcBuf.size() - m_SrcOffset;
+        copy_len =
+            pdfium::base::checked_cast<uint32_t>(m_SrcBuf.size() - m_SrcOffset);
         m_bEOD = true;
       }
       auto copy_span = m_SrcBuf.subspan(m_SrcOffset, copy_len);
-      memcpy(m_pScanline.get() + col_pos, copy_span.data(), copy_span.size());
+      fxcrt::spancpy(scan_span.subspan(col_pos), copy_span);
       col_pos += copy_len;
       UpdateOperator((uint8_t)copy_len);
     } else if (m_Operator > 128) {
@@ -144,10 +155,11 @@ uint8_t* RLScanlineDecoder::v_GetNextLine() {
       }
       uint32_t duplicate_len = 257 - m_Operator;
       if (col_pos + duplicate_len >= m_dwLineBytes) {
-        duplicate_len = m_dwLineBytes - col_pos;
+        duplicate_len =
+            pdfium::base::checked_cast<uint32_t>(m_dwLineBytes - col_pos);
         eol = true;
       }
-      memset(m_pScanline.get() + col_pos, fill, duplicate_len);
+      fxcrt::spanset(scan_span.subspan(col_pos, duplicate_len), fill);
       col_pos += duplicate_len;
       UpdateOperator((uint8_t)duplicate_len);
     } else {
@@ -155,7 +167,11 @@ uint8_t* RLScanlineDecoder::v_GetNextLine() {
       break;
     }
   }
-  return m_pScanline.get();
+  return m_Scanline;
+}
+
+uint32_t RLScanlineDecoder::GetSrcOffset() {
+  return pdfium::base::checked_cast<uint32_t>(m_SrcOffset);
 }
 
 void RLScanlineDecoder::GetNextOperator() {
@@ -293,7 +309,7 @@ bool BasicModule::RunLengthEncode(
     out += 2;
   }
   *out = 128;
-  *dest_size = out + 1 - dest_buf->get();
+  *dest_size = pdfium::base::checked_cast<uint32_t>(out + 1 - dest_buf->get());
   return true;
 }
 
@@ -326,10 +342,8 @@ bool BasicModule::A85Encode(pdfium::span<const uint8_t> src_span,
   uint32_t pos = 0;
   uint32_t line_length = 0;
   while (src_span.size() >= 4 && pos < src_span.size() - 3) {
-    uint32_t val = ((uint32_t)(src_span[pos]) << 24) +
-                   ((uint32_t)(src_span[pos + 1]) << 16) +
-                   ((uint32_t)(src_span[pos + 2]) << 8) +
-                   (uint32_t)(src_span[pos + 3]);
+    auto val_span = src_span.subspan(pos, 4);
+    uint32_t val = FXSYS_UINT32_GET_MSBFIRST(val_span);
     pos += 4;
     if (val == 0) {  // All zero special case
       *out = 'z';
@@ -369,7 +383,7 @@ bool BasicModule::A85Encode(pdfium::span<const uint8_t> src_span,
   out[0] = '~';
   out[1] = '>';
   out += 2;
-  *dest_size = out - dest_buf->get();
+  *dest_size = pdfium::base::checked_cast<uint32_t>(out - dest_buf->get());
   return true;
 }
 

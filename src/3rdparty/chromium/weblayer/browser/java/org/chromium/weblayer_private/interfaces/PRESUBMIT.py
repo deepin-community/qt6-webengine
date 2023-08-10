@@ -15,6 +15,8 @@ import subprocess
 import sys
 import tempfile
 
+USE_PYTHON3 = True
+
 _INCOMPATIBLE_API_ERROR_STRING = """You have made an incompatible API change.
 Generally this means one of the following:
   A function has been removed.
@@ -38,7 +40,7 @@ class AidlFile:
     self.file_name = os.path.basename(self.path_in_repo)
     current_dir = self.path_in_repo
     packages = []
-    while current_dir is not '':
+    while current_dir != '':
       dir_name, base_name = os.path.split(current_dir)
       packages.append(base_name)
       if base_name == 'org':

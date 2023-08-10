@@ -5,6 +5,7 @@
 #ifndef BASE_TASK_SEQUENCE_MANAGER_THREAD_CONTROLLER_POWER_MONITOR_H_
 #define BASE_TASK_SEQUENCE_MANAGER_THREAD_CONTROLLER_POWER_MONITOR_H_
 
+#include "base/base_export.h"
 #include "base/power_monitor/power_observer.h"
 
 namespace base {
@@ -14,7 +15,7 @@ namespace internal {
 // A helper class that keeps track of the power state and handles power
 // notifications. The class register itself to the PowerMonitor and receives
 // notifications on the bound thread (see BindToCurrentThread(...)).
-class BASE_EXPORT ThreadControllerPowerMonitor : public PowerObserver {
+class BASE_EXPORT ThreadControllerPowerMonitor : public PowerSuspendObserver {
  public:
   ThreadControllerPowerMonitor();
   ~ThreadControllerPowerMonitor() override;
@@ -37,7 +38,7 @@ class BASE_EXPORT ThreadControllerPowerMonitor : public PowerObserver {
   static void OverrideUsePowerMonitorForTesting(bool use_power_monitor);
   static void ResetForTesting();
 
-  // base::PowerObserver:
+  // base::PowerSuspendObserver:
   void OnSuspend() override;
   void OnResume() override;
 

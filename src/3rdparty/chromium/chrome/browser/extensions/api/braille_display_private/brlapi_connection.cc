@@ -11,7 +11,6 @@
 #include "base/files/file_descriptor_watcher_posix.h"
 #include "base/logging.h"
 #include "base/memory/free_deleter.h"
-#include "base/stl_util.h"
 #include "base/system/sys_info.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
@@ -118,7 +117,7 @@ BrlapiConnection::ConnectResult BrlapiConnectionImpl::Connect(
   };
   if (libbrlapi_loader_->brlapi__acceptKeys(handle_.get(),
                                             brlapi_rangeType_command, extraKeys,
-                                            base::size(extraKeys)) < 0) {
+                                            std::size(extraKeys)) < 0) {
     LOG(ERROR) << "Couldn't acceptKeys: " << BrlapiStrError();
     Disconnect();
     return CONNECT_ERROR_RETRY;

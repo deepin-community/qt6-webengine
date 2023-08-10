@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # Copyright (c) 2021 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
@@ -213,7 +213,7 @@ class TclibUnittest(unittest.TestCase):
 
     self.assertEqual(
         pl.PseudoLongStringMessage(msg).GetContent(),
-        [u'\u0125_', p1, p2, u'\u0175', ' one two three four'])
+        [u'\u0125_', p1, p2, u'\u0175', ' - one two three four'])
 
     msg.AppendText('hello world')
     self.assertEqual(

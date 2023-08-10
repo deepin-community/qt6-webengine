@@ -5,9 +5,10 @@
 #include "cc/metrics/compositor_timing_history.h"
 
 #include "base/logging.h"
+#include "base/memory/raw_ptr.h"
+#include "base/time/time.h"
 #include "cc/debug/rendering_stats_instrumentation.h"
 #include "cc/metrics/dropped_frame_counter.h"
-#include "cc/test/fake_compositor_frame_reporting_controller.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace cc {
@@ -17,14 +18,9 @@ class CompositorTimingHistoryTest;
 
 class TestCompositorTimingHistory : public CompositorTimingHistory {
  public:
-  TestCompositorTimingHistory(
-      CompositorTimingHistoryTest* test,
-      RenderingStatsInstrumentation* rendering_stats,
-      CompositorFrameReportingController* reporting_controller)
-      : CompositorTimingHistory(false,
-                                RENDERER_UMA,
-                                rendering_stats,
-                                reporting_controller),
+  TestCompositorTimingHistory(CompositorTimingHistoryTest* test,
+                              RenderingStatsInstrumentation* rendering_stats)
+      : CompositorTimingHistory(false, RENDERER_UMA, rendering_stats),
         test_(test) {}
 
   TestCompositorTimingHistory(const TestCompositorTimingHistory&) = delete;
@@ -34,21 +30,16 @@ class TestCompositorTimingHistory : public CompositorTimingHistory {
  protected:
   base::TimeTicks Now() const override;
 
-  CompositorTimingHistoryTest* test_;
+  raw_ptr<CompositorTimingHistoryTest> test_;
 };
 
 class CompositorTimingHistoryTest : public testing::Test {
  public:
   CompositorTimingHistoryTest()
       : rendering_stats_(RenderingStatsInstrumentation::Create()),
-        reporting_controller_(
-            std::make_unique<FakeCompositorFrameReportingController>()),
-        timing_history_(this,
-                        rendering_stats_.get(),
-                        reporting_controller_.get()) {
-    AdvanceNowBy(base::TimeDelta::FromMilliseconds(1));
+        timing_history_(this, rendering_stats_.get()) {
+    AdvanceNowBy(base::Milliseconds(1));
     timing_history_.SetRecordingEnabled(true);
-    reporting_controller_->SetDroppedFrameCounter(&dropped_counter);
   }
 
   void AdvanceNowBy(base::TimeDelta delta) { now_ += delta; }
@@ -57,7 +48,6 @@ class CompositorTimingHistoryTest : public testing::Test {
 
  protected:
   std::unique_ptr<RenderingStatsInstrumentation> rendering_stats_;
-  std::unique_ptr<CompositorFrameReportingController> reporting_controller_;
   TestCompositorTimingHistory timing_history_;
   base::TimeTicks now_;
   uint64_t sequence_number = 0;
@@ -78,28 +68,26 @@ base::TimeTicks TestCompositorTimingHistory::Now() const {
 }
 
 TEST_F(CompositorTimingHistoryTest, AllSequential_Commit) {
-  base::TimeDelta one_second = base::TimeDelta::FromSeconds(1);
+  base::TimeDelta one_second = base::Seconds(1);
 
   // Critical BeginMainFrames are faster than non critical ones,
   // as expected.
-  base::TimeDelta begin_main_frame_queue_duration =
-      base::TimeDelta::FromMilliseconds(1);
+  base::TimeDelta begin_main_frame_queue_duration = base::Milliseconds(1);
   base::TimeDelta begin_main_frame_start_to_ready_to_commit_duration =
-      base::TimeDelta::FromMilliseconds(1);
-  base::TimeDelta prepare_tiles_duration = base::TimeDelta::FromMilliseconds(2);
+      base::Milliseconds(1);
+  base::TimeDelta prepare_tiles_duration = base::Milliseconds(2);
   base::TimeDelta prepare_tiles_end_to_ready_to_activate_duration =
-      base::TimeDelta::FromMilliseconds(1);
-  base::TimeDelta commit_to_ready_to_activate_duration =
-      base::TimeDelta::FromMilliseconds(3);
-  base::TimeDelta commit_duration = base::TimeDelta::FromMilliseconds(1);
-  base::TimeDelta activate_duration = base::TimeDelta::FromMilliseconds(4);
-  base::TimeDelta draw_duration = base::TimeDelta::FromMilliseconds(5);
+      base::Milliseconds(1);
+  base::TimeDelta commit_to_ready_to_activate_duration = base::Milliseconds(3);
+  base::TimeDelta commit_duration = base::Milliseconds(1);
+  base::TimeDelta activate_duration = base::Milliseconds(4);
+  base::TimeDelta draw_duration = base::Milliseconds(5);
 
   timing_history_.WillBeginMainFrame(GetFakeBeginFrameArg());
   AdvanceNowBy(begin_main_frame_queue_duration);
   timing_history_.BeginMainFrameStarted(Now());
   AdvanceNowBy(begin_main_frame_start_to_ready_to_commit_duration);
-  timing_history_.NotifyReadyToCommit(nullptr);
+  timing_history_.NotifyReadyToCommit();
   timing_history_.WillCommit();
   AdvanceNowBy(commit_duration);
   timing_history_.DidCommit();
@@ -137,17 +125,16 @@ TEST_F(CompositorTimingHistoryTest, AllSequential_Commit) {
 }
 
 TEST_F(CompositorTimingHistoryTest, AllSequential_BeginMainFrameAborted) {
-  base::TimeDelta one_second = base::TimeDelta::FromSeconds(1);
+  base::TimeDelta one_second = base::Seconds(1);
 
-  base::TimeDelta begin_main_frame_queue_duration =
-      base::TimeDelta::FromMilliseconds(1);
+  base::TimeDelta begin_main_frame_queue_duration = base::Milliseconds(1);
   base::TimeDelta begin_main_frame_start_to_ready_to_commit_duration =
-      base::TimeDelta::FromMilliseconds(1);
-  base::TimeDelta prepare_tiles_duration = base::TimeDelta::FromMilliseconds(2);
+      base::Milliseconds(1);
+  base::TimeDelta prepare_tiles_duration = base::Milliseconds(2);
   base::TimeDelta prepare_tiles_end_to_ready_to_activate_duration =
-      base::TimeDelta::FromMilliseconds(1);
-  base::TimeDelta activate_duration = base::TimeDelta::FromMilliseconds(4);
-  base::TimeDelta draw_duration = base::TimeDelta::FromMilliseconds(5);
+      base::Milliseconds(1);
+  base::TimeDelta activate_duration = base::Milliseconds(4);
+  base::TimeDelta draw_duration = base::Milliseconds(5);
 
   viz::BeginFrameArgs args_ = GetFakeBeginFrameArg(false);
   timing_history_.WillBeginMainFrame(args_);
@@ -155,8 +142,7 @@ TEST_F(CompositorTimingHistoryTest, AllSequential_BeginMainFrameAborted) {
   timing_history_.BeginMainFrameStarted(Now());
   AdvanceNowBy(begin_main_frame_start_to_ready_to_commit_duration);
   // BeginMainFrameAborted counts as a commit complete.
-  timing_history_.BeginMainFrameAborted(
-      args_.frame_id, CommitEarlyOutReason::ABORTED_DEFERRED_COMMIT);
+  timing_history_.BeginMainFrameAborted();
   timing_history_.WillPrepareTiles();
   AdvanceNowBy(prepare_tiles_duration);
   timing_history_.DidPrepareTiles();
@@ -186,27 +172,25 @@ TEST_F(CompositorTimingHistoryTest, AllSequential_BeginMainFrameAborted) {
 TEST_F(CompositorTimingHistoryTest, BeginMainFrame_CriticalFaster) {
   // Critical BeginMainFrames are faster than non critical ones.
   base::TimeDelta begin_main_frame_queue_duration_critical =
-      base::TimeDelta::FromMilliseconds(1);
+      base::Milliseconds(1);
   base::TimeDelta begin_main_frame_queue_duration_not_critical =
-      base::TimeDelta::FromMilliseconds(2);
+      base::Milliseconds(2);
   base::TimeDelta begin_main_frame_start_to_ready_to_commit_duration =
-      base::TimeDelta::FromMilliseconds(1);
+      base::Milliseconds(1);
 
   viz::BeginFrameArgs args_ = GetFakeBeginFrameArg();
   timing_history_.WillBeginMainFrame(args_);
   AdvanceNowBy(begin_main_frame_queue_duration_critical);
   timing_history_.BeginMainFrameStarted(Now());
   AdvanceNowBy(begin_main_frame_start_to_ready_to_commit_duration);
-  timing_history_.BeginMainFrameAborted(
-      args_.frame_id, CommitEarlyOutReason::ABORTED_DEFERRED_COMMIT);
+  timing_history_.BeginMainFrameAborted();
 
   args_ = GetFakeBeginFrameArg(false);
   timing_history_.WillBeginMainFrame(args_);
   AdvanceNowBy(begin_main_frame_queue_duration_not_critical);
   timing_history_.BeginMainFrameStarted(Now());
   AdvanceNowBy(begin_main_frame_start_to_ready_to_commit_duration);
-  timing_history_.BeginMainFrameAborted(
-      args_.frame_id, CommitEarlyOutReason::ABORTED_DEFERRED_COMMIT);
+  timing_history_.BeginMainFrameAborted();
 
   // Since the critical BeginMainFrames are faster than non critical ones,
   // the expectations are straightforward.
@@ -221,11 +205,11 @@ TEST_F(CompositorTimingHistoryTest, BeginMainFrames_OldCriticalSlower) {
   // which is unexpected, but could occur if one type of frame
   // hasn't been sent for a significant amount of time.
   base::TimeDelta begin_main_frame_queue_duration_critical =
-      base::TimeDelta::FromMilliseconds(2);
+      base::Milliseconds(2);
   base::TimeDelta begin_main_frame_queue_duration_not_critical =
-      base::TimeDelta::FromMilliseconds(1);
+      base::Milliseconds(1);
   base::TimeDelta begin_main_frame_start_to_ready_to_commit_duration =
-      base::TimeDelta::FromMilliseconds(1);
+      base::Milliseconds(1);
 
   // A single critical frame that is slow.
   viz::BeginFrameArgs args_ = GetFakeBeginFrameArg();
@@ -234,8 +218,7 @@ TEST_F(CompositorTimingHistoryTest, BeginMainFrames_OldCriticalSlower) {
   timing_history_.BeginMainFrameStarted(Now());
   AdvanceNowBy(begin_main_frame_start_to_ready_to_commit_duration);
   // BeginMainFrameAborted counts as a commit complete.
-  timing_history_.BeginMainFrameAborted(
-      args_.frame_id, CommitEarlyOutReason::ABORTED_DEFERRED_COMMIT);
+  timing_history_.BeginMainFrameAborted();
 
   // A bunch of faster non critical frames that are newer.
   for (int i = 0; i < 100; i++) {
@@ -245,8 +228,7 @@ TEST_F(CompositorTimingHistoryTest, BeginMainFrames_OldCriticalSlower) {
     timing_history_.BeginMainFrameStarted(Now());
     AdvanceNowBy(begin_main_frame_start_to_ready_to_commit_duration);
     // BeginMainFrameAborted counts as a commit complete.
-    timing_history_.BeginMainFrameAborted(
-        args_.frame_id, CommitEarlyOutReason::ABORTED_DEFERRED_COMMIT);
+    timing_history_.BeginMainFrameAborted();
   }
 
   // Recent fast non critical BeginMainFrames should result in the
@@ -262,11 +244,11 @@ TEST_F(CompositorTimingHistoryTest, BeginMainFrames_NewCriticalSlower) {
   // which is unexpected, but could occur if one type of frame
   // hasn't been sent for a significant amount of time.
   base::TimeDelta begin_main_frame_queue_duration_critical =
-      base::TimeDelta::FromMilliseconds(2);
+      base::Milliseconds(2);
   base::TimeDelta begin_main_frame_queue_duration_not_critical =
-      base::TimeDelta::FromMilliseconds(1);
+      base::Milliseconds(1);
   base::TimeDelta begin_main_frame_start_to_ready_to_commit_duration =
-      base::TimeDelta::FromMilliseconds(1);
+      base::Milliseconds(1);
 
   // A single non critical frame that is fast.
   viz::BeginFrameArgs args_ = GetFakeBeginFrameArg(false);
@@ -274,8 +256,7 @@ TEST_F(CompositorTimingHistoryTest, BeginMainFrames_NewCriticalSlower) {
   AdvanceNowBy(begin_main_frame_queue_duration_not_critical);
   timing_history_.BeginMainFrameStarted(Now());
   AdvanceNowBy(begin_main_frame_start_to_ready_to_commit_duration);
-  timing_history_.BeginMainFrameAborted(
-      args_.frame_id, CommitEarlyOutReason::ABORTED_DEFERRED_COMMIT);
+  timing_history_.BeginMainFrameAborted();
 
   // A bunch of slower critical frames that are newer.
   for (int i = 0; i < 100; i++) {
@@ -284,8 +265,7 @@ TEST_F(CompositorTimingHistoryTest, BeginMainFrames_NewCriticalSlower) {
     AdvanceNowBy(begin_main_frame_queue_duration_critical);
     timing_history_.BeginMainFrameStarted(Now());
     AdvanceNowBy(begin_main_frame_start_to_ready_to_commit_duration);
-    timing_history_.BeginMainFrameAborted(
-        args_.frame_id, CommitEarlyOutReason::ABORTED_DEFERRED_COMMIT);
+    timing_history_.BeginMainFrameAborted();
   }
 
   // Recent slow critical BeginMainFrames should result in the
@@ -294,35 +274,6 @@ TEST_F(CompositorTimingHistoryTest, BeginMainFrames_NewCriticalSlower) {
             timing_history_.BeginMainFrameQueueDurationCriticalEstimate());
   EXPECT_EQ(begin_main_frame_queue_duration_critical,
             timing_history_.BeginMainFrameQueueDurationNotCriticalEstimate());
-}
-
-TEST_F(CompositorTimingHistoryTest, DroppedFrameCountOnMainFrameAbort) {
-  DroppedFrameCounter c;
-  reporting_controller_->SetDroppedFrameCounter(&c);
-
-  // Start a few begin-main-frames, but abort the main-frames due to no damage.
-  for (int i = 0; i < 5; ++i) {
-    auto args = GetFakeBeginFrameArg(false);
-    timing_history_.WillBeginMainFrame(args);
-    timing_history_.BeginMainFrameStarted(Now());
-    timing_history_.BeginMainFrameAborted(
-        args.frame_id, CommitEarlyOutReason::FINISHED_NO_UPDATES);
-  }
-  EXPECT_EQ(0u, c.total_compositor_dropped());
-
-  // Start a few begin-main-frames, but abort the main-frames due to no damage.
-  for (int i = 0; i < 5; ++i) {
-    auto args = GetFakeBeginFrameArg(false);
-    timing_history_.WillBeginMainFrame(args);
-    timing_history_.BeginMainFrameStarted(Now());
-    timing_history_.BeginMainFrameAborted(
-        args.frame_id, CommitEarlyOutReason::ABORTED_DEFERRED_COMMIT);
-  }
-  timing_history_.WillBeginMainFrame(GetFakeBeginFrameArg());
-  EXPECT_EQ(5u, c.total_compositor_dropped());
-
-  reporting_controller_->SetDroppedFrameCounter(nullptr);
-  reporting_controller_ = nullptr;
 }
 
 }  // namespace

@@ -8,16 +8,18 @@
  */
 
 
+import type * as Protocol from './protocol.js'
+
 /**
  * API generated from Protocol commands and events.
  */
 declare namespace ProtocolProxyApi {
+  export type ProtocolDomainName = keyof ProtocolApi;
+
   export interface ProtocolApi {
     Accessibility: AccessibilityApi;
 
     Animation: AnimationApi;
-
-    ApplicationCache: ApplicationCacheApi;
 
     Audits: AuditsApi;
 
@@ -34,6 +36,8 @@ declare namespace ProtocolProxyApi {
     DOM: DOMApi;
 
     DOMDebugger: DOMDebuggerApi;
+
+    EventBreakpoints: EventBreakpointsApi;
 
     DOMSnapshot: DOMSnapshotApi;
 
@@ -104,6 +108,98 @@ declare namespace ProtocolProxyApi {
     Schema: SchemaApi;
   }
 
+  export interface ProtocolDispatchers {
+    Accessibility: AccessibilityDispatcher;
+
+    Animation: AnimationDispatcher;
+
+    Audits: AuditsDispatcher;
+
+    BackgroundService: BackgroundServiceDispatcher;
+
+    Browser: BrowserDispatcher;
+
+    CSS: CSSDispatcher;
+
+    CacheStorage: CacheStorageDispatcher;
+
+    Cast: CastDispatcher;
+
+    DOM: DOMDispatcher;
+
+    DOMDebugger: DOMDebuggerDispatcher;
+
+    EventBreakpoints: EventBreakpointsDispatcher;
+
+    DOMSnapshot: DOMSnapshotDispatcher;
+
+    DOMStorage: DOMStorageDispatcher;
+
+    Database: DatabaseDispatcher;
+
+    DeviceOrientation: DeviceOrientationDispatcher;
+
+    Emulation: EmulationDispatcher;
+
+    HeadlessExperimental: HeadlessExperimentalDispatcher;
+
+    IO: IODispatcher;
+
+    IndexedDB: IndexedDBDispatcher;
+
+    Input: InputDispatcher;
+
+    Inspector: InspectorDispatcher;
+
+    LayerTree: LayerTreeDispatcher;
+
+    Log: LogDispatcher;
+
+    Memory: MemoryDispatcher;
+
+    Network: NetworkDispatcher;
+
+    Overlay: OverlayDispatcher;
+
+    Page: PageDispatcher;
+
+    Performance: PerformanceDispatcher;
+
+    PerformanceTimeline: PerformanceTimelineDispatcher;
+
+    Security: SecurityDispatcher;
+
+    ServiceWorker: ServiceWorkerDispatcher;
+
+    Storage: StorageDispatcher;
+
+    SystemInfo: SystemInfoDispatcher;
+
+    Target: TargetDispatcher;
+
+    Tethering: TetheringDispatcher;
+
+    Tracing: TracingDispatcher;
+
+    Fetch: FetchDispatcher;
+
+    WebAudio: WebAudioDispatcher;
+
+    WebAuthn: WebAuthnDispatcher;
+
+    Media: MediaDispatcher;
+
+    Debugger: DebuggerDispatcher;
+
+    HeapProfiler: HeapProfilerDispatcher;
+
+    Profiler: ProfilerDispatcher;
+
+    Runtime: RuntimeDispatcher;
+
+    Schema: SchemaDispatcher;
+  }
+
 
   export interface AccessibilityApi {
     /**
@@ -130,6 +226,20 @@ declare namespace ProtocolProxyApi {
         Promise<Protocol.Accessibility.GetFullAXTreeResponse>;
 
     /**
+     * Fetches the root node.
+     * Requires `enable()` to have been called previously.
+     */
+    invoke_getRootAXNode(params: Protocol.Accessibility.GetRootAXNodeRequest):
+        Promise<Protocol.Accessibility.GetRootAXNodeResponse>;
+
+    /**
+     * Fetches a node and all ancestors up to and including the root.
+     * Requires `enable()` to have been called previously.
+     */
+    invoke_getAXNodeAndAncestors(params: Protocol.Accessibility.GetAXNodeAndAncestorsRequest):
+        Promise<Protocol.Accessibility.GetAXNodeAndAncestorsResponse>;
+
+    /**
      * Fetches a particular accessibility node by AXNodeId.
      * Requires `enable()` to have been called previously.
      */
@@ -146,7 +256,18 @@ declare namespace ProtocolProxyApi {
     invoke_queryAXTree(params: Protocol.Accessibility.QueryAXTreeRequest):
         Promise<Protocol.Accessibility.QueryAXTreeResponse>;
   }
-  export interface AccessibilityDispatcher {}
+  export interface AccessibilityDispatcher {
+    /**
+     * The loadComplete event mirrors the load complete event sent by the browser to assistive
+     * technology when the web page has finished loading.
+     */
+    loadComplete(params: Protocol.Accessibility.LoadCompleteEvent): void;
+
+    /**
+     * The nodesUpdated event is sent every time a previously requested node has changed the in tree.
+     */
+    nodesUpdated(params: Protocol.Accessibility.NodesUpdatedEvent): void;
+  }
 
   export interface AnimationApi {
     /**
@@ -221,36 +342,6 @@ declare namespace ProtocolProxyApi {
     animationStarted(params: Protocol.Animation.AnimationStartedEvent): void;
   }
 
-  export interface ApplicationCacheApi {
-    /**
-     * Enables application cache domain notifications.
-     */
-    invoke_enable(): Promise<Protocol.ProtocolResponseWithError>;
-
-    /**
-     * Returns relevant application cache data for the document in given frame.
-     */
-    invoke_getApplicationCacheForFrame(params: Protocol.ApplicationCache.GetApplicationCacheForFrameRequest):
-        Promise<Protocol.ApplicationCache.GetApplicationCacheForFrameResponse>;
-
-    /**
-     * Returns array of frame identifiers with manifest urls for each frame containing a document
-     * associated with some application cache.
-     */
-    invoke_getFramesWithManifests(): Promise<Protocol.ApplicationCache.GetFramesWithManifestsResponse>;
-
-    /**
-     * Returns manifest URL for document in the given frame.
-     */
-    invoke_getManifestForFrame(params: Protocol.ApplicationCache.GetManifestForFrameRequest):
-        Promise<Protocol.ApplicationCache.GetManifestForFrameResponse>;
-  }
-  export interface ApplicationCacheDispatcher {
-    applicationCacheStatusUpdated(params: Protocol.ApplicationCache.ApplicationCacheStatusUpdatedEvent): void;
-
-    networkStateUpdated(params: Protocol.ApplicationCache.NetworkStateUpdatedEvent): void;
-  }
-
   export interface AuditsApi {
     /**
      * Returns the response body and size if it were re-encoded with the specified settings. Only
@@ -274,7 +365,7 @@ declare namespace ProtocolProxyApi {
      * Runs the contrast check for the target page. Found issues are reported
      * using Audits.issueAdded event.
      */
-    invoke_checkContrast(): Promise<Protocol.ProtocolResponseWithError>;
+    invoke_checkContrast(params: Protocol.Audits.CheckContrastRequest): Promise<Protocol.ProtocolResponseWithError>;
   }
   export interface AuditsDispatcher {
     issueAdded(params: Protocol.Audits.IssueAddedEvent): void;
@@ -343,6 +434,11 @@ declare namespace ProtocolProxyApi {
         Promise<Protocol.ProtocolResponseWithError>;
 
     /**
+     * Cancel a download if in progress
+     */
+    invoke_cancelDownload(params: Protocol.Browser.CancelDownloadRequest): Promise<Protocol.ProtocolResponseWithError>;
+
+    /**
      * Close browser gracefully.
      */
     invoke_close(): Promise<Protocol.ProtocolResponseWithError>;
@@ -408,7 +504,17 @@ declare namespace ProtocolProxyApi {
     invoke_executeBrowserCommand(params: Protocol.Browser.ExecuteBrowserCommandRequest):
         Promise<Protocol.ProtocolResponseWithError>;
   }
-  export interface BrowserDispatcher {}
+  export interface BrowserDispatcher {
+    /**
+     * Fired when page is about to start a download.
+     */
+    downloadWillBegin(params: Protocol.Browser.DownloadWillBeginEvent): void;
+
+    /**
+     * Fired when download makes progress. Last call has |done| == true.
+     */
+    downloadProgress(params: Protocol.Browser.DownloadProgressEvent): void;
+  }
 
   export interface CSSApi {
     /**
@@ -487,6 +593,15 @@ declare namespace ProtocolProxyApi {
         Promise<Protocol.CSS.GetStyleSheetTextResponse>;
 
     /**
+     * Returns all layers parsed by the rendering engine for the tree scope of a node.
+     * Given a DOM element identified by nodeId, getLayersForNode returns the root
+     * layer for the nearest ancestor document or shadow root. The layer root contains
+     * the full layer tree for the tree scope and their ordering.
+     */
+    invoke_getLayersForNode(params: Protocol.CSS.GetLayersForNodeRequest):
+        Promise<Protocol.CSS.GetLayersForNodeResponse>;
+
+    /**
      * Starts tracking the given computed styles for updates. The specified array of properties
      * replaces the one previously specified. Pass empty array to disable tracking.
      * Use takeComputedStyleUpdates to retrieve the list of nodes that had properties modified.
@@ -518,6 +633,17 @@ declare namespace ProtocolProxyApi {
      * Modifies the rule selector.
      */
     invoke_setMediaText(params: Protocol.CSS.SetMediaTextRequest): Promise<Protocol.CSS.SetMediaTextResponse>;
+
+    /**
+     * Modifies the expression of a container query.
+     */
+    invoke_setContainerQueryText(params: Protocol.CSS.SetContainerQueryTextRequest):
+        Promise<Protocol.CSS.SetContainerQueryTextResponse>;
+
+    /**
+     * Modifies the expression of a supports at-rule.
+     */
+    invoke_setSupportsText(params: Protocol.CSS.SetSupportsTextRequest): Promise<Protocol.CSS.SetSupportsTextResponse>;
 
     /**
      * Modifies the rule selector.
@@ -640,6 +766,12 @@ declare namespace ProtocolProxyApi {
     invoke_setSinkToUse(params: Protocol.Cast.SetSinkToUseRequest): Promise<Protocol.ProtocolResponseWithError>;
 
     /**
+     * Starts mirroring the desktop to the sink.
+     */
+    invoke_startDesktopMirroring(params: Protocol.Cast.StartDesktopMirroringRequest):
+        Promise<Protocol.ProtocolResponseWithError>;
+
+    /**
      * Starts mirroring the tab to the sink.
      */
     invoke_startTabMirroring(params: Protocol.Cast.StartTabMirroringRequest):
@@ -706,7 +838,7 @@ declare namespace ProtocolProxyApi {
     /**
      * Enables DOM agent for the given page.
      */
-    invoke_enable(): Promise<Protocol.ProtocolResponseWithError>;
+    invoke_enable(params: Protocol.DOM.EnableRequest): Promise<Protocol.ProtocolResponseWithError>;
 
     /**
      * Focuses the given element.
@@ -929,6 +1061,21 @@ declare namespace ProtocolProxyApi {
      * Returns iframe node that owns iframe with the given domain.
      */
     invoke_getFrameOwner(params: Protocol.DOM.GetFrameOwnerRequest): Promise<Protocol.DOM.GetFrameOwnerResponse>;
+
+    /**
+     * Returns the container of the given node based on container query conditions.
+     * If containerName is given, it will find the nearest container with a matching name;
+     * otherwise it will find the nearest container regardless of its container name.
+     */
+    invoke_getContainerForNode(params: Protocol.DOM.GetContainerForNodeRequest):
+        Promise<Protocol.DOM.GetContainerForNodeResponse>;
+
+    /**
+     * Returns the descendants of a container query container that have
+     * container queries against this container.
+     */
+    invoke_getQueryingDescendantsForContainer(params: Protocol.DOM.GetQueryingDescendantsForContainerRequest):
+        Promise<Protocol.DOM.GetQueryingDescendantsForContainerResponse>;
   }
   export interface DOMDispatcher {
     /**
@@ -962,7 +1109,7 @@ declare namespace ProtocolProxyApi {
     childNodeRemoved(params: Protocol.DOM.ChildNodeRemovedEvent): void;
 
     /**
-     * Called when distrubution is changed.
+     * Called when distribution is changed.
      */
     distributedNodesUpdated(params: Protocol.DOM.DistributedNodesUpdatedEvent): void;
 
@@ -1065,6 +1212,21 @@ declare namespace ProtocolProxyApi {
         Promise<Protocol.ProtocolResponseWithError>;
   }
   export interface DOMDebuggerDispatcher {}
+
+  export interface EventBreakpointsApi {
+    /**
+     * Sets breakpoint on particular native event.
+     */
+    invoke_setInstrumentationBreakpoint(params: Protocol.EventBreakpoints.SetInstrumentationBreakpointRequest):
+        Promise<Protocol.ProtocolResponseWithError>;
+
+    /**
+     * Removes breakpoint on particular native event.
+     */
+    invoke_removeInstrumentationBreakpoint(params: Protocol.EventBreakpoints.RemoveInstrumentationBreakpointRequest):
+        Promise<Protocol.ProtocolResponseWithError>;
+  }
+  export interface EventBreakpointsDispatcher {}
 
   export interface DOMSnapshotApi {
     /**
@@ -1170,12 +1332,12 @@ declare namespace ProtocolProxyApi {
     invoke_canEmulate(): Promise<Protocol.Emulation.CanEmulateResponse>;
 
     /**
-     * Clears the overriden device metrics.
+     * Clears the overridden device metrics.
      */
     invoke_clearDeviceMetricsOverride(): Promise<Protocol.ProtocolResponseWithError>;
 
     /**
-     * Clears the overriden Geolocation Position and Error.
+     * Clears the overridden Geolocation Position and Error.
      */
     invoke_clearGeolocationOverride(): Promise<Protocol.ProtocolResponseWithError>;
 
@@ -1188,6 +1350,12 @@ declare namespace ProtocolProxyApi {
      * Enables or disables simulating a focused and active page.
      */
     invoke_setFocusEmulationEnabled(params: Protocol.Emulation.SetFocusEmulationEnabledRequest):
+        Promise<Protocol.ProtocolResponseWithError>;
+
+    /**
+     * Automatically render all web contents using a dark theme.
+     */
+    invoke_setAutoDarkModeOverride(params: Protocol.Emulation.SetAutoDarkModeOverrideRequest):
         Promise<Protocol.ProtocolResponseWithError>;
 
     /**
@@ -1309,6 +1477,12 @@ declare namespace ProtocolProxyApi {
      */
     invoke_setUserAgentOverride(params: Protocol.Emulation.SetUserAgentOverrideRequest):
         Promise<Protocol.ProtocolResponseWithError>;
+
+    /**
+     * Allows overriding the automation flag.
+     */
+    invoke_setAutomationOverride(params: Protocol.Emulation.SetAutomationOverrideRequest):
+        Promise<Protocol.ProtocolResponseWithError>;
   }
   export interface EmulationDispatcher {
     /**
@@ -1425,6 +1599,12 @@ declare namespace ProtocolProxyApi {
   // eslint-disable-next-line @typescript-eslint/interface-name-prefix
   export interface InputApi {
     /**
+     * Dispatches a drag event into the page.
+     */
+    invoke_dispatchDragEvent(params: Protocol.Input.DispatchDragEventRequest):
+        Promise<Protocol.ProtocolResponseWithError>;
+
+    /**
      * Dispatches a key event to the page.
      */
     invoke_dispatchKeyEvent(params: Protocol.Input.DispatchKeyEventRequest):
@@ -1435,6 +1615,14 @@ declare namespace ProtocolProxyApi {
      * for example an emoji keyboard or an IME.
      */
     invoke_insertText(params: Protocol.Input.InsertTextRequest): Promise<Protocol.ProtocolResponseWithError>;
+
+    /**
+     * This method sets the current candidate text for ime.
+     * Use imeCommitComposition to commit the final text.
+     * Use imeSetComposition with empty string as text to cancel composition.
+     */
+    invoke_imeSetComposition(params: Protocol.Input.ImeSetCompositionRequest):
+        Promise<Protocol.ProtocolResponseWithError>;
 
     /**
      * Dispatches a mouse event to the page.
@@ -1461,6 +1649,13 @@ declare namespace ProtocolProxyApi {
         Promise<Protocol.ProtocolResponseWithError>;
 
     /**
+     * Prevents default drag and drop behavior and instead emits `Input.dragIntercepted` events.
+     * Drag and drop behavior can be directly controlled via `Input.dispatchDragEvent`.
+     */
+    invoke_setInterceptDrags(params: Protocol.Input.SetInterceptDragsRequest):
+        Promise<Protocol.ProtocolResponseWithError>;
+
+    /**
      * Synthesizes a pinch gesture over a time period by issuing appropriate touch events.
      */
     invoke_synthesizePinchGesture(params: Protocol.Input.SynthesizePinchGestureRequest):
@@ -1478,7 +1673,13 @@ declare namespace ProtocolProxyApi {
     invoke_synthesizeTapGesture(params: Protocol.Input.SynthesizeTapGestureRequest):
         Promise<Protocol.ProtocolResponseWithError>;
   }
-  export interface InputDispatcher {}
+  export interface InputDispatcher {
+    /**
+     * Emitted only when `Input.setInterceptDrags` is enabled. Use this data with `Input.dispatchDragEvent` to
+     * restore normal drag and drop behavior.
+     */
+    dragIntercepted(params: Protocol.Input.DragInterceptedEvent): void;
+  }
 
   // eslint thinks this is us prefixing our interfaces but it's not!
   // eslint-disable-next-line @typescript-eslint/interface-name-prefix
@@ -1655,6 +1856,17 @@ declare namespace ProtocolProxyApi {
 
   export interface NetworkApi {
     /**
+     * Sets a list of content encodings that will be accepted. Empty list means no encoding is accepted.
+     */
+    invoke_setAcceptedEncodings(params: Protocol.Network.SetAcceptedEncodingsRequest):
+        Promise<Protocol.ProtocolResponseWithError>;
+
+    /**
+     * Clears accepted encodings set by setAcceptedEncodings
+     */
+    invoke_clearAcceptedEncodingsOverride(): Promise<Protocol.ProtocolResponseWithError>;
+
+    /**
      * Tells whether clearing browser cache is supported.
      */
     invoke_canClearBrowserCache(): Promise<Protocol.Network.CanClearBrowserCacheResponse>;
@@ -1797,12 +2009,6 @@ declare namespace ProtocolProxyApi {
     invoke_setCookies(params: Protocol.Network.SetCookiesRequest): Promise<Protocol.ProtocolResponseWithError>;
 
     /**
-     * For testing.
-     */
-    invoke_setDataSizeLimitsForTest(params: Protocol.Network.SetDataSizeLimitsForTestRequest):
-        Promise<Protocol.ProtocolResponseWithError>;
-
-    /**
      * Specifies whether to always send extra HTTP headers with the requests from this page.
      */
     invoke_setExtraHTTPHeaders(params: Protocol.Network.SetExtraHTTPHeadersRequest):
@@ -1832,6 +2038,13 @@ declare namespace ProtocolProxyApi {
      */
     invoke_getSecurityIsolationStatus(params: Protocol.Network.GetSecurityIsolationStatusRequest):
         Promise<Protocol.Network.GetSecurityIsolationStatusResponse>;
+
+    /**
+     * Enables tracking for the Reporting API, events generated by the Reporting API will now be delivered to the client.
+     * Enabling triggers 'reportingApiReportAdded' for all existing reports.
+     */
+    invoke_enableReportingApi(params: Protocol.Network.EnableReportingApiRequest):
+        Promise<Protocol.ProtocolResponseWithError>;
 
     /**
      * Fetches the resource and returns the content.
@@ -1964,6 +2177,39 @@ declare namespace ProtocolProxyApi {
      * or after the response was received.
      */
     trustTokenOperationDone(params: Protocol.Network.TrustTokenOperationDoneEvent): void;
+
+    /**
+     * Fired once when parsing the .wbn file has succeeded.
+     * The event contains the information about the web bundle contents.
+     */
+    subresourceWebBundleMetadataReceived(params: Protocol.Network.SubresourceWebBundleMetadataReceivedEvent): void;
+
+    /**
+     * Fired once when parsing the .wbn file has failed.
+     */
+    subresourceWebBundleMetadataError(params: Protocol.Network.SubresourceWebBundleMetadataErrorEvent): void;
+
+    /**
+     * Fired when handling requests for resources within a .wbn file.
+     * Note: this will only be fired for resources that are requested by the webpage.
+     */
+    subresourceWebBundleInnerResponseParsed(params: Protocol.Network.SubresourceWebBundleInnerResponseParsedEvent):
+        void;
+
+    /**
+     * Fired when request for resources within a .wbn file failed.
+     */
+    subresourceWebBundleInnerResponseError(params: Protocol.Network.SubresourceWebBundleInnerResponseErrorEvent): void;
+
+    /**
+     * Is sent whenever a new report is added.
+     * And after 'enableReportingApi' for all existing reports.
+     */
+    reportingApiReportAdded(params: Protocol.Network.ReportingApiReportAddedEvent): void;
+
+    reportingApiReportUpdated(params: Protocol.Network.ReportingApiReportUpdatedEvent): void;
+
+    reportingApiEndpointsChangedForOrigin(params: Protocol.Network.ReportingApiEndpointsChangedForOriginEvent): void;
   }
 
   export interface OverlayApi {
@@ -2002,6 +2248,9 @@ declare namespace ProtocolProxyApi {
 
     /**
      * Highlights owner element of the frame with given id.
+     * Deprecated: Doesn't work reliablity and cannot be fixed due to process
+     * separatation (the owner node might be in a different process). Determine
+     * the owner node in the client and use highlightNode.
      */
     invoke_highlightFrame(params: Protocol.Overlay.HighlightFrameRequest): Promise<Protocol.ProtocolResponseWithError>;
 
@@ -2064,6 +2313,12 @@ declare namespace ProtocolProxyApi {
     invoke_setShowFlexOverlays(params: Protocol.Overlay.SetShowFlexOverlaysRequest):
         Promise<Protocol.ProtocolResponseWithError>;
 
+    invoke_setShowScrollSnapOverlays(params: Protocol.Overlay.SetShowScrollSnapOverlaysRequest):
+        Promise<Protocol.ProtocolResponseWithError>;
+
+    invoke_setShowContainerQueryOverlays(params: Protocol.Overlay.SetShowContainerQueryOverlaysRequest):
+        Promise<Protocol.ProtocolResponseWithError>;
+
     /**
      * Requests that backend shows paint rectangles
      */
@@ -2083,7 +2338,7 @@ declare namespace ProtocolProxyApi {
         Promise<Protocol.ProtocolResponseWithError>;
 
     /**
-     * Requests that backend shows hit-test borders on layers
+     * Deprecated, no longer has any effect.
      */
     invoke_setShowHitTestBorders(params: Protocol.Overlay.SetShowHitTestBordersRequest):
         Promise<Protocol.ProtocolResponseWithError>;
@@ -2104,6 +2359,12 @@ declare namespace ProtocolProxyApi {
      * Add a dual screen device hinge
      */
     invoke_setShowHinge(params: Protocol.Overlay.SetShowHingeRequest): Promise<Protocol.ProtocolResponseWithError>;
+
+    /**
+     * Show elements in isolation mode with overlays.
+     */
+    invoke_setShowIsolatedElements(params: Protocol.Overlay.SetShowIsolatedElementsRequest):
+        Promise<Protocol.ProtocolResponseWithError>;
   }
   export interface OverlayDispatcher {
     /**
@@ -2160,7 +2421,7 @@ declare namespace ProtocolProxyApi {
         Promise<Protocol.Page.CaptureSnapshotResponse>;
 
     /**
-     * Clears the overriden device metrics.
+     * Clears the overridden device metrics.
      */
     invoke_clearDeviceMetricsOverride(): Promise<Protocol.ProtocolResponseWithError>;
 
@@ -2170,7 +2431,7 @@ declare namespace ProtocolProxyApi {
     invoke_clearDeviceOrientationOverride(): Promise<Protocol.ProtocolResponseWithError>;
 
     /**
-     * Clears the overriden Geolocation Position and Error.
+     * Clears the overridden Geolocation Position and Error.
      */
     invoke_clearGeolocationOverride(): Promise<Protocol.ProtocolResponseWithError>;
 
@@ -2200,6 +2461,12 @@ declare namespace ProtocolProxyApi {
     invoke_getInstallabilityErrors(): Promise<Protocol.Page.GetInstallabilityErrorsResponse>;
 
     invoke_getManifestIcons(): Promise<Protocol.Page.GetManifestIconsResponse>;
+
+    /**
+     * Returns the unique (PWA) app id.
+     * Only returns values if the feature flag 'WebAppEnableManifestId' is enabled
+     */
+    invoke_getAppId(): Promise<Protocol.Page.GetAppIdResponse>;
 
     /**
      * Returns all browser cookies. Depending on the backend support, will return detailed cookie
@@ -2307,6 +2574,12 @@ declare namespace ProtocolProxyApi {
         Promise<Protocol.Page.GetPermissionsPolicyStateResponse>;
 
     /**
+     * Get Origin Trials on given frame.
+     */
+    invoke_getOriginTrials(params: Protocol.Page.GetOriginTrialsRequest):
+        Promise<Protocol.Page.GetOriginTrialsResponse>;
+
+    /**
      * Overrides the values of device screen dimensions (window.screen.width, window.screen.height,
      * window.innerWidth, window.innerHeight, and "device-width"/"device-height"-related CSS media
      * query results).
@@ -2395,9 +2668,14 @@ declare namespace ProtocolProxyApi {
     invoke_stopScreencast(): Promise<Protocol.ProtocolResponseWithError>;
 
     /**
-     * Forces compilation cache to be generated for every subresource script.
+     * Requests backend to produce compilation cache for the specified scripts.
+     * `scripts` are appeneded to the list of scripts for which the cache
+     * would be produced. The list may be reset during page navigation.
+     * When script with a matching URL is encountered, the cache is optionally
+     * produced upon backend discretion, based on internal heuristics.
+     * See also: `Page.compilationCacheProduced`.
      */
-    invoke_setProduceCompilationCache(params: Protocol.Page.SetProduceCompilationCacheRequest):
+    invoke_produceCompilationCache(params: Protocol.Page.ProduceCompilationCacheRequest):
         Promise<Protocol.ProtocolResponseWithError>;
 
     /**
@@ -2411,6 +2689,13 @@ declare namespace ProtocolProxyApi {
      * Clears seeded compilation cache.
      */
     invoke_clearCompilationCache(): Promise<Protocol.ProtocolResponseWithError>;
+
+    /**
+     * Sets the Secure Payment Confirmation transaction mode.
+     * https://w3c.github.io/secure-payment-confirmation/#sctn-automation-set-spc-transaction-mode
+     */
+    invoke_setSPCTransactionMode(params: Protocol.Page.SetSPCTransactionModeRequest):
+        Promise<Protocol.ProtocolResponseWithError>;
 
     /**
      * Generates a report for testing.
@@ -2489,11 +2774,13 @@ declare namespace ProtocolProxyApi {
 
     /**
      * Fired when page is about to start a download.
+     * Deprecated. Use Browser.downloadWillBegin instead.
      */
     downloadWillBegin(params: Protocol.Page.DownloadWillBeginEvent): void;
 
     /**
      * Fired when download makes progress. Last call has |done| == true.
+     * Deprecated. Use Browser.downloadProgress instead.
      */
     downloadProgress(params: Protocol.Page.DownloadProgressEvent): void;
 
@@ -2523,6 +2810,19 @@ declare namespace ProtocolProxyApi {
      * Fired for top level page lifecycle events such as navigation, load, paint, etc.
      */
     lifecycleEvent(params: Protocol.Page.LifecycleEventEvent): void;
+
+    /**
+     * Fired for failed bfcache history navigations if BackForwardCache feature is enabled. Do
+     * not assume any ordering with the Page.frameNavigated event. This event is fired only for
+     * main-frame history navigation where the document changes (non-same-document navigations),
+     * when bfcache navigation fails.
+     */
+    backForwardCacheNotUsed(params: Protocol.Page.BackForwardCacheNotUsedEvent): void;
+
+    /**
+     * Fired when a prerender attempt is completed.
+     */
+    prerenderAttemptCompleted(params: Protocol.Page.PrerenderAttemptCompletedEvent): void;
 
     loadEventFired(params: Protocol.Page.LoadEventFiredEvent): void;
 
@@ -2644,7 +2944,7 @@ declare namespace ProtocolProxyApi {
     visibleSecurityStateChanged(params: Protocol.Security.VisibleSecurityStateChangedEvent): void;
 
     /**
-     * The security state of the page changed.
+     * The security state of the page changed. No longer being sent.
      */
     securityStateChanged(params: Protocol.Security.SecurityStateChangedEvent): void;
   }
@@ -2753,6 +3053,25 @@ declare namespace ProtocolProxyApi {
      * current browsing context.
      */
     invoke_getTrustTokens(): Promise<Protocol.Storage.GetTrustTokensResponse>;
+
+    /**
+     * Removes all Trust Tokens issued by the provided issuerOrigin.
+     * Leaves other stored data, including the issuer's Redemption Records, intact.
+     */
+    invoke_clearTrustTokens(params: Protocol.Storage.ClearTrustTokensRequest):
+        Promise<Protocol.Storage.ClearTrustTokensResponse>;
+
+    /**
+     * Gets details for a named interest group.
+     */
+    invoke_getInterestGroupDetails(params: Protocol.Storage.GetInterestGroupDetailsRequest):
+        Promise<Protocol.Storage.GetInterestGroupDetailsResponse>;
+
+    /**
+     * Enables/Disables issuing of interestGroupAccessed events.
+     */
+    invoke_setInterestGroupTracking(params: Protocol.Storage.SetInterestGroupTrackingRequest):
+        Promise<Protocol.ProtocolResponseWithError>;
   }
   export interface StorageDispatcher {
     /**
@@ -2774,6 +3093,11 @@ declare namespace ProtocolProxyApi {
      * The origin's IndexedDB database list has been modified.
      */
     indexedDBListUpdated(params: Protocol.Storage.IndexedDBListUpdatedEvent): void;
+
+    /**
+     * One of the interest groups was accessed by the associated page.
+     */
+    interestGroupAccessed(params: Protocol.Storage.InterestGroupAccessedEvent): void;
   }
 
   export interface SystemInfoApi {
@@ -2876,8 +3200,20 @@ declare namespace ProtocolProxyApi {
      * Controls whether to automatically attach to new targets which are considered to be related to
      * this one. When turned on, attaches to all existing related targets as well. When turned off,
      * automatically detaches from all currently attached targets.
+     * This also clears all targets added by `autoAttachRelated` from the list of targets to watch
+     * for creation of related targets.
      */
     invoke_setAutoAttach(params: Protocol.Target.SetAutoAttachRequest): Promise<Protocol.ProtocolResponseWithError>;
+
+    /**
+     * Adds the specified target to the list of targets that will be monitored for any related target
+     * creation (such as child frames, child workers and new versions of service worker) and reported
+     * through `attachedToTarget`. The specified target is also auto-attached.
+     * This cancels the effect of any previous `setAutoAttach` and is also cancelled by subsequent
+     * `setAutoAttach`. Only available at the Browser target.
+     */
+    invoke_autoAttachRelated(params: Protocol.Target.AutoAttachRelatedRequest):
+        Promise<Protocol.ProtocolResponseWithError>;
 
     /**
      * Controls whether to discover available targets and notify via
@@ -3026,6 +3362,14 @@ declare namespace ProtocolProxyApi {
      * Continues a request supplying authChallengeResponse following authRequired event.
      */
     invoke_continueWithAuth(params: Protocol.Fetch.ContinueWithAuthRequest):
+        Promise<Protocol.ProtocolResponseWithError>;
+
+    /**
+     * Continues loading of the paused response, optionally modifying the
+     * response headers. If either responseCode or headers are modified, all of them
+     * must be present.
+     */
+    invoke_continueResponse(params: Protocol.Fetch.ContinueResponseRequest):
         Promise<Protocol.ProtocolResponseWithError>;
 
     /**
@@ -3261,8 +3605,8 @@ declare namespace ProtocolProxyApi {
     playerErrorsRaised(params: Protocol.Media.PlayerErrorsRaisedEvent): void;
 
     /**
-     * Called whenever a player is created, or when a new agent joins and recieves
-     * a list of active players. If an agent is restored, it will recieve the full
+     * Called whenever a player is created, or when a new agent joins and receives
+     * a list of active players. If an agent is restored, it will receive the full
      * list of player ids and all events again.
      */
     playersCreated(params: Protocol.Media.PlayersCreatedEvent): void;
@@ -3592,35 +3936,6 @@ declare namespace ProtocolProxyApi {
      */
     invoke_takeTypeProfile(): Promise<Protocol.Profiler.TakeTypeProfileResponse>;
 
-    /**
-     * Enable counters collection.
-     */
-    invoke_enableCounters(): Promise<Protocol.ProtocolResponseWithError>;
-
-    /**
-     * Disable counters collection.
-     */
-    invoke_disableCounters(): Promise<Protocol.ProtocolResponseWithError>;
-
-    /**
-     * Retrieve counters.
-     */
-    invoke_getCounters(): Promise<Protocol.Profiler.GetCountersResponse>;
-
-    /**
-     * Enable run time call stats collection.
-     */
-    invoke_enableRuntimeCallStats(): Promise<Protocol.ProtocolResponseWithError>;
-
-    /**
-     * Disable run time call stats collection.
-     */
-    invoke_disableRuntimeCallStats(): Promise<Protocol.ProtocolResponseWithError>;
-
-    /**
-     * Retrieve run time call stats.
-     */
-    invoke_getRuntimeCallStats(): Promise<Protocol.Profiler.GetRuntimeCallStatsResponse>;
   }
   export interface ProfilerDispatcher {
     consoleProfileFinished(params: Protocol.Profiler.ConsoleProfileFinishedEvent): void;
@@ -3634,7 +3949,7 @@ declare namespace ProtocolProxyApi {
      * Reports coverage delta since the last poll (either from an event like this, or from
      * `takePreciseCoverage` for the current isolate. May only be sent if precise code
      * coverage has been started. This event can be trigged by the embedder to, for example,
-     * trigger collection of coverage data immediatelly at a certain point in time.
+     * trigger collection of coverage data immediately at a certain point in time.
      */
     preciseCoverageDeltaUpdate(params: Protocol.Profiler.PreciseCoverageDeltaUpdateEvent): void;
   }
@@ -3760,6 +4075,16 @@ declare namespace ProtocolProxyApi {
      * unsubscribes current runtime agent from Runtime.bindingCalled notifications.
      */
     invoke_removeBinding(params: Protocol.Runtime.RemoveBindingRequest): Promise<Protocol.ProtocolResponseWithError>;
+
+    /**
+     * This method tries to lookup and populate exception details for a
+     * JavaScript Error object.
+     * Note that the stackTrace portion of the resulting exceptionDetails will
+     * only be populated if the Runtime domain was enabled at the time when the
+     * Error was thrown.
+     */
+    invoke_getExceptionDetails(params: Protocol.Runtime.GetExceptionDetailsRequest):
+        Promise<Protocol.Runtime.GetExceptionDetailsResponse>;
   }
   export interface RuntimeDispatcher {
     /**
@@ -3813,3 +4138,4 @@ declare namespace ProtocolProxyApi {
   export interface SchemaDispatcher {}
 }
 
+export = ProtocolProxyApi;

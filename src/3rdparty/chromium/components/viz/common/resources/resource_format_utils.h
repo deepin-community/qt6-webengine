@@ -10,14 +10,14 @@
 #include "components/viz/common/viz_resource_format_export.h"
 #include "gpu/vulkan/buildflags.h"
 #include "skia/buildflags.h"
-#include "third_party/dawn/src/include/dawn/webgpu.h"
-#include "third_party/dawn/src/include/dawn/webgpu_cpp.h"
+#include "third_party/dawn/include/dawn/webgpu.h"
+#include "third_party/dawn/include/dawn/webgpu_cpp.h"
 #include "third_party/skia/include/core/SkImageInfo.h"
 #include "third_party/skia/include/gpu/GrTypes.h"
 #include "ui/gfx/buffer_types.h"
 
 #if BUILDFLAG(ENABLE_VULKAN)
-#include <vulkan/vulkan.h>
+#include <vulkan/vulkan_core.h>
 #endif
 
 namespace viz {
@@ -26,6 +26,8 @@ VIZ_RESOURCE_FORMAT_EXPORT SkColorType
 ResourceFormatToClosestSkColorType(bool gpu_compositing, ResourceFormat format);
 VIZ_RESOURCE_FORMAT_EXPORT int BitsPerPixel(ResourceFormat format);
 VIZ_RESOURCE_FORMAT_EXPORT bool HasAlpha(ResourceFormat format);
+VIZ_RESOURCE_FORMAT_EXPORT ResourceFormat
+SkColorTypeToResourceFormat(SkColorType color_type);
 
 // The following functions use unsigned int instead of GLenum, since including
 // third_party/khronos/GLES2/gl2.h causes redefinition errors as
@@ -45,8 +47,12 @@ VIZ_RESOURCE_FORMAT_EXPORT gfx::BufferFormat BufferFormat(
     ResourceFormat format);
 VIZ_RESOURCE_FORMAT_EXPORT bool IsResourceFormatCompressed(
     ResourceFormat format);
+
+// |use_angle_rgbx_format| should be true when the GL_ANGLE_rgbx_internal_format
+// extension is available.
 VIZ_RESOURCE_FORMAT_EXPORT unsigned int TextureStorageFormat(
-    ResourceFormat format);
+    ResourceFormat format,
+    bool use_angle_rgbx_format);
 
 // Returns whether the format can be used with GpuMemoryBuffer texture storage,
 // allocated through TexStorage2DImageCHROMIUM.
@@ -74,9 +80,12 @@ VIZ_RESOURCE_FORMAT_EXPORT wgpu::TextureFormat ToDawnFormat(
 VIZ_RESOURCE_FORMAT_EXPORT WGPUTextureFormat
 ToWGPUFormat(ResourceFormat format);
 
-#if defined(OS_APPLE)
+#if BUILDFLAG(IS_APPLE)
 VIZ_RESOURCE_FORMAT_EXPORT unsigned int ToMTLPixelFormat(ResourceFormat format);
 #endif
+
+VIZ_RESOURCE_FORMAT_EXPORT size_t
+AlphaBitsForSkColorType(SkColorType color_type);
 
 }  // namespace viz
 

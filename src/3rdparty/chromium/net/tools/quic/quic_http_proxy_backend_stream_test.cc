@@ -4,10 +4,13 @@
 
 #include "net/tools/quic/quic_http_proxy_backend_stream.h"
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/path_service.h"
+#include "base/strings/abseil_string_conversions.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/task_environment.h"
@@ -15,10 +18,10 @@
 #include "net/test/embedded_test_server/http_request.h"
 #include "net/test/embedded_test_server/http_response.h"
 #include "net/test/embedded_test_server/request_handler_util.h"
-#include "net/third_party/quiche/src/quic/core/quic_connection_id.h"
-#include "net/third_party/quiche/src/quic/platform/api/quic_test.h"
-#include "net/third_party/quiche/src/quic/test_tools/quic_test_utils.h"
-#include "net/third_party/quiche/src/quic/tools/quic_backend_response.h"
+#include "net/third_party/quiche/src/quiche/quic/core/quic_connection_id.h"
+#include "net/third_party/quiche/src/quiche/quic/platform/api/quic_test.h"
+#include "net/third_party/quiche/src/quiche/quic/test_tools/quic_test_utils.h"
+#include "net/third_party/quiche/src/quiche/quic/tools/quic_backend_response.h"
 #include "net/tools/quic/quic_http_proxy_backend.h"
 
 namespace net {
@@ -128,8 +131,7 @@ class TestQuicServerStreamDelegate
   std::string peer_host() const override { return "127.0.0.1"; }
 
   void OnResponseBackendComplete(
-      const quic::QuicBackendResponse* response,
-      std::list<quic::QuicBackendResponse::ServerPushInfo> resources) override {
+      const quic::QuicBackendResponse* response) override {
     EXPECT_TRUE(task_runner_->BelongsToCurrentThread());
     EXPECT_FALSE(did_complete_);
     EXPECT_TRUE(quic_backend_stream_);
@@ -181,7 +183,7 @@ class QuicHttpProxyBackendStreamTest : public QuicTest {
   // Initializes |test_server_| without starting it.  Allows subclasses to use
   // their own server configuration.
   void SetUpServer() {
-    test_server_.reset(new EmbeddedTestServer);
+    test_server_ = std::make_unique<EmbeddedTestServer>();
     test_server_->AddDefaultHandlers(base::FilePath());
     test_server_->RegisterDefaultHandler(base::BindRepeating(
         &net::test_server::HandlePrefixedRequest, "/defaultresponselarge",

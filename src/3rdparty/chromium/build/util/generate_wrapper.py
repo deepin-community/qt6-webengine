@@ -1,4 +1,4 @@
-#!/usr/bin/env vpython
+#!/usr/bin/env python3
 # Copyright 2019 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
@@ -14,9 +14,8 @@ import textwrap
 # The bash template passes the python script into vpython via stdin.
 # The interpreter doesn't know about the script, so we have bash
 # inject the script location.
-BASH_TEMPLATE = textwrap.dedent(
-    """\
-    #!/usr/bin/env vpython
+BASH_TEMPLATE = textwrap.dedent("""\
+    #!/usr/bin/env vpython3
     _SCRIPT_LOCATION = __file__
     {script}
     """)
@@ -26,10 +25,9 @@ BASH_TEMPLATE = textwrap.dedent(
 # flag instructing the interpreter to ignore the first line. The interpreter
 # knows about the (batch) script in this case, so it can get the file location
 # directly.
-BATCH_TEMPLATE = textwrap.dedent(
-    """\
+BATCH_TEMPLATE = textwrap.dedent("""\
     @SETLOCAL ENABLEDELAYEDEXPANSION \
-      & vpython.bat -x "%~f0" %* \
+      & vpython3.bat -x "%~f0" %* \
       & EXIT /B !ERRORLEVEL!
     _SCRIPT_LOCATION = __file__
     {script}
@@ -174,8 +172,7 @@ def Wrap(args):
         executable_path=str(args.executable),
         executable_args=str(args.executable_args))
     template = SCRIPT_TEMPLATES[args.script_language]
-    wrapper_script.write(template.format(
-        script=py_contents))
+    wrapper_script.write(template.format(script=py_contents))
   os.chmod(args.wrapper_script, 0o750)
 
   return 0

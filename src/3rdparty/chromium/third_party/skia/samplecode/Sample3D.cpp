@@ -9,6 +9,7 @@
 #include "include/core/SkM44.h"
 #include "include/core/SkPaint.h"
 #include "include/core/SkRRect.h"
+#include "include/core/SkStream.h"
 #include "include/core/SkVertices.h"
 #include "include/utils/SkRandom.h"
 #include "samplecode/Sample.h"
@@ -72,6 +73,14 @@ static SkM44 inv(const SkM44& m) {
     return inverse;
 }
 
+// Compute the inverse transpose (of the upper-left 3x3) of a matrix, used to transform vectors
+static SkM44 normals(SkM44 m) {
+    m.setRow(3, {0, 0, 0, 1});
+    m.setCol(3, {0, 0, 0, 1});
+    SkAssertResult(m.invert(&m));
+    return m.transpose();
+}
+
 class Sample3DView : public Sample {
 protected:
     float   fNear = 0.05f;
@@ -82,12 +91,10 @@ protected:
     SkV3    fCOA { 0, 0, 0 };
     SkV3    fUp  { 0, 1, 0 };
 
-    const char* kLocalToWorld = "local_to_world";
-
 public:
     void concatCamera(SkCanvas* canvas, const SkRect& area, SkScalar zscale) {
-        SkM44 camera = Sk3LookAt(fEye, fCOA, fUp),
-              perspective = Sk3Perspective(fNear, fFar, fAngle),
+        SkM44 camera = SkM44::LookAt(fEye, fCOA, fUp),
+              perspective = SkM44::Perspective(fNear, fFar, fAngle),
               viewport = SkM44::Translate(area.centerX(), area.centerY(), 0) *
                          SkM44::Scale(area.width()*0.5f, area.height()*0.5f, zscale);
 
@@ -112,7 +119,7 @@ struct Face {
     }
 };
 
-static bool front(const SkM44& m) {
+static bool isFrontFacing(const SkM44& m) {
     SkM44 m2(SkM44::kUninitialized_Constructor);
     if (!m.invert(&m2)) {
         m2.setIdentity();
@@ -170,8 +177,8 @@ class RotateAnimator {
     SkScalar    fAngleSpeed = 0,
                 fAngleSign = 1;
 
-    static constexpr double kSlowDown = 4;
-    static constexpr SkScalar kMaxSpeed = 16;
+    inline static constexpr double kSlowDown = 4;
+    inline static constexpr SkScalar kMaxSpeed = 16;
 
 public:
     void update(SkV3 axis, SkScalar angle) {
@@ -258,7 +265,7 @@ public:
         return this->Sample3DView::onChar(uni);
     }
 
-    virtual void drawContent(SkCanvas* canvas, SkColor, int index, bool drawFront) = 0;
+    virtual void drawFace(SkCanvas*, SkColor, int face, bool front, const SkM44& localToWorld) = 0;
 
     void onDrawContent(SkCanvas* canvas) override {
         if (!canvas->recordingContext() && !(fFlags & kCanRunOnCPU)) {
@@ -270,21 +277,21 @@ public:
 
         this->concatCamera(canvas, {0, 0, 400, 400}, 200);
 
-        for (bool drawFront : {false, true}) {
+        SkM44 m = fRotateAnimator.rotation() * fRotation;
+        for (bool front : {false, true}) {
             int index = 0;
             for (auto f : faces) {
                 SkAutoCanvasRestore acr(canvas, true);
 
                 SkM44 trans = SkM44::Translate(200, 200, 0);   // center of the rotation
-                SkM44 m = fRotateAnimator.rotation() * fRotation * f.asM44(200);
 
                 canvas->concat(trans);
 
                 // "World" space - content is centered at the origin, in device scale (+-200)
-                canvas->markCTM(kLocalToWorld);
+                SkM44 localToWorld = m * f.asM44(200) * inv(trans);
 
-                canvas->concat(m * inv(trans));
-                this->drawContent(canvas, f.fColor, index++, drawFront);
+                canvas->concat(localToWorld);
+                this->drawFace(canvas, f.fColor, index++, front, localToWorld);
             }
         }
 
@@ -371,8 +378,8 @@ public:
             uniform shader color_map;
             uniform shader normal_map;
 
-            layout (marker=local_to_world)          uniform float4x4 localToWorld;
-            layout (marker=normals(local_to_world)) uniform float4x4 localToWorldAdjInv;
+            uniform float4x4 localToWorld;
+            uniform float4x4 localToWorldAdjInv;
             uniform float3   lightPos;
 
             float3 convert_normal_sample(half4 c) {
@@ -382,7 +389,7 @@ public:
             }
 
             half4 main(float2 p) {
-                float3 norm = convert_normal_sample(sample(normal_map, p));
+                float3 norm = convert_normal_sample(normal_map.eval(p));
                 float3 plane_norm = normalize(localToWorldAdjInv * norm.xyz0).xyz;
 
                 float3 plane_pos = (localToWorld * p.xy01).xyz;
@@ -392,117 +399,38 @@ public:
                 float dp = dot(plane_norm, light_dir);
                 float scale = min(ambient + max(dp, 0), 1);
 
-                return sample(color_map, p) * scale.xxx1;
+                return color_map.eval(p) * scale.xxx1;
             }
         )";
-        auto [effect, error] = SkRuntimeEffect::Make(SkString(code));
+        auto [effect, error] = SkRuntimeEffect::MakeForShader(SkString(code));
         if (!effect) {
             SkDebugf("runtime error %s\n", error.c_str());
         }
         fEffect = effect;
     }
 
-    void drawContent(SkCanvas* canvas, SkColor color, int index, bool drawFront) override {
-        if (!drawFront || !front(canvas->getLocalToDevice())) {
+    void drawFace(SkCanvas* canvas, SkColor color, int face, bool front,
+                  const SkM44& localToWorld) override {
+        if (!front || !isFrontFacing(canvas->getLocalToDevice())) {
             return;
         }
 
         SkRuntimeShaderBuilder builder(fEffect);
         builder.uniform("lightPos") = fLight.computeWorldPos(fSphere);
-        // localToWorld matrices are automatically populated, via layout(marker)
+        builder.uniform("localToWorld") = localToWorld;
+        builder.uniform("localToWorldAdjInv") = normals(localToWorld);
 
         builder.child("color_map")  = fImgShader;
         builder.child("normal_map") = fBmpShader;
 
         SkPaint paint;
         paint.setColor(color);
-        paint.setShader(builder.makeShader(nullptr, true));
+        paint.setShader(builder.makeShader());
 
         canvas->drawRRect(fRR, paint);
     }
 };
 DEF_SAMPLE( return new SampleBump3D; )
-
-class SampleVerts3D : public SampleCubeBase {
-    sk_sp<SkRuntimeEffect> fEffect;
-    sk_sp<SkVertices>      fVertices;
-
-public:
-    SampleVerts3D() : SampleCubeBase(kShowLightDome) {}
-
-    SkString name() override { return SkString("verts3d"); }
-
-    void onOnceBeforeDraw() override {
-        using Attr = SkVertices::Attribute;
-        Attr attrs[] = {
-            Attr(Attr::Type::kFloat3, Attr::Usage::kNormalVector),
-        };
-
-        SkVertices::Builder builder(SkVertices::kTriangleFan_VertexMode, 66, 0, attrs, 1);
-
-        SkPoint* pos = builder.positions();
-        SkV3* nrm = (SkV3*)builder.customData();
-
-        SkPoint center = { 200, 200 };
-        SkScalar radius = 200;
-
-        pos[0] = center;
-        nrm[0] = { 0, 0, 1 };
-
-        for (int i = 0; i < 65; ++i) {
-            SkScalar t = (i / 64.0f) * 2 * SK_ScalarPI;
-            SkScalar s = SkScalarSin(t),
-                     c = SkScalarCos(t);
-            pos[i + 1] = center + SkPoint { c * radius, s * radius };
-            nrm[i + 1] = { c, s, 0 };
-        }
-
-        fVertices = builder.detach();
-
-        const char code[] = R"(
-            varying float3 vtx_normal;
-
-            layout (marker=local_to_world)          uniform float4x4 localToWorld;
-            layout (marker=normals(local_to_world)) uniform float4x4 localToWorldAdjInv;
-            uniform float3   lightPos;
-
-            half4 main(float2 p) {
-                float3 norm = normalize(vtx_normal);
-                float3 plane_norm = normalize(localToWorldAdjInv * norm.xyz0).xyz;
-
-                float3 plane_pos = (localToWorld * p.xy01).xyz;
-                float3 light_dir = normalize(lightPos - plane_pos);
-
-                float ambient = 0.2;
-                float dp = dot(plane_norm, light_dir);
-                float scale = min(ambient + max(dp, 0), 1);
-
-                return half4(0.7, 0.9, 0.3, 1) * scale.xxx1;
-            }
-        )";
-        auto [effect, error] = SkRuntimeEffect::Make(SkString(code));
-        if (!effect) {
-            SkDebugf("runtime error %s\n", error.c_str());
-        }
-        fEffect = effect;
-    }
-
-    void drawContent(SkCanvas* canvas, SkColor color, int index, bool drawFront) override {
-        if (!drawFront || !front(canvas->getLocalToDevice())) {
-            return;
-        }
-
-        SkRuntimeShaderBuilder builder(fEffect);
-        builder.uniform("lightPos") = fLight.computeWorldPos(fSphere);
-
-        SkPaint paint;
-        paint.setColor(color);
-        paint.setShader(builder.makeShader(nullptr, true));
-
-        canvas->drawVertices(fVertices, paint);
-    }
-};
-DEF_SAMPLE( return new SampleVerts3D; )
 
 #include "modules/skottie/include/Skottie.h"
 
@@ -531,8 +459,8 @@ public:
         }
     }
 
-    void drawContent(SkCanvas* canvas, SkColor color, int index, bool drawFront) override {
-        if (!drawFront || !front(canvas->getLocalToDevice())) {
+    void drawFace(SkCanvas* canvas, SkColor color, int face, bool front, const SkM44&) override {
+        if (!front || !isFrontFacing(canvas->getLocalToDevice())) {
             return;
         }
 
@@ -540,7 +468,7 @@ public:
         paint.setColor(color);
         SkRect r = {0, 0, 400, 400};
         canvas->drawRect(r, paint);
-        fAnim[index]->render(canvas, &r);
+        fAnim[face]->render(canvas, &r);
     }
 
     bool onAnimate(double nanos) override {

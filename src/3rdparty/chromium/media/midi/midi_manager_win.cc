@@ -14,20 +14,21 @@
 #include <algorithm>
 #include <limits>
 #include <map>
+#include <memory>
 #include <string>
+#include <tuple>
 #include <utility>
 
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/callback_helpers.h"
 #include "base/logging.h"
-#include "base/optional.h"
-#include "base/single_thread_task_runner.h"
-#include "base/stl_util.h"
-#include "base/strings/string16.h"
+#include "base/memory/raw_ptr.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/lock.h"
+#include "base/task/single_thread_task_runner.h"
+#include "base/time/time.h"
 #include "base/win/windows_version.h"
 #include "media/midi/message_util.h"
 #include "media/midi/midi_manager_winrt.h"
@@ -35,6 +36,7 @@
 #include "media/midi/midi_service.mojom.h"
 #include "media/midi/midi_switches.h"
 #include "services/device/public/cpp/usb/usb_ids.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace midi {
 
@@ -119,7 +121,7 @@ base::Lock* GetInstanceIdLock() {
 }
 
 // Issues unique MidiManager instance ID.
-int64_t IssueNextInstanceId(base::Optional<int64_t> override_id) {
+int64_t IssueNextInstanceId(absl::optional<int64_t> override_id) {
   static int64_t id = kInvalidInstanceId;
   if (override_id) {
     int64_t result = ++id;
@@ -392,7 +394,7 @@ class MidiManagerWin::InPort final : public Port {
   }
 
   base::TimeTicks CalculateInEventTime(uint32_t elapsed_ms) const {
-    return start_time_ + base::TimeDelta::FromMilliseconds(elapsed_ms);
+    return start_time_ + base::Milliseconds(elapsed_ms);
   }
 
   void RestoreBuffer() {
@@ -455,7 +457,7 @@ class MidiManagerWin::InPort final : public Port {
   }
 
  private:
-  MidiManagerWin* manager_;
+  raw_ptr<MidiManagerWin> manager_;
   HMIDIIN in_handle_;
   ScopedMIDIHDR hdr_;
   base::TimeTicks start_time_;
@@ -536,7 +538,7 @@ class MidiManagerWin::OutPort final : public Port {
         midiOutUnprepareHeader(out_handle_, hdr.get(), sizeof(*hdr));
       } else {
         // MIDIHDR will be released on MOM_DONE.
-        ignore_result(hdr.release());
+        std::ignore = hdr.release();
       }
     }
   }
@@ -634,7 +636,7 @@ MidiManagerWin::PortManager::HandleMidiInCallback(HMIDIIN hmi,
   if (IsRunningInsideMidiInGetNumDevs())
     GetTaskLock()->AssertAcquired();
   else
-    task_lock.reset(new base::AutoLock(*GetTaskLock()));
+    task_lock = std::make_unique<base::AutoLock>(*GetTaskLock());
   {
     base::AutoLock lock(*GetInstanceIdLock());
     if (instance_id != g_active_instance_id)
@@ -654,7 +656,7 @@ MidiManagerWin::PortManager::HandleMidiInCallback(HMIDIIN hmi,
         static_cast<uint8_t>((param1 >> 16) & 0xff);
     const uint8_t kData[] = {status_byte, first_data_byte, second_data_byte};
     const size_t len = GetMessageLength(status_byte);
-    DCHECK_LE(len, base::size(kData));
+    DCHECK_LE(len, std::size(kData));
     std::vector<uint8_t> data;
     data.assign(kData, kData + len);
     manager->PostReplyTask(base::BindOnce(
@@ -703,7 +705,7 @@ void MidiManagerWin::OverflowInstanceIdForTesting() {
 
 MidiManagerWin::MidiManagerWin(MidiService* service)
     : MidiManager(service),
-      instance_id_(IssueNextInstanceId(base::nullopt)),
+      instance_id_(IssueNextInstanceId(absl::nullopt)),
       port_manager_(std::make_unique<PortManager>()) {
   base::AutoLock lock(*GetInstanceIdLock());
   CHECK_EQ(kInvalidInstanceId, g_active_instance_id);

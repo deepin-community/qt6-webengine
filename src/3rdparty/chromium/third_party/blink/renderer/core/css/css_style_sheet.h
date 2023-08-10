@@ -22,13 +22,18 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_CSS_CSS_STYLE_SHEET_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_CSS_CSS_STYLE_SHEET_H_
 
+#include "base/gtest_prod_util.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/css/css_rule.h"
 #include "third_party/blink/renderer/core/css/media_query_evaluator.h"
 #include "third_party/blink/renderer/core/css/style_sheet.h"
-#include "third_party/blink/renderer/core/dom/tree_scope.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_set.h"
+#include "third_party/blink/renderer/platform/heap/collection_support/heap_vector.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/wtf/casting.h"
+#include "third_party/blink/renderer/platform/wtf/hash_set.h"
+#include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
+#include "third_party/blink/renderer/platform/wtf/text/atomic_string_hash.h"
 #include "third_party/blink/renderer/platform/wtf/text/text_encoding.h"
 #include "third_party/blink/renderer/platform/wtf/text/text_position.h"
 
@@ -45,6 +50,7 @@ class MediaQuerySet;
 class ScriptPromise;
 class ScriptState;
 class StyleSheetContents;
+class TreeScope;
 
 enum class CSSImportRules {
   kAllow,
@@ -60,7 +66,10 @@ class CORE_EXPORT CSSStyleSheet final : public StyleSheet {
   static CSSStyleSheet* Create(Document&,
                                const CSSStyleSheetInit*,
                                ExceptionState&);
-
+  static CSSStyleSheet* Create(Document&,
+                               const KURL& base_url,
+                               const CSSStyleSheetInit*,
+                               ExceptionState&);
   static CSSStyleSheet* CreateInline(
       Node&,
       const KURL&,
@@ -73,6 +82,7 @@ class CORE_EXPORT CSSStyleSheet final : public StyleSheet {
 
   explicit CSSStyleSheet(StyleSheetContents*,
                          CSSImportRule* owner_rule = nullptr);
+  CSSStyleSheet(StyleSheetContents*, Document&, const CSSStyleSheetInit*);
   CSSStyleSheet(
       StyleSheetContents*,
       Node& owner_node,
@@ -105,7 +115,9 @@ class CORE_EXPORT CSSStyleSheet final : public StyleSheet {
     deleteRule(index, exception_state);
   }
 
-  ScriptPromise replace(ScriptState* script_state, const String& text);
+  ScriptPromise replace(ScriptState* script_state,
+                        const String& text,
+                        ExceptionState&);
   void replaceSync(const String& text, ExceptionState&);
 
   // For CSSRuleList.
@@ -127,6 +139,7 @@ class CORE_EXPORT CSSStyleSheet final : public StyleSheet {
     return !viewport_dependent_media_query_results_.IsEmpty() ||
            !device_dependent_media_query_results_.IsEmpty();
   }
+  bool HasDynamicViewportDependentMediaQueries() const;
   const MediaQueryResultList& ViewportDependentMediaQueryResults() const {
     return viewport_dependent_media_query_results_;
   }
@@ -135,13 +148,8 @@ class CORE_EXPORT CSSStyleSheet final : public StyleSheet {
   }
   void SetTitle(const String& title) { title_ = title; }
 
-  void AddedAdoptedToTreeScope(TreeScope& tree_scope) {
-    adopted_tree_scopes_.insert(&tree_scope);
-  }
-
-  void RemovedAdoptedFromTreeScope(TreeScope& tree_scope) {
-    adopted_tree_scopes_.erase(&tree_scope);
-  }
+  void AddedAdoptedToTreeScope(TreeScope& tree_scope);
+  void RemovedAdoptedFromTreeScope(TreeScope& tree_scope);
 
   // Associated document for constructed stylesheet. Always non-null for
   // constructed stylesheets, always null otherwise.
@@ -203,12 +211,14 @@ class CORE_EXPORT CSSStyleSheet final : public StyleSheet {
 
   bool SheetLoaded();
   bool LoadCompleted() const { return load_completed_; }
-  void StartLoadingDynamicSheet();
+  void SetToPendingState();
   void SetText(const String&, CSSImportRules);
   void SetMedia(MediaList*);
   void SetAlternateFromConstructor(bool);
   bool CanBeActivated(const String& current_preferrable_name) const;
   bool IsConstructed() const { return ConstructorDocument(); }
+  void SetIsForCSSModuleScript() { is_for_css_module_script_ = true; }
+  bool IsForCSSModuleScript() const { return is_for_css_module_script_; }
 
   void Trace(Visitor*) const override;
 
@@ -247,6 +257,7 @@ class CORE_EXPORT CSSStyleSheet final : public StyleSheet {
 
   Member<StyleSheetContents> contents_;
   bool is_inline_stylesheet_ = false;
+  bool is_for_css_module_script_ = false;
   bool is_disabled_ = false;
   bool load_completed_ = false;
   // This alternate variable is only used for constructed CSSStyleSheet.
@@ -258,6 +269,8 @@ class CORE_EXPORT CSSStyleSheet final : public StyleSheet {
   scoped_refptr<MediaQuerySet> media_queries_;
   MediaQueryResultList viewport_dependent_media_query_results_;
   MediaQueryResultList device_dependent_media_query_results_;
+  // See MediaQueryExpValue::UnitFlags.
+  unsigned media_query_unit_flags_ = 0;
 
   Member<Node> owner_node_;
   Member<CSSRule> owner_rule_;
@@ -298,4 +311,4 @@ struct DowncastTraits<CSSStyleSheet> {
 
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_RENDERER_CORE_CSS_CSS_STYLE_SHEET_H_

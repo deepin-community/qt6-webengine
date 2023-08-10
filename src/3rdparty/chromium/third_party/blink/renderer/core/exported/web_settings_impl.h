@@ -114,7 +114,6 @@ class CORE_EXPORT WebSettingsImpl final : public WebSettings {
   void SetMainFrameResizesAreOrientationChanges(bool) override;
   void SetMaxTouchPoints(int) override;
   void SetPictureInPictureEnabled(bool) override;
-  void SetDataSaverHoldbackWebApi(bool) override;
   void SetWebAppScope(const WebString&) override;
   void SetPresentationRequiresUserGesture(bool) override;
   void SetEmbeddedMediaExperienceEnabled(bool) override;
@@ -122,12 +121,8 @@ class CORE_EXPORT WebSettingsImpl final : public WebSettings {
   void SetMinimumFontSize(int) override;
   void SetMinimumLogicalFontSize(int) override;
   void SetHideScrollbars(bool) override;
-  void SetOfflineWebApplicationCacheEnabled(bool) override;
-  void SetPassiveEventListenerDefault(PassiveEventListenerDefault) override;
   void SetPasswordEchoDurationInSeconds(double) override;
   void SetPasswordEchoEnabled(bool) override;
-  void SetPictographFontFamily(const WebString&,
-                               UScriptCode = USCRIPT_COMMON) override;
   void SetPluginsEnabled(bool) override;
   void SetAvailablePointerTypes(int) override;
   void SetPrimaryPointerType(mojom::blink::PointerType) override;
@@ -217,11 +212,6 @@ class CORE_EXPORT WebSettingsImpl final : public WebSettings {
   void SetLazyImageLoadingDistanceThresholdPx2G(int) override;
   void SetLazyImageLoadingDistanceThresholdPx3G(int) override;
   void SetLazyImageLoadingDistanceThresholdPx4G(int) override;
-  void SetLazyImageFirstKFullyLoadUnknown(int) override;
-  void SetLazyImageFirstKFullyLoadSlow2G(int) override;
-  void SetLazyImageFirstKFullyLoad2G(int) override;
-  void SetLazyImageFirstKFullyLoad3G(int) override;
-  void SetLazyImageFirstKFullyLoad4G(int) override;
 
   void SetForceDarkModeEnabled(bool) override;
   void SetPreferredColorScheme(mojom::blink::PreferredColorScheme) override;
@@ -233,6 +223,7 @@ class CORE_EXPORT WebSettingsImpl final : public WebSettings {
   void SetSelectionClipboardBufferAvailable(bool) override;
   void SetAccessibilityIncludeSvgGElement(bool) override;
   void SetWebXRImmersiveArAllowed(bool webxr_immersive_ar_allowed) override;
+  void SetLitePageSubresourceRedirectOrigin(const WebString&) override;
 
   bool RenderVSyncNotificationEnabled() const {
     return render_v_sync_notification_enabled_;
@@ -273,4 +264,4 @@ class CORE_EXPORT WebSettingsImpl final : public WebSettings {
 
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_RENDERER_CORE_EXPORTED_WEB_SETTINGS_IMPL_H_

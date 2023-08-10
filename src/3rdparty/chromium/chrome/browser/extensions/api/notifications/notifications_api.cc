@@ -11,7 +11,6 @@
 
 #include "base/callback.h"
 #include "base/guid.h"
-#include "base/macros.h"
 #include "base/rand_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
@@ -43,11 +42,11 @@
 #include "extensions/common/extension.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/base/layout.h"
+#include "ui/gfx/geometry/skia_conversions.h"
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/image/image_skia_operations.h"
 #include "ui/gfx/image/image_skia_rep.h"
-#include "ui/gfx/skia_util.h"
 #include "ui/message_center/public/cpp/message_center_constants.h"
 #include "ui/message_center/public/cpp/notification.h"
 #include "ui/message_center/public/cpp/notification_delegate.h"
@@ -82,7 +81,7 @@ const char kExtraImageProvided[] =
 const char kNotificationIdTooLong[] =
     "The notification's ID should be %d characters or less";
 
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
 const char kLowPriorityDeprecatedOnPlatform[] =
     "Low-priority notifications are deprecated on this platform.";
 #endif
@@ -102,33 +101,6 @@ std::string StripScopeFromIdentifier(const std::string& extension_id,
   DCHECK_LT(index_of_separator, scoped_id.length());
 
   return scoped_id.substr(index_of_separator);
-}
-
-const gfx::ImageSkia CreateSolidColorImage(int width,
-                                           int height,
-                                           SkColor color) {
-  SkBitmap bitmap;
-  bitmap.allocN32Pixels(width, height);
-  bitmap.eraseColor(color);
-  return gfx::ImageSkia::CreateFrom1xBitmap(bitmap);
-}
-
-// Take the alpha channel of small_image, mask it with the foreground,
-// then add the masked foreground on top of the background
-const gfx::Image GetMaskedSmallImage(const gfx::ImageSkia& small_image) {
-  int width = small_image.width();
-  int height = small_image.height();
-
-  // Background color grey
-  const gfx::ImageSkia background = CreateSolidColorImage(
-      width, height, message_center::kSmallImageMaskBackgroundColor);
-  // Foreground color white
-  const gfx::ImageSkia foreground = CreateSolidColorImage(
-      width, height, message_center::kSmallImageMaskForegroundColor);
-  const gfx::ImageSkia masked_small_image =
-      gfx::ImageSkiaOperations::CreateMaskedImage(foreground, small_image);
-  return gfx::Image(gfx::ImageSkiaOperations::CreateSuperimposedImage(
-      background, masked_small_image));
 }
 
 // Converts the |notification_bitmap| (in RGBA format) to the |*return_image|
@@ -237,7 +209,7 @@ bool NotificationsApiFunction::CreateNotification(
     return false;
   }
 
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
   if (options->priority &&
       *options->priority < message_center::DEFAULT_PRIORITY) {
     *error = kLowPriorityDeprecatedOnPlatform;
@@ -247,15 +219,15 @@ bool NotificationsApiFunction::CreateNotification(
 
   NotificationBitmapSizes bitmap_sizes = GetNotificationBitmapSizes();
 
-  float image_scale =
-      ui::GetScaleForScaleFactor(ui::GetSupportedScaleFactors().back());
+  float image_scale = ui::GetScaleForResourceScaleFactor(
+      ui::GetSupportedResourceScaleFactors().back());
 
   // Extract required fields: type, title, message, and icon.
   message_center::NotificationType type =
       MapApiTemplateTypeToType(options->type);
 
-  const base::string16 title(base::UTF8ToUTF16(*options->title));
-  const base::string16 message(base::UTF8ToUTF16(*options->message));
+  const std::u16string title(base::UTF8ToUTF16(*options->title));
+  const std::u16string message(base::UTF8ToUTF16(*options->message));
   gfx::Image icon;
 
   if (!options->icon_bitmap.get() ||
@@ -275,8 +247,8 @@ bool NotificationsApiFunction::CreateNotification(
       *error = kUnableToDecodeIconError;
       return false;
     }
-    optional_fields.small_image =
-        GetMaskedSmallImage(small_icon_mask.AsImageSkia());
+    optional_fields.small_image = small_icon_mask;
+    optional_fields.small_image_needs_additional_masking = true;
   }
 
   if (options->priority.get())
@@ -366,7 +338,7 @@ bool NotificationsApiFunction::CreateNotification(
 
   std::string notification_id = CreateScopedIdentifier(extension_->id(), id);
   message_center::Notification notification(
-      type, notification_id, title, message, icon,
+      type, notification_id, title, message, ui::ImageModel::FromImage(icon),
       base::UTF8ToUTF16(extension_->name()), extension_->url(),
       message_center::NotifierId(message_center::NotifierType::APPLICATION,
                                  extension_->id()),
@@ -391,7 +363,7 @@ bool NotificationsApiFunction::UpdateNotification(
     api::notifications::NotificationOptions* options,
     message_center::Notification* notification,
     std::string* error) {
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
   if (options->priority &&
       *options->priority < message_center::DEFAULT_PRIORITY) {
     *error = kLowPriorityDeprecatedOnPlatform;
@@ -400,8 +372,8 @@ bool NotificationsApiFunction::UpdateNotification(
 #endif
 
   NotificationBitmapSizes bitmap_sizes = GetNotificationBitmapSizes();
-  float image_scale =
-      ui::GetScaleForScaleFactor(ui::GetSupportedScaleFactors().back());
+  float image_scale = ui::GetScaleForResourceScaleFactor(
+      ui::GetSupportedResourceScaleFactors().back());
 
   // Update optional fields if provided.
   if (options->type != api::notifications::TEMPLATE_TYPE_NONE)
@@ -419,7 +391,7 @@ bool NotificationsApiFunction::UpdateNotification(
       *error = kUnableToDecodeIconError;
       return false;
     }
-    notification->set_icon(icon);
+    notification->set_icon(ui::ImageModel::FromImage(icon));
   }
 
   if (options->app_icon_mask_bitmap.get()) {
@@ -430,8 +402,8 @@ bool NotificationsApiFunction::UpdateNotification(
       *error = kUnableToDecodeIconError;
       return false;
     }
-    notification->set_small_image(
-        GetMaskedSmallImage(app_icon_mask.AsImageSkia()));
+    notification->set_small_image(app_icon_mask);
+    notification->set_small_image_needs_additional_masking(true);
   }
 
   if (options->priority)
@@ -544,7 +516,7 @@ ExtensionNotificationDisplayHelper* NotificationsApiFunction::GetDisplayHelper()
 }
 
 Profile* NotificationsApiFunction::GetProfile() const {
-  return details_.GetProfile();
+  return Profile::FromBrowserContext(browser_context());
 }
 
 ExtensionFunction::ResponseAction NotificationsApiFunction::Run() {
@@ -583,7 +555,7 @@ NotificationsCreateFunction::~NotificationsCreateFunction() {
 
 ExtensionFunction::ResponseAction
 NotificationsCreateFunction::RunNotificationsApi() {
-  params_ = api::notifications::Create::Params::Create(*args_);
+  params_ = api::notifications::Create::Params::Create(args());
   EXTENSION_FUNCTION_VALIDATE(params_.get());
 
   const std::string extension_id(extension_->id());
@@ -617,7 +589,7 @@ NotificationsUpdateFunction::~NotificationsUpdateFunction() {
 
 ExtensionFunction::ResponseAction
 NotificationsUpdateFunction::RunNotificationsApi() {
-  params_ = api::notifications::Update::Params::Create(*args_);
+  params_ = api::notifications::Update::Params::Create(args());
   EXTENSION_FUNCTION_VALIDATE(params_.get());
 
   // We are in update.  If the ID doesn't exist, succeed but call the callback
@@ -658,7 +630,7 @@ NotificationsClearFunction::~NotificationsClearFunction() {
 
 ExtensionFunction::ResponseAction
 NotificationsClearFunction::RunNotificationsApi() {
-  params_ = api::notifications::Clear::Params::Create(*args_);
+  params_ = api::notifications::Clear::Params::Create(args());
   EXTENSION_FUNCTION_VALIDATE(params_.get());
 
   bool cancel_result = GetDisplayHelper()->Close(

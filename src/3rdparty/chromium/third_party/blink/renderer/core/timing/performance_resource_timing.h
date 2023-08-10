@@ -32,6 +32,7 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_TIMING_PERFORMANCE_RESOURCE_TIMING_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_TIMING_PERFORMANCE_RESOURCE_TIMING_H_
 
+#include "base/time/time.h"
 #include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom-blink.h"
 #include "third_party/blink/public/mojom/timing/performance_mark_or_measure.mojom-blink-forward.h"
 #include "third_party/blink/public/mojom/timing/resource_timing.mojom-blink.h"
@@ -40,7 +41,7 @@
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/timing/performance_entry.h"
 #include "third_party/blink/renderer/core/timing/performance_server_timing.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/mojo/heap_mojo_receiver.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
 
@@ -60,12 +61,14 @@ class CORE_EXPORT PerformanceResourceTiming
   PerformanceResourceTiming(
       const AtomicString& name,
       base::TimeTicks time_origin,
-      bool is_secure_context,
+      bool cross_origin_isolated_capability,
+      bool is_secure_transport,
       HeapVector<Member<PerformanceServerTiming>> server_timing,
       ExecutionContext* context);
   PerformanceResourceTiming(
       const mojom::blink::ResourceTimingInfo&,
       base::TimeTicks time_origin,
+      bool cross_origin_isolated_capability,
       const AtomicString& initiator_type,
       mojo::PendingReceiver<mojom::blink::WorkerTimingContainer>
           worker_timing_receiver,
@@ -108,6 +111,9 @@ class CORE_EXPORT PerformanceResourceTiming
   virtual AtomicString ConnectionInfo() const;
 
   base::TimeTicks TimeOrigin() const { return time_origin_; }
+  bool CrossOriginIsolatedCapability() const {
+    return cross_origin_isolated_capability_;
+  }
   mojom::blink::CacheState CacheState() const { return cache_state_; }
   static uint64_t GetTransferSize(uint64_t encoded_body_size,
                                   mojom::blink::CacheState cache_state);
@@ -132,6 +138,7 @@ class CORE_EXPORT PerformanceResourceTiming
   AtomicString alpn_negotiated_protocol_;
   AtomicString connection_info_;
   base::TimeTicks time_origin_;
+  bool cross_origin_isolated_capability_;
   scoped_refptr<ResourceLoadTiming> timing_;
   base::TimeTicks last_redirect_end_time_;
   base::TimeTicks response_end_;
@@ -140,15 +147,15 @@ class CORE_EXPORT PerformanceResourceTiming
   network::mojom::RequestDestination request_destination_ =
       network::mojom::RequestDestination::kEmpty;
   mojom::blink::CacheState cache_state_ = mojom::blink::CacheState::kNone;
-  uint64_t encoded_body_size_ = 0;
-  uint64_t decoded_body_size_ = 0;
-  bool did_reuse_connection_ = false;
+  const uint64_t encoded_body_size_ = 0;
+  const uint64_t decoded_body_size_ = 0;
+  const bool did_reuse_connection_ = false;
   // Do not access allow_timing_details_ directly.  Instead use the
   // AllowTimingDetails() method which is overridden by some sub-classes.
-  bool allow_timing_details_ = false;
-  bool allow_redirect_details_ = false;
-  bool allow_negative_value_ = false;
-  bool is_secure_context_ = false;
+  const bool allow_timing_details_ = false;
+  const bool allow_redirect_details_ = false;
+  const bool allow_negative_value_ = false;
+  const bool is_secure_transport_ = false;
   HeapVector<Member<PerformanceServerTiming>> server_timing_;
   HeapVector<Member<PerformanceEntry>> worker_timing_;
 

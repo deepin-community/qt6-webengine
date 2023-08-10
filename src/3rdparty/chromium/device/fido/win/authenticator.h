@@ -11,11 +11,11 @@
 
 #include "base/callback.h"
 #include "base/component_export.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
-#include "base/optional.h"
 #include "base/sequence_checker.h"
 #include "device/fido/fido_authenticator.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace device {
 
@@ -41,6 +41,11 @@ class COMPONENT_EXPORT(DEVICE_FIDO) WinWebAuthnApiAuthenticator
   // Callers must ensure that WinWebAuthnApi::IsAvailable() returns true
   // before creating instances of this class.
   WinWebAuthnApiAuthenticator(HWND current_window, WinWebAuthnApi* win_api_);
+
+  WinWebAuthnApiAuthenticator(const WinWebAuthnApiAuthenticator&) = delete;
+  WinWebAuthnApiAuthenticator& operator=(const WinWebAuthnApiAuthenticator&) =
+      delete;
+
   ~WinWebAuthnApiAuthenticator() override;
 
   // ShowsPrivacyNotice returns true if the Windows native UI will show a
@@ -52,12 +57,14 @@ class COMPONENT_EXPORT(DEVICE_FIDO) WinWebAuthnApiAuthenticator
   // FidoAuthenticator:
   void InitializeAuthenticator(base::OnceClosure callback) override;
   void MakeCredential(CtapMakeCredentialRequest request,
+                      MakeCredentialOptions options,
                       MakeCredentialCallback callback) override;
   void GetAssertion(CtapGetAssertionRequest request,
                     CtapGetAssertionOptions options,
                     GetAssertionCallback callback) override;
   void GetTouch(base::OnceClosure callback) override;
   void Cancel() override;
+  Type GetType() const override;
   std::string GetId() const override;
   bool IsInPairingMode() const override;
   bool IsPaired() const override;
@@ -66,19 +73,20 @@ class COMPONENT_EXPORT(DEVICE_FIDO) WinWebAuthnApiAuthenticator
   // credProtect CTAP extension.
   bool SupportsCredProtectExtension() const override;
   bool SupportsHMACSecretExtension() const override;
-  const base::Optional<AuthenticatorSupportedOptions>& Options() const override;
-  base::Optional<FidoTransportProtocol> AuthenticatorTransport() const override;
-  bool IsWinNativeApiAuthenticator() const override;
+  bool SupportsEnterpriseAttestation() const override;
+  bool SupportsCredBlobOfSize(size_t num_bytes) const override;
+  const absl::optional<AuthenticatorSupportedOptions>& Options() const override;
+  absl::optional<FidoTransportProtocol> AuthenticatorTransport() const override;
   base::WeakPtr<FidoAuthenticator> GetWeakPtr() override;
 
   void MakeCredentialDone(
       MakeCredentialCallback callback,
       std::pair<CtapDeviceResponseCode,
-                base::Optional<AuthenticatorMakeCredentialResponse>> result);
+                absl::optional<AuthenticatorMakeCredentialResponse>> result);
   void GetAssertionDone(
       GetAssertionCallback callback,
       std::pair<CtapDeviceResponseCode,
-                base::Optional<AuthenticatorGetAssertionResponse>> result);
+                absl::optional<AuthenticatorGetAssertionResponse>> result);
 
   HWND current_window_;
 
@@ -87,13 +95,12 @@ class COMPONENT_EXPORT(DEVICE_FIDO) WinWebAuthnApiAuthenticator
   GUID cancellation_id_ = {};
   // The pointee of |win_api_| is assumed to be a singleton that outlives
   // this instance.
-  WinWebAuthnApi* win_api_;
+  raw_ptr<WinWebAuthnApi> win_api_;
 
   // Verifies callbacks from |win_api_| are posted back onto the originating
   // sequence.
   SEQUENCE_CHECKER(sequence_checker_);
   base::WeakPtrFactory<WinWebAuthnApiAuthenticator> weak_factory_{this};
-  DISALLOW_COPY_AND_ASSIGN(WinWebAuthnApiAuthenticator);
 };
 
 }  // namespace device

@@ -9,12 +9,12 @@
 #include <stdint.h>
 
 #include <map>
+#include <string>
 #include <vector>
 
-#include "base/macros.h"
-#include "base/strings/string16.h"
 #import "content/browser/accessibility/browser_accessibility_cocoa.h"
 #include "content/browser/accessibility/browser_accessibility_manager.h"
+#include "content/common/content_export.h"
 #include "content/public/browser/ax_event_notification_details.h"
 
 namespace content {
@@ -27,6 +27,11 @@ class CONTENT_EXPORT BrowserAccessibilityManagerMac
   BrowserAccessibilityManagerMac(const ui::AXTreeUpdate& initial_tree,
                                  BrowserAccessibilityDelegate* delegate);
 
+  BrowserAccessibilityManagerMac(const BrowserAccessibilityManagerMac&) =
+      delete;
+  BrowserAccessibilityManagerMac& operator=(
+      const BrowserAccessibilityManagerMac&) = delete;
+
   ~BrowserAccessibilityManagerMac() override;
 
   static ui::AXTreeUpdate GetEmptyDocument();
@@ -36,7 +41,8 @@ class CONTENT_EXPORT BrowserAccessibilityManagerMac
   // Implementation of BrowserAccessibilityManager.
   void FireFocusEvent(BrowserAccessibility* node) override;
   void FireBlinkEvent(ax::mojom::Event event_type,
-                      BrowserAccessibility* node) override;
+                      BrowserAccessibility* node,
+                      int action_request_id) override;
   void FireGeneratedEvent(ui::AXEventGenerator::Event event_type,
                           BrowserAccessibility* node) override;
 
@@ -61,8 +67,8 @@ class CONTENT_EXPORT BrowserAccessibilityManagerMac
   // Returns an autoreleased object.
   NSDictionary* GetUserInfoForValueChangedNotification(
       const BrowserAccessibilityCocoa* native_node,
-      const base::string16& deleted_text,
-      const base::string16& inserted_text,
+      const std::u16string& deleted_text,
+      const std::u16string& inserted_text,
       id edit_text_marker) const;
 
   void AnnounceActiveDescendant(BrowserAccessibility* node) const;
@@ -82,8 +88,6 @@ class CONTENT_EXPORT BrowserAccessibilityManagerMac
   friend class BrowserAccessibilityManager;
 
   friend class BrowserAccessibilityCocoaBrowserTest;
-
-  DISALLOW_COPY_AND_ASSIGN(BrowserAccessibilityManagerMac);
 };
 
 }  // namespace content

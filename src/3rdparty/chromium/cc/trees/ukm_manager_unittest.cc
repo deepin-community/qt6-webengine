@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/memory/raw_ptr.h"
 #include "base/test/simple_test_tick_clock.h"
 #include "base/time/time.h"
 #include "cc/metrics/begin_main_frame_metrics.h"
@@ -66,8 +67,6 @@ const char kBlinkBreakdownLayoutUpdate[] =
 const char kBlinkBreakdownPrepaint[] = "SendBeginMainFrameToCommit.Prepaint";
 const char kBlinkBreakdownCompositingInputs[] =
     "SendBeginMainFrameToCommit.CompositingInputs";
-const char kBlinkBreakdownCompositingAssignments[] =
-    "SendBeginMainFrameToCommit.CompositingAssignments";
 const char kBlinkBreakdownPaint[] = "SendBeginMainFrameToCommit.Paint";
 const char kBlinkBreakdownCompositeCommit[] =
     "SendBeginMainFrameToCommit.CompositeCommit";
@@ -105,7 +104,6 @@ const char kVizBreakdownLatchToSwapEnd[] =
 const char kVizBreakdownSwapEndToPresentationCompositorFrame[] =
     "SubmitCompositorFrameToPresentationCompositorFrame."
     "SwapEndToPresentationCompositorFrame";
-const char kTotalLatencyToSwapBegin[] = "TotalLatencyToSwapBegin";
 const char kTotalLatency[] = "TotalLatency";
 
 // Names of frame sequence types use in compositor latency UKM metrics (see
@@ -136,19 +134,12 @@ class UkmManagerTest : public testing::Test {
 
  protected:
   base::TimeTicks AdvanceNowByMs(int advance_ms) {
-    test_tick_clock_.Advance(base::TimeDelta::FromMicroseconds(advance_ms));
+    test_tick_clock_.Advance(base::Microseconds(advance_ms));
     return test_tick_clock_.NowTicks();
   }
 
-  std::unique_ptr<EventMetrics> CreateEventMetrics(
-      ui::EventType type,
-      base::Optional<EventMetrics::ScrollUpdateType> scroll_update_type,
-      base::Optional<ui::ScrollInputType> scroll_input_type) {
-    base::TimeTicks event_time = AdvanceNowByMs(10);
-    AdvanceNowByMs(10);
-    std::unique_ptr<EventMetrics> metrics = EventMetrics::CreateForTesting(
-        type, scroll_update_type, scroll_input_type, event_time,
-        &test_tick_clock_);
+  std::unique_ptr<EventMetrics> SetupEventMetrics(
+      std::unique_ptr<EventMetrics> metrics) {
     if (metrics) {
       AdvanceNowByMs(10);
       metrics->SetDispatchStageTimestamp(
@@ -164,6 +155,24 @@ class UkmManagerTest : public testing::Test {
           EventMetrics::DispatchStage::kRendererMainFinished);
     }
     return metrics;
+  }
+
+  std::unique_ptr<EventMetrics> CreateScrollBeginEventMetrics() {
+    base::TimeTicks event_time = AdvanceNowByMs(10);
+    AdvanceNowByMs(10);
+    return SetupEventMetrics(ScrollEventMetrics::CreateForTesting(
+        ui::ET_GESTURE_SCROLL_BEGIN, ui::ScrollInputType::kWheel,
+        /*is_inertial=*/false, event_time, &test_tick_clock_));
+  }
+
+  std::unique_ptr<EventMetrics> CreateScrollUpdateEventMetrics(
+      bool is_inertial,
+      ScrollUpdateEventMetrics::ScrollUpdateType scroll_update_type) {
+    base::TimeTicks event_time = AdvanceNowByMs(10);
+    AdvanceNowByMs(10);
+    return SetupEventMetrics(ScrollUpdateEventMetrics::CreateForTesting(
+        ui::ET_GESTURE_SCROLL_UPDATE, ui::ScrollInputType::kWheel, is_inertial,
+        scroll_update_type, /*delta=*/10.0f, event_time, &test_tick_clock_));
   }
 
   struct DispatchTimestamps {
@@ -201,19 +210,18 @@ class UkmManagerTest : public testing::Test {
 
   BeginMainFrameMetrics BuildBlinkBreakdown() {
     BeginMainFrameMetrics breakdown;
-    breakdown.handle_input_events = base::TimeDelta::FromMicroseconds(10);
-    breakdown.animate = base::TimeDelta::FromMicroseconds(9);
-    breakdown.style_update = base::TimeDelta::FromMicroseconds(8);
-    breakdown.layout_update = base::TimeDelta::FromMicroseconds(7);
-    breakdown.compositing_inputs = base::TimeDelta::FromMicroseconds(6);
-    breakdown.prepaint = base::TimeDelta::FromMicroseconds(5);
-    breakdown.compositing_assignments = base::TimeDelta::FromMicroseconds(4);
-    breakdown.paint = base::TimeDelta::FromMicroseconds(3);
-    breakdown.composite_commit = base::TimeDelta::FromMicroseconds(2);
-    breakdown.update_layers = base::TimeDelta::FromMicroseconds(1);
+    breakdown.handle_input_events = base::Microseconds(10);
+    breakdown.animate = base::Microseconds(9);
+    breakdown.style_update = base::Microseconds(8);
+    breakdown.layout_update = base::Microseconds(7);
+    breakdown.compositing_inputs = base::Microseconds(6);
+    breakdown.prepaint = base::Microseconds(5);
+    breakdown.paint = base::Microseconds(3);
+    breakdown.composite_commit = base::Microseconds(2);
+    breakdown.update_layers = base::Microseconds(1);
 
     // Advance now by the sum of the breakdowns.
-    AdvanceNowByMs(10 + 9 + 8 + 7 + 6 + 5 + 4 + 3 + 2 + 1);
+    AdvanceNowByMs(10 + 9 + 8 + 7 + 6 + 5 + 3 + 2 + 1);
 
     return breakdown;
   }
@@ -231,7 +239,7 @@ class UkmManagerTest : public testing::Test {
     return breakdown;
   }
 
-  ukm::TestUkmRecorder* test_ukm_recorder_;
+  raw_ptr<ukm::TestUkmRecorder> test_ukm_recorder_;
   std::unique_ptr<UkmManager> manager_;
   base::SimpleTestTickClock test_tick_clock_;
 };
@@ -299,16 +307,26 @@ class UkmManagerCompositorLatencyTest
       public testing::WithParamInterface<
           CompositorFrameReporter::FrameReportType> {
  public:
-  UkmManagerCompositorLatencyTest() : report_type_(GetParam()) {}
+  UkmManagerCompositorLatencyTest() {
+    report_types_.set(static_cast<size_t>(GetParam()));
+  }
   ~UkmManagerCompositorLatencyTest() override = default;
 
  protected:
   CompositorFrameReporter::FrameReportType report_type() const {
-    return report_type_;
+    for (size_t type = 0; type < report_types_.size(); ++type) {
+      if (!report_types_.test(type))
+        continue;
+      return static_cast<CompositorFrameReporter::FrameReportType>(type);
+    }
+    return CompositorFrameReporter::FrameReportType::kNonDroppedFrame;
+  }
+  const CompositorFrameReporter::FrameReportTypes& report_types() const {
+    return report_types_;
   }
 
  private:
-  CompositorFrameReporter::FrameReportType report_type_;
+  CompositorFrameReporter::FrameReportTypes report_types_;
 };
 
 INSTANTIATE_TEST_SUITE_P(
@@ -381,7 +399,7 @@ TEST_P(UkmManagerCompositorLatencyTest, CompositorLatency) {
       },
   };
 
-  CompositorFrameReporter::ActiveTrackers active_trackers;
+  ActiveTrackers active_trackers;
   active_trackers.set(
       static_cast<size_t>(FrameSequenceTrackerType::kScrollbarScroll));
   active_trackers.set(
@@ -394,7 +412,7 @@ TEST_P(UkmManagerCompositorLatencyTest, CompositorLatency) {
   CompositorFrameReporter::ProcessedVizBreakdown processed_viz_breakdown(
       submit_time, viz_breakdown);
   manager_->RecordCompositorLatencyUKM(
-      report_type(), stage_history, active_trackers, processed_blink_breakdown,
+      report_types(), stage_history, active_trackers, processed_blink_breakdown,
       processed_viz_breakdown);
 
   const auto& entries =
@@ -435,9 +453,6 @@ TEST_P(UkmManagerCompositorLatencyTest, CompositorLatency) {
   test_ukm_recorder_->ExpectEntryMetric(
       entry, kBlinkBreakdownCompositingInputs,
       blink_breakdown.compositing_inputs.InMicroseconds());
-  test_ukm_recorder_->ExpectEntryMetric(
-      entry, kBlinkBreakdownCompositingAssignments,
-      blink_breakdown.compositing_assignments.InMicroseconds());
   test_ukm_recorder_->ExpectEntryMetric(entry, kBlinkBreakdownPaint,
                                         blink_breakdown.paint.InMicroseconds());
   test_ukm_recorder_->ExpectEntryMetric(
@@ -523,15 +538,19 @@ TEST_P(UkmManagerCompositorLatencyTest, CompositorLatency) {
 }
 
 TEST_F(UkmManagerTest, EventLatency) {
+  const bool kScrollIsInertial = true;
+  const bool kScrollIsNotInertial = false;
   std::unique_ptr<EventMetrics> event_metrics_ptrs[] = {
-      CreateEventMetrics(ui::ET_GESTURE_SCROLL_BEGIN, base::nullopt,
-                         ui::ScrollInputType::kWheel),
-      CreateEventMetrics(ui::ET_GESTURE_SCROLL_UPDATE,
-                         EventMetrics::ScrollUpdateType::kStarted,
-                         ui::ScrollInputType::kWheel),
-      CreateEventMetrics(ui::ET_GESTURE_SCROLL_UPDATE,
-                         EventMetrics::ScrollUpdateType::kContinued,
-                         ui::ScrollInputType::kWheel),
+      CreateScrollBeginEventMetrics(),
+      CreateScrollUpdateEventMetrics(
+          kScrollIsNotInertial,
+          ScrollUpdateEventMetrics::ScrollUpdateType::kStarted),
+      CreateScrollUpdateEventMetrics(
+          kScrollIsNotInertial,
+          ScrollUpdateEventMetrics::ScrollUpdateType::kContinued),
+      CreateScrollUpdateEventMetrics(
+          kScrollIsInertial,
+          ScrollUpdateEventMetrics::ScrollUpdateType::kContinued),
   };
   EXPECT_THAT(event_metrics_ptrs, ::testing::Each(::testing::NotNull()));
   EventMetrics::List events_metrics(
@@ -609,7 +628,7 @@ TEST_F(UkmManagerTest, EventLatency) {
                                   processed_viz_breakdown);
 
   const auto& entries = test_ukm_recorder_->GetEntriesByName(kEventLatency);
-  EXPECT_EQ(3u, entries.size());
+  EXPECT_EQ(4u, entries.size());
   for (size_t i = 0; i < entries.size(); i++) {
     const auto* entry = entries[i];
     const auto* event_metrics = events_metrics[i].get();
@@ -621,7 +640,7 @@ TEST_F(UkmManagerTest, EventLatency) {
         entry, kEventType, static_cast<int64_t>(event_metrics->type()));
     test_ukm_recorder_->ExpectEntryMetric(
         entry, kScrollInputType,
-        static_cast<int64_t>(*event_metrics->scroll_type()));
+        static_cast<int64_t>(event_metrics->AsScroll()->scroll_type()));
 
     test_ukm_recorder_->ExpectEntryMetric(
         entry, kGenerationToRendererCompositor,
@@ -676,9 +695,6 @@ TEST_F(UkmManagerTest, EventLatency) {
     test_ukm_recorder_->ExpectEntryMetric(
         entry, kBlinkBreakdownCompositingInputs,
         blink_breakdown.compositing_inputs.InMicroseconds());
-    test_ukm_recorder_->ExpectEntryMetric(
-        entry, kBlinkBreakdownCompositingAssignments,
-        blink_breakdown.compositing_assignments.InMicroseconds());
     test_ukm_recorder_->ExpectEntryMetric(
         entry, kBlinkBreakdownPaint, blink_breakdown.paint.InMicroseconds());
     test_ukm_recorder_->ExpectEntryMetric(
@@ -792,11 +808,6 @@ TEST_F(UkmManagerTest, EventLatency) {
         entry, kVizBreakdownSwapEndToPresentationCompositorFrame,
         (viz_breakdown.presentation_feedback.timestamp -
          viz_breakdown.swap_timings.swap_end)
-            .InMicroseconds());
-    test_ukm_recorder_->ExpectEntryMetric(
-        entry, kTotalLatencyToSwapBegin,
-        (viz_breakdown.swap_timings.swap_start -
-         event_dispatch_times[i].generated)
             .InMicroseconds());
     test_ukm_recorder_->ExpectEntryMetric(
         entry, kTotalLatency,

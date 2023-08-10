@@ -30,7 +30,6 @@
 
 #include <memory>
 
-#include "base/stl_util.h"
 #include "third_party/blink/renderer/modules/webdatabase/database.h"
 #include "third_party/blink/renderer/modules/webdatabase/database_authorizer.h"
 #include "third_party/blink/renderer/modules/webdatabase/database_context.h"
@@ -484,7 +483,7 @@ SQLTransactionBackend::StateFunction SQLTransactionBackend::StateFunctionFor(
       &SQLTransactionBackend::SendToFrontendState,
   };
 
-  DCHECK(base::size(kStateFunctions) ==
+  DCHECK(std::size(kStateFunctions) ==
          static_cast<int>(SQLTransactionState::kNumberOfStates));
   DCHECK_LT(state, SQLTransactionState::kNumberOfStates);
 

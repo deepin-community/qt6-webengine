@@ -11,8 +11,8 @@
 #include <vector>
 
 #include "base/callback.h"
-#include "base/macros.h"
 #include "extensions/browser/user_script_loader.h"
+#include "extensions/common/mojom/host_id.mojom-forward.h"
 
 class GURL;
 class WebUIURLFetcher;
@@ -26,6 +26,10 @@ class WebUIUserScriptLoader : public extensions::UserScriptLoader {
  public:
   WebUIUserScriptLoader(content::BrowserContext* browser_context,
                         const GURL& url);
+
+  WebUIUserScriptLoader(const WebUIUserScriptLoader&) = delete;
+  WebUIUserScriptLoader& operator=(const WebUIUserScriptLoader&) = delete;
+
   ~WebUIUserScriptLoader() override;
 
  private:
@@ -35,9 +39,9 @@ class WebUIUserScriptLoader : public extensions::UserScriptLoader {
   // UserScriptLoader:
   void AddScripts(std::unique_ptr<extensions::UserScriptList> scripts,
                   int render_process_id,
-                  int render_frame_id) override;
+                  int render_frame_id,
+                  ScriptsLoadedCallback callback) override;
   void LoadScripts(std::unique_ptr<extensions::UserScriptList> user_scripts,
-                   const std::set<HostID>& changed_hosts,
                    const std::set<std::string>& added_script_ids,
                    LoadScriptsCallback callback) override;
 
@@ -70,8 +74,6 @@ class WebUIUserScriptLoader : public extensions::UserScriptLoader {
   LoadScriptsCallback scripts_loaded_callback_;
 
   std::vector<std::unique_ptr<WebUIURLFetcher>> fetchers_;
-
-  DISALLOW_COPY_AND_ASSIGN(WebUIUserScriptLoader);
 };
 
 #endif  // EXTENSIONS_BROWSER_WEB_UI_USER_SCRIPT_LOADER_H_

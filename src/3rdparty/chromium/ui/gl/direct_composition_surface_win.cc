@@ -26,11 +26,6 @@
 #include "ui/gl/gl_switches.h"
 #include "ui/gl/gpu_switching_manager.h"
 
-#ifndef EGL_ANGLE_flexible_surface_compatibility
-#define EGL_ANGLE_flexible_surface_compatibility 1
-#define EGL_FLEXIBLE_SURFACE_COMPATIBILITY_SUPPORTED_ANGLE 0x33A6
-#endif /* EGL_ANGLE_flexible_surface_compatibility */
-
 namespace gl {
 namespace {
 // Whether the overlay caps are valid or not. GUARDED_BY GetOverlayLock().
@@ -38,6 +33,8 @@ bool g_overlay_caps_valid = false;
 // Indicates support for either NV12 or YUY2 overlays. GUARDED_BY
 // GetOverlayLock().
 bool g_supports_overlays = false;
+// Whether the GPU can support hardware overlays or not.
+bool g_supports_hardware_overlays = false;
 // Whether the DecodeSwapChain is disabled or not.
 bool g_decode_swap_chain_disabled = false;
 // Whether to force the nv12 overlay support.
@@ -56,9 +53,19 @@ bool SupportsOverlays() {
   return g_supports_overlays;
 }
 
+bool SupportsHardwareOverlays() {
+  base::AutoLock auto_lock(GetOverlayLock());
+  return g_supports_hardware_overlays;
+}
+
 void SetSupportsOverlays(bool support) {
   base::AutoLock auto_lock(GetOverlayLock());
   g_supports_overlays = support;
+}
+
+void SetSupportsHardwareOverlays(bool support) {
+  base::AutoLock auto_lock(GetOverlayLock());
+  g_supports_hardware_overlays = support;
 }
 
 bool SupportsSoftwareOverlays() {
@@ -98,6 +105,8 @@ gfx::Size g_primary_monitor_size;
 // The number of all visible display monitors on a desktop.
 int g_num_of_monitors = 0;
 
+Microsoft::WRL::ComPtr<IDCompositionDevice2> g_dcomp_device;
+
 DirectCompositionSurfaceWin::OverlayHDRInfoUpdateCallback
     g_overlay_hdr_gpu_info_callback;
 
@@ -118,6 +127,18 @@ UINT g_rgb10a2_overlay_support_flags = 0;
 // as supported as well.
 bool g_enable_bgra8_overlays_with_yuv_overlay_support = false;
 
+// Force enabling DXGI_FORMAT_R10G10B10A2_UNORM format for overlay. Intel
+// celake and Tigerlake fail to report the cap of this HDR overlay format.
+// TODO(magchen@): Remove this workaround when this cap is fixed in the Intel
+// drivers.
+bool g_force_rgb10a2_overlay_support = false;
+
+// Per Intel's request, only use NV12 for overlay when
+// COLOR_SPACE_YCBCR_STUDIO_G22_LEFT_P709 is also supported. At least one Intel
+// Gen9 SKU does not support NV12 overlays and it cannot be screened by the
+// device id.
+bool g_check_ycbcr_studio_g22_left_p709_for_nv12_support = false;
+
 void SetOverlaySupportFlagsForFormats(UINT nv12_flags,
                                       UINT yuy2_flags,
                                       UINT bgra8_flags,
@@ -135,6 +156,7 @@ bool FlagsSupportsOverlays(UINT flags) {
 }
 
 void GetGpuDriverOverlayInfo(bool* supports_overlays,
+                             bool* supports_hardware_overlays,
                              DXGI_FORMAT* overlay_format_used,
                              DXGI_FORMAT* overlay_format_used_hdr,
                              UINT* nv12_overlay_support_flags,
@@ -143,6 +165,7 @@ void GetGpuDriverOverlayInfo(bool* supports_overlays,
                              UINT* rgb10a2_overlay_support_flags) {
   // Initialization
   *supports_overlays = false;
+  *supports_hardware_overlays = false;
   *overlay_format_used = DXGI_FORMAT_NV12;
   *overlay_format_used_hdr = DXGI_FORMAT_R10G10B10A2_UNORM;
   *nv12_overlay_support_flags = 0;
@@ -208,12 +231,11 @@ void GetGpuDriverOverlayInfo(bool* supports_overlays,
                                  rgb10a2_overlay_support_flags);
     if (FlagsSupportsOverlays(*nv12_overlay_support_flags)) {
       // NV12 format is preferred if it's supported.
+      *overlay_format_used = DXGI_FORMAT_NV12;
+      *supports_hardware_overlays = true;
 
-      // Per Intel's request, use NV12 only when
-      // COLOR_SPACE_YCBCR_STUDIO_G22_LEFT_P709 is also supported. Rec 709 is
-      // commonly used for H.264 and HEVC. At least one Intel Gen9 SKU will not
-      // support NV12 overlays.
-      if (CheckOverlayColorSpaceSupport(
+      if (g_check_ycbcr_studio_g22_left_p709_for_nv12_support &&
+          !CheckOverlayColorSpaceSupport(
               DXGI_FORMAT_NV12, DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_LEFT_P709,
               output, d3d11_device)) {
         // Some new Intel drivers only claim to support unscaled overlays, but
@@ -221,15 +243,14 @@ void GetGpuDriverOverlayInfo(bool* supports_overlays,
         // performing an extra scaling Blt before calling the driver. Even when
         // scaled overlays aren't actually supported, presentation using the
         // overlay path should be relatively efficient.
-        *overlay_format_used = DXGI_FORMAT_NV12;
-        *supports_overlays = true;
+        *supports_hardware_overlays = false;
       }
     }
-    if (!*supports_overlays &&
+    if (!*supports_hardware_overlays &&
         FlagsSupportsOverlays(*yuy2_overlay_support_flags)) {
       // If NV12 isn't supported, fallback to YUY2 if it's supported.
       *overlay_format_used = DXGI_FORMAT_YUY2;
-      *supports_overlays = true;
+      *supports_hardware_overlays = true;
     }
     if (g_enable_bgra8_overlays_with_yuv_overlay_support) {
       if (FlagsSupportsOverlays(*nv12_overlay_support_flags))
@@ -247,6 +268,9 @@ void GetGpuDriverOverlayInfo(bool* supports_overlays,
               DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020, output, d3d11_device))
         *rgb10a2_overlay_support_flags = 0;
     }
+    if (g_force_rgb10a2_overlay_support) {
+      *rgb10a2_overlay_support_flags = DXGI_OVERLAY_SUPPORT_FLAG_SCALING;
+    }
 
     // Early out after the first output that reports overlay support. All
     // outputs are expected to report the same overlay support according to
@@ -254,14 +278,12 @@ void GetGpuDriverOverlayInfo(bool* supports_overlays,
     // https://docs.microsoft.com/en-us/windows-hardware/drivers/display/multiplane-overlay-hardware-requirements
     // TODO(sunnyps): If the above is true, then we can only look at first
     // output instead of iterating over all outputs.
-    if (*supports_overlays)
+    if (*supports_hardware_overlays)
       break;
   }
 
-  base::UmaHistogramBoolean("GPU.DirectComposition.HardwareOverlaysSupported",
-                            *supports_overlays);
-
-  if (*supports_overlays || !SupportsSoftwareOverlays()) {
+  *supports_overlays = *supports_hardware_overlays;
+  if (*supports_hardware_overlays || !SupportsSoftwareOverlays()) {
     return;
   }
 
@@ -283,6 +305,7 @@ void UpdateOverlaySupport() {
   SetOverlayCapsValid(true);
 
   bool supports_overlays = false;
+  bool supports_hardware_overlays = false;
   DXGI_FORMAT overlay_format_used = DXGI_FORMAT_NV12;
   DXGI_FORMAT overlay_format_used_hdr = DXGI_FORMAT_R10G10B10A2_UNORM;
   UINT nv12_overlay_support_flags = 0;
@@ -291,9 +314,10 @@ void UpdateOverlaySupport() {
   UINT rgb10a2_overlay_support_flags = 0;
 
   GetGpuDriverOverlayInfo(
-      &supports_overlays, &overlay_format_used, &overlay_format_used_hdr,
-      &nv12_overlay_support_flags, &yuy2_overlay_support_flags,
-      &bgra8_overlay_support_flags, &rgb10a2_overlay_support_flags);
+      &supports_overlays, &supports_hardware_overlays, &overlay_format_used,
+      &overlay_format_used_hdr, &nv12_overlay_support_flags,
+      &yuy2_overlay_support_flags, &bgra8_overlay_support_flags,
+      &rgb10a2_overlay_support_flags);
 
   if (g_force_nv12_overlay_support) {
     supports_overlays = true;
@@ -318,19 +342,19 @@ void UpdateOverlaySupport() {
     }
   }
 
-  if (supports_overlays != SupportsOverlays() ||
-      overlay_format_used != g_overlay_format_used) {
-    // Record the new histograms
-    if (supports_overlays) {
-      base::UmaHistogramSparse("GPU.DirectComposition.OverlayFormatUsed3",
-                               overlay_format_used);
-    }
-    UMA_HISTOGRAM_BOOLEAN("GPU.DirectComposition.OverlaysSupported",
-                          supports_overlays);
+  // Record histograms.
+  if (supports_overlays) {
+    base::UmaHistogramSparse("GPU.DirectComposition.OverlayFormatUsed3",
+                             overlay_format_used);
   }
+  base::UmaHistogramBoolean("GPU.DirectComposition.OverlaysSupported",
+                            supports_overlays);
+  base::UmaHistogramBoolean("GPU.DirectComposition.HardwareOverlaysSupported",
+                            supports_hardware_overlays);
 
-  // Update global caps
+  // Update global caps.
   SetSupportsOverlays(supports_overlays);
+  SetSupportsHardwareOverlays(supports_hardware_overlays);
   SetOverlaySupportFlagsForFormats(
       nv12_overlay_support_flags, yuy2_overlay_support_flags,
       bgra8_overlay_support_flags, rgb10a2_overlay_support_flags);
@@ -367,10 +391,12 @@ DirectCompositionSurfaceWin::DirectCompositionSurfaceWin(
           std::move(vsync_callback),
           settings.use_angle_texture_offset,
           settings.max_pending_frames,
-          settings.force_root_surface_full_damage)),
-      layer_tree_(
-          std::make_unique<DCLayerTree>(settings.disable_nv12_dynamic_textures,
-                                        settings.disable_vp_scaling)) {
+          settings.force_root_surface_full_damage,
+          settings.force_root_surface_full_damage_always)),
+      layer_tree_(std::make_unique<DCLayerTree>(
+          settings.disable_nv12_dynamic_textures,
+          settings.disable_vp_scaling,
+          settings.no_downscaled_overlay_promotion)) {
   ui::GpuSwitchingManager::GetInstance()->AddObserver(this);
 }
 
@@ -380,58 +406,100 @@ DirectCompositionSurfaceWin::~DirectCompositionSurfaceWin() {
 }
 
 // static
+void DirectCompositionSurfaceWin::InitializeOneOff() {
+  DCHECK(!g_dcomp_device);
+
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kDisableDirectComposition))
+    return;
+
+  // Direct composition can only be used with ANGLE.
+  if (gl::GetGLImplementation() != gl::kGLImplementationEGLANGLE)
+    return;
+
+  // Blocklist direct composition if MCTU.dll or MCTUX.dll are injected. These
+  // are user mode drivers for display adapters from Magic Control Technology
+  // Corporation.
+  if (GetModuleHandle(TEXT("MCTU.dll")) || GetModuleHandle(TEXT("MCTUX.dll"))) {
+    DLOG(ERROR) << "Blocklisted due to third party modules";
+    return;
+  }
+
+  // EGL_KHR_no_config_context surface compatibility is required to be able to
+  // MakeCurrent with the default pbuffer surface.
+  if (!GLSurfaceEGL::IsEGLNoConfigContextSupported()) {
+    DLOG(ERROR) << "EGL_KHR_no_config_context not supported";
+    return;
+  }
+
+  Microsoft::WRL::ComPtr<ID3D11Device> d3d11_device =
+      QueryD3D11DeviceObjectFromANGLE();
+  if (!d3d11_device) {
+    DLOG(ERROR) << "Failed to retrieve D3D11 device";
+    return;
+  }
+
+  // This will fail if the D3D device is "Microsoft Basic Display Adapter".
+  Microsoft::WRL::ComPtr<ID3D11VideoDevice> video_device;
+  if (FAILED(d3d11_device.As(&video_device))) {
+    DLOG(ERROR) << "Failed to retrieve video device";
+    return;
+  }
+
+  // Load DLL at runtime since older Windows versions don't have dcomp.
+  HMODULE dcomp_module = ::GetModuleHandle(L"dcomp.dll");
+  if (!dcomp_module) {
+    DLOG(ERROR) << "Failed to load dcomp.dll";
+    return;
+  }
+
+  using PFN_DCOMPOSITION_CREATE_DEVICE2 = HRESULT(WINAPI*)(
+      IUnknown * renderingDevice, REFIID iid, void** dcompositionDevice);
+  PFN_DCOMPOSITION_CREATE_DEVICE2 create_device_function =
+      reinterpret_cast<PFN_DCOMPOSITION_CREATE_DEVICE2>(
+          ::GetProcAddress(dcomp_module, "DCompositionCreateDevice2"));
+  if (!create_device_function) {
+    DLOG(ERROR) << "GetProcAddress failed for DCompositionCreateDevice2";
+    return;
+  }
+
+  Microsoft::WRL::ComPtr<IDXGIDevice> dxgi_device;
+  d3d11_device.As(&dxgi_device);
+
+  Microsoft::WRL::ComPtr<IDCompositionDesktopDevice> desktop_device;
+  HRESULT hr =
+      create_device_function(dxgi_device.Get(), IID_PPV_ARGS(&desktop_device));
+  if (FAILED(hr)) {
+    DLOG(ERROR) << "DCompositionCreateDevice2 failed with error 0x" << std::hex
+                << hr;
+    return;
+  }
+
+  hr = desktop_device.As(&g_dcomp_device);
+  if (FAILED(hr)) {
+    DLOG(ERROR) << "Failed to retrieve IDCompositionDevice2 with error 0x"
+                << std::hex << hr;
+    return;
+  }
+  DCHECK(g_dcomp_device);
+}
+
+// static
+void DirectCompositionSurfaceWin::ShutdownOneOff() {
+  g_dcomp_device.Reset();
+}
+
+// static
+const Microsoft::WRL::ComPtr<IDCompositionDevice2>&
+DirectCompositionSurfaceWin::GetDirectCompositionDevice() {
+  return g_dcomp_device;
+}
+
+// static
 bool DirectCompositionSurfaceWin::IsDirectCompositionSupported() {
-  static const bool supported = [] {
-    base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
-    if (command_line->HasSwitch(switches::kDisableDirectComposition))
-      return false;
-
-    // Direct composition can only be used with ANGLE.
-    if (gl::GetGLImplementation() != gl::kGLImplementationEGLANGLE)
-      return false;
-
-    // Blocklist direct composition if MCTU.dll or MCTUX.dll are injected. These
-    // are user mode drivers for display adapters from Magic Control Technology
-    // Corporation.
-    if (GetModuleHandle(TEXT("MCTU.dll")) ||
-        GetModuleHandle(TEXT("MCTUX.dll"))) {
-      DLOG(ERROR) << "Blocklisted due to third party modules";
-      return false;
-    }
-
-    // Flexible surface compatibility is required to be able to MakeCurrent with
-    // the default pbuffer surface.
-    if (!GLSurfaceEGL::IsEGLFlexibleSurfaceCompatibilitySupported()) {
-      DLOG(ERROR) << "EGL_ANGLE_flexible_surface_compatibility not supported";
-      return false;
-    }
-
-    Microsoft::WRL::ComPtr<ID3D11Device> d3d11_device =
-        QueryD3D11DeviceObjectFromANGLE();
-    if (!d3d11_device) {
-      DLOG(ERROR) << "Failed to retrieve D3D11 device";
-      return false;
-    }
-
-    // This will fail if the D3D device is "Microsoft Basic Display Adapter".
-    Microsoft::WRL::ComPtr<ID3D11VideoDevice> video_device;
-    if (FAILED(d3d11_device.As(&video_device))) {
-      DLOG(ERROR) << "Failed to retrieve video device";
-      return false;
-    }
-
-    // This will fail if DirectComposition DLL can't be loaded.
-    Microsoft::WRL::ComPtr<IDCompositionDevice2> dcomp_device =
-        QueryDirectCompositionDevice(d3d11_device);
-    if (!dcomp_device) {
-      DLOG(ERROR) << "Failed to retrieve direct composition device";
-      return false;
-    }
-
-    return true;
-  }();
-  return supported && !DirectCompositionChildSurfaceWin::
-                          IsDirectCompositionSwapChainFailed();
+  bool swap_chain_failed =
+      DirectCompositionChildSurfaceWin::IsDirectCompositionSwapChainFailed();
+  return g_dcomp_device && !swap_chain_failed;
 }
 
 // static
@@ -449,6 +517,11 @@ bool DirectCompositionSurfaceWin::AreOverlaysSupported() {
     return false;
 
   return SupportsOverlays();
+}
+
+bool DirectCompositionSurfaceWin::AreHardwareOverlaysSupported() {
+  UpdateOverlaySupport();
+  return SupportsHardwareOverlays();
 }
 
 // static
@@ -549,6 +622,8 @@ void DirectCompositionSurfaceWin::SetScaledOverlaysSupportedForTesting(
     g_yuy2_overlay_support_flags &= ~DXGI_OVERLAY_SUPPORT_FLAG_SCALING;
     g_rgb10a2_overlay_support_flags &= ~DXGI_OVERLAY_SUPPORT_FLAG_SCALING;
   }
+  g_disable_sw_overlays = !supported;
+  SetSupportsHardwareOverlays(supported);
   DCHECK_EQ(supported, AreScaledOverlaysSupported());
 }
 
@@ -688,17 +763,23 @@ void DirectCompositionSurfaceWin::ForceNV12OverlaySupport() {
   g_force_nv12_overlay_support = true;
 }
 
-bool DirectCompositionSurfaceWin::Initialize(GLSurfaceFormat format) {
-  d3d11_device_ = QueryD3D11DeviceObjectFromANGLE();
-  if (!d3d11_device_) {
-    DLOG(ERROR) << "Failed to retrieve D3D11 device from ANGLE";
-    return false;
-  }
+// static
+void DirectCompositionSurfaceWin::ForceRgb10a2OverlaySupport() {
+  // This has to be set before initializing overlay caps.
+  DCHECK(!OverlayCapsValid());
+  g_force_rgb10a2_overlay_support = true;
+}
+// static
+void DirectCompositionSurfaceWin::
+    SetCheckYCbCrStudioG22LeftP709ForNv12Support() {
+  // This has to be set before initializing overlay caps.
+  DCHECK(!OverlayCapsValid());
+  g_check_ycbcr_studio_g22_left_p709_for_nv12_support = true;
+}
 
-  dcomp_device_ = QueryDirectCompositionDevice(d3d11_device_);
-  if (!dcomp_device_) {
-    DLOG(ERROR)
-        << "Failed to retrieve direct compostion device from D3D11 device";
+bool DirectCompositionSurfaceWin::Initialize(GLSurfaceFormat format) {
+  if (!IsDirectCompositionSupported()) {
+    DLOG(ERROR) << "Direct composition not supported";
     return false;
   }
 
@@ -706,7 +787,7 @@ bool DirectCompositionSurfaceWin::Initialize(GLSurfaceFormat format) {
 
   window_ = child_window_.window();
 
-  if (!layer_tree_->Initialize(window_, d3d11_device_, dcomp_device_))
+  if (!layer_tree_->Initialize(window_))
     return false;
 
   if (!root_surface_->Initialize(GLSurfaceFormat()))
@@ -725,8 +806,8 @@ void DirectCompositionSurfaceWin::Destroy() {
   // that if DWM.exe crashes, the Chromium window will become black until
   // the next Commit.
   layer_tree_.reset();
-  if (dcomp_device_)
-    dcomp_device_->Commit();
+  if (g_dcomp_device)
+    g_dcomp_device->Commit();
 }
 
 gfx::Size DirectCompositionSurfaceWin::GetSize() {
@@ -788,8 +869,8 @@ void DirectCompositionSurfaceWin::SetVSyncEnabled(bool enabled) {
 }
 
 bool DirectCompositionSurfaceWin::ScheduleDCLayer(
-    const ui::DCRendererLayerParams& params) {
-  return layer_tree_->ScheduleDCLayer(params);
+    std::unique_ptr<ui::DCRendererLayerParams> params) {
+  return layer_tree_->ScheduleDCLayer(std::move(params));
 }
 
 void DirectCompositionSurfaceWin::SetFrameRate(float frame_rate) {
@@ -856,6 +937,7 @@ void DirectCompositionSurfaceWin::OnDisplayAdded() {
   InvalidateOverlayCaps();
   UpdateOverlaySupport();
   UpdateMonitorInfo();
+  layer_tree_->GetHDRMetadataHelper()->UpdateDisplayMetadata();
   RunOverlayHdrGpuInfoUpdateCallback();
 }
 
@@ -863,6 +945,7 @@ void DirectCompositionSurfaceWin::OnDisplayRemoved() {
   InvalidateOverlayCaps();
   UpdateOverlaySupport();
   UpdateMonitorInfo();
+  layer_tree_->GetHDRMetadataHelper()->UpdateDisplayMetadata();
   RunOverlayHdrGpuInfoUpdateCallback();
 }
 
@@ -872,6 +955,18 @@ void DirectCompositionSurfaceWin::OnDisplayMetricsChanged() {
 
 bool DirectCompositionSurfaceWin::SupportsDelegatedInk() {
   return layer_tree_->SupportsDelegatedInk();
+}
+
+void DirectCompositionSurfaceWin::SetDelegatedInkTrailStartPoint(
+    std::unique_ptr<gfx::DelegatedInkMetadata> metadata) {
+  layer_tree_->SetDelegatedInkTrailStartPoint(std::move(metadata));
+}
+
+void DirectCompositionSurfaceWin::InitDelegatedInkPointRendererReceiver(
+    mojo::PendingReceiver<gfx::mojom::DelegatedInkPointRenderer>
+        pending_receiver) {
+  layer_tree_->InitDelegatedInkPointRendererReceiver(
+      std::move(pending_receiver));
 }
 
 scoped_refptr<base::TaskRunner>

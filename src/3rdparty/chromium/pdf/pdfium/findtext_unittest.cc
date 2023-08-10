@@ -2,12 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/optional.h"
 #include "base/strings/utf_string_conversions.h"
 #include "pdf/pdfium/pdfium_engine.h"
 #include "pdf/pdfium/pdfium_test_base.h"
 #include "pdf/test/test_client.h"
 #include "testing/gmock/include/gmock/gmock.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 using testing::_;
 using testing::InSequence;
@@ -18,7 +18,8 @@ namespace {
 
 class FindTextTestClient : public TestClient {
  public:
-  FindTextTestClient() = default;
+  explicit FindTextTestClient(bool expected_case_sensitive)
+      : expected_case_sensitive_(expected_case_sensitive) {}
   FindTextTestClient(const FindTextTestClient&) = delete;
   FindTextTestClient& operator=(const FindTextTestClient&) = delete;
   ~FindTextTestClient() override = default;
@@ -27,19 +28,19 @@ class FindTextTestClient : public TestClient {
   MOCK_METHOD(void, NotifyNumberOfFindResultsChanged, (int, bool), (override));
   MOCK_METHOD(void, NotifySelectedFindResultChanged, (int), (override));
 
-  std::vector<SearchStringResult> SearchString(const base::char16* string,
-                                               const base::char16* term,
+  std::vector<SearchStringResult> SearchString(const char16_t* string,
+                                               const char16_t* term,
                                                bool case_sensitive) override {
-    EXPECT_TRUE(case_sensitive);
-    base::string16 haystack = base::string16(string);
-    base::string16 needle = base::string16(term);
+    EXPECT_EQ(case_sensitive, expected_case_sensitive_);
+    std::u16string haystack = std::u16string(string);
+    std::u16string needle = std::u16string(term);
 
     std::vector<SearchStringResult> results;
 
     size_t pos = 0;
-    while (1) {
+    while (true) {
       pos = haystack.find(needle, pos);
-      if (pos == base::string16::npos)
+      if (pos == std::u16string::npos)
         break;
 
       SearchStringResult result;
@@ -50,6 +51,9 @@ class FindTextTestClient : public TestClient {
     }
     return results;
   }
+
+ private:
+  const bool expected_case_sensitive_;
 };
 
 }  // namespace
@@ -57,7 +61,7 @@ class FindTextTestClient : public TestClient {
 using FindTextTest = PDFiumTestBase;
 
 TEST_F(FindTextTest, FindText) {
-  FindTextTestClient client;
+  FindTextTestClient client(/*expected_case_sensitive=*/true);
   std::unique_ptr<PDFiumEngine> engine =
       InitializeEngine(&client, FILE_PATH_LITERAL("hello_world2.pdf"));
   ASSERT_TRUE(engine);
@@ -76,7 +80,7 @@ TEST_F(FindTextTest, FindText) {
 }
 
 TEST_F(FindTextTest, FindHyphenatedText) {
-  FindTextTestClient client;
+  FindTextTestClient client(/*expected_case_sensitive=*/true);
   std::unique_ptr<PDFiumEngine> engine =
       InitializeEngine(&client, FILE_PATH_LITERAL("spanner.pdf"));
   ASSERT_TRUE(engine);
@@ -95,7 +99,7 @@ TEST_F(FindTextTest, FindHyphenatedText) {
 }
 
 TEST_F(FindTextTest, FindLineBreakText) {
-  FindTextTestClient client;
+  FindTextTestClient client(/*expected_case_sensitive=*/true);
   std::unique_ptr<PDFiumEngine> engine =
       InitializeEngine(&client, FILE_PATH_LITERAL("spanner.pdf"));
   ASSERT_TRUE(engine);
@@ -112,7 +116,7 @@ TEST_F(FindTextTest, FindLineBreakText) {
 }
 
 TEST_F(FindTextTest, FindSimpleQuotationMarkText) {
-  FindTextTestClient client;
+  FindTextTestClient client(/*expected_case_sensitive=*/true);
   std::unique_ptr<PDFiumEngine> engine =
       InitializeEngine(&client, FILE_PATH_LITERAL("bug_142627.pdf"));
   ASSERT_TRUE(engine);
@@ -130,7 +134,7 @@ TEST_F(FindTextTest, FindSimpleQuotationMarkText) {
 }
 
 TEST_F(FindTextTest, FindFancyQuotationMarkText) {
-  FindTextTestClient client;
+  FindTextTestClient client(/*expected_case_sensitive=*/true);
   std::unique_ptr<PDFiumEngine> engine =
       InitializeEngine(&client, FILE_PATH_LITERAL("bug_142627.pdf"));
   ASSERT_TRUE(engine);
@@ -145,7 +149,7 @@ TEST_F(FindTextTest, FindFancyQuotationMarkText) {
   }
 
   // don't, using right apostrophe instead of a single quotation mark
-  base::string16 term = {'d', 'o', 'n', 0x2019, 't'};
+  std::u16string term = {'d', 'o', 'n', 0x2019, 't'};
   engine->StartFind(base::UTF16ToUTF8(term), /*case_sensitive=*/true);
 }
 

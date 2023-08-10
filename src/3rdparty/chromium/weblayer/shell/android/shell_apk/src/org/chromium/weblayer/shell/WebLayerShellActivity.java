@@ -14,6 +14,7 @@ import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Point;
+import android.graphics.Rect;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -63,6 +64,7 @@ import org.chromium.weblayer.NavigationCallback;
 import org.chromium.weblayer.NavigationController;
 import org.chromium.weblayer.NewTabCallback;
 import org.chromium.weblayer.NewTabType;
+import org.chromium.weblayer.OpenUrlCallback;
 import org.chromium.weblayer.Profile;
 import org.chromium.weblayer.SiteSettingsActivity;
 import org.chromium.weblayer.Tab;
@@ -94,6 +96,7 @@ public class WebLayerShellActivity extends AppCompatActivity {
 
     private static final String NON_INCOGNITO_PROFILE_NAME = "DefaultProfile";
     private static final String EXTRA_START_IN_INCOGNITO = "EXTRA_START_IN_INCOGNITO";
+    private static final String KEY_PREVIOUS_TAB_GUIDS = "previousTabGuids";
 
     private static class ContextMenuCreator
             implements View.OnCreateContextMenuListener, MenuItem.OnMenuItemClickListener {
@@ -148,6 +151,9 @@ public class WebLayerShellActivity extends AppCompatActivity {
                 menu.setHeaderView(altTextView);
             }
             v.setOnCreateContextMenuListener(null);
+
+            // Clear the menu if we didn't add any actions. This will prevent it from showing up.
+            if (menu.size() == 1) menu.clear();
         }
 
         @Override
@@ -205,6 +211,9 @@ public class WebLayerShellActivity extends AppCompatActivity {
             attrs.flags |= WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS;
             mActivity.getWindow().setAttributes(attrs);
 
+            // Hide the controls bar as we need to give WebLayer all available screen space.
+            mActivity.findViewById(R.id.controls).setVisibility(View.GONE);
+
             View decorView = mActivity.getWindow().getDecorView();
             // Caching the system ui visibility is ok for shell, but likely not ok for
             // real code.
@@ -222,6 +231,8 @@ public class WebLayerShellActivity extends AppCompatActivity {
             if (mActivity == null) return;
             View decorView = mActivity.getWindow().getDecorView();
             decorView.setSystemUiVisibility(mSystemVisibilityToRestore);
+
+            mActivity.findViewById(R.id.controls).setVisibility(View.VISIBLE);
 
             final WindowManager.LayoutParams attrs = mActivity.getWindow().getAttributes();
             if ((attrs.flags & WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS) != 0) {
@@ -306,6 +317,19 @@ public class WebLayerShellActivity extends AppCompatActivity {
         }
     }
 
+    @Override
+    public void onSaveInstanceState(Bundle outState) {
+        super.onSaveInstanceState(outState);
+
+        // Store the stack of previous tab GUIDs that are used to set the next active tab when a tab
+        // closes. Also used to setup various callbacks again on restore.
+        String[] previousTabGuids = new String[mPreviousTabList.size()];
+        for (int i = 0; i < mPreviousTabList.size(); ++i) {
+            previousTabGuids[i] = mPreviousTabList.get(i).getGuid();
+        }
+        outState.putStringArray(KEY_PREVIOUS_TAB_GUIDS, previousTabGuids);
+    }
+
     private void onAppMenuButtonClicked(View appMenuButtonView) {
         PopupMenu popup = new PopupMenu(WebLayerShellActivity.this, appMenuButtonView);
         popup.getMenuInflater().inflate(R.menu.app_menu, popup.getMenu());
@@ -343,6 +367,13 @@ public class WebLayerShellActivity extends AppCompatActivity {
 
                 Intent intent = SiteSettingsActivity.createIntentForCategoryList(
                         this, NON_INCOGNITO_PROFILE_NAME);
+                IntentUtils.safeStartActivity(this, intent);
+                return true;
+            }
+
+            if (item.getItemId() == R.id.accessibility_settings_menu_id) {
+                Intent intent = SiteSettingsActivity.createIntentForAccessibilitySettings(
+                        this, mProfile.getName(), mProfile.isIncognito());
                 IntentUtils.safeStartActivity(this, intent);
                 return true;
             }
@@ -548,9 +579,7 @@ public class WebLayerShellActivity extends AppCompatActivity {
         // when the shell is rotated in the foreground).
         fragment.setRetainInstance(true);
         mBrowser = Browser.fromFragment(fragment);
-        Display display = getDefaultDisplay();
-        Point point = new Point();
-        display.getRealSize(point);
+        Point point = getDisplaySize();
         mBrowser.setMinimumSurfaceSize(point.x, point.y);
         mProfile = mBrowser.getProfile();
         mProfile.setUserIdentityCallback(new UserIdentityCallback() {
@@ -577,8 +606,21 @@ public class WebLayerShellActivity extends AppCompatActivity {
                 }, 3000);
             }
         });
+        mProfile.setTablessOpenUrlCallback(new OpenUrlCallback() {
+            @Override
+            public Browser getBrowserForNewTab() {
+                return mBrowser;
+            }
+
+            @Override
+            public void onTabAdded(Tab tab) {
+                onTabAddedImpl(tab);
+            }
+        });
 
         createTabCallbacks();
+
+        restorePreviousTabList(savedInstanceState);
 
         registerTabCallbacks(mBrowser.getActiveTab());
 
@@ -661,17 +703,15 @@ public class WebLayerShellActivity extends AppCompatActivity {
         mNewTabCallback = new NewTabCallback() {
             @Override
             public void onNewTab(Tab newTab, @NewTabType int type) {
-                registerTabCallbacks(newTab);
-                mPreviousTabList.add(mBrowser.getActiveTab());
-                mBrowser.setActiveTab(newTab);
+                onTabAddedImpl(newTab);
             }
         };
 
         mNavigationCallback = new NavigationCallback() {
             @Override
-            public void onLoadStateChanged(boolean isLoading, boolean toDifferentDocument) {
+            public void onLoadStateChanged(boolean isLoading, boolean shouldShowLoadingUi) {
                 mLoadProgressBar.setVisibility(
-                        isLoading && toDifferentDocument ? View.VISIBLE : View.INVISIBLE);
+                        isLoading && shouldShowLoadingUi ? View.VISIBLE : View.INVISIBLE);
             }
 
             @Override
@@ -687,6 +727,30 @@ public class WebLayerShellActivity extends AppCompatActivity {
                 return true;
             }
         };
+    }
+
+    private void restorePreviousTabList(Bundle savedInstanceState) {
+        if (savedInstanceState == null) return;
+        String[] previousTabGuids = savedInstanceState.getStringArray(KEY_PREVIOUS_TAB_GUIDS);
+        if (previousTabGuids == null) return;
+
+        Map<String, Tab> currentTabMap = new HashMap<String, Tab>();
+        for (Tab tab : mBrowser.getTabs()) {
+            currentTabMap.put(tab.getGuid(), tab);
+        }
+
+        for (String tabGuid : previousTabGuids) {
+            Tab tab = currentTabMap.get(tabGuid);
+            if (tab == null) continue;
+            mPreviousTabList.add(tab);
+            registerTabCallbacks(tab);
+        }
+    }
+
+    private void onTabAddedImpl(Tab newTab) {
+        registerTabCallbacks(newTab);
+        mPreviousTabList.add(mBrowser.getActiveTab());
+        mBrowser.setActiveTab(newTab);
     }
 
     private void registerTabCallbacks(Tab tab) {
@@ -831,6 +895,8 @@ public class WebLayerShellActivity extends AppCompatActivity {
             }
         }
 
+        if (input.startsWith("chrome://")) return Uri.parse(input);
+
         return Uri.parse("https://google.com/search")
                 .buildUpon()
                 .appendQueryParameter("q", input)
@@ -878,11 +944,16 @@ public class WebLayerShellActivity extends AppCompatActivity {
         }
     }
 
-    private Display getDefaultDisplay() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            return ApiHelperForR.getDisplay(this);
-        }
+    private Point getDisplaySize() {
+        Point point = new Point();
         WindowManager windowManager = (WindowManager) getSystemService(Context.WINDOW_SERVICE);
-        return windowManager.getDefaultDisplay();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Rect rect = ApiHelperForR.getMaximumWindowMetricsBounds(windowManager);
+            point.set(rect.width(), rect.height());
+        } else {
+            Display display = windowManager.getDefaultDisplay();
+            display.getRealSize(point);
+        }
+        return point;
     }
 }

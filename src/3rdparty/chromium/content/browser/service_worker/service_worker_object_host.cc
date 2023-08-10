@@ -6,6 +6,7 @@
 
 #include "base/bind.h"
 #include "base/callback_helpers.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "content/browser/service_worker/service_worker_client_utils.h"
 #include "content/browser/service_worker/service_worker_container_host.h"
 #include "content/browser/service_worker/service_worker_context_core.h"
@@ -13,7 +14,6 @@
 #include "content/browser/service_worker/service_worker_host.h"
 #include "content/browser/service_worker/service_worker_registration.h"
 #include "content/browser/service_worker/service_worker_type_converters.h"
-#include "content/common/service_worker/service_worker_utils.h"
 #include "content/public/browser/browser_thread.h"
 #include "mojo/public/cpp/bindings/associated_remote.h"
 
@@ -29,7 +29,7 @@ void DispatchExtendableMessageEventAfterStartWorker(
     scoped_refptr<ServiceWorkerVersion> worker,
     blink::TransferableMessage message,
     const url::Origin& source_origin,
-    const base::Optional<base::TimeDelta>& timeout,
+    const absl::optional<base::TimeDelta>& timeout,
     StatusCallback callback,
     PrepareExtendableMessageEventCallback prepare_callback,
     blink::ServiceWorkerStatusCode start_worker_status) {
@@ -64,12 +64,12 @@ void StartWorkerToDispatchExtendableMessageEvent(
     scoped_refptr<ServiceWorkerVersion> worker,
     blink::TransferableMessage message,
     const url::Origin& source_origin,
-    const base::Optional<base::TimeDelta>& timeout,
+    const absl::optional<base::TimeDelta>& timeout,
     StatusCallback callback,
     PrepareExtendableMessageEventCallback prepare_callback) {
   // If not enough time is left to actually process the event don't even
   // bother starting the worker and sending the event.
-  if (timeout && *timeout < base::TimeDelta::FromMilliseconds(100)) {
+  if (timeout && *timeout < base::Milliseconds(100)) {
     std::move(callback).Run(blink::ServiceWorkerStatusCode::kErrorTimeout);
     return;
   }
@@ -105,7 +105,7 @@ bool PrepareExtendableMessageEventFromClient(
   // Reset |registration->self_update_delay| iff postMessage is coming from a
   // client, to prevent workers from postMessage to another version to reset
   // the delay (https://crbug.com/805496).
-  ServiceWorkerRegistration* registration =
+  scoped_refptr<ServiceWorkerRegistration> registration =
       context->GetLiveRegistration(registration_id);
   DCHECK(registration) << "running workers should have a live registration";
   registration->set_self_update_delay(base::TimeDelta());
@@ -165,7 +165,7 @@ void DispatchExtendableMessageEventFromClient(
   }
 
   StartWorkerToDispatchExtendableMessageEvent(
-      worker, std::move(message), source_origin, base::nullopt /* timeout */,
+      worker, std::move(message), source_origin, absl::nullopt /* timeout */,
       std::move(callback),
       base::BindOnce(&PrepareExtendableMessageEventFromClient, context,
                      worker->registration_id(), std::move(source_client_info)));
@@ -175,7 +175,7 @@ void DispatchExtendableMessageEventFromServiceWorker(
     scoped_refptr<ServiceWorkerVersion> worker,
     blink::TransferableMessage message,
     const url::Origin& source_origin,
-    const base::Optional<base::TimeDelta>& timeout,
+    const absl::optional<base::TimeDelta>& timeout,
     StatusCallback callback,
     base::WeakPtr<ServiceWorkerContainerHost> source_container_host) {
   if (!source_container_host) {
@@ -200,7 +200,7 @@ ServiceWorkerObjectHost::ServiceWorkerObjectHost(
       container_host_(container_host),
       container_origin_(url::Origin::Create(container_host_->url())),
       version_(std::move(version)) {
-  DCHECK_CURRENTLY_ON(ServiceWorkerContext::GetCoreThreadId());
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
   DCHECK(context_ && container_host_ && version_);
   DCHECK(context_->GetLiveRegistration(version_->registration_id()));
   version_->AddObserver(this);
@@ -209,7 +209,7 @@ ServiceWorkerObjectHost::ServiceWorkerObjectHost(
 }
 
 ServiceWorkerObjectHost::~ServiceWorkerObjectHost() {
-  DCHECK_CURRENTLY_ON(ServiceWorkerContext::GetCoreThreadId());
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
   version_->RemoveObserver(this);
 }
 
@@ -295,7 +295,7 @@ void ServiceWorkerObjectHost::DispatchExtendableMessageEvent(
         FROM_HERE,
         base::BindOnce(&DispatchExtendableMessageEventFromServiceWorker,
                        version_, std::move(message), container_origin_,
-                       base::make_optional(timeout), std::move(callback),
+                       absl::make_optional(timeout), std::move(callback),
                        container_host_->GetWeakPtr()));
   } else if (container_host_->IsContainerForWindowClient()) {
     service_worker_client_utils::GetClient(

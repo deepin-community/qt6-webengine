@@ -7,16 +7,52 @@ import("//third_party/protobuf/proto_library.gni")
 
 # Record constants for use with the reporting messaging library.
 proto_library("record_constants") {
-  sources = [ "record_constants.proto" ]
+  proto_in_dir = "//"
 
-  proto_out_dir = "components/reporting/proto"
+  # Generate JS so it can be used by chrome extensions
+  generate_javascript = true
+
+  sources = [ "synced/record_constants.proto" ]
 }
 
 # Record definitions for reporting.
 proto_library("record_proto") {
-  sources = [ "record.proto" ]
+  proto_in_dir = "//"
+
+  # Generate JS so it can be used by chrome extensions
+  generate_javascript = true
+
+  sources = [ "synced/record.proto" ]
 
   deps = [ ":record_constants" ]
+}
 
-  proto_out_dir = "components/reporting/proto"
+proto_library("interface_proto") {
+  proto_in_dir = "//"
+
+  # Generate JS so it can be used by chrome extensions
+  generate_javascript = true
+
+  sources = [ "interface.proto" ]
+
+  proto_deps = [
+    ":record_constants",
+    ":record_proto",
+    "//components/reporting/util:status_proto",
+  ]
+}
+
+proto_library("test_proto") {
+  proto_in_dir = "//"
+  sources = [ "test.proto" ]
+}
+
+# Metrics records definitions.
+proto_library("metric_data_proto") {
+  proto_in_dir = "//"
+
+  # Generate JS so it can be used by chrome extensions
+  generate_javascript = true
+
+  sources = [ "synced/metric_data.proto" ]
 }

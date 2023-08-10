@@ -34,24 +34,25 @@
 #include "third_party/blink/renderer/core/style/computed_style.h"
 #include "third_party/blink/renderer/core/svg/graphics/svg_image.h"
 #include "third_party/blink/renderer/core/svg/graphics/svg_image_for_container.h"
-#include "third_party/blink/renderer/platform/geometry/layout_size.h"
 #include "third_party/blink/renderer/platform/graphics/bitmap_image.h"
 #include "third_party/blink/renderer/platform/graphics/placeholder_image.h"
-#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 
 namespace blink {
 
-StyleFetchedImage::StyleFetchedImage(const Document& document,
-                                     FetchParameters& params,
-                                     bool is_lazyload_possibly_deferred)
-    : document_(&document),
-      url_(params.Url()),
-      origin_clean_(!params.IsFromOriginDirtyStyleSheet()),
-      is_ad_related_(params.GetResourceRequest().IsAdResource()) {
+StyleFetchedImage::StyleFetchedImage(ImageResourceContent* image,
+                                     const Document& document,
+                                     bool is_lazyload_possibly_deferred,
+                                     bool origin_clean,
+                                     bool is_ad_related,
+                                     const KURL& url)
+    : document_(document),
+      url_(url),
+      origin_clean_(origin_clean),
+      is_ad_related_(is_ad_related) {
   is_image_resource_ = true;
   is_lazyload_possibly_deferred_ = is_lazyload_possibly_deferred;
 
-  image_ = ImageResourceContent::Fetch(params, document_->Fetcher());
+  image_ = image;
   image_->AddObserver(this);
   // ResourceFetcher is not determined from StyleFetchedImage and it is
   // impossible to send a request for refetching.
@@ -60,8 +61,8 @@ StyleFetchedImage::StyleFetchedImage(const Document& document,
 
 StyleFetchedImage::~StyleFetchedImage() = default;
 
-void StyleFetchedImage::Dispose() {
-  image_->RemoveObserver(this);
+void StyleFetchedImage::Prefinalize() {
+  image_->DidRemoveObserver();
   image_ = nullptr;
 }
 
@@ -106,10 +107,17 @@ bool StyleFetchedImage::ErrorOccurred() const {
   return image_->ErrorOccurred();
 }
 
-FloatSize StyleFetchedImage::ImageSize(
-    const Document&,
+bool StyleFetchedImage::IsAccessAllowed(String& failing_url) const {
+  DCHECK(image_->IsLoaded());
+  if (image_->IsAccessAllowed())
+    return true;
+  failing_url = image_->Url().ElidedString();
+  return false;
+}
+
+gfx::SizeF StyleFetchedImage::ImageSize(
     float multiplier,
-    const FloatSize& default_object_size,
+    const gfx::SizeF& default_object_size,
     RespectImageOrientationEnum respect_orientation) const {
   Image* image = image_->GetImage();
   if (image_->HasDevicePixelRatioHeaderValue()) {
@@ -119,7 +127,7 @@ FloatSize StyleFetchedImage::ImageSize(
     return ImageSizeForSVGImage(svg_image, multiplier, default_object_size);
   }
   respect_orientation = ForceOrientationIfNecessary(respect_orientation);
-  FloatSize size(image->Size(respect_orientation));
+  gfx::SizeF size(image->Size(respect_orientation));
   return ApplyZoom(size, multiplier);
 }
 
@@ -163,9 +171,9 @@ void StyleFetchedImage::ImageNotifyFinished(ImageResourceContent*) {
 
 scoped_refptr<Image> StyleFetchedImage::GetImage(
     const ImageResourceObserver&,
-    const Document&,
+    const Document& document,
     const ComputedStyle& style,
-    const FloatSize& target_size) const {
+    const gfx::SizeF& target_size) const {
   Image* image = image_->GetImage();
   if (image->IsPlaceholderImage()) {
     static_cast<PlaceholderImage*>(image)->SetIconAndTextScaleFactor(
@@ -176,7 +184,8 @@ scoped_refptr<Image> StyleFetchedImage::GetImage(
   if (!svg_image)
     return image;
   return SVGImageForContainer::Create(svg_image, target_size,
-                                      style.EffectiveZoom(), url_);
+                                      style.EffectiveZoom(), url_,
+                                      document.GetPreferredColorScheme());
 }
 
 bool StyleFetchedImage::KnownToBeOpaque(const Document&,
@@ -188,10 +197,6 @@ void StyleFetchedImage::LoadDeferredImage(const Document& document) {
   DCHECK(is_lazyload_possibly_deferred_);
   is_lazyload_possibly_deferred_ = false;
   document_ = &document;
-  if (document.GetFrame() && document.GetFrame()->Client()) {
-    document.GetFrame()->Client()->DidObserveLazyLoadBehavior(
-        WebLocalFrameClient::LazyLoadBehavior::kLazyLoadedImage);
-  }
   image_->LoadDeferredImage(document_->Fetcher());
 }
 
@@ -221,6 +226,7 @@ void StyleFetchedImage::Trace(Visitor* visitor) const {
   visitor->Trace(image_);
   visitor->Trace(document_);
   StyleImage::Trace(visitor);
+  ImageResourceObserver::Trace(visitor);
 }
 
 }  // namespace blink

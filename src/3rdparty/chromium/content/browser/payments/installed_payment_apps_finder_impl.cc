@@ -5,6 +5,7 @@
 #include "content/browser/payments/installed_payment_apps_finder_impl.h"
 
 #include "base/bind.h"
+#include "base/memory/ptr_util.h"
 #include "base/supports_user_data.h"
 #include "content/browser/payments/payment_app_context_impl.h"
 #include "content/browser/service_worker/service_worker_context_wrapper.h"
@@ -21,22 +22,6 @@ namespace {
 
 const char kInstalledPaymentAppsFinderImplName[] =
     "installed_payment_apps_finder_impl";
-
-void DidGetAllPaymentAppsOnCoreThread(
-    InstalledPaymentAppsFinder::GetAllPaymentAppsCallback callback,
-    InstalledPaymentAppsFinder::PaymentApps apps) {
-  GetUIThreadTaskRunner({})->PostTask(
-      FROM_HERE, base::BindOnce(std::move(callback), std::move(apps)));
-}
-
-void GetAllPaymentAppsOnCoreThread(
-    scoped_refptr<PaymentAppContextImpl> payment_app_context,
-    InstalledPaymentAppsFinder::GetAllPaymentAppsCallback callback) {
-  DCHECK_CURRENTLY_ON(ServiceWorkerContext::GetCoreThreadId());
-
-  payment_app_context->payment_app_database()->ReadAllPaymentApps(
-      base::BindOnce(&DidGetAllPaymentAppsOnCoreThread, std::move(callback)));
-}
 
 }  // namespace
 
@@ -72,17 +57,13 @@ void InstalledPaymentAppsFinderImpl::GetAllPaymentApps(
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   StoragePartitionImpl* partition = static_cast<StoragePartitionImpl*>(
-      BrowserContext::GetDefaultStoragePartition(browser_context_));
+      browser_context_->GetDefaultStoragePartition());
   scoped_refptr<PaymentAppContextImpl> payment_app_context =
       partition->GetPaymentAppContext();
-
-  RunOrPostTaskOnThread(
-      FROM_HERE, ServiceWorkerContext::GetCoreThreadId(),
+  payment_app_context->payment_app_database()->ReadAllPaymentApps(
       base::BindOnce(
-          &GetAllPaymentAppsOnCoreThread, payment_app_context,
-          base::BindOnce(
-              &InstalledPaymentAppsFinderImpl::CheckPermissionForPaymentApps,
-              weak_ptr_factory_.GetWeakPtr(), std::move(callback))));
+          &InstalledPaymentAppsFinderImpl::CheckPermissionForPaymentApps,
+          weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
 }
 
 void InstalledPaymentAppsFinderImpl::CheckPermissionForPaymentApps(
@@ -91,14 +72,14 @@ void InstalledPaymentAppsFinderImpl::CheckPermissionForPaymentApps(
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   PermissionController* permission_controller =
-      BrowserContext::GetPermissionController(browser_context_);
+      browser_context_->GetPermissionController();
   DCHECK(permission_controller);
 
   PaymentApps permitted_apps;
   for (auto& app : apps) {
-    GURL origin = app.second->scope.GetOrigin();
-    if (permission_controller->GetPermissionStatus(
-            PermissionType::PAYMENT_HANDLER, origin, origin) ==
+    GURL origin = app.second->scope.DeprecatedGetOriginAsURL();
+    if (permission_controller->GetPermissionStatusForOriginWithoutContext(
+            PermissionType::PAYMENT_HANDLER, url::Origin::Create(origin)) ==
         blink::mojom::PermissionStatus::GRANTED) {
       permitted_apps[app.first] = std::move(app.second);
     }

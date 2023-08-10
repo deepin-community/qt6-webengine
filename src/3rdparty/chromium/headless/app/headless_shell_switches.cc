@@ -22,11 +22,6 @@ const char kEnableBeginFrameControl[] = "enable-begin-frame-control";
 // Enable crash reporter for headless.
 const char kEnableCrashReporter[] = "enable-crash-reporter";
 
-// If enabled, generate a tagged (accessible) file when printing to PDF.
-// The plan is for this to go away once tagged PDFs become the default.
-// See https://crbug.com/607777
-const char kExportTaggedPDF[] = "export-tagged-pdf";
-
 // Disable crash reporter for headless. It is enabled by default in official
 // builds.
 const char kDisableCrashReporter[] = "disable-crash-reporter";
@@ -105,10 +100,15 @@ const char kTimeout[] = "timeout";
 // rendering.
 const char kUseGL[] = "use-gl";
 
+// Sets the ANGLE implementation to use. Only relevant if "use-gl" is set to
+// "angle"
+const char kUseANGLE[] = "use-angle";
+
 // A string used to override the default user agent with a custom one.
 const char kUserAgent[] = "user-agent";
 
-// Directory where the browser stores the user profile.
+// Directory where the browser stores the user profile. Note that if this switch
+// is added, the session will no longer be Incognito.
 const char kUserDataDir[] = "user-data-dir";
 
 // If set the system waits the specified number of virtual milliseconds before
@@ -123,7 +123,7 @@ const char kVirtualTimeBudget[] = "virtual-time-budget";
 const char kWindowSize[] = "window-size";
 
 // Allowlist for Negotiate Auth servers.
-const char kAuthServerAllowlist[] = "auth-server-whitelist";
+const char kAuthServerAllowlist[] = "auth-server-allowlist";
 
 // Sets font render hinting when running headless, affects Skia rendering and
 // whether glyph subpixel positioning is enabled.
@@ -132,5 +132,10 @@ const char kFontRenderHinting[] = "font-render-hinting";
 
 // If true, then all pop-ups and calls to window.open will fail.
 const char kBlockNewWebContents[] = "block-new-web-contents";
+
+// Allows overriding the list of restricted ports by passing a comma-separated
+// list of port numbers.
+const char kExplicitlyAllowedPorts[] = "explicitly-allowed-ports";
+
 }  // namespace switches
 }  // namespace headless

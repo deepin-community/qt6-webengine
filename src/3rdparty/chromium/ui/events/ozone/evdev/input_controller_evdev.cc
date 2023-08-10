@@ -14,6 +14,7 @@
 #include "base/callback.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "ui/events/devices/device_data_manager.h"
+#include "ui/events/devices/stylus_state.h"
 #include "ui/events/ozone/evdev/input_device_factory_evdev_proxy.h"
 #include "ui/events/ozone/evdev/keyboard_evdev.h"
 #include "ui/events/ozone/evdev/mouse_button_map_evdev.h"
@@ -51,6 +52,10 @@ void InputControllerEvdev::set_has_touchpad(bool has_touchpad) {
   has_touchpad_ = has_touchpad;
 }
 
+void InputControllerEvdev::set_has_haptic_touchpad(bool has_haptic_touchpad) {
+  has_haptic_touchpad_ = has_haptic_touchpad;
+}
+
 void InputControllerEvdev::SetInputDevicesEnabled(bool enabled) {
   input_device_settings_.enable_devices = enabled;
   ScheduleUpdateDeviceSettings();
@@ -66,6 +71,10 @@ bool InputControllerEvdev::HasPointingStick() {
 
 bool InputControllerEvdev::HasTouchpad() {
   return has_touchpad_;
+}
+
+bool InputControllerEvdev::HasHapticTouchpad() {
+  return has_haptic_touchpad_;
 }
 
 bool InputControllerEvdev::IsCapsLockEnabled() {
@@ -139,6 +148,16 @@ void InputControllerEvdev::SetTouchpadSensitivity(int value) {
 
 void InputControllerEvdev::SetTouchpadScrollSensitivity(int value) {
   input_device_settings_.touchpad_scroll_sensitivity = value;
+  ScheduleUpdateDeviceSettings();
+}
+
+void InputControllerEvdev::SetTouchpadHapticFeedback(bool enabled) {
+  input_device_settings_.touchpad_haptic_feedback_enabled = enabled;
+  ScheduleUpdateDeviceSettings();
+}
+
+void InputControllerEvdev::SetTouchpadHapticClickSensitivity(int value) {
+  input_device_settings_.touchpad_haptic_click_sensitivity = value;
   ScheduleUpdateDeviceSettings();
 }
 
@@ -248,6 +267,14 @@ void InputControllerEvdev::SetTapToClickPaused(bool state) {
   ScheduleUpdateDeviceSettings();
 }
 
+void InputControllerEvdev::GetStylusSwitchState(
+    GetStylusSwitchStateReply reply) {
+  if (input_device_factory_)
+    input_device_factory_->GetStylusSwitchState(std::move(reply));
+  else
+    std::move(reply).Run(ui::StylusState::REMOVED);
+}
+
 void InputControllerEvdev::GetTouchDeviceStatus(
     GetTouchDeviceStatusReply reply) {
   if (input_device_factory_)
@@ -305,6 +332,23 @@ void InputControllerEvdev::StopVibration(int id) {
   if (!input_device_factory_)
     return;
   input_device_factory_->StopVibration(id);
+}
+
+void InputControllerEvdev::PlayHapticTouchpadEffect(
+    ui::HapticTouchpadEffect effect,
+    ui::HapticTouchpadEffectStrength strength) {
+  if (!input_device_factory_)
+    return;
+  input_device_factory_->PlayHapticTouchpadEffect(effect, strength);
+}
+
+void InputControllerEvdev::SetHapticTouchpadEffectForNextButtonRelease(
+    ui::HapticTouchpadEffect effect,
+    ui::HapticTouchpadEffectStrength strength) {
+  if (!input_device_factory_)
+    return;
+  input_device_factory_->SetHapticTouchpadEffectForNextButtonRelease(effect,
+                                                                     strength);
 }
 
 }  // namespace ui

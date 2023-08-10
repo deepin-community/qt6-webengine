@@ -5,7 +5,6 @@
 #include "chrome/browser/ui/webui/print_preview/pdf_printer_handler.h"
 
 #include "base/json/json_reader.h"
-#include "base/optional.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
@@ -14,9 +13,10 @@
 #include "chrome/test/base/scoped_browser_locale.h"
 #include "components/url_formatter/url_formatter.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/gurl.h"
 
-#if defined(OS_MAC)
+#if BUILDFLAG(IS_MAC)
 #include "chrome/common/printing/printer_capabilities_mac.h"
 #include "printing/backend/print_backend.h"
 #include "ui/gfx/geometry/size.h"
@@ -122,7 +122,7 @@ void RecordCapability(base::OnceClosure done_closure,
   std::move(done_closure).Run();
 }
 
-#if defined(OS_MAC)
+#if BUILDFLAG(IS_MAC)
 base::Value GetValueFromCustomPaper(
     const PrinterSemanticCapsAndDefaults::Paper& paper) {
   base::Value paper_value(base::Value::Type::DICTIONARY);
@@ -254,7 +254,7 @@ TEST_F(PdfPrinterHandlerTest, GetFileName) {
   for (const auto& data : kTestData) {
     SCOPED_TRACE(std::string(data.url) + " | " + data.job_title);
     GURL url(data.url);
-    base::string16 job_title = base::ASCIIToUTF16(data.job_title);
+    std::u16string job_title = base::ASCIIToUTF16(data.job_title);
     base::FilePath path =
         PdfPrinterHandler::GetFileName(url, job_title, data.is_savable);
     EXPECT_EQ(data.expected_output, path.value());
@@ -262,7 +262,7 @@ TEST_F(PdfPrinterHandlerTest, GetFileName) {
 }
 
 TEST_F(PdfPrinterHandlerGetCapabilityTest, GetCapability) {
-  base::Optional<base::Value> expected_capability =
+  absl::optional<base::Value> expected_capability =
       base::JSONReader::Read(kPdfPrinterCapability);
   ASSERT_TRUE(expected_capability.has_value());
 
@@ -270,7 +270,7 @@ TEST_F(PdfPrinterHandlerGetCapabilityTest, GetCapability) {
   EXPECT_EQ(expected_capability.value(), capability);
 }
 
-#if defined(OS_MAC)
+#if BUILDFLAG(IS_MAC)
 TEST_F(PdfPrinterHandlerGetCapabilityTest,
        GetMacCustomPaperSizesInCapabilities) {
   constexpr char kPaperOptionPath[] = "capabilities.printer.media_size.option";
@@ -281,7 +281,7 @@ TEST_F(PdfPrinterHandlerGetCapabilityTest,
       {"printer4", "", gfx::Size(101600, 50800)},
   };
 
-  base::Optional<base::Value> expected_capability =
+  absl::optional<base::Value> expected_capability =
       base::JSONReader::Read(kPdfPrinterCapability);
   ASSERT_TRUE(expected_capability.has_value());
   ASSERT_TRUE(expected_capability.value().is_dict());

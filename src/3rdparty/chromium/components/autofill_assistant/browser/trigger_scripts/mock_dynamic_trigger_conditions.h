@@ -16,7 +16,11 @@ class MockDynamicTriggerConditions : public DynamicTriggerConditions {
   ~MockDynamicTriggerConditions() override;
 
   MOCK_CONST_METHOD1(GetSelectorMatches,
-                     base::Optional<bool>(const Selector& selector));
+                     absl::optional<bool>(const Selector& selector));
+
+  MOCK_CONST_METHOD1(
+      GetDocumentReadyState,
+      absl::optional<DocumentReadyState>(const Selector& selector));
 
   MOCK_METHOD1(SetURL, void(const GURL& url));
 
@@ -34,9 +38,9 @@ class MockDynamicTriggerConditions : public DynamicTriggerConditions {
                void(WebController* web_controller,
                     base::OnceCallback<void(void)>& callback));
 
-  MOCK_METHOD1(AddSelectorsFromTriggerScript,
+  MOCK_METHOD1(AddConditionsFromTriggerScript,
                void(const TriggerScriptProto& proto));
-  MOCK_METHOD0(ClearSelectors, void(void));
+  MOCK_METHOD0(ClearConditions, void(void));
   MOCK_CONST_METHOD0(HasResults, bool(void));
 };
 

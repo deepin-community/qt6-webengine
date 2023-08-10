@@ -10,6 +10,7 @@
 #include <utility>
 
 #include "base/check_op.h"
+#include "base/i18n/rtl.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/current_thread.h"
@@ -21,13 +22,14 @@
 #include "ui/accessibility/ax_action_data.h"
 #include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/accessibility/ax_node_data.h"
+#include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/base/resource/resource_bundle.h"
+#include "ui/color/color_id.h"
+#include "ui/color/color_provider.h"
 #include "ui/events/event.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/rect.h"
-#include "ui/native_theme/native_theme.h"
-#include "ui/views/metadata/metadata_impl_macros.h"
 #include "ui/views/widget/widget.h"
 
 namespace views {
@@ -72,9 +74,9 @@ float GetNearestAllowedValue(const base::flat_set<float>& allowed_values,
 }  // namespace
 
 Slider::Slider(SliderListener* listener) : listener_(listener) {
-  highlight_animation_.SetSlideDuration(base::TimeDelta::FromMilliseconds(150));
+  highlight_animation_.SetSlideDuration(base::Milliseconds(150));
   SetFlipCanvasOnPaintForRTLUI(true);
-#if defined(OS_APPLE)
+#if BUILDFLAG(IS_MAC)
   SetFocusBehavior(FocusBehavior::ACCESSIBLE_ONLY);
 #else
   SetFocusBehavior(FocusBehavior::ALWAYS);
@@ -186,7 +188,7 @@ void Slider::SetValueInternal(float value, SliderChangeReason reason) {
     if (!move_animation_) {
       initial_animating_value_ = old_value;
       move_animation_ = std::make_unique<gfx::SlideAnimation>(this);
-      move_animation_->SetSlideDuration(base::TimeDelta::FromMilliseconds(150));
+      move_animation_->SetSlideDuration(base::Milliseconds(150));
       move_animation_->Show();
     }
     OnPropertyChanged(&value_, kPropertyEffectsNone);
@@ -358,10 +360,18 @@ void Slider::OnPaint(gfx::Canvas* canvas) {
   const int thumb_highlight_radius =
       HasFocus() ? kThumbHighlightRadius : thumb_highlight_radius_;
   if (thumb_highlight_radius > kThumbRadius) {
-    cc::PaintFlags highlight;
-    highlight.setColor(GetTroughColor());
-    highlight.setAntiAlias(true);
-    canvas->DrawCircle(thumb_center, thumb_highlight_radius, highlight);
+    cc::PaintFlags highlight_background;
+    highlight_background.setColor(GetTroughColor());
+    highlight_background.setAntiAlias(true);
+    canvas->DrawCircle(thumb_center, thumb_highlight_radius,
+                       highlight_background);
+
+    cc::PaintFlags highlight_border;
+    highlight_border.setColor(GetThumbColor());
+    highlight_border.setAntiAlias(true);
+    highlight_border.setStyle(cc::PaintFlags::kStroke_Style);
+    highlight_border.setStrokeWidth(kLineThickness);
+    canvas->DrawCircle(thumb_center, thumb_highlight_radius, highlight_border);
   }
 
   // Paint the thumb of the slider.
@@ -407,7 +417,7 @@ void Slider::OnGestureEvent(ui::GestureEvent* event) {
     case ui::ET_GESTURE_TAP_DOWN:
       OnSliderDragStarted();
       PrepareForMove(event->location().x());
-      FALLTHROUGH;
+      [[fallthrough]];
     case ui::ET_GESTURE_SCROLL_BEGIN:
     case ui::ET_GESTURE_SCROLL_UPDATE:
       MoveButtonTo(event->location());
@@ -427,22 +437,18 @@ void Slider::OnGestureEvent(ui::GestureEvent* event) {
 SkColor Slider::GetThumbColor() const {
   switch (style_) {
     case RenderingStyle::kDefaultStyle:
-      return GetNativeTheme()->GetSystemColor(
-          ui::NativeTheme::kColorId_SliderThumbDefault);
+      return GetColorProvider()->GetColor(ui::kColorSliderThumb);
     case RenderingStyle::kMinimalStyle:
-      return GetNativeTheme()->GetSystemColor(
-          ui::NativeTheme::kColorId_SliderThumbMinimal);
+      return GetColorProvider()->GetColor(ui::kColorSliderThumbMinimal);
   }
 }
 
 SkColor Slider::GetTroughColor() const {
   switch (style_) {
     case RenderingStyle::kDefaultStyle:
-      return GetNativeTheme()->GetSystemColor(
-          ui::NativeTheme::kColorId_SliderTroughDefault);
+      return GetColorProvider()->GetColor(ui::kColorSliderTrack);
     case RenderingStyle::kMinimalStyle:
-      return GetNativeTheme()->GetSystemColor(
-          ui::NativeTheme::kColorId_SliderTroughMinimal);
+      return GetColorProvider()->GetColor(ui::kColorSliderTrackMinimal);
   }
 }
 

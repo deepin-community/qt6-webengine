@@ -5,12 +5,11 @@
 #ifndef WEBLAYER_BROWSER_NO_STATE_PREFETCH_PRERENDER_CONTROLLER_IMPL_H_
 #define WEBLAYER_BROWSER_NO_STATE_PREFETCH_PRERENDER_CONTROLLER_IMPL_H_
 
-#include <memory>
-
+#include "base/memory/raw_ptr.h"
 #include "build/build_config.h"
 #include "weblayer/public/prerender_controller.h"
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 #include "base/android/scoped_java_ref.h"
 #endif
 
@@ -30,15 +29,16 @@ class PrerenderControllerImpl : public PrerenderController {
   PrerenderControllerImpl(const PrerenderControllerImpl&) = delete;
   PrerenderControllerImpl& operator=(const PrerenderControllerImpl&) = delete;
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   void Prerender(JNIEnv* env, const base::android::JavaParamRef<jstring>& url);
 #endif
 
   // PrerenderController
   void Prerender(const GURL& url) override;
+  void DestroyAllContents() override;
 
  private:
-  content::BrowserContext* browser_context_;
+  raw_ptr<content::BrowserContext> browser_context_;
 };
 
 }  // namespace weblayer

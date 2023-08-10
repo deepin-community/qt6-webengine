@@ -16,26 +16,26 @@ static constexpr int kMinLuminanceFixedPoint = 10000;
 namespace gl {
 
 HDRMetadataHelperWin::HDRMetadataHelperWin(
-    const Microsoft::WRL::ComPtr<ID3D11Device>& d3d11_device) {
-  CacheDisplayMetadata(d3d11_device);
+    Microsoft::WRL::ComPtr<ID3D11Device> d3d11_device)
+    : d3d11_device_(std::move(d3d11_device)) {
+  UpdateDisplayMetadata();
 }
 
 HDRMetadataHelperWin::~HDRMetadataHelperWin() = default;
 
-base::Optional<DXGI_HDR_METADATA_HDR10>
+absl::optional<DXGI_HDR_METADATA_HDR10>
 HDRMetadataHelperWin::GetDisplayMetadata() {
   return hdr_metadata_;
 }
 
-void HDRMetadataHelperWin::CacheDisplayMetadata(
-    const Microsoft::WRL::ComPtr<ID3D11Device>& d3d11_device) {
+void HDRMetadataHelperWin::UpdateDisplayMetadata() {
   hdr_metadata_.reset();
 
-  if (!d3d11_device)
+  if (!d3d11_device_)
     return;
 
   Microsoft::WRL::ComPtr<IDXGIDevice> dxgi_device;
-  if (FAILED(d3d11_device.As(&dxgi_device)))
+  if (FAILED(d3d11_device_.As(&dxgi_device)))
     return;
 
   Microsoft::WRL::ComPtr<IDXGIAdapter> dxgi_adapter;
@@ -43,7 +43,7 @@ void HDRMetadataHelperWin::CacheDisplayMetadata(
     return;
 
   Microsoft::WRL::ComPtr<IDXGIFactory> dxgi_factory;
-  if (FAILED(dxgi_adapter->GetParent(__uuidof(IDXGIFactory), &dxgi_factory)))
+  if (FAILED(dxgi_adapter->GetParent(IID_PPV_ARGS(&dxgi_factory))))
     return;
 
   DXGI_OUTPUT_DESC1 desc_best{};
@@ -107,22 +107,23 @@ DXGI_HDR_METADATA_HDR10 HDRMetadataHelperWin::HDRMetadataToDXGI(
     const gfx::HDRMetadata& hdr_metadata) {
   DXGI_HDR_METADATA_HDR10 metadata{};
 
-  auto& primary_r = hdr_metadata.mastering_metadata.primary_r;
+  auto& primary_r = hdr_metadata.color_volume_metadata.primary_r;
   metadata.RedPrimary[0] = primary_r.x() * kPrimariesFixedPoint;
   metadata.RedPrimary[1] = primary_r.y() * kPrimariesFixedPoint;
-  auto& primary_g = hdr_metadata.mastering_metadata.primary_g;
+  auto& primary_g = hdr_metadata.color_volume_metadata.primary_g;
   metadata.GreenPrimary[0] = primary_g.x() * kPrimariesFixedPoint;
   metadata.GreenPrimary[1] = primary_g.y() * kPrimariesFixedPoint;
-  auto& primary_b = hdr_metadata.mastering_metadata.primary_b;
+  auto& primary_b = hdr_metadata.color_volume_metadata.primary_b;
   metadata.BluePrimary[0] = primary_b.x() * kPrimariesFixedPoint;
   metadata.BluePrimary[1] = primary_b.y() * kPrimariesFixedPoint;
-  auto& white_point = hdr_metadata.mastering_metadata.white_point;
+  auto& white_point = hdr_metadata.color_volume_metadata.white_point;
   metadata.WhitePoint[0] = white_point.x() * kPrimariesFixedPoint;
   metadata.WhitePoint[1] = white_point.y() * kPrimariesFixedPoint;
   metadata.MaxMasteringLuminance =
-      hdr_metadata.mastering_metadata.luminance_max;
+      hdr_metadata.color_volume_metadata.luminance_max;
   metadata.MinMasteringLuminance =
-      hdr_metadata.mastering_metadata.luminance_min * kMinLuminanceFixedPoint;
+      hdr_metadata.color_volume_metadata.luminance_min *
+      kMinLuminanceFixedPoint;
   metadata.MaxContentLightLevel = hdr_metadata.max_content_light_level;
   metadata.MaxFrameAverageLightLevel =
       hdr_metadata.max_frame_average_light_level;

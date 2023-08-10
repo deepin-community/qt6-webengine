@@ -8,6 +8,7 @@
 // Defines all the command-line switches used by ui/gl.
 
 #include "base/feature_list.h"
+#include "base/metrics/field_trial_params.h"
 #include "ui/gl/gl_export.h"
 
 namespace gl {
@@ -18,8 +19,6 @@ GL_EXPORT extern const char kGLImplementationCoreProfileName[];
 GL_EXPORT extern const char kGLImplementationAppleName[];
 GL_EXPORT extern const char kGLImplementationEGLName[];
 GL_EXPORT extern const char kGLImplementationANGLEName[];
-GL_EXPORT extern const char kGLImplementationSwiftShaderName[];
-GL_EXPORT extern const char kGLImplementationSwiftShaderForWebGLName[];
 GL_EXPORT extern const char kGLImplementationMockName[];
 GL_EXPORT extern const char kGLImplementationStubName[];
 GL_EXPORT extern const char kGLImplementationDisabledName[];
@@ -35,7 +34,9 @@ GL_EXPORT extern const char kANGLEImplementationOpenGLESEGLName[];
 GL_EXPORT extern const char kANGLEImplementationNullName[];
 GL_EXPORT extern const char kANGLEImplementationVulkanName[];
 GL_EXPORT extern const char kANGLEImplementationSwiftShaderName[];
+GL_EXPORT extern const char kANGLEImplementationSwiftShaderForWebGLName[];
 GL_EXPORT extern const char kANGLEImplementationMetalName[];
+GL_EXPORT extern const char kANGLEImplementationNoneName[];
 
 GL_EXPORT extern const char kANGLEImplementationD3D11NULLName[];
 GL_EXPORT extern const char kANGLEImplementationOpenGLNULLName[];
@@ -97,11 +98,15 @@ GL_EXPORT extern const base::Feature kDCompTripleBufferVideoSwapChain;
 GL_EXPORT extern const base::Feature kDirectCompositionForceFullDamage;
 GL_EXPORT extern const base::Feature kDirectCompositionGpuVSync;
 GL_EXPORT extern const base::Feature kDirectCompositionLowLatencyPresentation;
+GL_EXPORT extern const base::Feature kDirectCompositionVerifyDrawOffset;
+GL_EXPORT extern const base::FeatureParam<int> kVerifyDrawOffsetX;
+GL_EXPORT extern const base::FeatureParam<int> kVerifyDrawOffsetY;
 GL_EXPORT extern const base::Feature kDirectCompositionSoftwareOverlays;
 GL_EXPORT extern const base::Feature kDefaultANGLEOpenGL;
 GL_EXPORT extern const base::Feature kDefaultANGLEMetal;
 GL_EXPORT extern const base::Feature kDefaultANGLEVulkan;
 GL_EXPORT extern const base::Feature kTrackCurrentShaders;
+GL_EXPORT extern const base::Feature kVulkanFromANGLE;
 
 GL_EXPORT bool IsDefaultANGLEVulkan();
 

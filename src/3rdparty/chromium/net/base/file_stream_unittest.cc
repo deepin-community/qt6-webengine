@@ -11,10 +11,9 @@
 #include "base/callback.h"
 #include "base/files/file.h"
 #include "base/files/file_util.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
-#include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/task/current_thread.h"
@@ -36,7 +35,7 @@
 using net::test::IsError;
 using net::test::IsOk;
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 #include "base/test/test_file_util.h"
 #endif
 
@@ -45,7 +44,7 @@ namespace net {
 namespace {
 
 constexpr char kTestData[] = "0123456789";
-constexpr int kTestDataSize = base::size(kTestData) - 1;
+constexpr int kTestDataSize = std::size(kTestData) - 1;
 
 // Creates an IOBufferWithSize that contains the kTestDataSize.
 scoped_refptr<IOBufferWithSize> CreateTestDataBuffer() {
@@ -592,10 +591,10 @@ class TestWriteReadCompletionCallback {
   int result_;
   bool have_result_;
   bool waiting_for_result_;
-  FileStream* stream_;
-  int* total_bytes_written_;
-  int* total_bytes_read_;
-  std::string* data_read_;
+  raw_ptr<FileStream> stream_;
+  raw_ptr<int> total_bytes_written_;
+  raw_ptr<int> total_bytes_read_;
+  raw_ptr<std::string> data_read_;
   scoped_refptr<DrainableIOBuffer> drainable_;
 };
 
@@ -703,8 +702,8 @@ class TestWriteCloseCompletionCallback {
   int result_;
   bool have_result_;
   bool waiting_for_result_;
-  FileStream* stream_;
-  int* total_bytes_written_;
+  raw_ptr<FileStream> stream_;
+  raw_ptr<int> total_bytes_written_;
   scoped_refptr<DrainableIOBuffer> drainable_;
 };
 
@@ -746,7 +745,7 @@ TEST_F(FileStreamTest, OpenAndDelete) {
   base::Thread worker_thread("StreamTest");
   ASSERT_TRUE(worker_thread.Start());
 
-  bool prev = base::ThreadRestrictions::SetIOAllowed(false);
+  base::ScopedDisallowBlocking disallow_blocking;
   std::unique_ptr<FileStream> stream(
       new FileStream(worker_thread.task_runner()));
   int flags = base::File::FLAG_OPEN | base::File::FLAG_WRITE |
@@ -770,7 +769,6 @@ TEST_F(FileStreamTest, OpenAndDelete) {
   // open_callback won't be called.
   base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(open_callback.have_result());
-  base::ThreadRestrictions::SetIOAllowed(prev);
 }
 
 // Verify that Write() errors are mapped correctly.
@@ -821,7 +819,7 @@ TEST_F(FileStreamTest, ReadError) {
   base::RunLoop().RunUntilIdle();
 }
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 // Verifies that a FileStream will close itself if it receives a File whose
 // async flag doesn't match the async state of the underlying handle.
 TEST_F(FileStreamTest, AsyncFlagMismatch) {
@@ -842,7 +840,7 @@ TEST_F(FileStreamTest, AsyncFlagMismatch) {
 }
 #endif
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 // TODO(https://crbug.com/894599): flaky on both android and cronet bots.
 TEST_F(FileStreamTest, DISABLED_ContentUriRead) {
   base::FilePath test_dir;

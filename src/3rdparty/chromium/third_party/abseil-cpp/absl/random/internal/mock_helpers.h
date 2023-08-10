@@ -18,6 +18,7 @@
 
 #include <tuple>
 #include <type_traits>
+#include <utility>
 
 #include "absl/base/internal/fast_type_id.h"
 #include "absl/types/optional.h"
@@ -120,10 +121,10 @@ class MockHelpers {
       -> decltype(m.template RegisterMock<
                   typename KeySignature<KeyT>::result_type,
                   typename KeySignature<KeyT>::arg_tuple_type>(
-          std::declval<IdType>())) {
+          m, std::declval<IdType>())) {
     return m.template RegisterMock<typename KeySignature<KeyT>::result_type,
                                    typename KeySignature<KeyT>::arg_tuple_type>(
-        ::absl::base_internal::FastTypeId<KeyT>());
+        m, ::absl::base_internal::FastTypeId<KeyT>());
   }
 };
 

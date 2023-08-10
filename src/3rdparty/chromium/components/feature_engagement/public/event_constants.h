@@ -11,27 +11,24 @@ namespace feature_engagement {
 
 namespace events {
 
-// Desktop and IOS.
-#if defined(OS_WIN) || defined(OS_APPLE) || defined(OS_LINUX) || \
-    defined(OS_CHROMEOS)
+// Desktop
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_APPLE) || BUILDFLAG(IS_LINUX) || \
+    BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_FUCHSIA)
 // The user has explicitly opened a new tab via an entry point from inside of
 // Chrome.
 extern const char kNewTabOpened[];
-#endif  // defined(OS_WIN) || defined(OS_APPLE) || defined(OS_LINUX) ||
-        // defined(OS_CHROMEOS)
-
-// Desktop
-#if defined(OS_WIN) || defined(OS_APPLE) || defined(OS_LINUX) || \
-    defined(OS_CHROMEOS)
 // A new tab was opened when 5 (or more) tabs were already open.
 extern const char kSixthTabOpened[];
 // The user made a new tab group.
 extern const char kTabGroupCreated[];
-
+// A tab was closed when there are eight or more tabs in the browser.
+extern const char kClosedTabWithEightOrMore[];
 // A tab was added to reading list.
 extern const char kReadingListItemAdded[];
 // Reading list was opened.
 extern const char kReadingListMenuOpened[];
+// Bookmark star button was clicked opening the menu.
+extern const char kBookmarkStarMenuOpened[];
 
 // All conditions for reopen closed tab IPH were met. Since this IPH needs to
 // track user events (opening/closing tabs, focusing the omnibox, etc) on the
@@ -54,6 +51,12 @@ extern const char kFocusModeOpened[];
 // All conditions for show Focus Mode IPH were met.
 extern const char kFocusModeConditionsMet[];
 
+// The Side search panel was opened by the user.
+extern const char kSideSearchOpened[];
+
+// Tab Search tab strip was opened by the user.
+extern const char kTabSearchOpened[];
+
 // The WebUI tab strip was closed by the user.
 extern const char kWebUITabStripClosed[];
 // The WebUI tab strip was opened by the user.
@@ -62,10 +65,20 @@ extern const char kWebUITabStripOpened[];
 // The PWA was installed by the user.
 extern const char kDesktopPwaInstalled[];
 
-#endif  // defined(OS_WIN) || defined(OS_APPLE) || defined(OS_LINUX) ||
-        // defined(OS_CHROMEOS)
+// Omnibox displayed the updated connection security indicator.
+extern const char kUpdatedConnectionSecurityIndicatorDisplayed[];
 
-#if defined(OS_IOS)
+// The user entered the special "focus help bubble" accelerator.
+extern const char kFocusHelpBubbleAcceleratorPressed[];
+
+// The screen reader promo for the "focus help bubble" accelerator was read to
+// the user.
+extern const char kFocusHelpBubbleAcceleratorPromoRead[];
+
+#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_APPLE) || BUILDFLAG(IS_LINUX) ||
+        // BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_FUCHSIA)
+
+#if BUILDFLAG(IS_IOS)
 // The user has opened Chrome (cold start or from background).
 extern const char kChromeOpened[];
 
@@ -86,13 +99,26 @@ extern const char kBottomToolbarOpened[];
 
 // The Discover feed has loaded content in the NTP.
 extern const char kDiscoverFeedLoaded[];
-#endif  // defined(OS_IOS)
+
+// The user has requested the desktop version of a page.
+extern const char kDesktopVersionRequested[];
+
+// The default site view tip is shown.
+extern const char kDefaultSiteViewShown[];
+
+// Autofill displayed password suggestions.
+extern const char kPasswordSuggestionsShown[];
+
+// The user has selected an Autofill password suggestion.
+extern const char kPasswordSuggestionSelected[];
+
+#endif  // BUILDFLAG(IS_IOS)
 
 // Android.
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 // The user has explicitly used the Install menu item under the App Menu.
 extern const char kPwaInstallMenuSelected[];
-#endif  // defined(OS_ANDROID)
+#endif  // BUILDFLAG(IS_ANDROID)
 
 }  // namespace events
 

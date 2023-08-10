@@ -23,6 +23,10 @@
 #include "services/device/public/mojom/geolocation_context.mojom.h"
 #include "services/device/public/mojom/geolocation_control.mojom.h"
 
+#if BUILDFLAG(IS_MAC)
+#include "services/device/public/cpp/test/fake_geolocation_manager.h"
+#endif
+
 namespace device {
 
 namespace {
@@ -37,6 +41,11 @@ void CheckBoolReturnValue(base::OnceClosure quit_closure,
 class GeolocationServiceUnitTest : public DeviceServiceTestBase {
  public:
   GeolocationServiceUnitTest() = default;
+
+  GeolocationServiceUnitTest(const GeolocationServiceUnitTest&) = delete;
+  GeolocationServiceUnitTest& operator=(const GeolocationServiceUnitTest&) =
+      delete;
+
   ~GeolocationServiceUnitTest() override = default;
 
  protected:
@@ -69,8 +78,8 @@ class GeolocationServiceUnitTest : public DeviceServiceTestBase {
 #endif
 
     // Let the GeolocationImpl destruct earlier than GeolocationProviderImpl to
-    // make sure the base::CallbackList<> member in GeolocationProviderImpl is
-    // empty.
+    // make sure the base::RepeatingCallbackList<> member in
+    // GeolocationProviderImpl is empty.
     geolocation_.reset();
     GeolocationProviderImpl::GetInstance()
         ->clear_user_did_opt_into_location_services_for_testing();
@@ -87,19 +96,19 @@ class GeolocationServiceUnitTest : public DeviceServiceTestBase {
   mojo::Remote<mojom::GeolocationContext> geolocation_context_;
   mojo::Remote<mojom::Geolocation> geolocation_;
   mojo::Remote<mojom::GeolocationConfig> geolocation_config_;
-
-  DISALLOW_COPY_AND_ASSIGN(GeolocationServiceUnitTest);
 };
 
-#if BUILDFLAG(IS_CHROMEOS_ASH) || defined(OS_ANDROID)
+#if BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_ANDROID)
 // ChromeOS fails to perform network geolocation when zero wifi networks are
 // detected in a scan: https://crbug.com/767300.
 #else
 TEST_F(GeolocationServiceUnitTest, UrlWithApiKey) {
-  // With this flag enabled macOS will try to use the system location provider
-  // instead of NetworkLocationProvider.
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndDisableFeature(features::kMacCoreLocationImplementation);
+// To align with user expectation we do not make Network Location Requests
+// on macOS unless the browser has Location Permission from the OS.
+#if BUILDFLAG(IS_MAC)
+  fake_geolocation_manager_->SetSystemPermission(
+      LocationSystemPermissionStatus::kAllowed);
+#endif
 
   base::RunLoop loop;
   test_url_loader_factory_.SetInterceptor(base::BindLambdaForTesting(
@@ -115,6 +124,9 @@ TEST_F(GeolocationServiceUnitTest, UrlWithApiKey) {
 
   geolocation_->SetHighAccuracy(true);
   loop.Run();
+
+  // Clearing interceptor callback to ensure it does not outlive this scope.
+  test_url_loader_factory_.SetInterceptor(base::NullCallback());
 }
 #endif
 

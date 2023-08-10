@@ -11,11 +11,10 @@
 
 #include "base/callback.h"
 #include "base/containers/flat_map.h"
-#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/optional.h"
 #include "components/update_client/component.h"
 #include "components/update_client/protocol_parser.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/gurl.h"
 
 namespace update_client {
@@ -26,7 +25,7 @@ class PersistedData;
 class UpdateChecker {
  public:
   using UpdateCheckCallback = base::OnceCallback<void(
-      const base::Optional<ProtocolParser::Results>& results,
+      const absl::optional<ProtocolParser::Results>& results,
       ErrorCategory error_category,
       int error,
       int retry_after_sec)>;
@@ -34,6 +33,9 @@ class UpdateChecker {
   using Factory =
       std::unique_ptr<UpdateChecker> (*)(scoped_refptr<Configurator> config,
                                          PersistedData* persistent);
+
+  UpdateChecker(const UpdateChecker&) = delete;
+  UpdateChecker& operator=(const UpdateChecker&) = delete;
 
   virtual ~UpdateChecker() = default;
 
@@ -48,7 +50,6 @@ class UpdateChecker {
       const std::vector<std::string>& ids_to_check,
       const IdToComponentPtrMap& components,
       const base::flat_map<std::string, std::string>& additional_attributes,
-      bool enabled_component_updates,
       UpdateCheckCallback update_check_callback) = 0;
 
   static std::unique_ptr<UpdateChecker> Create(
@@ -57,9 +58,6 @@ class UpdateChecker {
 
  protected:
   UpdateChecker() = default;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(UpdateChecker);
 };
 
 }  // namespace update_client

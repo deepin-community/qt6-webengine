@@ -10,7 +10,8 @@
 namespace permissions {
 namespace prefs {
 
-#if defined(OS_ANDROID)
+extern const char kPermissionActions[];
+#if BUILDFLAG(IS_ANDROID)
 extern const char kLocationSettingsBackoffLevelDSE[];
 extern const char kLocationSettingsBackoffLevelDefault[];
 extern const char kLocationSettingsNextShowDSE[];
@@ -20,4 +21,4 @@ extern const char kLocationSettingsNextShowDefault[];
 }  // namespace prefs
 }  // namespace permissions
 
-#endif  // COMPONENTS_PROXIMITY_AUTH_BLE_PREF_NAMES_H
+#endif  // COMPONENTS_PERMISSIONS_PREF_NAMES_H_

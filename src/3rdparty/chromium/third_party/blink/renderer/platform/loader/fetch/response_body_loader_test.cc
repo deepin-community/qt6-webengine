@@ -7,7 +7,9 @@
 #include <memory>
 #include <string>
 #include <utility>
+#include "base/strings/string_number_conversions.h"
 #include "base/test/scoped_feature_list.h"
+#include "services/network/public/cpp/features.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/platform/web_runtime_features.h"
@@ -27,9 +29,12 @@ class TestBackForwardCacheLoaderHelper : public BackForwardCacheLoaderHelper {
  public:
   TestBackForwardCacheLoaderHelper() = default;
 
-  bool CanContinueBufferingWhileInBackForwardCache() const override {
-    return true;
-  }
+  void EvictFromBackForwardCache(
+      mojom::RendererEvictionReason reason) override {}
+
+  void DidBufferLoadWhileInBackForwardCache(size_t num_bytes) override {}
+
+  void Detach() override {}
 };
 
 class ResponseBodyLoaderTest : public testing::Test {
@@ -37,6 +42,7 @@ class ResponseBodyLoaderTest : public testing::Test {
   using Command = ReplayingBytesConsumer::Command;
   using PublicState = BytesConsumer::PublicState;
   using Result = BytesConsumer::Result;
+
   class TestClient final : public GarbageCollected<TestClient>,
                            public ResponseBodyLoaderClient {
    public:
@@ -58,7 +64,7 @@ class ResponseBodyLoaderTest : public testing::Test {
     void DidReceiveData(base::span<const char> data) override {
       DCHECK(!finished_);
       DCHECK(!failed_);
-      data_.Append(data.data(), data.size());
+      data_.Append(data.data(), static_cast<wtf_size_t>(data.size()));
       switch (option_) {
         case Option::kNone:
           break;
@@ -66,7 +72,7 @@ class ResponseBodyLoaderTest : public testing::Test {
           loader_->Abort();
           break;
         case Option::kSuspendOnDidReceiveData:
-          loader_->Suspend(WebURLLoader::DeferType::kDeferred);
+          loader_->Suspend(LoaderFreezeMode::kStrict);
           break;
       }
     }
@@ -153,6 +159,9 @@ class ResponseBodyLoaderTest : public testing::Test {
         bytes_consumer, client, task_runner,
         MakeGarbageCollected<TestBackForwardCacheLoaderHelper>());
   }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 class ResponseBodyLoaderDrainedBytesConsumerNotificationOutOfOnStateChangeTest
@@ -339,7 +348,7 @@ TEST_F(ResponseBodyLoaderTest, Suspend) {
 TEST_F(ResponseBodyLoaderTest, ReadTooBigBuffer) {
   auto task_runner = base::MakeRefCounted<scheduler::FakeTaskRunner>();
   auto* consumer = MakeGarbageCollected<ReplayingBytesConsumer>(task_runner);
-  constexpr auto kMax = ResponseBodyLoader::kMaxNumConsumedBytesInTask;
+  const uint32_t kMax = network::features::GetLoaderChunkSize();
 
   consumer->Add(Command(Command::kData, std::string(kMax - 1, 'a').data()));
   consumer->Add(Command(Command::kData, std::string(2, 'b').data()));
@@ -480,7 +489,7 @@ TEST_P(ResponseBodyLoaderLoadingTasksUnfreezableTest,
   EXPECT_FALSE(client->LoadingIsFailed());
 
   // Suspend (not for back-forward cache), then add some data to |consumer|.
-  body_loader->Suspend(WebURLLoader::DeferType::kDeferred);
+  body_loader->Suspend(LoaderFreezeMode::kStrict);
   consumer->Add(Command(Command::kData, "llo"));
   EXPECT_FALSE(consumer->IsCommandsEmpty());
   // Simulate the "readable again" signal.
@@ -495,7 +504,7 @@ TEST_P(ResponseBodyLoaderLoadingTasksUnfreezableTest,
   EXPECT_FALSE(client->LoadingIsFailed());
 
   // Suspend for back-forward cache, then add some more data to |consumer|.
-  body_loader->Suspend(WebURLLoader::DeferType::kDeferredWithBackForwardCache);
+  body_loader->Suspend(LoaderFreezeMode::kBufferIncoming);
   consumer->Add(Command(Command::kData, "w"));
   consumer->Add(Command(Command::kWait));
   consumer->Add(Command(Command::kData, "o"));
@@ -539,7 +548,7 @@ TEST_P(ResponseBodyLoaderLoadingTasksUnfreezableTest,
 
   // Suspend (not for back-forward cache), then add some data to |consumer| with
   // the finish signal at the end.
-  body_loader->Suspend(WebURLLoader::DeferType::kDeferred);
+  body_loader->Suspend(LoaderFreezeMode::kStrict);
   consumer->Add(Command(Command::kData, "llo"));
   consumer->Add(Command(Command::kDone));
   // Simulate the "readable again" signal.
@@ -555,7 +564,7 @@ TEST_P(ResponseBodyLoaderLoadingTasksUnfreezableTest,
   EXPECT_FALSE(client->LoadingIsFailed());
 
   // Suspend for back-forward cache.
-  body_loader->Suspend(WebURLLoader::DeferType::kDeferredWithBackForwardCache);
+  body_loader->Suspend(LoaderFreezeMode::kBufferIncoming);
   // ResponseBodyLoader will buffer data when deferred for back-forward cache,
   // but won't notify the client until it's resumed.
   EXPECT_FALSE(consumer->IsCommandsEmpty());
@@ -592,7 +601,7 @@ TEST_P(ResponseBodyLoaderLoadingTasksUnfreezableTest,
   EXPECT_FALSE(client->LoadingIsFailed());
 
   // Suspend for back-forward cache, then add some more data to |consumer|.
-  body_loader->Suspend(WebURLLoader::DeferType::kDeferredWithBackForwardCache);
+  body_loader->Suspend(LoaderFreezeMode::kBufferIncoming);
   consumer->Add(Command(Command::kData, "llo"));
   EXPECT_FALSE(consumer->IsCommandsEmpty());
   // Simulate the "readable again" signal.
@@ -609,7 +618,7 @@ TEST_P(ResponseBodyLoaderLoadingTasksUnfreezableTest,
   EXPECT_FALSE(client->LoadingIsFailed());
 
   // Suspend (not for back-forward cache), then add some data to |consumer|.
-  body_loader->Suspend(WebURLLoader::DeferType::kDeferred);
+  body_loader->Suspend(LoaderFreezeMode::kStrict);
   consumer->Add(Command(Command::kData, "w"));
   consumer->Add(Command(Command::kWait));
   consumer->Add(Command(Command::kData, "o"));
@@ -652,7 +661,7 @@ TEST_P(ResponseBodyLoaderLoadingTasksUnfreezableTest,
   EXPECT_FALSE(client->LoadingIsFailed());
 
   // Suspend, then add a long response body to |consumer|.
-  body_loader->Suspend(WebURLLoader::DeferType::kDeferredWithBackForwardCache);
+  body_loader->Suspend(LoaderFreezeMode::kBufferIncoming);
   std::string body(70000, '*');
   consumer->Add(Command(Command::kDataAndDone, body.c_str()));
 

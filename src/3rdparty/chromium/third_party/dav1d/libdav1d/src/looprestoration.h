@@ -1,5 +1,5 @@
 /*
- * Copyright © 2018, VideoLAN and dav1d authors
+ * Copyright © 2018-2021, VideoLAN and dav1d authors
  * Copyright © 2018, Two Orioles, LLC
  * All rights reserved.
  *
@@ -64,8 +64,8 @@ typedef union LooprestorationParams {
 #define decl_lr_filter_fn(name) \
 void (name)(pixel *dst, ptrdiff_t dst_stride, \
             const_left_pixel_row left, \
-            const pixel *lpf, ptrdiff_t lpf_stride, \
-            int w, int h, const LooprestorationParams *params, \
+            const pixel *lpf, int w, int h, \
+            const LooprestorationParams *params, \
             enum LrEdgeFlags edges HIGHBD_DECL_SUFFIX)
 typedef decl_lr_filter_fn(*looprestorationfilter_fn);
 
@@ -76,7 +76,7 @@ typedef struct Dav1dLoopRestorationDSPContext {
 
 bitfn_decls(void dav1d_loop_restoration_dsp_init, Dav1dLoopRestorationDSPContext *c, int bpc);
 bitfn_decls(void dav1d_loop_restoration_dsp_init_arm, Dav1dLoopRestorationDSPContext *c, int bpc);
-bitfn_decls(void dav1d_loop_restoration_dsp_init_x86, Dav1dLoopRestorationDSPContext *c);
-bitfn_decls(void dav1d_loop_restoration_dsp_init_ppc, Dav1dLoopRestorationDSPContext *c);
+bitfn_decls(void dav1d_loop_restoration_dsp_init_x86, Dav1dLoopRestorationDSPContext *c, int bpc);
+bitfn_decls(void dav1d_loop_restoration_dsp_init_ppc, Dav1dLoopRestorationDSPContext *c, int bpc);
 
 #endif /* DAV1D_SRC_LOOPRESTORATION_H */

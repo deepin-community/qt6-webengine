@@ -5,6 +5,7 @@
 #include "ui/compositor/total_animation_throughput_reporter.h"
 
 #include "base/logging.h"
+#include "base/observer_list.h"
 #include "ui/compositor/compositor.h"
 
 namespace ui {
@@ -44,6 +45,9 @@ void TotalAnimationThroughputReporter::OnLastAnimationEnded(
     ui::Compositor* compositor) {
   throughput_tracker_->Stop();
   throughput_tracker_.reset();
+  // Stop observing if no need to report multiple times.
+  if (report_repeating_callback_.is_null())
+    compositor_->RemoveObserver(this);
 }
 
 void TotalAnimationThroughputReporter::OnCompositingShuttingDown(

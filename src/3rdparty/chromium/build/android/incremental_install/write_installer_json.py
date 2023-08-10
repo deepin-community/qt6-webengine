@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 # Copyright 2017 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
@@ -60,7 +60,7 @@ def main(args):
       'split_globs': options.split_globs,
   }
 
-  with build_utils.AtomicOutput(options.output_path) as f:
+  with build_utils.AtomicOutput(options.output_path, mode='w+') as f:
     json.dump(data, f, indent=2, sort_keys=True)
 
 

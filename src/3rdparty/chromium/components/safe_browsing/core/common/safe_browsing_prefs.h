@@ -111,6 +111,18 @@ extern const char kSafeBrowsingMetricsLastLogTime[];
 // Used for logging metrics. Structure: go/sb-event-ts-pref-struct.
 extern const char kSafeBrowsingEventTimestamps[];
 
+// A timestamp indicating the last time the account tailored security boolean
+// was updated.
+extern const char kAccountTailoredSecurityUpdateTimestamp[];
+
+// Whether the user was shown the notification that they may want to enable
+// Enhanced Safe Browsing due to their account tailored security state.
+extern const char kAccountTailoredSecurityShownNotification[];
+
+// A boolean indicating if Enhanced Protection was enabled in sync with
+// account tailored security.
+extern const char kEnhancedProtectionEnabledViaTailoredSecurity[];
+
 }  // namespace prefs
 
 namespace safe_browsing {
@@ -162,7 +174,7 @@ enum PasswordProtectionTrigger {
 // numeric values should never be reused.
 // A Java counterpart will be generated for this enum.
 // GENERATED_JAVA_ENUM_PACKAGE: org.chromium.chrome.browser.safe_browsing
-enum SafeBrowsingState {
+enum class SafeBrowsingState {
   // The user is not opted into Safe Browsing.
   NO_SAFE_BROWSING = 0,
   // The user selected standard protection.
@@ -180,7 +192,11 @@ enum EnterpriseRealTimeUrlCheckMode {
 
 SafeBrowsingState GetSafeBrowsingState(const PrefService& prefs);
 
-void SetSafeBrowsingState(PrefService* prefs, SafeBrowsingState state);
+// Set the SafeBrowsing prefs. Also records if ESB was enabled in sync with
+// Account-ESB via Tailored Security.
+void SetSafeBrowsingState(PrefService* prefs,
+                          SafeBrowsingState state,
+                          bool is_esb_enabled_in_sync = false);
 
 // Returns whether Safe Browsing is enabled for the user.
 bool IsSafeBrowsingEnabled(const PrefService& prefs);
@@ -215,9 +231,6 @@ bool IsExtendedReportingPolicyManaged(const PrefService& prefs);
 // either the SafeBrowsingEnabled policy(legacy) or the
 // SafeBrowsingProtectionLevel policy(new).
 bool IsSafeBrowsingPolicyManaged(const PrefService& prefs);
-
-// Returns whether enhanced protection message is enabled in interstitials.
-bool IsEnhancedProtectionMessageInInterstitialsEnabled();
 
 // Updates UMA metrics about Safe Browsing Extended Reporting states.
 void RecordExtendedReportingMetrics(const PrefService& prefs);
@@ -266,6 +279,11 @@ void UpdatePrefsBeforeSecurityInterstitial(PrefService* prefs);
 // values represented as strings.
 base::ListValue GetSafeBrowsingPreferencesList(PrefService* prefs);
 
+// Returns a list of policies to be shown in chrome://safe-browsing. The
+// policies are passed as an alternating sequence of policy names and
+// values represented as strings.
+base::ListValue GetSafeBrowsingPoliciesList(PrefService* prefs);
+
 // Returns a list of valid domains that Safe Browsing service trusts.
 void GetSafeBrowsingAllowlistDomainsPref(
     const PrefService& prefs,
@@ -273,18 +291,11 @@ void GetSafeBrowsingAllowlistDomainsPref(
 
 // Helper function to validate and canonicalize a list of domain strings.
 void CanonicalizeDomainList(
-    const base::ListValue& raw_domain_list,
+    const base::Value& raw_domain_list,
     std::vector<std::string>* out_canonicalized_domain_list);
 
 // Helper function to determine if |url| matches Safe Browsing allowlist domains
 // (a.k. a prefs::kSafeBrowsingAllowlistDomains).
-// Called on IO thread.
-bool IsURLAllowlistedByPolicy(const GURL& url,
-                              StringListPrefMember* pref_member);
-
-// Helper function to determine if |url| matches Safe Browsing allowlist domains
-// (a.k. a prefs::kSafeBrowsingAllowlistDomains).
-// Called on UI thread.
 bool IsURLAllowlistedByPolicy(const GURL& url, const PrefService& pref);
 
 // Helper function to get a list of Safe Browsing allowlist domains

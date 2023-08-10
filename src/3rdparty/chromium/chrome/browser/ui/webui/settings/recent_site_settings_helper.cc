@@ -64,10 +64,11 @@ std::map<GURL, std::vector<TimestampedSetting>> GetAllSettingsForProfile(
       if (last_modified.is_null()) {
         continue;
       }
-      GURL origin = GURL(e.primary_pattern.ToString()).GetOrigin();
+      GURL origin =
+          GURL(e.primary_pattern.ToString()).DeprecatedGetOriginAsURL();
       results[origin].emplace_back(
           last_modified, content_type,
-          content_settings::ValueToContentSetting(&e.setting_value),
+          content_settings::ValueToContentSetting(e.setting_value),
           site_settings::SiteSettingSource::kPreference);
     }
 
@@ -77,7 +78,7 @@ std::map<GURL, std::vector<TimestampedSetting>> GetAllSettingsForProfile(
       auto last_modified =
           PermissionDecisionAutoBlockerFactory::GetForProfile(profile)
               ->GetEmbargoStartTime(url, content_type);
-      results[url.GetOrigin()].emplace_back(
+      results[url.DeprecatedGetOriginAsURL()].emplace_back(
           last_modified, content_type, ContentSetting::CONTENT_SETTING_BLOCK,
           site_settings::SiteSettingSource::kEmbargo);
     }
@@ -147,7 +148,8 @@ std::vector<RecentSitePermissions> GetRecentSitePermissions(
 
   if (profile->HasPrimaryOTRProfile()) {
     incognito_settings = GetAllSettingsForProfile(
-        profile->GetPrimaryOTRProfile(), content_types);
+        profile->GetPrimaryOTRProfile(/*create_if_needed=*/true),
+        content_types);
 
     // Remove all permission entries in the incognito map which also have
     // an entry in the regular settings. This may result in an empty setting

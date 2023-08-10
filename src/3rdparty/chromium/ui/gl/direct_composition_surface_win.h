@@ -12,12 +12,20 @@
 
 #include "base/callback.h"
 #include "base/time/time.h"
-#include "ui/gfx/transform.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "ui/gfx/geometry/transform.h"
 #include "ui/gl/child_window_win.h"
 #include "ui/gl/gl_export.h"
 #include "ui/gl/gl_surface_egl.h"
 #include "ui/gl/gpu_switching_observer.h"
 #include "ui/gl/vsync_observer.h"
+
+namespace gfx {
+namespace mojom {
+class DelegatedInkPointRenderer;
+}  // namespace mojom
+class DelegatedInkMetadata;
+}  // namespace gfx
 
 namespace gl {
 class DCLayerTree;
@@ -36,12 +44,24 @@ class GL_EXPORT DirectCompositionSurfaceWin : public GLSurfaceEGL,
     size_t max_pending_frames = 2;
     bool use_angle_texture_offset = false;
     bool force_root_surface_full_damage = false;
+    bool force_root_surface_full_damage_always = false;
+    bool no_downscaled_overlay_promotion = false;
   };
 
   DirectCompositionSurfaceWin(
       HWND parent_window,
       VSyncCallback vsync_callback,
       const DirectCompositionSurfaceWin::Settings& settings);
+
+  DirectCompositionSurfaceWin(const DirectCompositionSurfaceWin&) = delete;
+  DirectCompositionSurfaceWin& operator=(const DirectCompositionSurfaceWin&) =
+      delete;
+
+  static void InitializeOneOff();
+  static void ShutdownOneOff();
+
+  static const Microsoft::WRL::ComPtr<IDCompositionDevice2>&
+  GetDirectCompositionDevice();
 
   // Returns true if direct composition is supported.  We prefer to use direct
   // composition even without hardware overlays, because it allows us to bypass
@@ -53,6 +73,10 @@ class GL_EXPORT DirectCompositionSurfaceWin : public GLSurfaceEGL,
   // with --enable-direct-composition-video-overlays and
   // --disable-direct-composition-video-overlays. This function is thread safe.
   static bool AreOverlaysSupported();
+
+  // Returns if the GPU supports hardware overlays. This function is thread
+  // safe.
+  static bool AreHardwareOverlaysSupported();
 
   // Returns true if zero copy decode swap chain is supported.
   static bool IsDecodeSwapChainSupported();
@@ -110,6 +134,14 @@ class GL_EXPORT DirectCompositionSurfaceWin : public GLSurfaceEGL,
   // IDXGIOutput3::CheckOverlaySupport().
   static void ForceNV12OverlaySupport();
 
+  // Forces to enable RGBA101010A2 overlay support regardless of the query
+  // results from IDXGIOutput3::CheckOverlaySupport().
+  static void ForceRgb10a2OverlaySupport();
+
+  // Enable NV12 overlay support only when
+  // DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_LEFT_P709 is supported.
+  static void SetCheckYCbCrStudioG22LeftP709ForNv12Support();
+
   // GLSurfaceEGL implementation.
   bool Initialize(GLSurfaceFormat format) override;
   void Destroy() override;
@@ -143,7 +175,8 @@ class GL_EXPORT DirectCompositionSurfaceWin : public GLSurfaceEGL,
   // to remain in the layer tree. This surface's backbuffer doesn't have to be
   // scheduled with ScheduleDCLayer, as it's automatically placed in the layer
   // tree at z-order 0.
-  bool ScheduleDCLayer(const ui::DCRendererLayerParams& params) override;
+  bool ScheduleDCLayer(
+      std::unique_ptr<ui::DCRendererLayerParams> params) override;
   void SetFrameRate(float frame_rate) override;
 
   // Implements GpuSwitchingObserver.
@@ -153,6 +186,11 @@ class GL_EXPORT DirectCompositionSurfaceWin : public GLSurfaceEGL,
   void OnDisplayMetricsChanged() override;
 
   bool SupportsDelegatedInk() override;
+  void SetDelegatedInkTrailStartPoint(
+      std::unique_ptr<gfx::DelegatedInkMetadata> metadata) override;
+  void InitDelegatedInkPointRendererReceiver(
+      mojo::PendingReceiver<gfx::mojom::DelegatedInkPointRenderer>
+          pending_receiver) override;
 
   HWND window() const { return window_; }
 
@@ -174,6 +212,8 @@ class GL_EXPORT DirectCompositionSurfaceWin : public GLSurfaceEGL,
 
   void SetMonitorInfoForTesting(int num_of_monitors, gfx::Size monitor_size);
 
+  DCLayerTree* GetLayerTreeForTesting() { return layer_tree_.get(); }
+
  protected:
   ~DirectCompositionSurfaceWin() override;
 
@@ -183,11 +223,6 @@ class GL_EXPORT DirectCompositionSurfaceWin : public GLSurfaceEGL,
 
   scoped_refptr<DirectCompositionChildSurfaceWin> root_surface_;
   std::unique_ptr<DCLayerTree> layer_tree_;
-
-  Microsoft::WRL::ComPtr<ID3D11Device> d3d11_device_;
-  Microsoft::WRL::ComPtr<IDCompositionDevice2> dcomp_device_;
-
-  DISALLOW_COPY_AND_ASSIGN(DirectCompositionSurfaceWin);
 };
 
 }  // namespace gl

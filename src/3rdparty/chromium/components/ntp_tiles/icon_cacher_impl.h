@@ -7,11 +7,11 @@
 
 #include <memory>
 #include <set>
-#include <string>
 #include <vector>
 
 #include "base/callback.h"
 #include "base/cancelable_callback.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/task/cancelable_task_tracker.h"
 #include "components/ntp_tiles/icon_cacher.h"
@@ -46,6 +46,10 @@ class IconCacherImpl : public IconCacher {
   IconCacherImpl(favicon::FaviconService* favicon_service,
                  favicon::LargeIconService* large_icon_service,
                  std::unique_ptr<image_fetcher::ImageFetcher> image_fetcher);
+
+  IconCacherImpl(const IconCacherImpl&) = delete;
+  IconCacherImpl& operator=(const IconCacherImpl&) = delete;
+
   ~IconCacherImpl() override;
 
   void StartFetchPopularSites(
@@ -94,14 +98,12 @@ class IconCacherImpl : public IconCacher {
                                            bool newly_available);
 
   base::CancelableTaskTracker tracker_;
-  favicon::FaviconService* const favicon_service_;
-  favicon::LargeIconService* const large_icon_service_;
+  const raw_ptr<favicon::FaviconService> favicon_service_;
+  const raw_ptr<favicon::LargeIconService> large_icon_service_;
   std::unique_ptr<image_fetcher::ImageFetcher> const image_fetcher_;
   std::map<GURL, std::vector<base::OnceClosure>> in_flight_requests_;
 
   base::WeakPtrFactory<IconCacherImpl> weak_ptr_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(IconCacherImpl);
 };
 
 }  // namespace ntp_tiles

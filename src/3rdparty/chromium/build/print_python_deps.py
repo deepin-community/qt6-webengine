@@ -1,4 +1,4 @@
-#!/usr/bin/python2.7
+#!/usr/bin/env vpython3
 # Copyright 2016 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
@@ -30,7 +30,7 @@ def ComputePythonDependencies():
   src/. The paths will be relative to the current directory.
   """
   module_paths = (m.__file__ for m in sys.modules.values()
-                  if m and hasattr(m, '__file__'))
+                  if m and hasattr(m, '__file__') and m.__file__)
 
   src_paths = set()
   for path in module_paths:
@@ -58,8 +58,8 @@ def _NormalizeCommandLine(options):
     args.extend(('--output', os.path.relpath(options.output, _SRC_ROOT)))
   if options.gn_paths:
     args.extend(('--gn-paths',))
-  for whitelist in sorted(options.whitelists):
-    args.extend(('--whitelist', os.path.relpath(whitelist, _SRC_ROOT)))
+  for allowlist in sorted(options.allowlists):
+    args.extend(('--allowlist', os.path.relpath(allowlist, _SRC_ROOT)))
   args.append(os.path.relpath(options.module, _SRC_ROOT))
   return ' '.join(pipes.quote(x) for x in args)
 
@@ -136,8 +136,10 @@ def main():
                       help='Write paths as //foo/bar/baz.py')
   parser.add_argument('--did-relaunch', action='store_true',
                       help=argparse.SUPPRESS)
-  parser.add_argument('--whitelist', default=[], action='append',
-                      dest='whitelists',
+  parser.add_argument('--allowlist',
+                      default=[],
+                      action='append',
+                      dest='allowlists',
                       help='Recursively include all non-test python files '
                       'within this directory. May be specified multiple times.')
   options = parser.parse_args()
@@ -163,12 +165,6 @@ def main():
 
   current_version = sys.version_info[0]
 
-  # Trybots run with vpython as default Python, but with a different config
-  # from //.vpython. To make the is_vpython test work, and to match the behavior
-  # of dev machines, the shebang line must be run with python2.7.
-  #
-  # E.g. $HOME/.vpython-root/dd50d3/bin/python
-  # E.g. /b/s/w/ir/cache/vpython/ab5c79/bin/python
   is_vpython = 'vpython' in sys.executable
   if not is_vpython or target_version != current_version:
     # Prevent infinite relaunch if something goes awry.
@@ -179,6 +175,12 @@ def main():
     # TODO(agrieve): Add support for this if the need ever arises.
     vpython_to_use = {2: 'vpython', 3: 'vpython3'}[target_version]
     os.execvp(vpython_to_use, [vpython_to_use] + sys.argv + ['--did-relaunch'])
+
+  if current_version == 3:
+    # Work-around for protobuf library not being loadable via importlib
+    # This is needed due to compile_resources.py.
+    import importlib._bootstrap_external
+    importlib._bootstrap_external._NamespacePath.sort = lambda self, **_: 0
 
   paths_set = set()
   try:
@@ -193,7 +195,7 @@ def main():
     sys.stderr.write('python={}\n'.format(sys.executable))
     raise
 
-  for path in options.whitelists:
+  for path in options.allowlists:
     paths_set.update(
         os.path.abspath(p)
         for p in _FindPythonInDirectory(path, allow_test=False))

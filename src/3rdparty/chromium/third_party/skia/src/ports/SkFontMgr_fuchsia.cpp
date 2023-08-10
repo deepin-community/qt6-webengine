@@ -217,8 +217,10 @@ sk_sp<SkTypeface> CreateTypefaceFromSkStream(std::unique_ptr<SkStreamAsset> stre
     SkAutoSTMalloc<4, SkFixed> axisValues(axisDefinitions.count());
     Scanner::computeAxisValues(axisDefinitions, position, axisValues, name);
 
-    auto fontData = std::make_unique<SkFontData>(std::move(stream), args.getCollectionIndex(),
-                                                 axisValues.get(), axisDefinitions.count());
+    auto fontData = std::make_unique<SkFontData>(
+        std::move(stream), args.getCollectionIndex(), args.getPalette().index,
+        axisValues.get(), axisDefinitions.count(),
+        args.getPalette().overrides, args.getPalette().overrideCount);
     return sk_make_sp<SkTypeface_Fuchsia>(std::move(fontData), style, isFixedPitch, name, id);
 }
 
@@ -242,7 +244,6 @@ protected:
     SkTypeface* onMatchFamilyStyleCharacter(const char familyName[], const SkFontStyle&,
                                             const char* bcp47[], int bcp47Count,
                                             SkUnichar character) const override;
-    SkTypeface* onMatchFaceStyle(const SkTypeface*, const SkFontStyle&) const override;
     sk_sp<SkTypeface> onMakeFromData(sk_sp<SkData>, int ttcIndex) const override;
     sk_sp<SkTypeface> onMakeFromStreamIndex(std::unique_ptr<SkStreamAsset>,
                                             int ttcIndex) const override;
@@ -370,13 +371,8 @@ SkTypeface* SkFontMgr_Fuchsia::onMatchFamilyStyleCharacter(const char familyName
     return typeface.release();
 }
 
-SkTypeface* SkFontMgr_Fuchsia::onMatchFaceStyle(const SkTypeface*, const SkFontStyle&) const {
-    return nullptr;
-}
-
-sk_sp<SkTypeface> SkFontMgr_Fuchsia::onMakeFromData(sk_sp<SkData>, int ttcIndex) const {
-    SkASSERT(false);
-    return nullptr;
+sk_sp<SkTypeface> SkFontMgr_Fuchsia::onMakeFromData(sk_sp<SkData> data, int ttcIndex) const {
+    return makeFromStream(std::make_unique<SkMemoryStream>(std::move(data)), ttcIndex);
 }
 
 sk_sp<SkTypeface> SkFontMgr_Fuchsia::onMakeFromStreamIndex(std::unique_ptr<SkStreamAsset> asset,

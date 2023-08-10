@@ -8,7 +8,8 @@
 #include <string>
 #include <vector>
 
-#include "base/compiler_specific.h"
+#include "base/memory/raw_ptr.h"
+#include "base/memory/scoped_refptr.h"
 #include "chrome/browser/extensions/chrome_extension_function_details.h"
 #include "chrome/common/extensions/api/tabs.h"
 #include "components/translate/core/browser/translate_driver.h"
@@ -24,6 +25,11 @@
 class GURL;
 class SkBitmap;
 class TabStripModel;
+
+namespace base {
+class TaskRunner;
+}
+
 namespace content {
 class WebContents;
 }
@@ -147,7 +153,7 @@ class TabsUpdateFunction : public ExtensionFunction {
                  std::string* error);
   ResponseValue GetResult();
 
-  content::WebContents* web_contents_;
+  raw_ptr<content::WebContents> web_contents_;
 
  private:
   ResponseAction Run() override;
@@ -232,10 +238,22 @@ class TabsCaptureVisibleTabFunction
       public ExtensionFunction {
  public:
   TabsCaptureVisibleTabFunction();
+
+  TabsCaptureVisibleTabFunction(const TabsCaptureVisibleTabFunction&) = delete;
+  TabsCaptureVisibleTabFunction& operator=(
+      const TabsCaptureVisibleTabFunction&) = delete;
+
   static void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry);
+
+  static void set_disable_throttling_for_tests(
+      bool disable_throttling_for_test) {
+    disable_throttling_for_test_ = disable_throttling_for_test;
+  }
 
   // ExtensionFunction implementation.
   ResponseAction Run() override;
+  void GetQuotaLimitHeuristics(QuotaLimitHeuristics* heuristics) const override;
+  bool ShouldSkipQuotaLimiting() const override;
 
  protected:
   ~TabsCaptureVisibleTabFunction() override {}
@@ -246,17 +264,23 @@ class TabsCaptureVisibleTabFunction
   content::WebContents* GetWebContentsForID(int window_id, std::string* error);
 
   // extensions::WebContentsCaptureClient:
-  bool IsScreenshotEnabled(content::WebContents* web_contents) const override;
+  ScreenshotAccess GetScreenshotAccess(
+      content::WebContents* web_contents) const override;
   bool ClientAllowsTransparency() override;
   void OnCaptureSuccess(const SkBitmap& bitmap) override;
   void OnCaptureFailure(CaptureResult result) override;
+
+  void EncodeBitmapOnWorkerThread(
+      scoped_refptr<base::TaskRunner> reply_task_runner,
+      const SkBitmap& bitmap);
+  void OnBitmapEncodedOnUIThread(bool success, std::string base64_result);
 
  private:
   DECLARE_EXTENSION_FUNCTION("tabs.captureVisibleTab", TABS_CAPTUREVISIBLETAB)
 
   static std::string CaptureResultToErrorMessage(CaptureResult result);
 
-  DISALLOW_COPY_AND_ASSIGN(TabsCaptureVisibleTabFunction);
+  static bool disable_throttling_for_test_;
 };
 
 // Implement API calls tabs.executeScript, tabs.insertCSS, and tabs.removeCSS.
@@ -358,13 +382,14 @@ class TabsDiscardFunction : public ExtensionFunction {
 
   TabsDiscardFunction();
 
+  TabsDiscardFunction(const TabsDiscardFunction&) = delete;
+  TabsDiscardFunction& operator=(const TabsDiscardFunction&) = delete;
+
  private:
   ~TabsDiscardFunction() override;
 
   // ExtensionFunction:
   ExtensionFunction::ResponseAction Run() override;
-
-  DISALLOW_COPY_AND_ASSIGN(TabsDiscardFunction);
 };
 
 class TabsGoForwardFunction : public ExtensionFunction {
@@ -373,13 +398,14 @@ class TabsGoForwardFunction : public ExtensionFunction {
 
   TabsGoForwardFunction() {}
 
+  TabsGoForwardFunction(const TabsGoForwardFunction&) = delete;
+  TabsGoForwardFunction& operator=(const TabsGoForwardFunction&) = delete;
+
  private:
   ~TabsGoForwardFunction() override {}
 
   // ExtensionFunction:
   ExtensionFunction::ResponseAction Run() override;
-
-  DISALLOW_COPY_AND_ASSIGN(TabsGoForwardFunction);
 };
 
 class TabsGoBackFunction : public ExtensionFunction {
@@ -388,13 +414,14 @@ class TabsGoBackFunction : public ExtensionFunction {
 
   TabsGoBackFunction() {}
 
+  TabsGoBackFunction(const TabsGoBackFunction&) = delete;
+  TabsGoBackFunction& operator=(const TabsGoBackFunction&) = delete;
+
  private:
   ~TabsGoBackFunction() override {}
 
   // ExtensionFunction:
   ExtensionFunction::ResponseAction Run() override;
-
-  DISALLOW_COPY_AND_ASSIGN(TabsGoBackFunction);
 };
 
 }  // namespace extensions

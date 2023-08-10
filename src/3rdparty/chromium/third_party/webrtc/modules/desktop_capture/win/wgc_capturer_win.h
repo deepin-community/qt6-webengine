@@ -13,6 +13,7 @@
 
 #include <d3d11.h>
 #include <wrl/client.h>
+
 #include <map>
 #include <memory>
 
@@ -24,6 +25,9 @@
 #include "modules/desktop_capture/win/window_capture_utils.h"
 
 namespace webrtc {
+
+// Checks if the WGC API is present and supported on the system.
+bool IsWgcSupported(CaptureType capture_type);
 
 // WgcCapturerWin is initialized with an implementation of this base class,
 // which it uses to find capturable sources of a particular type. This way,
@@ -37,7 +41,8 @@ class SourceEnumerator {
 
 class WindowEnumerator final : public SourceEnumerator {
  public:
-  WindowEnumerator() = default;
+  explicit WindowEnumerator(bool enumerate_current_process_windows)
+      : enumerate_current_process_windows_(enumerate_current_process_windows) {}
 
   WindowEnumerator(const WindowEnumerator&) = delete;
   WindowEnumerator& operator=(const WindowEnumerator&) = delete;
@@ -45,11 +50,15 @@ class WindowEnumerator final : public SourceEnumerator {
   ~WindowEnumerator() override = default;
 
   bool FindAllSources(DesktopCapturer::SourceList* sources) override {
-    return window_capture_helper_.EnumerateCapturableWindows(sources);
+    // WGC fails to capture windows with the WS_EX_TOOLWINDOW style, so we
+    // provide it as a filter to ensure windows with the style are not returned.
+    return window_capture_helper_.EnumerateCapturableWindows(
+        sources, enumerate_current_process_windows_, WS_EX_TOOLWINDOW);
   }
 
  private:
   WindowCaptureHelperWin window_capture_helper_;
+  bool enumerate_current_process_windows_;
 };
 
 class ScreenEnumerator final : public SourceEnumerator {
@@ -62,19 +71,20 @@ class ScreenEnumerator final : public SourceEnumerator {
   ~ScreenEnumerator() override = default;
 
   bool FindAllSources(DesktopCapturer::SourceList* sources) override {
-    return webrtc::GetMonitorList(sources);
+    return webrtc::GetScreenList(sources);
   }
 };
 
 // A capturer that uses the Window.Graphics.Capture APIs. It is suitable for
 // both window and screen capture (but only one type per instance). Consumers
 // should not instantiate this class directly, instead they should use
-// |CreateRawWindowCapturer()| or |CreateRawScreenCapturer()| to receive a
+// `CreateRawWindowCapturer()` or `CreateRawScreenCapturer()` to receive a
 // capturer appropriate for the type of source they want to capture.
 class WgcCapturerWin : public DesktopCapturer {
  public:
   WgcCapturerWin(std::unique_ptr<WgcCaptureSourceFactory> source_factory,
-                 std::unique_ptr<SourceEnumerator> source_enumerator);
+                 std::unique_ptr<SourceEnumerator> source_enumerator,
+                 bool allow_delayed_capturable_check);
 
   WgcCapturerWin(const WgcCapturerWin&) = delete;
   WgcCapturerWin& operator=(const WgcCapturerWin&) = delete;
@@ -82,7 +92,8 @@ class WgcCapturerWin : public DesktopCapturer {
   ~WgcCapturerWin() override;
 
   static std::unique_ptr<DesktopCapturer> CreateRawWindowCapturer(
-      const DesktopCaptureOptions& options);
+      const DesktopCaptureOptions& options,
+      bool allow_delayed_capturable_check = false);
 
   static std::unique_ptr<DesktopCapturer> CreateRawScreenCapturer(
       const DesktopCaptureOptions& options);
@@ -90,6 +101,7 @@ class WgcCapturerWin : public DesktopCapturer {
   // DesktopCapturer interface.
   bool GetSourceList(SourceList* sources) override;
   bool SelectSource(SourceId id) override;
+  bool FocusOnSelectedSource() override;
   void Start(Callback* callback) override;
   void CaptureFrame() override;
 
@@ -120,6 +132,11 @@ class WgcCapturerWin : public DesktopCapturer {
   // The callback that we deliver frames to, synchronously, before CaptureFrame
   // returns.
   Callback* callback_ = nullptr;
+
+  // WgcCaptureSource::IsCapturable is expensive to run. So, caller can
+  // delay capturable check till capture frame is called if the WgcCapturerWin
+  // is used as a fallback capturer.
+  bool allow_delayed_capturable_check_ = false;
 
   // A Direct3D11 device that is shared amongst the WgcCaptureSessions, who
   // require one to perform the capture.

@@ -5,10 +5,8 @@
 #include "media/capture/video_capture_types.h"
 
 #include "base/check.h"
-#include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "media/base/limits.h"
-#include "media/base/video_frame.h"
 
 namespace media {
 
@@ -40,10 +38,6 @@ bool VideoCaptureFormat::IsValid() const {
           pixel_format <= PIXEL_FORMAT_MAX);
 }
 
-size_t VideoCaptureFormat::ImageAllocationSize() const {
-  return VideoFrame::AllocationSize(pixel_format, frame_size);
-}
-
 // static
 std::string VideoCaptureFormat::ToString(const VideoCaptureFormat& format) {
   // Beware: This string is parsed by manager.js:parseVideoCaptureFormat_,
@@ -59,11 +53,11 @@ bool VideoCaptureFormat::ComparePixelFormatPreference(
     const VideoPixelFormat& rhs) {
   auto* format_lhs = std::find(
       kSupportedCapturePixelFormats,
-      kSupportedCapturePixelFormats + base::size(kSupportedCapturePixelFormats),
+      kSupportedCapturePixelFormats + std::size(kSupportedCapturePixelFormats),
       lhs);
   auto* format_rhs = std::find(
       kSupportedCapturePixelFormats,
-      kSupportedCapturePixelFormats + base::size(kSupportedCapturePixelFormats),
+      kSupportedCapturePixelFormats + std::size(kSupportedCapturePixelFormats),
       rhs);
   return format_lhs < format_rhs;
 }
@@ -101,8 +95,6 @@ VideoCaptureParams::SuggestConstraints() const {
       break;
 
     case ResolutionChangePolicy::FIXED_ASPECT_RATIO: {
-      // TODO(miu): This is a place-holder until "min constraints" are plumbed-
-      // in from the MediaStream framework.  http://crbug.com/473336
       constexpr int kMinLines = 180;
       if (max_frame_size.height() <= kMinLines) {
         min_frame_size = max_frame_size;

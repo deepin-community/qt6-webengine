@@ -10,7 +10,7 @@
 
 #include "base/callback.h"
 #include "base/memory/ref_counted.h"
-#include "base/single_thread_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui_data_source.h"
@@ -98,6 +98,13 @@ class CONTENT_EXPORT URLDataSource {
   //  - "script-src chrome://resources 'self';"
   virtual std::string GetContentSecurityPolicy(
       network::mojom::CSPDirectiveName directive);
+
+  // By default, neither of these headers are set. Override to change this.
+  // TODO(https://crbug.com/1189194): Consider setting COOP:same-origin and
+  // COEP:require-corp as the default instead.
+  virtual std::string GetCrossOriginOpenerPolicy();
+  virtual std::string GetCrossOriginEmbedderPolicy();
+  virtual std::string GetCrossOriginResourcePolicy();
 
   // By default, the "X-Frame-Options: DENY" header is sent. To stop this from
   // happening, return false. It is OK to return false as needed.

@@ -9,15 +9,13 @@
 
 namespace switches {
 
-// TODO(crbug.com/1066962): remove this code when most of bookmarks are
-// reuploaded.
-extern const base::Feature kSyncReuploadBookmarkFullTitles;
-extern const base::Feature kSyncUseClientTagForBookmarkCommits;
+inline constexpr base::Feature kSyncOmitLargeBookmarkFaviconUrl{
+    "SyncOmitLargeBookmarkFaviconUrl", base::FEATURE_ENABLED_BY_DEFAULT};
 
-// TODO(crbug.com/1177798): remove this code when most of bookmarks are
-// reuploaded. This feature toggle will work only when
-// SyncReuploadBookmarkFullTitles is enabled.
-extern const base::Feature kSyncReuploadBookmarksUponMatchingData;
+// TODO(crbug.com/1232951): remove the feature toggle once most of bookmarks
+// have been reuploaded.
+inline constexpr base::Feature kSyncReuploadBookmarks{
+    "SyncReuploadBookmarks", base::FEATURE_ENABLED_BY_DEFAULT};
 
 }  // namespace switches
 

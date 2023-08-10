@@ -7,9 +7,10 @@
 #ifndef CORE_FXCRT_CFX_WIDETEXTBUF_H_
 #define CORE_FXCRT_CFX_WIDETEXTBUF_H_
 
+#include <stddef.h>
+
 #include "core/fxcrt/cfx_binarybuf.h"
 #include "core/fxcrt/fx_string.h"
-#include "core/fxcrt/fx_system.h"
 #include "third_party/base/span.h"
 
 class CFX_WideTextBuf final : public CFX_BinaryBuf {
@@ -23,10 +24,8 @@ class CFX_WideTextBuf final : public CFX_BinaryBuf {
   WideString MakeString() const;
 
   void AppendChar(wchar_t wch);
-  void Delete(int start_index, int count);
+  void Delete(size_t start_index, size_t count);
 
-  CFX_WideTextBuf& operator<<(int i);
-  CFX_WideTextBuf& operator<<(double f);
   CFX_WideTextBuf& operator<<(ByteStringView ascii);
   CFX_WideTextBuf& operator<<(const wchar_t* lpsz);
   CFX_WideTextBuf& operator<<(WideStringView str);

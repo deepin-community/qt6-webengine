@@ -6,7 +6,6 @@
 
 #include <memory>
 
-#include "base/stl_util.h"
 #include "crypto/secure_hash.h"
 #include "crypto/sha2.h"
 
@@ -41,7 +40,7 @@ std::string ComputeTreeHashRoot(const std::vector<std::string>& leaf_hashes,
         ++i;
       }
       parent_nodes.push_back(std::string(crypto::kSHA256Length, 0));
-      hash->Finish(base::data(parent_nodes.back()), crypto::kSHA256Length);
+      hash->Finish(std::data(parent_nodes.back()), crypto::kSHA256Length);
     }
     current_nodes.swap(parent_nodes);
     parent_nodes.clear();

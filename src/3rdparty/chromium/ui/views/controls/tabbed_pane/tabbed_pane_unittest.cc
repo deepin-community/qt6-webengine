@@ -7,7 +7,7 @@
 #include <memory>
 #include <utility>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/strings/utf_string_conversions.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/accessibility/ax_action_data.h"
@@ -15,6 +15,7 @@
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/events/keycodes/keyboard_code_conversion.h"
 #include "ui/views/accessibility/view_accessibility.h"
+#include "ui/views/test/ax_event_counter.h"
 #include "ui/views/test/test_views.h"
 #include "ui/views/test/views_test_base.h"
 #include "ui/views/widget/widget.h"
@@ -25,11 +26,11 @@ namespace views {
 namespace test {
 namespace {
 
-base::string16 DefaultTabTitle() {
-  return ASCIIToUTF16("tab");
+std::u16string DefaultTabTitle() {
+  return u"tab";
 }
 
-base::string16 GetAccessibleName(View* view) {
+std::u16string GetAccessibleName(View* view) {
   ui::AXNodeData ax_node_data;
   view->GetViewAccessibility().GetAccessibleNodeData(&ax_node_data);
   return ax_node_data.GetString16Attribute(ax::mojom::StringAttribute::kName);
@@ -77,11 +78,10 @@ TEST_F(TabbedPaneTest, TabStripHighlightStyle) {
 TEST_F(TabbedPaneTest, SizeAndLayoutInVerticalOrientation) {
   auto tabbed_pane = std::make_unique<TabbedPane>(
       TabbedPane::Orientation::kVertical, TabbedPane::TabStripStyle::kBorder);
-  View* child1 =
-      tabbed_pane->AddTab(ASCIIToUTF16("tab1"),
-                          std::make_unique<StaticSizedView>(gfx::Size(20, 10)));
+  View* child1 = tabbed_pane->AddTab(
+      u"tab1", std::make_unique<StaticSizedView>(gfx::Size(20, 10)));
   View* child2 = tabbed_pane->AddTab(
-      ASCIIToUTF16("tab2"), std::make_unique<StaticSizedView>(gfx::Size(5, 5)));
+      u"tab2", std::make_unique<StaticSizedView>(gfx::Size(5, 5)));
   tabbed_pane->SelectTabAt(0);
 
   // |tabbed_pane_| reserves extra width for the tab strip in vertical mode.
@@ -108,6 +108,9 @@ TEST_F(TabbedPaneTest, SizeAndLayoutInVerticalOrientation) {
 class TabbedPaneWithWidgetTest : public ViewsTestBase {
  public:
   TabbedPaneWithWidgetTest() = default;
+
+  TabbedPaneWithWidgetTest(const TabbedPaneWithWidgetTest&) = delete;
+  TabbedPaneWithWidgetTest& operator=(const TabbedPaneWithWidgetTest&) = delete;
 
   void SetUp() override {
     ViewsTestBase::SetUp();
@@ -146,10 +149,7 @@ class TabbedPaneWithWidgetTest : public ViewsTestBase {
   }
 
   std::unique_ptr<Widget> widget_;
-  TabbedPane* tabbed_pane_;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(TabbedPaneWithWidgetTest);
+  raw_ptr<TabbedPane> tabbed_pane_;
 };
 
 // Tests the preferred size and layout when tabs are aligned horizontally.
@@ -157,10 +157,9 @@ class TabbedPaneWithWidgetTest : public ViewsTestBase {
 // necessary to display the tab titles, whichever is larger.
 TEST_F(TabbedPaneWithWidgetTest, SizeAndLayout) {
   View* child1 = tabbed_pane_->AddTab(
-      ASCIIToUTF16("tab1"),
-      std::make_unique<StaticSizedView>(gfx::Size(20, 10)));
+      u"tab1", std::make_unique<StaticSizedView>(gfx::Size(20, 10)));
   View* child2 = tabbed_pane_->AddTab(
-      ASCIIToUTF16("tab2"), std::make_unique<StaticSizedView>(gfx::Size(5, 5)));
+      u"tab2", std::make_unique<StaticSizedView>(gfx::Size(5, 5)));
   tabbed_pane_->SelectTabAt(0);
 
   // In horizontal mode, |tabbed_pane_| width should match the largest child or
@@ -174,8 +173,7 @@ TEST_F(TabbedPaneWithWidgetTest, SizeAndLayout) {
   // Test that the preferred size is now the size of the size of the largest
   // child.
   View* child3 = tabbed_pane_->AddTab(
-      ASCIIToUTF16("tab3"),
-      std::make_unique<StaticSizedView>(gfx::Size(150, 5)));
+      u"tab3", std::make_unique<StaticSizedView>(gfx::Size(150, 5)));
   EXPECT_EQ(tabbed_pane_->GetPreferredSize().width(), 150);
 
   // The child views should resize to fit in larger tabbed panes.
@@ -211,8 +209,8 @@ TEST_F(TabbedPaneWithWidgetTest, AddAndSelect) {
   }
 
   // Add a tab at index 0, it should not be selected automatically.
-  View* tab0 = tabbed_pane_->AddTabAtIndex(0, ASCIIToUTF16("tab0"),
-                                           std::make_unique<View>());
+  View* tab0 =
+      tabbed_pane_->AddTabAtIndex(0, u"tab0", std::make_unique<View>());
   EXPECT_NE(tab0, GetSelectedTabContentView());
   EXPECT_NE(0u, tabbed_pane_->GetSelectedTabIndex());
 }
@@ -281,8 +279,8 @@ TEST_F(TabbedPaneWithWidgetTest, SelectTabWithAccessibleAction) {
 }
 
 TEST_F(TabbedPaneWithWidgetTest, AccessiblePaneTitleTracksActiveTabTitle) {
-  const base::string16 kFirstTitle = ASCIIToUTF16("Tab1");
-  const base::string16 kSecondTitle = ASCIIToUTF16("Tab2");
+  const std::u16string kFirstTitle = u"Tab1";
+  const std::u16string kSecondTitle = u"Tab2";
   tabbed_pane_->AddTab(kFirstTitle, std::make_unique<View>());
   tabbed_pane_->AddTab(kSecondTitle, std::make_unique<View>());
   EXPECT_EQ(kFirstTitle, GetAccessibleName(tabbed_pane_));
@@ -291,8 +289,8 @@ TEST_F(TabbedPaneWithWidgetTest, AccessiblePaneTitleTracksActiveTabTitle) {
 }
 
 TEST_F(TabbedPaneWithWidgetTest, AccessiblePaneContentsTitleTracksTabTitle) {
-  const base::string16 kFirstTitle = ASCIIToUTF16("Tab1");
-  const base::string16 kSecondTitle = ASCIIToUTF16("Tab2");
+  const std::u16string kFirstTitle = u"Tab1";
+  const std::u16string kSecondTitle = u"Tab2";
   View* const tab1_contents =
       tabbed_pane_->AddTab(kFirstTitle, std::make_unique<View>());
   View* const tab2_contents =
@@ -301,15 +299,72 @@ TEST_F(TabbedPaneWithWidgetTest, AccessiblePaneContentsTitleTracksTabTitle) {
   EXPECT_EQ(kSecondTitle, GetAccessibleName(tab2_contents));
 }
 
-TEST_F(TabbedPaneWithWidgetTest, AccessiblePaneContentsRoleIsTab) {
-  const base::string16 kFirstTitle = ASCIIToUTF16("Tab1");
-  const base::string16 kSecondTitle = ASCIIToUTF16("Tab2");
+TEST_F(TabbedPaneWithWidgetTest, AccessiblePaneContentsRoleIsTabPanel) {
+  const std::u16string kFirstTitle = u"Tab1";
+  const std::u16string kSecondTitle = u"Tab2";
   View* const tab1_contents =
       tabbed_pane_->AddTab(kFirstTitle, std::make_unique<View>());
   View* const tab2_contents =
       tabbed_pane_->AddTab(kSecondTitle, std::make_unique<View>());
-  EXPECT_EQ(ax::mojom::Role::kTab, GetAccessibleRole(tab1_contents));
-  EXPECT_EQ(ax::mojom::Role::kTab, GetAccessibleRole(tab2_contents));
+  EXPECT_EQ(ax::mojom::Role::kTabPanel, GetAccessibleRole(tab1_contents));
+  EXPECT_EQ(ax::mojom::Role::kTabPanel, GetAccessibleRole(tab2_contents));
+}
+
+TEST_F(TabbedPaneWithWidgetTest, AccessibleEvents) {
+  tabbed_pane_->AddTab(u"Tab1", std::make_unique<View>());
+  tabbed_pane_->AddTab(u"Tab2", std::make_unique<View>());
+  test::AXEventCounter counter(views::AXEventManager::Get());
+
+  // This is needed for FocusManager::SetFocusedViewWithReason to notify
+  // observers observers of focus changes.
+  if (widget_ && !widget_->IsActive())
+    widget_->Activate();
+
+  EXPECT_EQ(0u, tabbed_pane_->GetSelectedTabIndex());
+
+  // Change the selected tab without giving the tab focus should result in a
+  // selection change for the new tab and a selected-children-changed for the
+  // tab list. No focus events should occur.
+  tabbed_pane_->SelectTabAt(1);
+  EXPECT_EQ(1u, tabbed_pane_->GetSelectedTabIndex());
+  EXPECT_EQ(
+      1, counter.GetCount(ax::mojom::Event::kSelection, ax::mojom::Role::kTab));
+  EXPECT_EQ(1, counter.GetCount(ax::mojom::Event::kSelectedChildrenChanged,
+                                ax::mojom::Role::kTabList));
+  EXPECT_EQ(0, counter.GetCount(ax::mojom::Event::kFocus));
+
+  counter.ResetAllCounts();
+
+  // Focusing the selected tab should only result in a focus event for that tab.
+  tabbed_pane_->GetFocusManager()->SetFocusedView(tabbed_pane_->GetTabAt(1));
+  EXPECT_EQ(1, counter.GetCount(ax::mojom::Event::kFocus));
+  EXPECT_EQ(1,
+            counter.GetCount(ax::mojom::Event::kFocus, ax::mojom::Role::kTab));
+  EXPECT_EQ(0, counter.GetCount(ax::mojom::Event::kSelection));
+  EXPECT_EQ(0, counter.GetCount(ax::mojom::Event::kSelectedChildrenChanged));
+
+  counter.ResetAllCounts();
+
+  // Arrowing left to the first tab selects it. Therefore we should get the same
+  // events as we did when SelectTabAt() was called.
+  SendKeyPressToSelectedTab(ui::VKEY_LEFT);
+  EXPECT_EQ(0u, tabbed_pane_->GetSelectedTabIndex());
+  EXPECT_EQ(
+      1, counter.GetCount(ax::mojom::Event::kSelection, ax::mojom::Role::kTab));
+  EXPECT_EQ(1, counter.GetCount(ax::mojom::Event::kSelectedChildrenChanged,
+                                ax::mojom::Role::kTabList));
+  EXPECT_EQ(0, counter.GetCount(ax::mojom::Event::kFocus));
+
+  counter.ResetAllCounts();
+
+  // Focusing an unselected tab, if the UI allows it, a should only result in a
+  // focus event for that tab.
+  tabbed_pane_->GetFocusManager()->SetFocusedView(tabbed_pane_->GetTabAt(1));
+  EXPECT_EQ(1, counter.GetCount(ax::mojom::Event::kFocus));
+  EXPECT_EQ(1,
+            counter.GetCount(ax::mojom::Event::kFocus, ax::mojom::Role::kTab));
+  EXPECT_EQ(0, counter.GetCount(ax::mojom::Event::kSelection));
+  EXPECT_EQ(0, counter.GetCount(ax::mojom::Event::kSelectedChildrenChanged));
 }
 
 }  // namespace test

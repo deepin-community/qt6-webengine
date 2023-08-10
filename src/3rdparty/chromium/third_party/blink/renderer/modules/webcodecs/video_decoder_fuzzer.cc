@@ -53,14 +53,16 @@ DEFINE_TEXT_PROTO_FUZZER(
         ToScriptStateForMainWorld(&page_holder->GetFrame());
     ScriptState::Scope scope(script_state);
 
-    Persistent<FakeFunction> error_function =
-        FakeFunction::Create(script_state, "error");
+    Persistent<ScriptFunction> error_function =
+        MakeGarbageCollected<ScriptFunction>(
+            script_state, MakeGarbageCollected<FakeFunction>("error"));
     Persistent<V8WebCodecsErrorCallback> error_callback =
-        V8WebCodecsErrorCallback::Create(error_function->Bind());
-    Persistent<FakeFunction> output_function =
-        FakeFunction::Create(script_state, "output");
+        V8WebCodecsErrorCallback::Create(error_function->V8Function());
+    Persistent<ScriptFunction> output_function =
+        MakeGarbageCollected<ScriptFunction>(
+            script_state, MakeGarbageCollected<FakeFunction>("output"));
     Persistent<V8VideoFrameOutputCallback> output_callback =
-        V8VideoFrameOutputCallback::Create(output_function->Bind());
+        V8VideoFrameOutputCallback::Create(output_function->V8Function());
 
     Persistent<VideoDecoderInit> video_decoder_init =
         MakeGarbageCollected<VideoDecoderInit>();
@@ -73,11 +75,17 @@ DEFINE_TEXT_PROTO_FUZZER(
     if (video_decoder) {
       for (auto& invocation : proto.invocations()) {
         switch (invocation.Api_case()) {
-          case wc_fuzzer::VideoDecoderApiInvocation::kConfigure:
-            video_decoder->configure(
-                MakeVideoDecoderConfig(invocation.configure()),
-                IGNORE_EXCEPTION_FOR_TESTING);
+          case wc_fuzzer::VideoDecoderApiInvocation::kConfigure: {
+            VideoDecoderConfig* config =
+                MakeVideoDecoderConfig(invocation.configure());
+
+            // Use the same config to fuzz isConfigSupported().
+            VideoDecoder::isConfigSupported(script_state, config,
+                                            IGNORE_EXCEPTION_FOR_TESTING);
+
+            video_decoder->configure(config, IGNORE_EXCEPTION_FOR_TESTING);
             break;
+          }
           case wc_fuzzer::VideoDecoderApiInvocation::kDecode:
             video_decoder->decode(
                 MakeEncodedVideoChunk(invocation.decode().chunk()),

@@ -9,7 +9,6 @@
 #include "components/viz/service/display_embedder/skia_output_surface_dependency.h"
 #include "gpu/command_buffer/service/shared_context_state.h"
 #include "gpu/command_buffer/service/shared_image_factory.h"
-#include "skia/ext/legacy_display_globals.h"
 #include "third_party/skia/include/gpu/GrBackendSemaphore.h"
 #include "third_party/skia/include/gpu/GrDirectContext.h"
 
@@ -47,21 +46,18 @@ bool OutputPresenter::Image::Initialize(
   return true;
 }
 
-void OutputPresenter::Image::BeginWriteSkia() {
+void OutputPresenter::Image::BeginWriteSkia(int sample_count) {
   DCHECK(!scoped_skia_write_access_);
   DCHECK(!GetPresentCount());
   DCHECK(end_semaphores_.empty());
 
   std::vector<GrBackendSemaphore> begin_semaphores;
-  SkSurfaceProps surface_props =
-      skia::LegacyDisplayGlobals::GetSkSurfaceProps();
+  SkSurfaceProps surface_props{0, kUnknown_SkPixelGeometry};
 
   // Buffer queue is internal to GPU proc and handles texture initialization,
   // so allow uncleared access.
-  // TODO(vasilyt): Props and MSAA
   scoped_skia_write_access_ = skia_representation_->BeginScopedWriteAccess(
-      0 /* final_msaa_count */, surface_props, &begin_semaphores,
-      &end_semaphores_,
+      sample_count, surface_props, &begin_semaphores, &end_semaphores_,
       gpu::SharedImageRepresentation::AllowUnclearedAccess::kYes);
   DCHECK(scoped_skia_write_access_);
   if (!begin_semaphores.empty()) {
@@ -84,11 +80,11 @@ OutputPresenter::Image::TakeEndWriteSkiaSemaphores() {
   return result;
 }
 
-void OutputPresenter::Image::EndWriteSkia() {
+void OutputPresenter::Image::EndWriteSkia(bool force_flush) {
   // The Flush now takes place in finishPaintCurrentBuffer on the CPU side.
-  // check if end_semaphores is not empty then flash here
+  // check if end_semaphores is not empty then flush here
   DCHECK(scoped_skia_write_access_);
-  if (!end_semaphores_.empty()) {
+  if (!end_semaphores_.empty() || force_flush) {
     GrFlushInfo flush_info = {
         .fNumSemaphores = end_semaphores_.size(),
         .fSignalSemaphores = end_semaphores_.data(),
@@ -115,13 +111,14 @@ void OutputPresenter::Image::PreGrContextSubmit() {
   }
 }
 
-std::unique_ptr<OutputPresenter::Image>
-OutputPresenter::AllocateBackgroundImage(gfx::ColorSpace color_space,
-                                         gfx::Size image_size) {
+std::unique_ptr<OutputPresenter::Image> OutputPresenter::AllocateSingleImage(
+    gfx::ColorSpace color_space,
+    gfx::Size image_size) {
   return nullptr;
 }
 
-void OutputPresenter::ScheduleBackground(Image* image) {
+void OutputPresenter::ScheduleOneOverlay(const OverlayCandidate& overlay,
+                                         ScopedOverlayAccess* access) {
   NOTREACHED();
 }
 

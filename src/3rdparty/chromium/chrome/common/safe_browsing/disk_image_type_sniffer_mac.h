@@ -20,6 +20,9 @@ class DiskImageTypeSnifferMac
  public:
   DiskImageTypeSnifferMac();
 
+  DiskImageTypeSnifferMac(const DiskImageTypeSnifferMac&) = delete;
+  DiskImageTypeSnifferMac& operator=(const DiskImageTypeSnifferMac&) = delete;
+
   // Reads trailer from file to see if it is a DMG type. Must be called on the
   // FILE thread.
   static bool IsAppleDiskImage(const base::FilePath& dmg_file);
@@ -34,10 +37,8 @@ class DiskImageTypeSnifferMac
   friend class base::RefCountedThreadSafe<DiskImageTypeSnifferMac>;
 
   ~DiskImageTypeSnifferMac();
-
-  DISALLOW_COPY_AND_ASSIGN(DiskImageTypeSnifferMac);
 };
 
 }  // namespace safe_browsing
 
-#endif  // CHROME_COMMON_SAFE_BROWSING_DISK_IMAGE_TYPE_SNIFFE_MAC_H_
+#endif  // CHROME_COMMON_SAFE_BROWSING_DISK_IMAGE_TYPE_SNIFFER_MAC_H_

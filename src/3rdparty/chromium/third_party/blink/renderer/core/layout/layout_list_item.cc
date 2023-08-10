@@ -27,6 +27,7 @@
 #include "third_party/blink/renderer/core/html/html_li_element.h"
 #include "third_party/blink/renderer/core/html/html_olist_element.h"
 #include "third_party/blink/renderer/core/layout/layout_list_marker.h"
+#include "third_party/blink/renderer/core/layout/layout_object_inlines.h"
 #include "third_party/blink/renderer/core/layout/layout_outside_list_marker.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
 #include "third_party/blink/renderer/core/layout/list_marker.h"
@@ -60,9 +61,19 @@ void LayoutListItem::StyleDidChange(StyleDifference diff,
   LayoutBlockFlow::StyleDidChange(diff, old_style);
 
   StyleImage* current_image = StyleRef().ListStyleImage();
-  if (StyleRef().GetListStyleType() ||
-      (current_image && !current_image->ErrorOccurred())) {
-    NotifyOfSubtreeChange();
+  if (old_style && (StyleRef().ListStyleType() ||
+                    (current_image && !current_image->ErrorOccurred()))) {
+    // The old_style check makes sure we don't enter here when attaching the
+    // LayoutObject.
+    DCHECK(GetDocument().InStyleRecalc());
+    DCHECK(!GetDocument().GetStyleEngine().InRebuildLayoutTree());
+    // We may enter here when propagating writing-mode and direction from body
+    // to the root element after layout tree rebuild. Skip NotifyOfSubtreeChange
+    // for that case.
+    if (GetDocument().documentElement() != GetNode() ||
+        GetDocument().GetStyleEngine().NeedsStyleRecalc()) {
+      NotifyOfSubtreeChange();
+    }
   }
 
   LayoutObject* marker = Marker();
@@ -79,10 +90,8 @@ void LayoutListItem::StyleDidChange(StyleDifference diff,
     list_marker->UpdateMarkerContentIfNeeded(*marker);
 
   if (old_style) {
-    const ListStyleTypeData* old_list_style_type =
-        old_style->GetListStyleType();
-    const ListStyleTypeData* new_list_style_type =
-        StyleRef().GetListStyleType();
+    const ListStyleTypeData* old_list_style_type = old_style->ListStyleType();
+    const ListStyleTypeData* new_list_style_type = StyleRef().ListStyleType();
     if (old_list_style_type != new_list_style_type &&
         (!old_list_style_type || !new_list_style_type ||
          *old_list_style_type != *new_list_style_type)) {
@@ -97,12 +106,8 @@ void LayoutListItem::StyleDidChange(StyleDifference diff,
 void LayoutListItem::UpdateCounterStyle() {
   NOT_DESTROYED();
 
-  if (!RuntimeEnabledFeatures::CSSAtRuleCounterStyleEnabled())
-    return;
-
-  if (!StyleRef().GetListStyleType() ||
-      StyleRef().GetListStyleType()->IsCounterStyleReferenceValid(
-          GetDocument())) {
+  if (!StyleRef().ListStyleType() ||
+      StyleRef().ListStyleType()->IsCounterStyleReferenceValid(GetDocument())) {
     return;
   }
 
@@ -346,7 +351,9 @@ bool LayoutListItem::UpdateMarkerLocation() {
     // If the marker is currently contained inside an anonymous box, then we
     // are the only item in that anonymous box (since no line box parent was
     // found). It's ok to just leave the marker where it is in this case.
-    if (marker_parent && marker_parent->IsAnonymousBlock()) {
+    // Also ok to leave it in a flow thread.
+    if (marker_parent && (marker_parent->IsAnonymousBlock() ||
+                          marker_parent->IsLayoutFlowThread())) {
       line_box_parent = marker_parent;
       // We could use marker_parent as line_box_parent only if marker is the
       // first leaf child of list item.

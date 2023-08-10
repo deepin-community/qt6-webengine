@@ -8,7 +8,7 @@
 #include <string>
 #include <utility>
 
-#include "core/fpdfapi/page/cpdf_pagemodule.h"
+#include "core/fpdfapi/page/test_with_page_module.h"
 #include "core/fpdfapi/parser/cpdf_data_avail.h"
 #include "core/fpdfapi/parser/cpdf_dictionary.h"
 #include "core/fpdfapi/parser/cpdf_linearized_header.h"
@@ -36,8 +36,8 @@ RetainPtr<CPDF_ReadValidator> MakeValidatorFromFile(
 
 std::unique_ptr<CPDF_DataAvail> MakeDataAvailFromFile(
     const std::string& file_name) {
-  return std::make_unique<CPDF_DataAvail>(
-      nullptr, MakeValidatorFromFile(file_name), true);
+  return std::make_unique<CPDF_DataAvail>(nullptr,
+                                          MakeValidatorFromFile(file_name));
 }
 
 class TestLinearizedHeader final : public CPDF_LinearizedHeader {
@@ -59,20 +59,12 @@ class TestLinearizedHeader final : public CPDF_LinearizedHeader {
 
 }  // namespace
 
-class CPDF_HintTablesTest : public testing::Test {
- public:
-  CPDF_HintTablesTest() {
-    // Needs for encoding Hint table stream.
-    CPDF_PageModule::Create();
-  }
+// Needs page module for encoding Hint table stream.
+using HintTablesTest = TestWithPageModule;
 
-  ~CPDF_HintTablesTest() override { CPDF_PageModule::Destroy(); }
-};
-
-TEST_F(CPDF_HintTablesTest, Load) {
+TEST_F(HintTablesTest, Load) {
   auto data_avail = MakeDataAvailFromFile("feature_linearized_loading.pdf");
-  ASSERT_EQ(CPDF_DataAvail::DocAvailStatus::DataAvailable,
-            data_avail->IsDocAvail(nullptr));
+  ASSERT_EQ(CPDF_DataAvail::kDataAvailable, data_avail->IsDocAvail(nullptr));
 
   ASSERT_TRUE(data_avail->GetHintTables());
 
@@ -97,10 +89,9 @@ TEST_F(CPDF_HintTablesTest, Load) {
       hint_tables->GetPagePos(2, &page_start, &page_length, &page_obj_num));
 }
 
-TEST_F(CPDF_HintTablesTest, PageAndGroupInfos) {
+TEST_F(HintTablesTest, PageAndGroupInfos) {
   auto data_avail = MakeDataAvailFromFile("feature_linearized_loading.pdf");
-  ASSERT_EQ(CPDF_DataAvail::DocAvailStatus::DataAvailable,
-            data_avail->IsDocAvail(nullptr));
+  ASSERT_EQ(CPDF_DataAvail::kDataAvailable, data_avail->IsDocAvail(nullptr));
 
   const CPDF_HintTables* hint_tables = data_avail->GetHintTables();
   ASSERT_TRUE(hint_tables);
@@ -159,7 +150,7 @@ TEST_F(CPDF_HintTablesTest, PageAndGroupInfos) {
   EXPECT_EQ(1u, hint_tables->SharedGroupInfos()[5].m_dwObjectsCount);
 }
 
-TEST_F(CPDF_HintTablesTest, FirstPageOffset) {
+TEST_F(HintTablesTest, FirstPageOffset) {
   // Test that valid hint table is loaded, and have correct offset of first page
   // object.
   const auto linearized_header = TestLinearizedHeader::MakeHeader(

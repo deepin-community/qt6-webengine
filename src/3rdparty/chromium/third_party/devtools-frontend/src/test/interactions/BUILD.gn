@@ -19,11 +19,14 @@ ts_library("tests") {
     "data_grid",
     "data_grid_controller",
     "helpers",
-    "theme_colors",
+    "text_editor",
     "tree_outline",
   ]
 }
 
 copy_to_gen("config") {
-  sources = [ ".mocharc.js" ]
+  sources = [
+    ".mocharc.js",
+    "test-runner-config.json",
+  ]
 }

@@ -1,38 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2020 The Qt Company Ltd.
-** Contact: http://www.qt.io/licensing/
-**
-** This file is part of the QtPDF module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL3$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see http://www.qt.io/terms-conditions. For further
-** information use the contact form at http://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPLv3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or later as published by the Free
-** Software Foundation and appearing in the file LICENSE.GPL included in
-** the packaging of this file. Please review the following information to
-** ensure the GNU General Public License version 2.0 requirements will be
-** met: http://www.gnu.org/licenses/gpl-2.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2020 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #ifndef QQUICKPDFSEARCHMODEL_P_H
 #define QQUICKPDFSEARCHMODEL_P_H
@@ -50,10 +17,9 @@
 
 #include <QtPdfQuick/private/qtpdfquickglobal_p.h>
 #include <QtPdfQuick/private/qquickpdfdocument_p.h>
-#include <QtPdf/qpdfsearchmodel.h>
 
-#include <QtCore/qvariant.h>
-#include <QtQml/qqml.h>
+#include <QtPdf/qpdfsearchmodel.h>
+#include <QtQml/QQmlEngine>
 
 QT_BEGIN_NAMESPACE
 
@@ -63,12 +29,16 @@ class  Q_PDFQUICK_EXPORT QQuickPdfSearchModel : public QPdfSearchModel
     Q_PROPERTY(QQuickPdfDocument *document READ document WRITE setDocument NOTIFY documentChanged)
     Q_PROPERTY(int currentPage READ currentPage WRITE setCurrentPage NOTIFY currentPageChanged)
     Q_PROPERTY(int currentResult READ currentResult WRITE setCurrentResult NOTIFY currentResultChanged)
+    Q_PROPERTY(QPdfLink currentResultLink READ currentResultLink NOTIFY currentResultLinkChanged)
     Q_PROPERTY(QList<QPolygonF> currentPageBoundingPolygons READ currentPageBoundingPolygons NOTIFY currentPageBoundingPolygonsChanged)
     Q_PROPERTY(QList<QPolygonF> currentResultBoundingPolygons READ currentResultBoundingPolygons NOTIFY currentResultBoundingPolygonsChanged)
     Q_PROPERTY(QRectF currentResultBoundingRect READ currentResultBoundingRect NOTIFY currentResultBoundingRectChanged)
+    QML_NAMED_ELEMENT(PdfSearchModel)
+    QML_ADDED_IN_VERSION(5, 15)
 
 public:
     explicit QQuickPdfSearchModel(QObject *parent = nullptr);
+    ~QQuickPdfSearchModel() override;
 
     QQuickPdfDocument *document() const;
     void setDocument(QQuickPdfDocument * document);
@@ -81,14 +51,15 @@ public:
     int currentResult() const { return m_currentResult; }
     void setCurrentResult(int currentResult);
 
+    QPdfLink currentResultLink() const;
     QList<QPolygonF> currentPageBoundingPolygons() const;
     QList<QPolygonF> currentResultBoundingPolygons() const;
     QRectF currentResultBoundingRect() const;
 
 signals:
-    void documentChanged();
     void currentPageChanged();
     void currentResultChanged();
+    void currentResultLinkChanged();
     void currentPageBoundingPolygonsChanged();
     void currentResultBoundingPolygonsChanged();
     void currentResultBoundingRectChanged();

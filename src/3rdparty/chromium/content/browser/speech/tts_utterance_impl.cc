@@ -4,6 +4,8 @@
 
 #include "content/browser/speech/tts_utterance_impl.h"
 
+#include <memory>
+
 #include "base/values.h"
 #include "content/public/browser/web_contents.h"
 #include "third_party/blink/public/mojom/speech/speech_synthesis.mojom.h"
@@ -58,15 +60,17 @@ std::unique_ptr<TtsUtterance> TtsUtterance::Create() {
 
 TtsUtteranceImpl::TtsUtteranceImpl(BrowserContext* browser_context,
                                    WebContents* web_contents)
-    : WebContentsObserver(web_contents),
-      browser_context_(browser_context),
+    : browser_context_(browser_context),
       was_created_with_web_contents_(web_contents != nullptr),
       id_(next_utterance_id_++),
       src_id_(-1),
       should_clear_queue_(true),
       char_index_(0),
       finished_(false) {
-  options_.reset(new base::DictionaryValue());
+  options_ = std::make_unique<base::DictionaryValue>();
+  if (web_contents) {
+    web_contents_ = web_contents->GetWeakPtr();
+  }
 }
 
 TtsUtteranceImpl::~TtsUtteranceImpl() {
@@ -104,7 +108,7 @@ const std::string& TtsUtteranceImpl::GetText() {
 }
 
 void TtsUtteranceImpl::SetOptions(const base::Value* options) {
-  options_.reset(options->DeepCopy());
+  options_ = base::Value::ToUniquePtrValue(options->Clone());
 }
 
 const base::Value* TtsUtteranceImpl::GetOptions() {
@@ -211,6 +215,10 @@ int TtsUtteranceImpl::GetId() {
 
 bool TtsUtteranceImpl::IsFinished() {
   return finished_;
+}
+
+WebContents* TtsUtteranceImpl::GetWebContents() {
+  return web_contents_.get();
 }
 
 }  // namespace content

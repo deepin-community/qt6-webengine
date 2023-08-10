@@ -5,8 +5,11 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_HEAP_COLLECTION_SUPPORT_HEAP_VECTOR_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_HEAP_COLLECTION_SUPPORT_HEAP_VECTOR_H_
 
-#include "third_party/blink/renderer/platform/heap/heap.h"
+#include <initializer_list>
+#include "third_party/blink/renderer/platform/heap/forward.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/heap/heap_allocator_impl.h"
+#include "third_party/blink/renderer/platform/heap/member.h"
 #include "third_party/blink/renderer/platform/wtf/type_traits.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
@@ -20,18 +23,29 @@ class HeapVector final : public GarbageCollected<HeapVector<T, inlineCapacity>>,
  public:
   HeapVector() = default;
 
+  void operator delete(void* p) { delete
+                                  (Vector<T, inlineCapacity, HeapAllocator>*)p; }
+
   explicit HeapVector(wtf_size_t size)
-      : Vector<T, inlineCapacity, HeapAllocator>(size) {}
+      : Vector<T, inlineCapacity, HeapAllocator>(size) {
+    CheckType();
+  }
 
   HeapVector(wtf_size_t size, const T& val)
-      : Vector<T, inlineCapacity, HeapAllocator>(size, val) {}
+      : Vector<T, inlineCapacity, HeapAllocator>(size, val) {
+    CheckType();
+  }
 
   template <wtf_size_t otherCapacity>
   HeapVector(const HeapVector<T, otherCapacity>& other)  // NOLINT
-      : Vector<T, inlineCapacity, HeapAllocator>(other) {}
+      : Vector<T, inlineCapacity, HeapAllocator>(other) {
+    CheckType();
+  }
 
   HeapVector(const HeapVector& other)
-      : Vector<T, inlineCapacity, HeapAllocator>(other) {}
+      : Vector<T, inlineCapacity, HeapAllocator>(other) {
+    CheckType();
+  }
 
   HeapVector& operator=(const HeapVector& other) {
     Vector<T, inlineCapacity, HeapAllocator>::operator=(other);
@@ -39,7 +53,9 @@ class HeapVector final : public GarbageCollected<HeapVector<T, inlineCapacity>>,
   }
 
   HeapVector(HeapVector&& other) noexcept
-      : Vector<T, inlineCapacity, HeapAllocator>(std::move(other)) {}
+      : Vector<T, inlineCapacity, HeapAllocator>(std::move(other)) {
+    CheckType();
+  }
 
   HeapVector& operator=(HeapVector&& other) noexcept {
     Vector<T, inlineCapacity, HeapAllocator>::operator=(std::move(other));
@@ -47,14 +63,37 @@ class HeapVector final : public GarbageCollected<HeapVector<T, inlineCapacity>>,
   }
 
   HeapVector(std::initializer_list<T> elements)
-      : Vector<T, inlineCapacity, HeapAllocator>(elements) {}
+      : Vector<T, inlineCapacity, HeapAllocator>(std::move(elements)) {
+    CheckType();
+  }
+
+  HeapVector& operator=(std::initializer_list<T> elements) {
+    Vector<T, inlineCapacity, HeapAllocator>::operator=(std::move(elements));
+    return *this;
+  }
 
   void Trace(Visitor* visitor) const {
-    CheckType();
     Vector<T, inlineCapacity, HeapAllocator>::Trace(visitor);
   }
 
  private:
+  template <typename U>
+  struct IsHeapVector {
+   private:
+    typedef char YesType;
+    struct NoType {
+      char padding[8];
+    };
+
+    template <typename X, wtf_size_t Y>
+    static YesType SubclassCheck(HeapVector<X, Y>*);
+    static NoType SubclassCheck(...);
+    static U* u_;
+
+   public:
+    static const bool value = sizeof(SubclassCheck(u_)) == sizeof(YesType);
+  };
+
   static constexpr void CheckType() {
     static_assert(
         std::is_trivially_destructible<HeapVector>::value || inlineCapacity,
@@ -64,6 +103,9 @@ class HeapVector final : public GarbageCollected<HeapVector<T, inlineCapacity>>,
                   "instead of HeapVector<>.");
     static_assert(!WTF::IsWeak<T>::value,
                   "Weak types are not allowed in HeapVector.");
+    static_assert(
+        !WTF::IsGarbageCollectedType<T>::value || IsHeapVector<T>::value,
+        "GCed types should not be inlined in a HeapVector.");
     static_assert(WTF::IsTraceableInCollectionTrait<VectorTraits<T>>::value,
                   "Type must be traceable in collection");
   }
@@ -114,16 +156,6 @@ struct VectorTraits<blink::UntracedMember<T>>
 template <typename T>
 struct VectorTraits<blink::HeapVector<T, 0>>
     : VectorTraitsBase<blink::HeapVector<T, 0>> {
-  STATIC_ONLY(VectorTraits);
-  static const bool kNeedsDestruction = false;
-  static const bool kCanInitializeWithMemset = true;
-  static const bool kCanClearUnusedSlotsWithMemset = true;
-  static const bool kCanMoveWithMemcpy = true;
-};
-
-template <typename T>
-struct VectorTraits<blink::HeapDeque<T>>
-    : VectorTraitsBase<blink::HeapDeque<T>> {
   STATIC_ONLY(VectorTraits);
   static const bool kNeedsDestruction = false;
   static const bool kCanInitializeWithMemset = true;

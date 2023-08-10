@@ -7,17 +7,22 @@
 
 #include "tools/debugger/DebugLayerManager.h"
 
+#include "include/core/SkAlphaType.h"
+#include "include/core/SkColorSpace.h"
+#include "include/core/SkColorType.h"
 #include "include/core/SkImage.h"
 #include "include/core/SkImageInfo.h"
 #include "include/core/SkPicture.h"
+#include "include/core/SkRect.h"
 #include "include/core/SkSurface.h"
+#include "include/core/SkTypes.h"
 #include "include/private/SkTHash.h"
 #include "tools/debugger/DebugCanvas.h"
 
 #include <memory>
-#include <vector>
-#include <tuple>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 void DebugLayerManager::setCommand(int nodeId, int frame, int command) {
   auto* drawEvent = fDraws.find({frame, nodeId});
@@ -31,8 +36,8 @@ void DebugLayerManager::setCommand(int nodeId, int frame, int command) {
   // Invalidate stored images that depended on this combination of node and frame.
   // actually this does all of the events for this nodeId, but close enough.
   auto relevantFrames = listFramesForNode(nodeId);
-  for (const auto& frame : relevantFrames) {
-    fDraws[{frame, nodeId}].image = nullptr;
+  for (const auto& f : relevantFrames) {
+    fDraws[{f, nodeId}].image = nullptr;
   }
 }
 

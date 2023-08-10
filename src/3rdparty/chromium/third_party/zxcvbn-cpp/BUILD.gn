@@ -5,8 +5,10 @@
 import("//testing/libfuzzer/fuzzer_test.gni")
 import("//testing/test.gni")
 
-config("zxcvbn_include_config") {
+config("zxcvbn_config") {
   include_dirs = [ "//third_party/zxcvbn-cpp/native-src" ]
+
+  cflags = [ "-Wno-shadow" ]
 }
 
 source_set("zxcvbn-cpp") {
@@ -14,11 +16,8 @@ source_set("zxcvbn-cpp") {
     "native-src/zxcvbn/adjacency_graphs.cpp",
     "native-src/zxcvbn/adjacency_graphs.hpp",
     "native-src/zxcvbn/common.hpp",
-    "native-src/zxcvbn/feedback.cpp",
-    "native-src/zxcvbn/feedback.hpp",
     "native-src/zxcvbn/frequency_lists.cpp",
     "native-src/zxcvbn/frequency_lists.hpp",
-    "native-src/zxcvbn/frequency_lists_common.hpp",
     "native-src/zxcvbn/matching.cpp",
     "native-src/zxcvbn/matching.hpp",
     "native-src/zxcvbn/optional.hpp",
@@ -35,7 +34,7 @@ source_set("zxcvbn-cpp") {
     "//third_party/icu",
   ]
 
-  public_configs = [ ":zxcvbn_include_config" ]
+  public_configs = [ ":zxcvbn_config" ]
 }
 
 test("zxcvbn_unittests") {

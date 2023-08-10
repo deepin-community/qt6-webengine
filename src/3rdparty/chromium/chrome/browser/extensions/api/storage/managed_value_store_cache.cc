@@ -4,6 +4,7 @@
 
 #include "chrome/browser/extensions/api/storage/managed_value_store_cache.h"
 
+#include <memory>
 #include <utility>
 
 #include "base/bind.h"
@@ -11,10 +12,9 @@
 #include "base/callback_helpers.h"
 #include "base/check_op.h"
 #include "base/files/file_util.h"
-#include "base/macros.h"
-#include "base/memory/weak_ptr.h"
+#include "base/memory/raw_ptr.h"
 #include "base/one_shot_event.h"
-#include "base/scoped_observer.h"
+#include "base/scoped_observation.h"
 #include "build/chromeos_buildflags.h"
 #include "chrome/browser/extensions/api/storage/policy_value_store.h"
 #include "chrome/browser/policy/profile_policy_connector.h"
@@ -24,16 +24,17 @@
 #include "components/policy/core/common/schema.h"
 #include "components/policy/core/common/schema_map.h"
 #include "components/policy/core/common/schema_registry.h"
+#include "components/value_store/value_store_change.h"
+#include "components/value_store/value_store_factory.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "extensions/browser/api/storage/backend_task_runner.h"
+#include "extensions/browser/api/storage/value_store_util.h"
 #include "extensions/browser/extension_file_task_runner.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_registry_observer.h"
 #include "extensions/browser/extension_system.h"
-#include "extensions/browser/value_store/value_store_change.h"
-#include "extensions/browser/value_store/value_store_factory.h"
 #include "extensions/common/api/storage.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
@@ -55,8 +56,8 @@ class ExtensionRegistry;
 namespace {
 
 // Only extension settings are stored in the managed namespace - not apps.
-const ValueStoreFactory::ModelType kManagedModelType =
-    ValueStoreFactory::ModelType::EXTENSION;
+const value_store_util::ModelType kManagedModelType =
+    value_store_util::ModelType::EXTENSION;
 
 }  // namespace
 
@@ -69,6 +70,10 @@ class ManagedValueStoreCache::ExtensionTracker
     : public ExtensionRegistryObserver {
  public:
   ExtensionTracker(Profile* profile, policy::PolicyDomain policy_domain);
+
+  ExtensionTracker(const ExtensionTracker&) = delete;
+  ExtensionTracker& operator=(const ExtensionTracker&) = delete;
+
   ~ExtensionTracker() override {}
 
  private:
@@ -96,14 +101,12 @@ class ManagedValueStoreCache::ExtensionTracker
       base::WeakPtr<ExtensionTracker> self);
   void Register(const policy::ComponentMap* components);
 
-  Profile* profile_;
+  raw_ptr<Profile> profile_;
   policy::PolicyDomain policy_domain_;
-  ScopedObserver<ExtensionRegistry, ExtensionRegistryObserver>
-      extension_registry_observer_{this};
-  policy::SchemaRegistry* schema_registry_;
+  base::ScopedObservation<ExtensionRegistry, ExtensionRegistryObserver>
+      extension_registry_observation_{this};
+  raw_ptr<policy::SchemaRegistry> schema_registry_;
   base::WeakPtrFactory<ExtensionTracker> weak_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(ExtensionTracker);
 };
 
 ManagedValueStoreCache::ExtensionTracker::ExtensionTracker(
@@ -112,7 +115,7 @@ ManagedValueStoreCache::ExtensionTracker::ExtensionTracker(
     : profile_(profile),
       policy_domain_(policy_domain),
       schema_registry_(profile->GetPolicySchemaRegistryService()->registry()) {
-  extension_registry_observer_.Add(ExtensionRegistry::Get(profile_));
+  extension_registry_observation_.Observe(ExtensionRegistry::Get(profile_));
   // Load schemas when the extension system is ready. It might be ready now.
   ExtensionSystem::Get(profile_)->ready().Post(
       FROM_HERE, base::BindOnce(&ExtensionTracker::OnExtensionsReady,
@@ -173,7 +176,7 @@ void ManagedValueStoreCache::ExtensionTracker::LoadSchemas(
 
 bool ManagedValueStoreCache::ExtensionTracker::UsesManagedStorage(
     const Extension* extension) const {
-  return extension->manifest()->HasPath(manifest_keys::kStorageManagedSchema);
+  return extension->manifest()->FindPath(manifest_keys::kStorageManagedSchema);
 }
 
 // static
@@ -184,9 +187,8 @@ void ManagedValueStoreCache::ExtensionTracker::LoadSchemasOnFileTaskRunner(
 
   for (ExtensionSet::const_iterator it = extensions->begin();
        it != extensions->end(); ++it) {
-    std::string schema_file;
-    if (!(*it)->manifest()->GetString(
-            manifest_keys::kStorageManagedSchema, &schema_file)) {
+    if (!(*it)->manifest()->FindStringPath(
+            manifest_keys::kStorageManagedSchema)) {
       // TODO(joaodasilva): Remove this. http://crbug.com/325349
       (*components)[(*it)->id()] = policy::Schema();
       continue;
@@ -228,18 +230,21 @@ void ManagedValueStoreCache::ExtensionTracker::Register(
 
 ManagedValueStoreCache::ManagedValueStoreCache(
     BrowserContext* context,
-    scoped_refptr<ValueStoreFactory> factory,
-    scoped_refptr<SettingsObserverList> observers)
+    scoped_refptr<value_store::ValueStoreFactory> factory,
+    SettingsChangedCallback observer)
     : profile_(Profile::FromBrowserContext(context)),
       policy_domain_(GetPolicyDomain(profile_)),
       policy_service_(profile_->GetProfilePolicyConnector()->policy_service()),
       storage_factory_(std::move(factory)),
-      observers_(std::move(observers)) {
+      observer_(GetSequenceBoundSettingsChangedCallback(
+          base::SequencedTaskRunnerHandle::Get(),
+          std::move(observer))) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   policy_service_->AddObserver(policy_domain_, this);
 
-  extension_tracker_.reset(new ExtensionTracker(profile_, policy_domain_));
+  extension_tracker_ =
+      std::make_unique<ExtensionTracker>(profile_, policy_domain_);
 
   if (policy_service_->IsInitializationComplete(policy_domain_))
     OnPolicyServiceInitialized(policy_domain_);
@@ -313,16 +318,20 @@ void ManagedValueStoreCache::OnPolicyUpdated(const policy::PolicyNamespace& ns,
     return;
   }
 
+  // This WeakPtr usage *should* be safe. Even though we are "vending" WeakPtrs
+  // from the UI thread, they are only ever dereferenced or invalidated from
+  // the background sequence, since this object is destroyed on the
+  // background sequence.
   GetBackendTaskRunner()->PostTask(
       FROM_HERE, base::BindOnce(&ManagedValueStoreCache::UpdatePolicyOnBackend,
-                                base::Unretained(this), ns.component_id,
-                                current.DeepCopy()));
+                                weak_ptr_factory_.GetWeakPtr(), ns.component_id,
+                                current.Clone()));
 }
 
 // static
 policy::PolicyDomain ManagedValueStoreCache::GetPolicyDomain(Profile* profile) {
 #if BUILDFLAG(IS_CHROMEOS_ASH)
-  return chromeos::ProfileHelper::IsSigninProfile(profile)
+  return ash::ProfileHelper::IsSigninProfile(profile)
              ? policy::POLICY_DOMAIN_SIGNIN_EXTENSIONS
              : policy::POLICY_DOMAIN_EXTENSIONS;
 #else
@@ -332,17 +341,17 @@ policy::PolicyDomain ManagedValueStoreCache::GetPolicyDomain(Profile* profile) {
 
 void ManagedValueStoreCache::UpdatePolicyOnBackend(
     const std::string& extension_id,
-    std::unique_ptr<policy::PolicyMap> current_policy) {
+    const policy::PolicyMap& current_policy) {
   DCHECK(IsOnBackendSequence());
 
-  if (!HasStore(extension_id) && current_policy->empty()) {
+  if (!HasStore(extension_id) && current_policy.empty()) {
     // Don't create the store now if there are no policies configured for this
     // extension. If the extension uses the storage.managed API then the store
     // will be created at RunWithValueStoreForExtension().
     return;
   }
 
-  GetStoreFor(extension_id)->SetCurrentPolicy(*current_policy);
+  GetStoreFor(extension_id)->SetCurrentPolicy(current_policy);
 }
 
 PolicyValueStore* ManagedValueStoreCache::GetStoreFor(
@@ -356,9 +365,10 @@ PolicyValueStore* ManagedValueStoreCache::GetStoreFor(
   // Create the store now, and serve the cached policy until the PolicyService
   // sends updated values.
   std::unique_ptr<PolicyValueStore> store(new PolicyValueStore(
-      extension_id, observers_,
-      storage_factory_->CreateSettingsStore(settings_namespace::MANAGED,
-                                            kManagedModelType, extension_id)));
+      extension_id, observer_,
+      value_store_util::CreateSettingsStore(settings_namespace::MANAGED,
+                                            kManagedModelType, extension_id,
+                                            storage_factory_)));
   PolicyValueStore* raw_store = store.get();
   store_map_[extension_id] = std::move(store);
 
@@ -367,8 +377,9 @@ PolicyValueStore* ManagedValueStoreCache::GetStoreFor(
 
 bool ManagedValueStoreCache::HasStore(const std::string& extension_id) const {
   // Note: Currently only manage extensions (not apps).
-  return storage_factory_->HasSettings(settings_namespace::MANAGED,
-                                       kManagedModelType, extension_id);
+  return value_store_util::HasValueStore(settings_namespace::MANAGED,
+                                         kManagedModelType, extension_id,
+                                         storage_factory_);
 }
 
 }  // namespace extensions

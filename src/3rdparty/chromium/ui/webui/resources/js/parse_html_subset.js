@@ -3,11 +3,35 @@
 // found in the LICENSE file.
 
 /**
+ * @typedef {{
+ *   substitutions: (!Array<string>|undefined),
+ *   attrs: (!Array<string>|undefined),
+ *   tags: (!Array<string>|undefined),
+ * }}
+ */
+/* #export */ let SanitizeInnerHtmlOpts;
+
+/**
+ * Make a string safe for Polymer bindings that are inner-h-t-m-l or other
+ * innerHTML use.
+ * @param {string} rawString The unsanitized string
+ * @param {SanitizeInnerHtmlOpts=} opts Optional additional allowed tags and
+ *     attributes.
+ * @return {string}
+ */
+/* #export */ const sanitizeInnerHtml = function(rawString, opts) {
+  opts = opts || {};
+  return parseHtmlSubset('<b>' + rawString + '</b>', opts.tags, opts.attrs)
+      .firstChild.innerHTML;
+};
+
+
+/**
  * Parses a very small subset of HTML. This ensures that insecure HTML /
  * javascript cannot be injected into WebUI.
  * @param {string} s The string to parse.
- * @param {!Array<string>=} opt_extraTags Optional extra allowed tags.
- * @param {!Array<string>=} opt_extraAttrs
+ * @param {!Array<string>=} extraTags Optional extra allowed tags.
+ * @param {!Array<string>=} extraAttrs
  *     Optional extra allowed attributes (all tags are run through these).
  * @throws {Error} In case of non supported markup.
  * @return {DocumentFragment} A document fragment containing the DOM tree.
@@ -30,9 +54,11 @@
     [
       'href',
       (node, value) => {
-        // Only allow a[href] starting with chrome:// and https://
+        // Only allow a[href] starting with chrome:// or https:// or equaling
+        // to #.
         return node.tagName === 'A' &&
-            (value.startsWith('chrome://') || value.startsWith('https://'));
+            (value.startsWith('chrome://') || value.startsWith('https://') ||
+             value === '#');
       }
     ],
     [
@@ -63,6 +89,8 @@
       }
     ],
     ['tabindex', allowAttribute],
+    ['aria-hidden', allowAttribute],
+    ['aria-labelledby', allowAttribute],
   ]);
 
   /**
@@ -71,14 +99,14 @@
    * @const
    */
   const allowedTags =
-      new Set(['A', 'B', 'BR', 'DIV', 'P', 'PRE', 'SPAN', 'STRONG']);
+      new Set(['A', 'B', 'BR', 'DIV', 'KBD', 'P', 'PRE', 'SPAN', 'STRONG']);
 
   /**
    * Allow-list of optional tag names in parseHtmlSubset.
    * @type {!Set<string>}
    * @const
    */
-  const allowedOptionalTags = new Set(['IMG']);
+  const allowedOptionalTags = new Set(['IMG', 'LI', 'UL']);
 
   /**
    * This policy maps a given string to a `TrustedHTML` object
@@ -140,10 +168,9 @@
     }
   }
 
-  return function(s, opt_extraTags, opt_extraAttrs) {
-    const tags = opt_extraTags ? mergeTags(opt_extraTags) : allowedTags;
-    const attrs =
-        opt_extraAttrs ? mergeAttrs(opt_extraAttrs) : allowedAttributes;
+  return function(s, extraTags, extraAttrs) {
+    const tags = extraTags ? mergeTags(extraTags) : allowedTags;
+    const attrs = extraAttrs ? mergeAttrs(extraAttrs) : allowedAttributes;
 
     const doc = document.implementation.createHTMLDocument('');
     const r = doc.createRange();

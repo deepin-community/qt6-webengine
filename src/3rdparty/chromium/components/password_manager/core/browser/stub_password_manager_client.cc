@@ -6,8 +6,10 @@
 
 #include <memory>
 
+#include "base/stl_util.h"
 #include "components/password_manager/core/browser/credentials_filter.h"
 #include "components/password_manager/core/browser/password_form_manager_for_ui.h"
+#include "components/version_info/channel.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 
 namespace password_manager {
@@ -35,6 +37,7 @@ void StubPasswordManagerClient::HideManualFallbackForSaving() {}
 
 void StubPasswordManagerClient::FocusedInputChanged(
     password_manager::PasswordManagerDriver* driver,
+    autofill::FieldRendererId focused_field_id,
     autofill::mojom::FocusedFieldType focused_field_type) {}
 
 bool StubPasswordManagerClient::PromptUserToChooseCredentials(
@@ -63,12 +66,32 @@ PrefService* StubPasswordManagerClient::GetPrefs() const {
   return nullptr;
 }
 
-PasswordStore* StubPasswordManagerClient::GetProfilePasswordStore() const {
+const syncer::SyncService* StubPasswordManagerClient::GetSyncService() const {
   return nullptr;
 }
 
-PasswordStore* StubPasswordManagerClient::GetAccountPasswordStore() const {
+PasswordStoreInterface* StubPasswordManagerClient::GetProfilePasswordStore()
+    const {
   return nullptr;
+}
+
+PasswordStoreInterface* StubPasswordManagerClient::GetAccountPasswordStore()
+    const {
+  return nullptr;
+}
+
+PasswordReuseManager* StubPasswordManagerClient::GetPasswordReuseManager()
+    const {
+  return nullptr;
+}
+
+PasswordScriptsFetcher* StubPasswordManagerClient::GetPasswordScriptsFetcher() {
+  return nullptr;
+}
+
+MockPasswordChangeSuccessTracker*
+StubPasswordManagerClient::GetPasswordChangeSuccessTracker() {
+  return &password_change_success_tracker_;
 }
 
 const GURL& StubPasswordManagerClient::GetLastCommittedURL() const {
@@ -124,7 +147,7 @@ ukm::SourceId StubPasswordManagerClient::GetUkmSourceId() {
 PasswordManagerMetricsRecorder*
 StubPasswordManagerClient::GetMetricsRecorder() {
   if (!metrics_recorder_) {
-    metrics_recorder_.emplace(GetUkmSourceId(), nullptr);
+    metrics_recorder_.emplace(GetUkmSourceId());
   }
   return base::OptionalOrNullptr(metrics_recorder_);
 }
@@ -157,6 +180,10 @@ FieldInfoManager* StubPasswordManagerClient::GetFieldInfoManager() const {
 
 bool StubPasswordManagerClient::IsAutofillAssistantUIVisible() const {
   return false;
+}
+
+version_info::Channel StubPasswordManagerClient::GetChannel() const {
+  return version_info::Channel::UNKNOWN;
 }
 
 }  // namespace password_manager

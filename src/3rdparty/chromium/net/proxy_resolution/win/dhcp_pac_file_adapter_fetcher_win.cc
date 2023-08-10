@@ -11,7 +11,7 @@
 #include "base/memory/free_deleter.h"
 #include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
-#include "base/task_runner.h"
+#include "base/task/task_runner.h"
 #include "base/threading/scoped_blocking_call.h"
 #include "base/time/time.h"
 #include "net/base/net_errors.h"
@@ -54,7 +54,7 @@ void DhcpPacFileAdapterFetcher::Fetch(
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DCHECK_EQ(state_, STATE_START);
   result_ = ERR_IO_PENDING;
-  pac_script_ = base::string16();
+  pac_script_ = std::u16string();
   state_ = STATE_WAIT_DHCP;
   callback_ = std::move(callback);
 
@@ -104,7 +104,7 @@ int DhcpPacFileAdapterFetcher::GetResult() const {
   return result_;
 }
 
-base::string16 DhcpPacFileAdapterFetcher::GetPacScript() const {
+std::u16string DhcpPacFileAdapterFetcher::GetPacScript() const {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   return pac_script_;
 }
@@ -204,7 +204,7 @@ DhcpPacFileAdapterFetcher::ImplCreateDhcpQuery() {
 }
 
 base::TimeDelta DhcpPacFileAdapterFetcher::ImplGetTimeout() const {
-  return base::TimeDelta::FromMilliseconds(kTimeoutMs);
+  return base::Milliseconds(kTimeoutMs);
 }
 
 // static

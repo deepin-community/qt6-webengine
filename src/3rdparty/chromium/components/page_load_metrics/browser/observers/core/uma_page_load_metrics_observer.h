@@ -5,8 +5,10 @@
 #ifndef COMPONENTS_PAGE_LOAD_METRICS_BROWSER_OBSERVERS_CORE_UMA_PAGE_LOAD_METRICS_OBSERVER_H_
 #define COMPONENTS_PAGE_LOAD_METRICS_BROWSER_OBSERVERS_CORE_UMA_PAGE_LOAD_METRICS_OBSERVER_H_
 
+#include "base/time/time.h"
 #include "components/page_load_metrics/browser/observers/click_input_tracker.h"
 #include "components/page_load_metrics/browser/page_load_metrics_observer.h"
+#include "content/public/browser/navigation_handle_timing.h"
 #include "services/metrics/public/cpp/ukm_source.h"
 
 namespace internal {
@@ -15,6 +17,17 @@ namespace internal {
 // specified by the ".Background" suffix. For these events, we put them into the
 // background histogram if the web contents was ever in the background from
 // navigation start to the event in question.
+extern const char kHistogramNumInteractions[];
+extern const char
+    kHistogramAverageUserInteractionLatencyOverBudgetMaxEventDuration[];
+extern const char
+    kHistogramSlowUserInteractionLatencyOverBudgetHighPercentile2MaxEventDuration
+        [];
+extern const char
+    kHistogramUserInteractionLatencyHighPercentile2MaxEventDuration[];
+extern const char
+    kHistogramSumOfUserInteractionLatencyOverBudgetMaxEventDuration[];
+extern const char kHistogramWorstUserInteractionLatencyMaxEventDuration[];
 extern const char kHistogramFirstInputDelay[];
 extern const char kHistogramFirstInputTimestamp[];
 extern const char kHistogramFirstInputDelay4[];
@@ -31,11 +44,7 @@ extern const char kHistogramLargestContentfulPaint[];
 extern const char kHistogramLargestContentfulPaintContentType[];
 extern const char kHistogramLargestContentfulPaintMainFrame[];
 extern const char kHistogramLargestContentfulPaintMainFrameContentType[];
-extern const char kDeprecatedHistogramLargestContentfulPaint[];
-extern const char kHistogramExperimentalLargestContentfulPaintContentType[];
-extern const char kDeprecatedHistogramLargestContentfulPaintMainFrame[];
-extern const char
-    kHistogramExperimentalLargestContentfulPaintMainFrameContentType[];
+extern const char kHistogramLargestContentfulPaintCrossSiteSubFrame[];
 extern const char kHistogramParseDuration[];
 extern const char kHistogramParseBlockedOnScriptLoad[];
 extern const char kHistogramParseBlockedOnScriptExecution[];
@@ -54,8 +63,6 @@ extern const char kHistogramLoadTypeParseStartReload[];
 extern const char kHistogramLoadTypeParseStartForwardBack[];
 extern const char kHistogramLoadTypeParseStartNewNavigation[];
 
-extern const char kHistogramFailedProvisionalLoad[];
-
 extern const char kHistogramUserGestureNavigationToForwardBack[];
 
 extern const char kHistogramPageTimingForegroundDuration[];
@@ -68,6 +75,8 @@ extern const char kHistogramCommitSentToFirstSubresourceLoadStart[];
 extern const char kHistogramNavigationToFirstSubresourceLoadStart[];
 extern const char kHistogramResourceLoadTimePrefix[];
 extern const char kHistogramTotalSubresourceLoadTimeAtFirstContentfulPaint[];
+extern const char kHistogramFirstEligibleToPaint[];
+extern const char kHistogramFirstEligibleToPaintToFirstPaint[];
 
 extern const char kHistogramFirstNonScrollInputAfterFirstPaint[];
 extern const char kHistogramFirstScrollInputAfterFirstPaint[];
@@ -92,10 +101,6 @@ extern const char kHistogramLoadTypeCacheBytesReload[];
 extern const char kHistogramLoadTypeTotalBytesNewNavigation[];
 extern const char kHistogramLoadTypeNetworkBytesNewNavigation[];
 extern const char kHistogramLoadTypeCacheBytesNewNavigation[];
-
-extern const char kHistogramTotalCompletedResources[];
-extern const char kHistogramNetworkCompletedResources[];
-extern const char kHistogramCacheCompletedResources[];
 
 extern const char kHistogramInputToNavigation[];
 extern const char kBackgroundHistogramInputToNavigation[];
@@ -135,10 +140,11 @@ extern const char
 extern const char
     kHistogramNavigationTimingFinalLoaderCallbackToNavigationCommitSent[];
 
-// 103 Early Hints metrics for experiment (https://crbug.com/1093693).
-extern const char kHistogramEarlyHintsFirstRequestStartToEarlyHints[];
-extern const char kHistogramEarlyHintsFinalRequestStartToEarlyHints[];
-extern const char kHistogramEarlyHintsEarlyHintsToFinalResponseStart[];
+// V8 memory usage metrics.
+extern const char kHistogramMemoryMainframe[];
+extern const char kHistogramMemorySubframeAggregate[];
+extern const char kHistogramMemoryTotal[];
+extern const char kHistogramMemoryUpdateReceived[];
 
 enum FirstMeaningfulPaintStatus {
   FIRST_MEANINGFUL_PAINT_RECORDED,
@@ -166,13 +172,17 @@ class UmaPageLoadMetricsObserver
     : public page_load_metrics::PageLoadMetricsObserver {
  public:
   UmaPageLoadMetricsObserver();
+
+  UmaPageLoadMetricsObserver(const UmaPageLoadMetricsObserver&) = delete;
+  UmaPageLoadMetricsObserver& operator=(const UmaPageLoadMetricsObserver&) =
+      delete;
+
   ~UmaPageLoadMetricsObserver() override;
 
   // page_load_metrics::PageLoadMetricsObserver:
   ObservePolicy OnRedirect(
       content::NavigationHandle* navigation_handle) override;
-  ObservePolicy OnCommit(content::NavigationHandle* navigation_handle,
-                         ukm::SourceId source_id) override;
+  ObservePolicy OnCommit(content::NavigationHandle* navigation_handle) override;
   void OnDomContentLoadedEventStart(
       const page_load_metrics::mojom::PageLoadTiming& timing) override;
   void OnLoadEventStart(
@@ -215,8 +225,23 @@ class UmaPageLoadMetricsObserver
   void OnRestoreFromBackForwardCache(
       const page_load_metrics::mojom::PageLoadTiming& timing,
       content::NavigationHandle* navigation_handle) override;
+  void OnV8MemoryChanged(const std::vector<page_load_metrics::MemoryUpdate>&
+                             memory_updates) override;
 
  private:
+  // Class to keep track of per-frame memory usage by V8.
+  class MemoryUsage {
+   public:
+    void UpdateUsage(int64_t delta_bytes);
+
+    uint64_t current_bytes_used() { return current_bytes_used_; }
+    uint64_t max_bytes_used() { return max_bytes_used_; }
+
+   private:
+    uint64_t current_bytes_used_ = 0U;
+    uint64_t max_bytes_used_ = 0U;
+  };
+
   void RecordNavigationTimingHistograms();
   void RecordTimingHistograms(
       const page_load_metrics::mojom::PageLoadTiming& main_frame_timing);
@@ -226,15 +251,13 @@ class UmaPageLoadMetricsObserver
   void RecordForegroundDurationHistograms(
       const page_load_metrics::mojom::PageLoadTiming& timing,
       base::TimeTicks app_background_time);
+  void RecordV8MemoryHistograms();
+  void RecordNormalizedResponsivenessMetrics();
 
   content::NavigationHandleTiming navigation_handle_timing_;
 
   ui::PageTransition transition_;
   bool was_no_store_main_resource_;
-
-  // Number of complete resources loaded by the page.
-  int num_cache_resources_;
-  int num_network_resources_;
 
   // The number of body (not header) prefilter bytes consumed by completed
   // requests for the page.
@@ -264,10 +287,17 @@ class UmaPageLoadMetricsObserver
   // Tracks user input clicks for possible click burst.
   page_load_metrics::ClickInputTracker click_tracker_;
 
+  // V8 Memory Usage: whether a memory update was received, the usage of the
+  // mainframe, the aggregate usage of all subframes on the page, and the
+  // aggregate usage of all frames on the page (including the main frame),
+  // respectively.
+  bool memory_update_received_ = false;
+  MemoryUsage main_frame_memory_usage_;
+  MemoryUsage aggregate_subframe_memory_usage_;
+  MemoryUsage aggregate_total_memory_usage_;
+
   bool received_first_subresource_load_ = false;
   base::TimeDelta total_subresource_load_time_;
-
-  DISALLOW_COPY_AND_ASSIGN(UmaPageLoadMetricsObserver);
 };
 
 #endif  // COMPONENTS_PAGE_LOAD_METRICS_BROWSER_OBSERVERS_CORE_UMA_PAGE_LOAD_METRICS_OBSERVER_H_

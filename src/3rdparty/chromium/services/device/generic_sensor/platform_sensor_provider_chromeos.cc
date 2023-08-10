@@ -10,21 +10,22 @@
 
 #include "base/bind.h"
 #include "base/containers/contains.h"
+#include "base/containers/cxx20_erase_map.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/ranges/algorithm.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/task/post_task.h"
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "chromeos/components/sensors/sensor_util.h"
 #include "services/device/generic_sensor/platform_sensor_chromeos.h"
 
+using chromeos::sensors::mojom::SensorDeviceDisconnectReason;
+
 namespace device {
 namespace {
 
-constexpr base::TimeDelta kReconnectDelay =
-    base::TimeDelta::FromMilliseconds(1000);
+constexpr base::TimeDelta kReconnectDelay = base::Milliseconds(1000);
 
-base::Optional<mojom::SensorType> ConvertSensorType(
+absl::optional<mojom::SensorType> ConvertSensorType(
     chromeos::sensors::mojom::DeviceType device_type) {
   switch (device_type) {
     case chromeos::sensors::mojom::DeviceType::ACCEL:
@@ -39,8 +40,11 @@ base::Optional<mojom::SensorType> ConvertSensorType(
     case chromeos::sensors::mojom::DeviceType::MAGN:
       return mojom::SensorType::MAGNETOMETER;
 
+    case chromeos::sensors::mojom::DeviceType::GRAVITY:
+      return mojom::SensorType::GRAVITY;
+
     default:
-      return base::nullopt;
+      return absl::nullopt;
   }
 }
 
@@ -51,6 +55,7 @@ bool DeviceNeedsLocationWithTypes(const std::vector<mojom::SensorType>& types) {
       case mojom::SensorType::ACCELEROMETER:
       case mojom::SensorType::GYROSCOPE:
       case mojom::SensorType::MAGNETOMETER:
+      case mojom::SensorType::GRAVITY:
         return true;
       default:
         break;
@@ -85,9 +90,26 @@ void PlatformSensorProviderChromeOS::SetUpChannel(
       base::BindOnce(&PlatformSensorProviderChromeOS::OnSensorServiceDisconnect,
                      weak_ptr_factory_.GetWeakPtr()));
 
+  sensor_service_remote_->RegisterNewDevicesObserver(
+      new_devices_observer_.BindNewPipeAndPassRemote());
+  new_devices_observer_.set_disconnect_handler(base::BindOnce(
+      &PlatformSensorProviderChromeOS::OnNewDevicesObserverDisconnect,
+      weak_ptr_factory_.GetWeakPtr()));
+
   sensor_service_remote_->GetAllDeviceIds(
       base::BindOnce(&PlatformSensorProviderChromeOS::GetAllDeviceIdsCallback,
                      weak_ptr_factory_.GetWeakPtr()));
+}
+
+void PlatformSensorProviderChromeOS::OnNewDeviceAdded(
+    int32_t iio_device_id,
+    const std::vector<chromeos::sensors::mojom::DeviceType>& types) {
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+
+  if (base::Contains(sensors_, iio_device_id))
+    return;
+
+  RegisterDevice(iio_device_id, types);
 }
 
 void PlatformSensorProviderChromeOS::CreateSensorInternal(
@@ -126,12 +148,29 @@ void PlatformSensorProviderChromeOS::CreateSensorInternal(
 
   auto sensor_device_remote = GetSensorDeviceRemote(id);
   std::move(callback).Run(base::MakeRefCounted<PlatformSensorChromeOS>(
-      id, type, reading_buffer, this, sensor.scale.value(),
-      std::move(sensor_device_remote)));
+      id, type, reading_buffer, this,
+      base::BindOnce(&PlatformSensorProviderChromeOS::OnSensorDeviceDisconnect,
+                     weak_ptr_factory_.GetWeakPtr(), id),
+      sensor.scale.value(), std::move(sensor_device_remote)));
 }
 
 void PlatformSensorProviderChromeOS::FreeResources() {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+}
+
+bool PlatformSensorProviderChromeOS::IsFusionSensorType(
+    mojom::SensorType type) const {
+  // Let iioservice provide the Gravity sensor.
+  switch (type) {
+    case mojom::SensorType::LINEAR_ACCELERATION:
+    case mojom::SensorType::ABSOLUTE_ORIENTATION_EULER_ANGLES:
+    case mojom::SensorType::ABSOLUTE_ORIENTATION_QUATERNION:
+    case mojom::SensorType::RELATIVE_ORIENTATION_EULER_ANGLES:
+    case mojom::SensorType::RELATIVE_ORIENTATION_QUATERNION:
+      return true;
+    default:
+      return false;
+  }
 }
 
 bool PlatformSensorProviderChromeOS::IsSensorTypeAvailable(
@@ -143,12 +182,12 @@ bool PlatformSensorProviderChromeOS::IsSensorTypeAvailable(
 PlatformSensorProviderChromeOS::SensorData::SensorData() = default;
 PlatformSensorProviderChromeOS::SensorData::~SensorData() = default;
 
-base::Optional<PlatformSensorProviderChromeOS::SensorLocation>
+absl::optional<PlatformSensorProviderChromeOS::SensorLocation>
 PlatformSensorProviderChromeOS::ParseLocation(
-    const base::Optional<std::string>& raw_location) {
+    const absl::optional<std::string>& raw_location) {
   if (!raw_location.has_value()) {
     LOG(ERROR) << "No location attribute";
-    return base::nullopt;
+    return absl::nullopt;
   }
 
   // These locations must be listed in the same order as the SensorLocation
@@ -159,18 +198,18 @@ PlatformSensorProviderChromeOS::ParseLocation(
       chromeos::sensors::mojom::kLocationCamera};
   const auto it = base::ranges::find(location_strings, raw_location.value());
   if (it == std::end(location_strings))
-    return base::nullopt;
+    return absl::nullopt;
 
   return static_cast<SensorLocation>(
       std::distance(std::begin(location_strings), it));
 }
 
-base::Optional<int32_t> PlatformSensorProviderChromeOS::GetDeviceId(
+absl::optional<int32_t> PlatformSensorProviderChromeOS::GetDeviceId(
     mojom::SensorType type) const {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   const auto type_id = sensor_id_by_type_.find(type);
   if (type_id == sensor_id_by_type_.end())
-    return base::nullopt;
+    return absl::nullopt;
   return type_id->second;
 }
 
@@ -213,6 +252,15 @@ void PlatformSensorProviderChromeOS::OnSensorServiceDisconnect() {
   ResetSensorService();
 }
 
+void PlatformSensorProviderChromeOS::OnNewDevicesObserverDisconnect() {
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+
+  LOG(ERROR) << "OnNewDevicesObserverDisconnect";
+
+  // Assumes IIO Service has crashed and waits for its relaunch.
+  ResetSensorService();
+}
+
 void PlatformSensorProviderChromeOS::ResetSensorService() {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
@@ -222,6 +270,11 @@ void PlatformSensorProviderChromeOS::ResetSensorService() {
     sensor.second.remote.reset();
   }
 
+  // Reset the existing PlatformSensors as well.
+  for (const auto& type_id : sensor_id_by_type_)
+    ReplaceAndRemoveSensor(type_id.first);
+
+  new_devices_observer_.reset();
   sensor_service_remote_.reset();
 }
 
@@ -232,60 +285,66 @@ void PlatformSensorProviderChromeOS::GetAllDeviceIdsCallback(
 
   sensor_ids_received_ = true;
 
-  for (const auto& id_types : ids_types) {
-    int32_t id = id_types.first;
-    SensorData& sensor = sensors_[id];
-
-    if (sensor.ignored)
-      continue;
-
-    for (const auto& device_type : id_types.second) {
-      auto type_opt = ConvertSensorType(device_type);
-      if (!type_opt.has_value())
-        continue;
-
-      sensor.types.push_back(type_opt.value());
-    }
-
-    if (sensor.types.empty()) {
-      sensor.ignored = true;
-      continue;
-    }
-
-    sensor.remote.reset();
-
-    std::vector<std::string> attr_names;
-    if (!sensor.scale.has_value())
-      attr_names.push_back(chromeos::sensors::mojom::kScale);
-    if (DeviceNeedsLocationWithTypes(sensor.types) &&
-        !sensor.location.has_value()) {
-      attr_names.push_back(chromeos::sensors::mojom::kLocation);
-    }
-
-    if (attr_names.empty())
-      continue;
-
-    sensor.remote = GetSensorDeviceRemote(id);
-
-    // Add a temporary disconnect handler to catch failures during sensor
-    // enumeration. PlatformSensorChromeOS will handle disconnection during
-    // normal operation.
-    sensor.remote.set_disconnect_handler(base::BindOnce(
-        &PlatformSensorProviderChromeOS::OnSensorDeviceDisconnect,
-        weak_ptr_factory_.GetWeakPtr(), id));
-
-    sensor.remote->GetAttributes(
-        std::move(attr_names),
-        base::BindOnce(&PlatformSensorProviderChromeOS::GetAttributesCallback,
-                       weak_ptr_factory_.GetWeakPtr(), id));
-  }
+  for (const auto& id_types : ids_types)
+    RegisterDevice(id_types.first, id_types.second);
 
   ProcessSensorsIfPossible();
 }
 
+void PlatformSensorProviderChromeOS::RegisterDevice(
+    int32_t id,
+    const std::vector<chromeos::sensors::mojom::DeviceType>& types) {
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+
+  SensorData& sensor = sensors_[id];
+
+  if (sensor.ignored)
+    return;
+
+  for (const auto& device_type : types) {
+    auto type_opt = ConvertSensorType(device_type);
+    if (!type_opt.has_value())
+      continue;
+
+    sensor.types.push_back(type_opt.value());
+  }
+
+  if (sensor.types.empty()) {
+    sensor.ignored = true;
+    return;
+  }
+
+  sensor.remote.reset();
+
+  std::vector<std::string> attr_names;
+  if (!sensor.scale.has_value())
+    attr_names.push_back(chromeos::sensors::mojom::kScale);
+  if (DeviceNeedsLocationWithTypes(sensor.types) &&
+      !sensor.location.has_value()) {
+    attr_names.push_back(chromeos::sensors::mojom::kLocation);
+  }
+
+  if (attr_names.empty())
+    return;
+
+  sensor.remote = GetSensorDeviceRemote(id);
+
+  // Add a temporary disconnect handler to catch failures during sensor
+  // enumeration. PlatformSensorChromeOS will handle disconnection during
+  // normal operation.
+  sensor.remote.set_disconnect_with_reason_handler(
+      base::BindOnce(&PlatformSensorProviderChromeOS::OnSensorDeviceDisconnect,
+                     weak_ptr_factory_.GetWeakPtr(), id));
+
+  sensor.remote->GetAttributes(
+      std::move(attr_names),
+      base::BindOnce(&PlatformSensorProviderChromeOS::GetAttributesCallback,
+                     weak_ptr_factory_.GetWeakPtr(), id));
+}
+
 void PlatformSensorProviderChromeOS::GetAttributesCallback(
     int32_t id,
-    const std::vector<base::Optional<std::string>>& values) {
+    const std::vector<absl::optional<std::string>>& values) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   auto it = sensors_.find(id);
@@ -361,13 +420,54 @@ bool PlatformSensorProviderChromeOS::AreAllSensorsReady() const {
   });
 }
 
-void PlatformSensorProviderChromeOS::OnSensorDeviceDisconnect(int32_t id) {
+void PlatformSensorProviderChromeOS::OnSensorDeviceDisconnect(
+    int32_t id,
+    uint32_t custom_reason_code,
+    const std::string& description) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
-  LOG(ERROR) << "OnSensorDeviceDisconnect: " << id;
+  auto reason =
+      static_cast<chromeos::sensors::mojom::SensorDeviceDisconnectReason>(
+          custom_reason_code);
+  LOG(ERROR) << "OnSensorDeviceDisconnect: " << id << ", reason: " << reason
+             << ", description: " << description;
 
-  // Assumes IIO Service has crashed and waits for its relaunch.
-  ResetSensorService();
+  switch (reason) {
+    case SensorDeviceDisconnectReason::IIOSERVICE_CRASHED:
+      ResetSensorService();
+      break;
+
+    case SensorDeviceDisconnectReason::DEVICE_REMOVED:
+      // Hot-pluggable sensors should be HID-stack sensors and shouldn't have
+      // the location attribute.
+      if (sensors_[id].location.has_value()) {
+        LOG(WARNING) << "Device being removed has location: "
+                     << static_cast<int>(sensors_[id].location.value());
+      }
+
+      base::EraseIf(sensor_id_by_type_, [this, &id](const auto& entry) {
+        if (entry.second == id) {
+          ReplaceAndRemoveSensor(entry.first);
+          return true;
+        }
+        return false;
+      });
+
+      sensors_.erase(id);
+      ProcessSensorsIfPossible();
+      break;
+  }
+}
+
+void PlatformSensorProviderChromeOS::ReplaceAndRemoveSensor(
+    mojom::SensorType type) {
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+
+  auto* platform_sensor = GetSensor(type).get();
+  if (platform_sensor)
+    platform_sensor->SensorReplaced();
+
+  RemoveSensor(type, platform_sensor);
 }
 
 void PlatformSensorProviderChromeOS::ProcessSensorsIfPossible() {
@@ -416,6 +516,15 @@ void PlatformSensorProviderChromeOS::DetermineMotionSensors() {
           break;
         }
 
+        case mojom::SensorType::GRAVITY: {
+          auto& motion_sensor_info = motion_sensor_location_info[location];
+          // Don't need to increase |motion_sensor_info.count|, as gravity
+          // sensors shouldn't influence the decision.
+          motion_sensor_info.sensor_info_pairs.push_back(
+              std::make_pair(sensor.first, type));
+          break;
+        }
+
         default:
           break;
       }
@@ -429,14 +538,15 @@ void PlatformSensorProviderChromeOS::DetermineMotionSensors() {
           : SensorLocation::kBase;
   const auto& sensor_info_pairs =
       motion_sensor_location_info[preferred_location].sensor_info_pairs;
+
   for (const auto& pair : sensor_info_pairs)
-    sensor_id_by_type_[pair.second] = pair.first;
+    UpdateSensorIdMapping(pair.second, pair.first);
 }
 
 // Prefer the light sensor on the lid, as it's more meaningful to web API users.
 void PlatformSensorProviderChromeOS::DetermineLightSensor() {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
-  base::Optional<int32_t> id = base::nullopt;
+  absl::optional<int32_t> id = absl::nullopt;
 
   for (const auto& sensor : sensors_) {
     if (sensor.second.ignored ||
@@ -448,7 +558,18 @@ void PlatformSensorProviderChromeOS::DetermineLightSensor() {
   }
 
   if (id.has_value())
-    sensor_id_by_type_[mojom::SensorType::AMBIENT_LIGHT] = id.value();
+    UpdateSensorIdMapping(mojom::SensorType::AMBIENT_LIGHT, id.value());
+}
+
+void PlatformSensorProviderChromeOS::UpdateSensorIdMapping(
+    const mojom::SensorType& type,
+    int32_t id) {
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  auto it = sensor_id_by_type_.find(type);
+  if (it != sensor_id_by_type_.end() && it->second != id)
+    ReplaceAndRemoveSensor(type);
+
+  sensor_id_by_type_[type] = id;
 }
 
 void PlatformSensorProviderChromeOS::RemoveUnusedSensorDeviceRemotes() {
@@ -496,8 +617,11 @@ void PlatformSensorProviderChromeOS::ProcessStoredRequests() {
     auto sensor_device_remote = GetSensorDeviceRemote(id);
     NotifySensorCreated(
         type, base::MakeRefCounted<PlatformSensorChromeOS>(
-                  id, type, reading_buffer, this, sensor.scale.value(),
-                  std::move(sensor_device_remote)));
+                  id, type, reading_buffer, this,
+                  base::BindOnce(
+                      &PlatformSensorProviderChromeOS::OnSensorDeviceDisconnect,
+                      weak_ptr_factory_.GetWeakPtr(), id),
+                  sensor.scale.value(), std::move(sensor_device_remote)));
   }
 }
 

@@ -10,11 +10,18 @@
 
 #include "base/logging.h"
 #include "base/trace_event/trace_event.h"
+#include "build/chromeos_buildflags.h"
 #include "ui/events/devices/stylus_state.h"
 #include "ui/events/event.h"
 #include "ui/events/event_utils.h"
 #include "ui/events/keycodes/dom/keycode_converter.h"
 #include "ui/events/ozone/evdev/device_event_dispatcher_evdev.h"
+#include "ui/events/ozone/evdev/event_device_util.h"
+#include "ui/events/ozone/evdev/numberpad_metrics.h"
+
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+#include "ui/events/ozone/evdev/numberpad_metrics.h"
+#endif
 
 namespace ui {
 
@@ -48,12 +55,23 @@ EventConverterEvdevImpl::EventConverterEvdevImpl(
       input_device_fd_(std::move(fd)),
       has_keyboard_(devinfo.HasKeyboard()),
       has_touchpad_(devinfo.HasTouchpad()),
+      has_numberpad_(devinfo.HasNumberpad()),
+      has_stylus_switch_(devinfo.HasStylusSwitch()),
       has_caps_lock_led_(devinfo.HasLedEvent(LED_CAPSL)),
       controller_(FROM_HERE),
       cursor_(cursor),
-      dispatcher_(dispatcher) {}
+      dispatcher_(dispatcher) {
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+  if (has_numberpad_)
+    NumberpadMetricsRecorder::GetInstance()->AddDevice(input_device_);
+#endif
+}
 
 EventConverterEvdevImpl::~EventConverterEvdevImpl() {
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+  if (has_numberpad_)
+    NumberpadMetricsRecorder::GetInstance()->RemoveDevice(input_device_);
+#endif
 }
 
 void EventConverterEvdevImpl::OnFileCanReadWithoutBlocking(int fd) {
@@ -90,6 +108,10 @@ bool EventConverterEvdevImpl::HasCapsLockLed() const {
   return has_caps_lock_led_;
 }
 
+bool EventConverterEvdevImpl::HasStylusSwitch() const {
+  return has_stylus_switch_;
+}
+
 void EventConverterEvdevImpl::SetKeyFilter(bool enable_filter,
                                            std::vector<DomCode> allowed_keys) {
   if (!enable_filter) {
@@ -113,6 +135,22 @@ void EventConverterEvdevImpl::SetKeyFilter(bool enable_filter,
 void EventConverterEvdevImpl::OnDisabled() {
   ReleaseKeys();
   ReleaseMouseButtons();
+}
+
+ui::StylusState EventConverterEvdevImpl::GetStylusSwitchState() {
+  if (!HasStylusSwitch()) {
+    return ui::StylusState::REMOVED;
+  }
+
+  // Prepare storage for SW_MAX bits
+  unsigned long array[EVDEV_BITS_TO_LONGS(SW_MAX)] = {0};
+  int result = ioctl(input_device_fd_.get(), EVIOCGSW(SW_MAX), array);
+  if (result == -1) {
+    return ui::StylusState::REMOVED;
+  }
+
+  return EvdevBitIsSet(array, kSwitchStylusInserted) ? ui::StylusState::INSERTED
+                                                     : ui::StylusState::REMOVED;
 }
 
 void EventConverterEvdevImpl::ProcessEvents(const input_event* inputs,
@@ -194,9 +232,19 @@ void EventConverterEvdevImpl::OnKeyChange(unsigned int key,
   // State transition: !(down) -> (down)
   key_state_.set(key, down);
 
+  GenerateKeyMetrics(key, down);
+
   dispatcher_->DispatchKeyEvent(
       KeyEventParams(input_device_.id, ui::EF_NONE, key, last_scan_code_, down,
                      false /* suppress_auto_repeat */, timestamp));
+}
+
+void EventConverterEvdevImpl::GenerateKeyMetrics(unsigned int key, bool down) {
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+  if (!has_numberpad_)
+    return;
+  NumberpadMetricsRecorder::GetInstance()->ProcessKey(key, down, input_device_);
+#endif
 }
 
 void EventConverterEvdevImpl::ReleaseKeys() {

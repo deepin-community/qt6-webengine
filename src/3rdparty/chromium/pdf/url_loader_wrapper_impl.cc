@@ -17,6 +17,7 @@
 #include "base/callback.h"
 #include "base/check_op.h"
 #include "base/containers/span.h"
+#include "base/location.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "net/http/http_util.h"
@@ -28,7 +29,7 @@ namespace chrome_pdf {
 namespace {
 
 // We should read with delay to prevent block UI thread, and reduce CPU usage.
-constexpr base::TimeDelta kReadDelayMs = base::TimeDelta::FromMilliseconds(2);
+constexpr base::TimeDelta kReadDelayMs = base::Milliseconds(2);
 
 UrlRequest MakeRangeRequest(const std::string& url,
                             const std::string& referrer_url,
@@ -153,16 +154,17 @@ void URLLoaderWrapperImpl::OpenRange(const std::string& url,
                                      const std::string& referrer_url,
                                      uint32_t position,
                                      uint32_t size,
-                                     ResultCallback callback) {
+                                     base::OnceCallback<void(int)> callback) {
   url_loader_->Open(
       MakeRangeRequest(url, referrer_url, position, size),
       base::BindOnce(&URLLoaderWrapperImpl::DidOpen, weak_factory_.GetWeakPtr(),
                      std::move(callback)));
 }
 
-void URLLoaderWrapperImpl::ReadResponseBody(char* buffer,
-                                            int buffer_size,
-                                            ResultCallback callback) {
+void URLLoaderWrapperImpl::ReadResponseBody(
+    char* buffer,
+    int buffer_size,
+    base::OnceCallback<void(int)> callback) {
   buffer_ = buffer;
   buffer_size_ = buffer_size;
   read_starter_.Start(
@@ -171,20 +173,15 @@ void URLLoaderWrapperImpl::ReadResponseBody(char* buffer,
                      base::Unretained(this), std::move(callback)));
 }
 
-void URLLoaderWrapperImpl::ReadResponseBodyImpl(ResultCallback callback) {
+void URLLoaderWrapperImpl::ReadResponseBodyImpl(
+    base::OnceCallback<void(int)> callback) {
   url_loader_->ReadResponseBody(
-      base::make_span(buffer_, buffer_size_),
+      base::make_span(buffer_.get(), buffer_size_),
       base::BindOnce(&URLLoaderWrapperImpl::DidRead, weak_factory_.GetWeakPtr(),
                      std::move(callback)));
 }
 
-void URLLoaderWrapperImpl::SetResponseHeaders(
-    const std::string& response_headers) {
-  response_headers_ = response_headers;
-  ParseHeaders();
-}
-
-void URLLoaderWrapperImpl::ParseHeaders() {
+void URLLoaderWrapperImpl::ParseHeaders(const std::string& response_headers) {
   content_length_ = -1;
   accept_ranges_bytes_ = false;
   content_encoded_ = false;
@@ -194,11 +191,11 @@ void URLLoaderWrapperImpl::ParseHeaders() {
   byte_range_ = gfx::Range::InvalidRange();
   is_multipart_ = false;
 
-  if (response_headers_.empty())
+  if (response_headers.empty())
     return;
 
-  net::HttpUtil::HeadersIterator it(response_headers_.begin(),
-                                    response_headers_.end(), "\n");
+  net::HttpUtil::HeadersIterator it(response_headers.begin(),
+                                    response_headers.end(), "\n");
   while (it.GetNext()) {
     base::StringPiece name = it.name_piece();
     if (base::LowerCaseEqualsASCII(name, "content-length")) {
@@ -236,12 +233,14 @@ void URLLoaderWrapperImpl::ParseHeaders() {
   }
 }
 
-void URLLoaderWrapperImpl::DidOpen(ResultCallback callback, int32_t result) {
+void URLLoaderWrapperImpl::DidOpen(base::OnceCallback<void(int)> callback,
+                                   int32_t result) {
   SetHeadersFromLoader();
   std::move(callback).Run(result);
 }
 
-void URLLoaderWrapperImpl::DidRead(ResultCallback callback, int32_t result) {
+void URLLoaderWrapperImpl::DidRead(base::OnceCallback<void(int)> callback,
+                                   int32_t result) {
   if (multi_part_processed_) {
     // Reset this flag so we look inside the buffer in calls of DidRead for this
     // response only once.  Note that this code DOES NOT handle multi part
@@ -266,7 +265,7 @@ void URLLoaderWrapperImpl::DidRead(ResultCallback callback, int32_t result) {
     if (IsDoubleEndLineAtEnd(buffer_, i)) {
       int start_pos = 0;
       int end_pos = 0;
-      if (GetByteRangeFromHeaders(std::string(buffer_, i), &start_pos,
+      if (GetByteRangeFromHeaders(std::string(buffer_.get(), i), &start_pos,
                                   &end_pos)) {
         byte_range_ = gfx::Range(start_pos, end_pos);
         start += i;
@@ -287,7 +286,7 @@ void URLLoaderWrapperImpl::DidRead(ResultCallback callback, int32_t result) {
 }
 
 void URLLoaderWrapperImpl::SetHeadersFromLoader() {
-  SetResponseHeaders(url_loader_->response().headers);
+  ParseHeaders(url_loader_->response().headers);
 }
 
 }  // namespace chrome_pdf

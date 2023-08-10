@@ -32,11 +32,10 @@
 #include "third_party/blink/renderer/core/html/html_image_loader.h"
 #include "third_party/blink/renderer/core/html/media/html_media_element.h"
 #include "third_party/blink/renderer/core/imagebitmap/image_bitmap_source.h"
-#include "third_party/blink/renderer/core/paint/compositing/paint_layer_compositor.h"
 #include "third_party/blink/renderer/platform/graphics/canvas_resource_provider.h"
-#include "third_party/khronos/GLES2/gl2.h"
 
 namespace blink {
+
 class ImageBitmapOptions;
 class IntersectionObserverEntry;
 class MediaCustomControlsFullscreenDetector;
@@ -67,7 +66,7 @@ class CORE_EXPORT HTMLVideoElement final
   unsigned videoWidth() const;
   unsigned videoHeight() const;
 
-  IntSize videoVisibleSize() const;
+  gfx::Size videoVisibleSize() const;
 
   bool IsDefaultIntrinsicSize() const {
     return is_default_overridden_intrinsic_size_;
@@ -88,10 +87,10 @@ class CORE_EXPORT HTMLVideoElement final
 
   // Used by canvas to gain raw pixel access
   //
-  // PaintFlags is optional. If unspecified, its blend mode defaults to kSrc.
+  // |paint_flags| is optional. If unspecified, its blend mode defaults to kSrc.
   void PaintCurrentFrame(cc::PaintCanvas*,
-                         const IntRect&,
-                         const cc::PaintFlags*) const;
+                         const gfx::Rect&,
+                         const cc::PaintFlags* paint_flags) const;
 
   bool HasAvailableVideoFrame() const;
 
@@ -110,12 +109,14 @@ class CORE_EXPORT HTMLVideoElement final
       bool allow_accelerated_images = true);
 
   // CanvasImageSource implementation
-  scoped_refptr<Image> GetSourceImageForCanvas(SourceImageStatus*,
-                                               const FloatSize&) override;
+  scoped_refptr<Image> GetSourceImageForCanvas(
+      SourceImageStatus*,
+      const gfx::SizeF&,
+      const AlphaDisposition alpha_disposition = kPremultiplyAlpha) override;
   bool IsVideoElement() const override { return true; }
   bool WouldTaintOrigin() const override;
-  FloatSize ElementSize(const FloatSize&,
-                        const RespectImageOrientationEnum) const override;
+  gfx::SizeF ElementSize(const gfx::SizeF&,
+                         const RespectImageOrientationEnum) const override;
   const KURL& SourceURL() const override { return currentSrc(); }
   bool IsHTMLVideoElement() const override { return true; }
   // Video elements currently always go through RAM when used as a canvas image
@@ -123,14 +124,13 @@ class CORE_EXPORT HTMLVideoElement final
   bool IsAccelerated() const override { return false; }
 
   // ImageBitmapSource implementation
-  IntSize BitmapSourceSize() const override;
+  gfx::Size BitmapSourceSize() const override;
   ScriptPromise CreateImageBitmap(ScriptState*,
-                                  base::Optional<IntRect> crop_rect,
+                                  absl::optional<gfx::Rect> crop_rect,
                                   const ImageBitmapOptions*,
                                   ExceptionState&) override;
 
   // WebMediaPlayerClient implementation.
-  void OnBecamePersistentVideo(bool) final;
   void OnRequestVideoFrameCallback() final;
 
   bool IsPersistent() const;
@@ -143,6 +143,7 @@ class CORE_EXPORT HTMLVideoElement final
   DisplayType GetDisplayType() const final;
   bool IsInAutoPIP() const final;
   void OnPictureInPictureStateChange() final;
+  void SetPersistentState(bool persistent) final;
 
   // Used by the PictureInPictureController as callback when the video element
   // enters or exits Picture-in-Picture state.
@@ -201,6 +202,8 @@ class CORE_EXPORT HTMLVideoElement final
 
   void OnIntersectionChangedForLazyLoad(
       const HeapVector<Member<IntersectionObserverEntry>>& entries);
+
+  void SetPersistentStateInternal(bool persistent);
 
   Member<HTMLImageLoader> image_loader_;
   Member<MediaCustomControlsFullscreenDetector>

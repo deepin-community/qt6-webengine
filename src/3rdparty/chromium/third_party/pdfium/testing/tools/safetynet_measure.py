@@ -7,13 +7,14 @@
 The output is a number that is a metric which depends on the profiler specified.
 """
 
+from __future__ import print_function
+
 import argparse
 import os
 import re
 import subprocess
 import sys
 
-# pylint: disable=relative-import
 from common import PrintErr
 
 CALLGRIND_PROFILER = 'callgrind'
@@ -23,7 +24,7 @@ NONE_PROFILER = 'none'
 PDFIUM_TEST = 'pdfium_test'
 
 
-class PerformanceRun(object):
+class PerformanceRun:
   """A single measurement of a test case."""
 
   def __init__(self, args):
@@ -65,7 +66,7 @@ class PerformanceRun(object):
     if time is None:
       return 1
 
-    print time
+    print(time)
     return 0
 
   def _RunCallgrind(self):
@@ -84,7 +85,8 @@ class PerformanceRun(object):
         '--instr-atstart=%s' % instrument_at_start,
         '--callgrind-out-file=%s' % output_path
     ] + self._BuildTestHarnessCommand())
-    output = subprocess.check_output(valgrind_cmd, stderr=subprocess.STDOUT)
+    output = subprocess.check_output(
+        valgrind_cmd, stderr=subprocess.STDOUT).decode('utf-8')
 
     # Match the line with the instruction count, eg.
     # '==98765== Collected : 12345'
@@ -100,7 +102,8 @@ class PerformanceRun(object):
     # -einstructions: print only instruction count
     cmd_to_run = (['perf', 'stat', '--no-big-num', '-einstructions'] +
                   self._BuildTestHarnessCommand())
-    output = subprocess.check_output(cmd_to_run, stderr=subprocess.STDOUT)
+    output = subprocess.check_output(
+        cmd_to_run, stderr=subprocess.STDOUT).decode('utf-8')
 
     # Match the line with the instruction count, eg.
     # '        12345      instructions'

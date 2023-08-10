@@ -16,8 +16,8 @@ namespace content {
 void VideoCaptureDependencies::CreateJpegDecodeAccelerator(
     mojo::PendingReceiver<chromeos_camera::mojom::MjpegDecodeAccelerator>
         accelerator) {
-  if (!BrowserThread::CurrentlyOn(BrowserThread::IO)) {
-    GetIOThreadTaskRunner({})->PostTask(
+  if (!GetUIThreadTaskRunner({})->BelongsToCurrentThread()) {
+    GetUIThreadTaskRunner({})->PostTask(
         FROM_HERE,
         base::BindOnce(&VideoCaptureDependencies::CreateJpegDecodeAccelerator,
                        std::move(accelerator)));
@@ -38,8 +38,8 @@ void VideoCaptureDependencies::CreateJpegDecodeAccelerator(
 void VideoCaptureDependencies::CreateJpegEncodeAccelerator(
     mojo::PendingReceiver<chromeos_camera::mojom::JpegEncodeAccelerator>
         accelerator) {
-  if (!BrowserThread::CurrentlyOn(BrowserThread::IO)) {
-    GetIOThreadTaskRunner({})->PostTask(
+  if (!GetUIThreadTaskRunner({})->BelongsToCurrentThread()) {
+    GetUIThreadTaskRunner({})->PostTask(
         FROM_HERE,
         base::BindOnce(&VideoCaptureDependencies::CreateJpegEncodeAccelerator,
                        std::move(accelerator)));

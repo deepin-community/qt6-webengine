@@ -124,16 +124,16 @@ void EventForwarder::OnMouseEvent(JNIEnv* env,
 void EventForwarder::OnDragEvent(JNIEnv* env,
                                  const JavaParamRef<jobject>& jobj,
                                  jint action,
-                                 jint x,
-                                 jint y,
-                                 jint screen_x,
-                                 jint screen_y,
+                                 jfloat x,
+                                 jfloat y,
+                                 jfloat screen_x,
+                                 jfloat screen_y,
                                  const JavaParamRef<jobjectArray>& j_mimeTypes,
                                  const JavaParamRef<jstring>& j_content) {
   float dip_scale = view_->GetDipScale();
   gfx::PointF location(x / dip_scale, y / dip_scale);
   gfx::PointF root_location(screen_x / dip_scale, screen_y / dip_scale);
-  std::vector<base::string16> mime_types;
+  std::vector<std::u16string> mime_types;
   AppendJavaStringArrayToStringVector(env, j_mimeTypes, &mime_types);
 
   DragEventAndroid event(env, action, location, root_location, mime_types,

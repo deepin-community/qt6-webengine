@@ -41,16 +41,17 @@ Chrome team on approval of the request.
     entry in
     [`DohProviderEntry::GetList()`](/net/dns/public/doh_provider_entry.cc).
     *   `provider` is a unique string label used to identify the specific entry.
-        It may be used for provider-specific metrics data sent to Google or for
-        [`FeatureParam`](/base/metrics/field_trial_params.h) support via
-        [`kDnsOverHttpsUpgradeDisabledProvidersParam`](/services/network/public/cpp/features.h)
-        allowing specific providers to be dynamically disabled. The `provider`
-        string should be cammelcase, and for cases where a single organization
-        runs multiple servers/varieties, the overall organization name should go
-        before the variety-specific name. For example, if ExampleOrg has both
-        filtered and unfiltered servers, they may have two provider list entries
-        with the `provider` strings "ExampleOrgFiltered" and
-        "ExampleOrgUnfiltered".
+        It may be used for provider-specific metrics data sent to Google. The
+        `provider` string should be camelcase, and for cases where a single
+        organization runs multiple servers/varieties, the overall organization
+        name should go before the variety-specific name. For example, if
+        ExampleOrg has both filtered and unfiltered servers, they may have two
+        provider list entries with the `provider` strings "ExampleOrgFiltered"
+        and "ExampleOrgUnfiltered".
+    *   `feature` is used by experiments to control an individual provider. When
+        the feature is disabled, either by default or remotely by an experiment
+        config, the provider is not eligible for autoupgrade and it will not be
+        listed in the "Secure DNS" settings.
     *   `provider_id_for_histogram` is a
         [`DohProviderIdForHistogram`](/net/dns/public/doh_provider_entry.h) enum
         value used for histograms data regarding UI interaction. It is only
@@ -105,7 +106,7 @@ Chrome team on approval of the request.
         issues requiring that provider to be disabled for auto upgrade.
 1.  Update histogram entries as necessary.
     *   If new providers were added, new `provider` strings must be added to the
-        [`DohProviderId`](/tools/metrics/histograms/histograms_xml/histogram_suffixes_list.xml)
+        [`DohProviderId`](/tools/metrics/histograms/metadata/histogram_suffixes_list.xml)
         histogram suffix.
     *   If new enum values were added for `provider_id_for_histogram`, the value
         must also be added to the
@@ -159,6 +160,14 @@ Chrome team on approval of the request.
 1.  If a provider must be intially disabled or partially disabled, e.g. because
     a provider with significant usage has requested a gradual controlled
     rollout, a Googler must modify the `DnsOverHttps.gcl` experiment config.
+
+    *** aside
+    TODO(dmcardle): Document the new procedure here, which will involve creating
+    starting a new experiment for each gradual rollout. For some period of time,
+    we'll need to mirror changes between new per-provider experiments and the
+    old `DnsOverHttps.gcl`. Also mention that changes should be reflected in
+    `testing/variations/fieldtrial_testing_config.json`.
+    ***
 
 ## Dynamic control
 

@@ -12,7 +12,6 @@
 #include <string>
 #include <vector>
 
-#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/sequence_checker.h"
@@ -46,6 +45,9 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothAdapterCast
   BluetoothAdapterCast(
       chromecast::bluetooth::GattClientManager* gatt_client_manager,
       chromecast::bluetooth::LeScanManager* le_scan_manager);
+
+  BluetoothAdapterCast(const BluetoothAdapterCast&) = delete;
+  BluetoothAdapterCast& operator=(const BluetoothAdapterCast&) = delete;
 
   // BluetoothAdapter implementation
   // |callback| will be executed asynchronously on the calling sequence.
@@ -88,7 +90,7 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothAdapterCast
                         AdvertisementErrorCallback error_callback) override;
   void ConnectDevice(
       const std::string& address,
-      const base::Optional<BluetoothDevice::AddressType>& address_type,
+      const absl::optional<BluetoothDevice::AddressType>& address_type,
       ConnectDeviceCallback callback,
       ErrorCallback error_callback) override;
   BluetoothLocalGattService* GetGattService(
@@ -190,8 +192,6 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothAdapterCast
 
   SEQUENCE_CHECKER(sequence_checker_);
   base::WeakPtrFactory<BluetoothAdapterCast> weak_factory_;
-
-  DISALLOW_COPY_AND_ASSIGN(BluetoothAdapterCast);
 };
 
 }  // namespace device

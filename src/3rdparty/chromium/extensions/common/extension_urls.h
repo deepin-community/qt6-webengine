@@ -7,7 +7,6 @@
 
 #include <string>
 
-#include "base/strings/string16.h"
 #include "base/strings/string_piece.h"
 #include "url/gurl.h"
 
@@ -21,7 +20,7 @@ namespace extensions {
 // to a page or a script, and can be external (e.g., "http://www.google.com"),
 // extension-related (e.g., "chrome-extension://<extension_id>/background.js"),
 // or internal (e.g., "event_bindings" or "schemaUtils").
-bool IsSourceFromAnExtension(const base::string16& source);
+bool IsSourceFromAnExtension(const std::u16string& source);
 
 }  // namespace extensions
 
@@ -68,8 +67,8 @@ GURL GetWebstoreReportAbuseUrl(const std::string& extension_id,
 // and path, not scheme, query, etc.)
 bool IsWebstoreUpdateUrl(const GURL& update_url);
 
-// Returns true if the URL points to an extension blacklist.
-bool IsBlacklistUpdateUrl(const GURL& url);
+// Returns true if the URL points to an extension blocklist.
+bool IsBlocklistUpdateUrl(const GURL& url);
 
 // Returns true if the origin points to an URL used for safebrowsing.
 // TODO(devlin): Update other methods to also take an url::Origin?

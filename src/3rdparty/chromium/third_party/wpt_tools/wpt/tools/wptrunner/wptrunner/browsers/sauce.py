@@ -1,7 +1,3 @@
-# This Source Code Form is subject to the terms of the Mozilla Public
-# License, v. 2.0. If a copy of the MPL was not distributed with this file,
-# You can obtain one at http://mozilla.org/MPL/2.0/.
-
 import glob
 import os
 import shutil
@@ -12,7 +8,7 @@ import time
 
 import requests
 
-from six.moves import cStringIO as StringIO
+from io import StringIO
 
 from .base import Browser, ExecutorBrowser, require_arg
 from .base import get_timeout_multiplier   # noqa: F401
@@ -101,10 +97,9 @@ def browser_kwargs(logger, test_type, run_info_data, config, **kwargs):
     return {"sauce_config": sauce_config}
 
 
-def executor_kwargs(logger, test_type, server_config, cache_manager, run_info_data,
+def executor_kwargs(logger, test_type, test_environment, run_info_data,
                     **kwargs):
-    executor_kwargs = base_executor_kwargs(test_type, server_config,
-                                           cache_manager, run_info_data, **kwargs)
+    executor_kwargs = base_executor_kwargs(test_type, test_environment, run_info_data, **kwargs)
 
     executor_kwargs["capabilities"] = get_capabilities(**kwargs)
 
@@ -228,7 +223,7 @@ class SauceException(Exception):
 class SauceBrowser(Browser):
     init_timeout = 300
 
-    def __init__(self, logger, sauce_config):
+    def __init__(self, logger, sauce_config, **kwargs):
         Browser.__init__(self, logger)
         self.sauce_config = sauce_config
 

@@ -8,6 +8,7 @@
 #include "include/core/SkShader.h"
 #include "include/utils/SkNWayCanvas.h"
 #include "src/core/SkCanvasPriv.h"
+#include "src/core/SkDevice.h"
 
 SkNWayCanvas::SkNWayCanvas(int width, int height) : INHERITED(width, height) {}
 
@@ -16,6 +17,12 @@ SkNWayCanvas::~SkNWayCanvas() {
 }
 
 void SkNWayCanvas::addCanvas(SkCanvas* canvas) {
+    if (!fList.isEmpty()) {
+        // We are using the nway canvas as a wrapper for the originally added canvas, and the device
+        // on the nway may contradict calls for the device on this canvas. So, to add a second
+        // canvas, the devices on the first canvas, and the nway base device must be different.
+        SkASSERT(fList[0]->baseDevice() != this->baseDevice());
+    }
     if (canvas) {
         *fList.append() = canvas;
     }
@@ -93,14 +100,6 @@ void SkNWayCanvas::willRestore() {
     this->INHERITED::willRestore();
 }
 
-void SkNWayCanvas::onMarkCTM(const char* name) {
-    Iter iter(fList);
-    while (iter.next()) {
-        iter->markCTM(name);
-    }
-    this->INHERITED::onMarkCTM(name);
-}
-
 void SkNWayCanvas::didConcat44(const SkM44& m) {
     Iter iter(fList);
     while (iter.next()) {
@@ -167,6 +166,14 @@ void SkNWayCanvas::onClipRegion(const SkRegion& deviceRgn, SkClipOp op) {
         iter->clipRegion(deviceRgn, op);
     }
     this->INHERITED::onClipRegion(deviceRgn, op);
+}
+
+void SkNWayCanvas::onResetClip() {
+    Iter iter(fList);
+    while (iter.next()) {
+        SkCanvasPriv::ResetClip(iter.get());
+    }
+    this->INHERITED::onResetClip();
 }
 
 void SkNWayCanvas::onDrawPaint(const SkPaint& paint) {
@@ -277,6 +284,13 @@ void SkNWayCanvas::onDrawAtlas2(const SkImage* image, const SkRSXform xform[], c
     }
 }
 
+void SkNWayCanvas::onDrawGlyphRunList(const SkGlyphRunList& list, const SkPaint &paint) {
+    Iter iter(fList);
+    while (iter.next()) {
+        iter->onDrawGlyphRunList(list, paint);
+    }
+}
+
 void SkNWayCanvas::onDrawTextBlob(const SkTextBlob* blob, SkScalar x, SkScalar y,
                                   const SkPaint &paint) {
     Iter iter(fList);
@@ -284,6 +298,15 @@ void SkNWayCanvas::onDrawTextBlob(const SkTextBlob* blob, SkScalar x, SkScalar y
         iter->drawTextBlob(blob, x, y, paint);
     }
 }
+
+#if SK_SUPPORT_GPU
+void SkNWayCanvas::onDrawSlug(const GrSlug* slug) {
+    Iter iter(fList);
+    while (iter.next()) {
+        iter->drawSlug(slug);
+    }
+}
+#endif
 
 void SkNWayCanvas::onDrawPicture(const SkPicture* picture, const SkMatrix* matrix,
                                  const SkPaint* paint) {

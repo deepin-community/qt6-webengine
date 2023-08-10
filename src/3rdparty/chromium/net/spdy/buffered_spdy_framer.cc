@@ -232,10 +232,6 @@ void BufferedSpdyFramer::UpdateHeaderDecoderTableSize(uint32_t value) {
   deframer_.GetHpackDecoder()->ApplyHeaderTableSizeSetting(value);
 }
 
-void BufferedSpdyFramer::Reset() {
-  deframer_.Reset();
-}
-
 http2::Http2DecoderAdapter::SpdyFramerError
 BufferedSpdyFramer::spdy_framer_error() const {
   return deframer_.spdy_framer_error();
@@ -327,18 +323,6 @@ uint32_t BufferedSpdyFramer::header_encoder_table_size() const {
   return spdy_framer_.header_encoder_table_size();
 }
 
-size_t BufferedSpdyFramer::EstimateMemoryUsage() const {
-  return base::trace_event::EstimateMemoryUsage(spdy_framer_) +
-         base::trace_event::EstimateMemoryUsage(deframer_) +
-         base::trace_event::EstimateMemoryUsage(coalescer_) +
-         base::trace_event::EstimateMemoryUsage(control_frame_fields_) +
-         base::trace_event::EstimateMemoryUsage(goaway_fields_);
-}
-
 BufferedSpdyFramer::ControlFrameFields::ControlFrameFields() = default;
-
-size_t BufferedSpdyFramer::GoAwayFields::EstimateMemoryUsage() const {
-  return base::trace_event::EstimateMemoryUsage(debug_data);
-}
 
 }  // namespace net

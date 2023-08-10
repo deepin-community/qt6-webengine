@@ -4,22 +4,21 @@
 
 #include "ui/base/ui_base_switches.h"
 
+#include "build/build_config.h"
+
 namespace switches {
 
-#if defined(OS_MAC)
-// Disable use of AVFoundation to draw video content.
-const char kDisableAVFoundationOverlays[] = "disable-avfoundation-overlays";
+#if BUILDFLAG(IS_ANDROID)
+// Disable overscroll edge effects like those found in Android views.
+const char kDisableOverscrollEdgeEffect[] = "disable-overscroll-edge-effect";
 
-// Fall back to using CAOpenGLLayers display content, instead of the IOSurface
-// based overlay display path.
-const char kDisableMacOverlays[] = "disable-mac-overlays";
+// Disable the pull-to-refresh effect when vertically overscrolling content.
+const char kDisablePullToRefreshEffect[] = "disable-pull-to-refresh-effect";
+#endif
 
+#if BUILDFLAG(IS_MAC)
 // Disable animations for showing and hiding modal dialogs.
 const char kDisableModalAnimations[] = "disable-modal-animations";
-
-// Disable use of cross-process CALayers to display content directly from the
-// GPU process on Mac.
-const char kDisableRemoteCoreAnimation[] = "disable-remote-core-animation";
 
 // Show borders around CALayers corresponding to overlays and partial damage.
 const char kShowMacOverlayBorders[] = "show-mac-overlay-borders";

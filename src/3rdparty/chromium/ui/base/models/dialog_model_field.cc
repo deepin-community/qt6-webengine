@@ -29,10 +29,10 @@ DialogModelLabel::DialogModelLabel(int message_id, std::vector<Link> links)
   // labels with links.
 }
 
-DialogModelLabel::DialogModelLabel(base::string16 fixed_string)
+DialogModelLabel::DialogModelLabel(std::u16string fixed_string)
     : message_id_(-1), string_(std::move(fixed_string)) {}
 
-const base::string16& DialogModelLabel::GetString(
+const std::u16string& DialogModelLabel::GetString(
     base::PassKey<DialogModelHost>) const {
   DCHECK(links_.empty());
   return string_;
@@ -89,6 +89,11 @@ DialogModelTextfield* DialogModelField::AsTextfield(
   return AsTextfield();
 }
 
+DialogModelCustomField* DialogModelField::AsCustomField(
+    base::PassKey<DialogModelHost>) {
+  return AsCustomField();
+}
+
 DialogModelButton* DialogModelField::AsButton() {
   DCHECK_EQ(type_, kButton);
   return static_cast<DialogModelButton*>(this);
@@ -114,6 +119,11 @@ DialogModelTextfield* DialogModelField::AsTextfield() {
   return static_cast<DialogModelTextfield*>(this);
 }
 
+DialogModelCustomField* DialogModelField::AsCustomField() {
+  DCHECK_EQ(type_, kCustom);
+  return static_cast<DialogModelCustomField*>(this);
+}
+
 DialogModelButton::Params::Params() = default;
 DialogModelButton::Params::~Params() = default;
 
@@ -134,7 +144,7 @@ DialogModelButton::DialogModelButton(
     base::PassKey<DialogModel> pass_key,
     DialogModel* model,
     base::RepeatingCallback<void(const Event&)> callback,
-    base::string16 label,
+    std::u16string label,
     const DialogModelButton::Params& params)
     : DialogModelField(pass_key,
                        model,
@@ -211,7 +221,7 @@ DialogModelCombobox::Params& DialogModelCombobox::Params::AddAccelerator(
 DialogModelCombobox::DialogModelCombobox(
     base::PassKey<DialogModel> pass_key,
     DialogModel* model,
-    base::string16 label,
+    std::u16string label,
     std::unique_ptr<ui::ComboboxModel> combobox_model,
     const DialogModelCombobox::Params& params)
     : DialogModelField(pass_key,
@@ -256,8 +266,8 @@ DialogModelTextfield::Params& DialogModelTextfield::Params::AddAccelerator(
 DialogModelTextfield::DialogModelTextfield(
     base::PassKey<DialogModel> pass_key,
     DialogModel* model,
-    base::string16 label,
-    base::string16 text,
+    std::u16string label,
+    std::u16string text,
     const ui::DialogModelTextfield::Params& params)
     : DialogModelField(pass_key,
                        model,
@@ -271,8 +281,24 @@ DialogModelTextfield::DialogModelTextfield(
 DialogModelTextfield::~DialogModelTextfield() = default;
 
 void DialogModelTextfield::OnTextChanged(base::PassKey<DialogModelHost>,
-                                         base::string16 text) {
+                                         std::u16string text) {
   text_ = std::move(text);
 }
+
+DialogModelCustomField::Factory::~Factory() = default;
+
+DialogModelCustomField::DialogModelCustomField(
+    base::PassKey<DialogModel> pass_key,
+    DialogModel* model,
+    int unique_id,
+    std::unique_ptr<DialogModelCustomField::Factory> factory)
+    : DialogModelField(pass_key,
+                       model,
+                       kCustom,
+                       unique_id,
+                       base::flat_set<Accelerator>()),
+      factory_(std::move(factory)) {}
+
+DialogModelCustomField::~DialogModelCustomField() = default;
 
 }  // namespace ui

@@ -21,6 +21,7 @@ namespace printing {
 
 // Printer capability setting keys.
 extern const char kOptionKey[];
+extern const char kResetToDefaultKey[];
 extern const char kTypeKey[];
 extern const char kSelectCapKey[];
 extern const char kSelectString[];
@@ -41,14 +42,14 @@ base::Value ValidateCddForPrintPreview(base::Value cdd);
 
 // Starts a local print of |print_data| with print settings dictionary
 // |job_settings|. Runs |callback| on failure or success.
-void StartLocalPrint(base::Value job_settings,
+void StartLocalPrint(base::Value::Dict job_settings,
                      scoped_refptr<base::RefCountedMemory> print_data,
                      content::WebContents* preview_web_contents,
                      PrinterHandler::PrintCallback callback);
 
 // Parses print job settings. Returns |true| on success.
-// This is used by extension and privet printers.
-bool ParseSettings(const base::Value& settings,
+// This is used by extension printers.
+bool ParseSettings(const base::Value::Dict& settings,
                    std::string* out_destination_id,
                    std::string* out_capabilities,
                    gfx::Size* out_page_size,

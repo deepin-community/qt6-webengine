@@ -11,11 +11,10 @@
 #include "base/callback.h"
 #include "base/containers/flat_map.h"
 #include "base/containers/queue.h"
-#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
-#include "base/optional.h"
 #include "base/timer/timer.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/display/manager/display_configurator.h"
 #include "ui/display/manager/display_manager_export.h"
 
@@ -70,13 +69,17 @@ class DISPLAY_MANAGER_EXPORT ContentProtectionManager
 
   ContentProtectionManager(DisplayLayoutManager*,
                            ConfigurationDisabledCallback);
+
+  ContentProtectionManager(const ContentProtectionManager&) = delete;
+  ContentProtectionManager& operator=(const ContentProtectionManager&) = delete;
+
   ~ContentProtectionManager() override;
 
   void set_native_display_delegate(NativeDisplayDelegate* delegate) {
     native_display_delegate_ = delegate;
   }
 
-  using ClientId = base::Optional<uint64_t>;
+  using ClientId = absl::optional<uint64_t>;
 
   // On display reconfiguration, pending requests are cancelled, i.e. clients
   // receive failure callbacks, and are responsible for renewing requests. If a
@@ -179,8 +182,6 @@ class DISPLAY_MANAGER_EXPORT ContentProtectionManager
   base::RepeatingTimer security_timer_;
 
   base::WeakPtrFactory<ContentProtectionManager> weak_ptr_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(ContentProtectionManager);
 };
 
 }  // namespace display

@@ -61,15 +61,7 @@ struct COMPONENT_EXPORT(GFX_SHARED_MOJOM_TRAITS)
     return input.angle_features;
   }
 
-#if defined(USE_OZONE_PLATFORM_X11) || defined(USE_X11)
-  static uint64_t system_visual(const gfx::GpuExtraInfo& input) {
-    return static_cast<uint64_t>(input.system_visual);
-  }
-
-  static uint64_t rgba_visual(const gfx::GpuExtraInfo& input) {
-    return static_cast<uint64_t>(input.rgba_visual);
-  }
-
+#if defined(USE_OZONE_PLATFORM_X11)
   static const std::vector<gfx::BufferUsageAndFormat>&
   gpu_memory_buffer_support_x11(const gfx::GpuExtraInfo& input) {
     return input.gpu_memory_buffer_support_x11;

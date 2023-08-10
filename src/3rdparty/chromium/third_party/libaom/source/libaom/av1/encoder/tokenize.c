@@ -51,7 +51,7 @@ static int cost_and_tokenize_map(Av1ColorMapParam *param, TokenExtra **t,
           color_map, plane_block_width, i, j, &color_new_idx);
       assert(color_new_idx >= 0 && color_new_idx < n);
       if (calc_rate) {
-        this_rate += (*color_cost)[palette_size_idx][color_ctx][color_new_idx];
+        this_rate += color_cost[palette_size_idx][color_ctx][color_new_idx];
       } else {
         (*t)->token = color_new_idx;
         (*t)->color_ctx = color_ctx;
@@ -82,8 +82,8 @@ static void get_palette_params(const MACROBLOCK *const x, int plane,
   params->color_map = xd->plane[plane].color_index_map;
   params->map_cdf = plane ? xd->tile_ctx->palette_uv_color_index_cdf
                           : xd->tile_ctx->palette_y_color_index_cdf;
-  params->color_cost = plane ? &x->mode_costs.palette_uv_color_cost
-                             : &x->mode_costs.palette_y_color_cost;
+  params->color_cost = plane ? x->mode_costs.palette_uv_color_cost
+                             : x->mode_costs.palette_y_color_cost;
   params->n_colors = pmi->palette_size[plane];
   av1_get_block_dimensions(bsize, plane, xd, &params->plane_width, NULL,
                            &params->rows, &params->cols);
@@ -146,8 +146,14 @@ static void tokenize_vartx(ThreadData *td, TX_SIZE tx_size,
   if (tx_size == plane_tx_size || plane) {
     plane_bsize =
         get_plane_block_size(mbmi->bsize, pd->subsampling_x, pd->subsampling_y);
-    av1_update_and_record_txb_context(plane, block, blk_row, blk_col,
-                                      plane_bsize, tx_size, arg);
+
+    struct tokenize_b_args *args = arg;
+    if (args->allow_update_cdf)
+      av1_update_and_record_txb_context(plane, block, blk_row, blk_col,
+                                        plane_bsize, tx_size, arg);
+    else
+      av1_record_txb_context(plane, block, blk_row, blk_col, plane_bsize,
+                             tx_size, arg);
 
   } else {
     // Half the block size in transform block unit.
@@ -155,15 +161,17 @@ static void tokenize_vartx(ThreadData *td, TX_SIZE tx_size,
     const int bsw = tx_size_wide_unit[sub_txs];
     const int bsh = tx_size_high_unit[sub_txs];
     const int step = bsw * bsh;
+    const int row_end =
+        AOMMIN(tx_size_high_unit[tx_size], max_blocks_high - blk_row);
+    const int col_end =
+        AOMMIN(tx_size_wide_unit[tx_size], max_blocks_wide - blk_col);
 
     assert(bsw > 0 && bsh > 0);
 
-    for (int row = 0; row < tx_size_high_unit[tx_size]; row += bsh) {
-      for (int col = 0; col < tx_size_wide_unit[tx_size]; col += bsw) {
-        const int offsetr = blk_row + row;
+    for (int row = 0; row < row_end; row += bsh) {
+      const int offsetr = blk_row + row;
+      for (int col = 0; col < col_end; col += bsw) {
         const int offsetc = blk_col + col;
-
-        if (offsetr >= max_blocks_high || offsetc >= max_blocks_wide) continue;
 
         tokenize_vartx(td, sub_txs, plane_bsize, offsetr, offsetc, block, plane,
                        arg);

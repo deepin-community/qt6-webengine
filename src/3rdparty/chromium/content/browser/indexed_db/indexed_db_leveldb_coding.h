@@ -13,11 +13,9 @@
 #include <utility>
 #include <vector>
 
-#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/strings/string16.h"
 #include "base/strings/string_piece.h"
-#include "components/services/storage/indexed_db/scopes/scope_lock_range.h"
+#include "components/services/storage/indexed_db/locks/leveled_lock_range.h"
 #include "content/common/content_export.h"
 #include "third_party/blink/public/common/indexeddb/indexeddb_key.h"
 #include "third_party/blink/public/common/indexeddb/indexeddb_key_path.h"
@@ -51,9 +49,9 @@ CONTENT_EXPORT void EncodeBool(bool value, std::string* into);
 // number. The Decoder must know how to calculate the size of the encoded int,
 // typically by having this reside at the end of the value or key.
 CONTENT_EXPORT void EncodeInt(int64_t value, std::string* into);
-CONTENT_EXPORT void EncodeString(const base::string16& value,
+CONTENT_EXPORT void EncodeString(const std::u16string& value,
                                  std::string* into);
-CONTENT_EXPORT void EncodeStringWithLength(const base::string16& value,
+CONTENT_EXPORT void EncodeStringWithLength(const std::u16string& value,
                                            std::string* into);
 CONTENT_EXPORT void EncodeBinary(const std::string& value, std::string* into);
 CONTENT_EXPORT void EncodeBinary(base::span<const uint8_t> value,
@@ -66,43 +64,41 @@ CONTENT_EXPORT void EncodeIDBKeyPath(const blink::IndexedDBKeyPath& value,
 CONTENT_EXPORT void EncodeBlobJournal(const BlobJournalType& journal,
                                       std::string* into);
 
-CONTENT_EXPORT WARN_UNUSED_RESULT bool DecodeByte(base::StringPiece* slice,
-                                                  unsigned char* value);
-CONTENT_EXPORT WARN_UNUSED_RESULT bool DecodeBool(base::StringPiece* slice,
-                                                  bool* value);
-CONTENT_EXPORT WARN_UNUSED_RESULT bool DecodeInt(base::StringPiece* slice,
-                                                 int64_t* value);
-CONTENT_EXPORT WARN_UNUSED_RESULT bool DecodeString(base::StringPiece* slice,
-                                                    base::string16* value);
-CONTENT_EXPORT WARN_UNUSED_RESULT bool DecodeStringWithLength(
+[[nodiscard]] CONTENT_EXPORT bool DecodeByte(base::StringPiece* slice,
+                                             unsigned char* value);
+[[nodiscard]] CONTENT_EXPORT bool DecodeBool(base::StringPiece* slice,
+                                             bool* value);
+[[nodiscard]] CONTENT_EXPORT bool DecodeInt(base::StringPiece* slice,
+                                            int64_t* value);
+[[nodiscard]] CONTENT_EXPORT bool DecodeString(base::StringPiece* slice,
+                                               std::u16string* value);
+[[nodiscard]] CONTENT_EXPORT bool DecodeStringWithLength(
     base::StringPiece* slice,
-    base::string16* value);
-CONTENT_EXPORT WARN_UNUSED_RESULT bool DecodeBinary(base::StringPiece* slice,
-                                                    std::string* value);
+    std::u16string* value);
+[[nodiscard]] CONTENT_EXPORT bool DecodeBinary(base::StringPiece* slice,
+                                               std::string* value);
 // The returned span is only valid as long as the date behind |slice| is
 // still valid.
-CONTENT_EXPORT WARN_UNUSED_RESULT bool DecodeBinary(
+[[nodiscard]] CONTENT_EXPORT bool DecodeBinary(
     base::StringPiece* slice,
     base::span<const uint8_t>* value);
-CONTENT_EXPORT WARN_UNUSED_RESULT bool DecodeDouble(base::StringPiece* slice,
-                                                    double* value);
-CONTENT_EXPORT WARN_UNUSED_RESULT bool DecodeIDBKey(
+[[nodiscard]] CONTENT_EXPORT bool DecodeDouble(base::StringPiece* slice,
+                                               double* value);
+[[nodiscard]] CONTENT_EXPORT bool DecodeIDBKey(
     base::StringPiece* slice,
     std::unique_ptr<blink::IndexedDBKey>* value);
-CONTENT_EXPORT WARN_UNUSED_RESULT bool DecodeIDBKeyPath(
+[[nodiscard]] CONTENT_EXPORT bool DecodeIDBKeyPath(
     base::StringPiece* slice,
     blink::IndexedDBKeyPath* value);
-CONTENT_EXPORT WARN_UNUSED_RESULT bool DecodeBlobJournal(
-    base::StringPiece* slice,
-    BlobJournalType* journal);
+[[nodiscard]] CONTENT_EXPORT bool DecodeBlobJournal(base::StringPiece* slice,
+                                                    BlobJournalType* journal);
 
 CONTENT_EXPORT int CompareEncodedStringsWithLength(base::StringPiece* slice1,
                                                    base::StringPiece* slice2,
                                                    bool* ok);
 
-CONTENT_EXPORT WARN_UNUSED_RESULT bool ExtractEncodedIDBKey(
-    base::StringPiece* slice,
-    std::string* result);
+[[nodiscard]] CONTENT_EXPORT bool ExtractEncodedIDBKey(base::StringPiece* slice,
+                                                       std::string* result);
 
 CONTENT_EXPORT int CompareEncodedIDBKeys(base::StringPiece* slice1,
                                          base::StringPiece* slice2,
@@ -125,9 +121,9 @@ const constexpr int kDatabaseRangeLockLevel = 0;
 const constexpr int kObjectStoreRangeLockLevel = 1;
 const constexpr int kIndexedDBLockLevelCount = 2;
 
-CONTENT_EXPORT ScopeLockRange GetDatabaseLockRange(int64_t database_id);
-CONTENT_EXPORT ScopeLockRange GetObjectStoreLockRange(int64_t database_id,
-                                                      int64_t object_store_id);
+CONTENT_EXPORT LeveledLockRange GetDatabaseLockRange(int64_t database_id);
+CONTENT_EXPORT LeveledLockRange
+GetObjectStoreLockRange(int64_t database_id, int64_t object_store_id);
 
 // TODO(dmurph): Modify all decoding methods to return something more sensible,
 // as it is not obvious that they modify the input slice to remove the decoded
@@ -248,6 +244,11 @@ class EarliestSweepKey {
   static std::string Encode();
 };
 
+class EarliestCompactionKey {
+ public:
+  static std::string Encode();
+};
+
 class ScopesPrefix {
  public:
   CONTENT_EXPORT static std::vector<uint8_t> Encode();
@@ -271,20 +272,20 @@ class DatabaseNameKey {
  public:
   static bool Decode(base::StringPiece* slice, DatabaseNameKey* result);
   CONTENT_EXPORT static std::string Encode(const std::string& origin_identifier,
-                                           const base::string16& database_name);
+                                           const std::u16string& database_name);
   static std::string EncodeMinKeyForOrigin(
       const std::string& origin_identifier);
   static std::string EncodeStopKeyForOrigin(
       const std::string& origin_identifier);
-  base::string16 origin() const { return origin_; }
-  base::string16 database_name() const { return database_name_; }
+  std::u16string origin() const { return origin_; }
+  std::u16string database_name() const { return database_name_; }
   int Compare(const DatabaseNameKey& other);
   std::string DebugString() const;
 
  private:
-  base::string16 origin_;  // TODO(jsbell): Store encoded strings, or just
+  std::u16string origin_;  // TODO(jsbell): Store encoded strings, or just
                            // pointers.
-  base::string16 database_name_;
+  std::u16string database_name_;
 };
 
 class DatabaseMetaDataKey {
@@ -417,15 +418,15 @@ class ObjectStoreNamesKey {
   static bool Decode(base::StringPiece* slice, ObjectStoreNamesKey* result);
   CONTENT_EXPORT static std::string Encode(
       int64_t database_id,
-      const base::string16& object_store_name);
+      const std::u16string& object_store_name);
   int Compare(const ObjectStoreNamesKey& other);
   std::string DebugString() const;
 
-  base::string16 object_store_name() const { return object_store_name_; }
+  std::u16string object_store_name() const { return object_store_name_; }
 
  private:
   // TODO(jsbell): Store the encoded string, or just pointers to it.
-  base::string16 object_store_name_;
+  std::u16string object_store_name_;
 };
 
 class IndexNamesKey {
@@ -436,15 +437,15 @@ class IndexNamesKey {
   static bool Decode(base::StringPiece* slice, IndexNamesKey* result);
   CONTENT_EXPORT static std::string Encode(int64_t database_id,
                                            int64_t object_store_id,
-                                           const base::string16& index_name);
+                                           const std::u16string& index_name);
   int Compare(const IndexNamesKey& other);
   std::string DebugString() const;
 
-  base::string16 index_name() const { return index_name_; }
+  std::u16string index_name() const { return index_name_; }
 
  private:
   int64_t object_store_id_;
-  base::string16 index_name_;
+  std::u16string index_name_;
 };
 
 class ObjectStoreDataKey {
@@ -472,6 +473,10 @@ class ObjectStoreDataKey {
 class ExistsEntryKey {
  public:
   ExistsEntryKey();
+
+  ExistsEntryKey(const ExistsEntryKey&) = delete;
+  ExistsEntryKey& operator=(const ExistsEntryKey&) = delete;
+
   ~ExistsEntryKey();
 
   static bool Decode(base::StringPiece* slice, ExistsEntryKey* result);
@@ -489,7 +494,6 @@ class ExistsEntryKey {
   static const int64_t kSpecialIndexNumber;
 
   std::string encoded_user_key_;
-  DISALLOW_COPY_AND_ASSIGN(ExistsEntryKey);
 };
 
 class CONTENT_EXPORT BlobEntryKey {
@@ -528,7 +532,12 @@ class IndexDataKey {
  public:
   CONTENT_EXPORT IndexDataKey();
   CONTENT_EXPORT IndexDataKey(IndexDataKey&& other);
+
+  IndexDataKey(const IndexDataKey&) = delete;
+  IndexDataKey& operator=(const IndexDataKey&) = delete;
+
   CONTENT_EXPORT ~IndexDataKey();
+
   CONTENT_EXPORT static bool Decode(base::StringPiece* slice,
                                     IndexDataKey* result);
   CONTENT_EXPORT static std::string Encode(
@@ -573,8 +582,6 @@ class IndexDataKey {
   std::string encoded_user_key_;
   std::string encoded_primary_key_;
   int64_t sequence_number_;
-
-  DISALLOW_COPY_AND_ASSIGN(IndexDataKey);
 };
 
 }  // namespace content

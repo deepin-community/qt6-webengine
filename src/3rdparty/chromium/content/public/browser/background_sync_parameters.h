@@ -16,13 +16,14 @@ namespace content {
 struct CONTENT_EXPORT BackgroundSyncParameters {
   BackgroundSyncParameters();
   BackgroundSyncParameters(const BackgroundSyncParameters& other);
+  BackgroundSyncParameters& operator=(const BackgroundSyncParameters& other);
   bool operator==(const BackgroundSyncParameters& other) const;
 
   // True if the manager should be disabled and registration attempts should
   // fail.
   bool disable;
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   // True if we should rely on Android's network detection where possible.
   bool rely_on_android_network_detection;
 #endif

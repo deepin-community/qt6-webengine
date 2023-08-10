@@ -7,8 +7,6 @@
 
 #include <stddef.h>
 
-#include <memory>
-
 #include "cc/paint/filter_operations.h"
 #include "components/viz/common/quads/aggregated_render_pass.h"
 #include "components/viz/common/quads/draw_quad.h"
@@ -30,7 +28,7 @@ class VIZ_COMMON_EXPORT AggregatedRenderPassDrawQuad
   void SetNew(const SharedQuadState* shared_quad_state,
               const gfx::Rect& rect,
               const gfx::Rect& visible_rect,
-              AggregatedRenderPassId render_pass_id,
+              AggregatedRenderPassId render_pass,
               ResourceId mask_resource_id,
               const gfx::RectF& mask_uv_rect,
               const gfx::Size& mask_texture_size,
@@ -44,7 +42,7 @@ class VIZ_COMMON_EXPORT AggregatedRenderPassDrawQuad
               const gfx::Rect& rect,
               const gfx::Rect& visible_rect,
               bool needs_blending,
-              AggregatedRenderPassId render_pass_id,
+              AggregatedRenderPassId render_pass,
               ResourceId mask_resource_id,
               const gfx::RectF& mask_uv_rect,
               const gfx::Size& mask_texture_size,

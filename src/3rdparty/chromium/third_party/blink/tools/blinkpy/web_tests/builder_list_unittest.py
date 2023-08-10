@@ -89,6 +89,18 @@ class BuilderListTest(unittest.TestCase):
                 'master': "luci",
                 'has_webdriver_tests': True
             },
+            'Flag Specific A': {
+                'port_name': 'port-c',
+                'specifiers': ['C', 'Release'],
+                'flag_specific': 'highdpi',
+                "is_try_builder": True
+            },
+            'Flag Specific B': {
+                'port_name': 'port-c',
+                'specifiers': ['C', 'Release'],
+                'flag_specific': 'disable-layout-ng',
+                "is_try_builder": True
+            },
         })
 
     def test_constructor_validates_list(self):
@@ -107,6 +119,8 @@ class BuilderListTest(unittest.TestCase):
             'CQ Try A',
             'CQ Try B',
             'CQ Try C',
+            'Flag Specific A',
+            'Flag Specific B',
             'Try A',
             'Try B',
             'some-wpt-bot',
@@ -121,8 +135,8 @@ class BuilderListTest(unittest.TestCase):
     def test_all_try_builder_names(self):
         builders = self.sample_builder_list()
         self.assertEqual([
-            'CQ Try A', 'CQ Try B', 'CQ Try C', 'Try A', 'Try B',
-            'some-wpt-bot'
+            'CQ Try A', 'CQ Try B', 'CQ Try C', 'Flag Specific A',
+            'Flag Specific B', 'Try A', 'Try B', 'some-wpt-bot'
         ], builders.all_try_builder_names())
 
     def test_all_cq_try_builder_names(self):
@@ -130,6 +144,15 @@ class BuilderListTest(unittest.TestCase):
         self.assertEqual(
             ['CQ Try A', 'CQ Try B', 'CQ Try C'],
             builders.all_cq_try_builder_names())
+
+    def test_all_flag_specific_builder_names(self):
+        builders = self.sample_builder_list()
+        self.assertEqual(['Flag Specific A'],
+                         builders.all_flag_specific_try_builder_names(
+                             flag_specific="highdpi"))
+        self.assertEqual(['Flag Specific A', 'Flag Specific B'],
+                         builders.all_flag_specific_try_builder_names(
+                             flag_specific="*"))
 
     def test_all_port_names(self):
         builders = self.sample_builder_list()

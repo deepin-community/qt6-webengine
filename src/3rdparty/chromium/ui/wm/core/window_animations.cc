@@ -14,7 +14,7 @@
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
 #include "base/containers/contains.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/notreached.h"
 #include "base/time/time.h"
@@ -60,6 +60,12 @@ class HidingWindowAnimationObserverBase : public aura::WindowObserver {
       : window_(window) {
     window_->AddObserver(this);
   }
+
+  HidingWindowAnimationObserverBase(const HidingWindowAnimationObserverBase&) =
+      delete;
+  HidingWindowAnimationObserverBase& operator=(
+      const HidingWindowAnimationObserverBase&) = delete;
+
   ~HidingWindowAnimationObserverBase() override {
     if (window_)
       window_->RemoveObserver(this);
@@ -131,12 +137,10 @@ class HidingWindowAnimationObserverBase : public aura::WindowObserver {
     window_ = nullptr;
   }
 
-  aura::Window* window_;
+  raw_ptr<aura::Window> window_;
 
   // The owner of detached layers.
   std::unique_ptr<ui::LayerTreeOwner> layer_owner_;
-
-  DISALLOW_COPY_AND_ASSIGN(HidingWindowAnimationObserverBase);
 };
 
 // TODO(crbug.com/1021774): Find a better home and merge with
@@ -169,13 +173,16 @@ class ImplicitHidingWindowAnimationObserver
   ImplicitHidingWindowAnimationObserver(
       aura::Window* window,
       ui::ScopedLayerAnimationSettings* settings);
+
+  ImplicitHidingWindowAnimationObserver(
+      const ImplicitHidingWindowAnimationObserver&) = delete;
+  ImplicitHidingWindowAnimationObserver& operator=(
+      const ImplicitHidingWindowAnimationObserver&) = delete;
+
   ~ImplicitHidingWindowAnimationObserver() override {}
 
   // ui::ImplicitAnimationObserver:
   void OnImplicitAnimationsCompleted() override;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(ImplicitHidingWindowAnimationObserver);
 };
 
 namespace {
@@ -202,9 +209,9 @@ base::TimeDelta GetWindowVisibilityAnimationDuration(
     const aura::Window& window) {
   base::TimeDelta duration =
       window.GetProperty(kWindowVisibilityAnimationDurationKey);
-  if (duration.is_zero() && window.type() == aura::client::WINDOW_TYPE_MENU) {
-    return base::TimeDelta::FromMilliseconds(
-        kDefaultAnimationDurationForMenuMS);
+  if (duration.is_zero() &&
+      window.GetType() == aura::client::WINDOW_TYPE_MENU) {
+    return base::Milliseconds(kDefaultAnimationDurationForMenuMS);
   }
   return duration;
 }
@@ -214,8 +221,8 @@ base::TimeDelta GetWindowVisibilityAnimationDuration(
 int GetWindowVisibilityAnimationType(aura::Window* window) {
   int type = window->GetProperty(kWindowVisibilityAnimationTypeKey);
   if (type == WINDOW_VISIBILITY_ANIMATION_TYPE_DEFAULT) {
-    return (window->type() == aura::client::WINDOW_TYPE_MENU ||
-            window->type() == aura::client::WINDOW_TYPE_TOOLTIP)
+    return (window->GetType() == aura::client::WINDOW_TYPE_MENU ||
+            window->GetType() == aura::client::WINDOW_TYPE_TOOLTIP)
                ? WINDOW_VISIBILITY_ANIMATION_TYPE_FADE
                : WINDOW_VISIBILITY_ANIMATION_TYPE_DROP;
   }
@@ -287,7 +294,7 @@ void AnimateShowWindowCommon(aura::Window* window,
     // Property sets within this scope will be implicitly animated.
     ui::ScopedLayerAnimationSettings settings(window->layer()->GetAnimator());
     base::TimeDelta duration = GetWindowVisibilityAnimationDuration(*window);
-    if (duration > base::TimeDelta())
+    if (duration.is_positive())
       settings.SetTransitionDuration(duration);
 
     window->layer()->SetTransform(end_transform);
@@ -314,7 +321,7 @@ void AnimateHideWindowCommon(aura::Window* window,
   if (!window->layer()->children().empty())
     hiding_settings.layer_animation_settings()->CacheRenderSurface();
   base::TimeDelta duration = GetWindowVisibilityAnimationDuration(*window);
-  if (duration > base::TimeDelta())
+  if (duration.is_positive())
     hiding_settings.layer_animation_settings()->SetTransitionDuration(duration);
 
   window->layer()->SetOpacity(kWindowAnimation_HideOpacity);
@@ -381,9 +388,9 @@ std::unique_ptr<ui::LayerAnimationElement> CreateGrowShrinkElement(
   std::unique_ptr<ui::LayerAnimationElement> transition =
       ui::LayerAnimationElement::CreateInterpolatedTransformElement(
           std::move(scale_about_pivot),
-          base::TimeDelta::FromMilliseconds(
-              kWindowAnimation_Bounce_DurationMS *
-              kWindowAnimation_Bounce_GrowShrinkDurationPercent / 100));
+          base::Milliseconds(kWindowAnimation_Bounce_DurationMS *
+                             kWindowAnimation_Bounce_GrowShrinkDurationPercent /
+                             100));
   transition->set_tween_type(grow ? gfx::Tween::EASE_OUT : gfx::Tween::EASE_IN);
   return transition;
 }
@@ -398,10 +405,10 @@ void AnimateBounce(aura::Window* window) {
   sequence->AddElement(CreateGrowShrinkElement(window, true));
   sequence->AddElement(ui::LayerAnimationElement::CreatePauseElement(
       ui::LayerAnimationElement::BOUNDS,
-      base::TimeDelta::FromMilliseconds(
-        kWindowAnimation_Bounce_DurationMS *
-            (100 - 2 * kWindowAnimation_Bounce_GrowShrinkDurationPercent) /
-            100)));
+      base::Milliseconds(
+          kWindowAnimation_Bounce_DurationMS *
+          (100 - 2 * kWindowAnimation_Bounce_GrowShrinkDurationPercent) /
+          100)));
   sequence->AddElement(CreateGrowShrinkElement(window, false));
   window->layer()->GetAnimator()->StartAnimation(sequence.release());
 }
@@ -414,6 +421,12 @@ class RotateHidingWindowAnimationObserver
  public:
   explicit RotateHidingWindowAnimationObserver(aura::Window* window)
       : HidingWindowAnimationObserverBase(window) {}
+
+  RotateHidingWindowAnimationObserver(
+      const RotateHidingWindowAnimationObserver&) = delete;
+  RotateHidingWindowAnimationObserver& operator=(
+      const RotateHidingWindowAnimationObserver&) = delete;
+
   ~RotateHidingWindowAnimationObserver() override {}
 
   // Destroys itself after |last_sequence| ends or is aborted. Does not take
@@ -431,17 +444,14 @@ class RotateHidingWindowAnimationObserver
   }
   void OnLayerAnimationScheduled(
       ui::LayerAnimationSequence* sequence) override {}
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(RotateHidingWindowAnimationObserver);
 };
 
 void AddLayerAnimationsForRotate(aura::Window* window, bool show) {
   if (show)
     window->layer()->SetOpacity(kWindowAnimation_HideOpacity);
 
-  base::TimeDelta duration = base::TimeDelta::FromMilliseconds(
-      kWindowAnimation_Rotate_DurationMS);
+  base::TimeDelta duration =
+      base::Milliseconds(kWindowAnimation_Rotate_DurationMS);
 
   if (!show) {
     window->layer()->GetAnimator()->SchedulePauseForProperties(

@@ -7,7 +7,6 @@
 #include "base/i18n/rtl.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
-#include "base/stl_util.h"
 #include "components/dom_distiller/core/url_constants.h"
 #include "components/profile_metrics/browser_profile_type.h"
 #include "components/url_formatter/url_formatter.h"
@@ -49,7 +48,7 @@ const char* const kSchemeNames[] = {
     "externalfile",
 };
 
-static_assert(base::size(kSchemeNames) == static_cast<int>(Scheme::COUNT),
+static_assert(std::size(kSchemeNames) == static_cast<int>(Scheme::COUNT),
               "kSchemeNames should have Scheme::COUNT elements");
 
 }  // namespace
@@ -63,7 +62,7 @@ Scheme GetScheme(const GURL& url) {
   return Scheme::UNKNOWN;
 }
 
-void RecordMainFrameNavigation(
+void RecordPrimaryMainFrameNavigation(
     const GURL& url,
     bool is_same_document,
     bool is_off_the_record,

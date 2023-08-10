@@ -17,7 +17,7 @@ source_set("utils") {
     "//base",
     "//components/browser_sync",
     "//components/infobars/core",
-    "//components/strings",
+    "//components/strings:components_strings_grit",
     "//components/sync",
     "//google_apis",
     "//ios/chrome/app/strings",
@@ -27,14 +27,33 @@ source_set("utils") {
     "//ios/chrome/browser/sync",
     "//ios/chrome/browser/tabs",
     "//ios/chrome/browser/ui/commands",
+    "//ios/chrome/browser/ui/settings/google_services/resources:google_services_sync_error",
     "//ui/base",
     "//ui/gfx",
   ]
   frameworks = [ "UIKit.framework" ]
 }
 
+source_set("unit_tests") {
+  configs += [ "//build/config/compiler:enable_arc" ]
+  testonly = true
+  sources = [ "sync_error_infobar_delegate_unittest.mm" ]
+  deps = [
+    ":utils",
+    "//base",
+    "//components/sync/driver",
+    "//ios/chrome/browser/browser_state:test_support",
+    "//ios/chrome/browser/infobars",
+    "//ios/chrome/browser/sync",
+    "//ios/chrome/browser/sync:test_support",
+    "//ios/public/provider/chrome/browser/signin",
+    "//ios/web/public/test",
+    "//testing/gtest",
+    "//third_party/ocmock",
+  ]
+}
+
 source_set("eg2_tests") {
-  defines = [ "CHROME_EARL_GREY_2" ]
   configs += [
     "//build/config/compiler:enable_arc",
     "//build/config/ios:xctest_config",
@@ -52,7 +71,6 @@ source_set("eg2_tests") {
     "//ios/chrome/test/earl_grey:eg_test_support+eg2",
     "//ios/chrome/test/earl_grey:eg_test_support+eg2",
     "//ios/public/provider/chrome/browser/signin:fake_chrome_identity",
-    "//ios/public/provider/chrome/browser/signin:test_support",
     "//ios/testing/earl_grey:eg_test_support+eg2",
     "//ios/third_party/earl_grey2:test_lib",
     "//ios/web/public/test/http_server",

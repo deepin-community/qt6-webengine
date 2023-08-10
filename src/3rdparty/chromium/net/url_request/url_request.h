@@ -11,33 +11,36 @@
 #include <string>
 #include <vector>
 
-#include "base/macros.h"
+#include "base/containers/flat_set.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
-#include "base/optional.h"
-#include "base/strings/string16.h"
 #include "base/supports_user_data.h"
 #include "base/threading/thread_checker.h"
 #include "base/time/time.h"
 #include "net/base/auth.h"
+#include "net/base/completion_repeating_callback.h"
 #include "net/base/idempotency.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/isolation_info.h"
 #include "net/base/load_states.h"
 #include "net/base/load_timing_info.h"
 #include "net/base/net_error_details.h"
+#include "net/base/net_errors.h"
 #include "net/base/net_export.h"
 #include "net/base/network_delegate.h"
-#include "net/base/privacy_mode.h"
 #include "net/base/proxy_server.h"
 #include "net/base/request_priority.h"
 #include "net/base/upload_progress.h"
 #include "net/cookies/canonical_cookie.h"
 #include "net/cookies/site_for_cookies.h"
+#include "net/dns/public/secure_dns_policy.h"
+#include "net/filter/source_stream.h"
 #include "net/http/http_raw_request_headers.h"
 #include "net/http/http_request_headers.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_response_info.h"
 #include "net/log/net_log_event_type.h"
+#include "net/log/net_log_source.h"
 #include "net/log/net_log_with_source.h"
 #include "net/net_buildflags.h"
 #include "net/socket/connection_attempts.h"
@@ -45,6 +48,7 @@
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/url_request/redirect_info.h"
 #include "net/url_request/referrer_policy.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
@@ -126,13 +130,12 @@ class NET_EXPORT URLRequest : public base::SupportsUserData {
     // several times per transaction, e.g. if the connection is retried, after
     // each HTTP auth challenge, or for split HTTP range requests.
     //
-    // If this returns an error, the request fails with the given error.
-    // Otherwise the request continues unimpeded.
-    // Must not return ERR_IO_PENDING.
-    //
-    // TODO(crbug.com/591068): Allow ERR_IO_PENDING for a potentially-slow
-    // CORS-RFC1918 preflight check.
-    virtual int OnConnected(URLRequest* request, const TransportInfo& info);
+    // If this returns an error, the transaction will stop. The transaction
+    // will continue when the |callback| is run. If run with an error, the
+    // transaction will fail.
+    virtual int OnConnected(URLRequest* request,
+                            const TransportInfo& info,
+                            CompletionOnceCallback callback);
 
     // Called upon receiving a redirect.  The delegate may call the request's
     // Cancel method to prevent the redirect from being followed.  Since there
@@ -207,6 +210,9 @@ class NET_EXPORT URLRequest : public base::SupportsUserData {
     virtual ~Delegate() {}
   };
 
+  URLRequest(const URLRequest&) = delete;
+  URLRequest& operator=(const URLRequest&) = delete;
+
   // If destroyed after Start() has been called but while IO is pending,
   // then the request will be effectively canceled and the delegate
   // will not have any more of its methods called.
@@ -280,6 +286,16 @@ class NET_EXPORT URLRequest : public base::SupportsUserData {
     force_ignore_site_for_cookies_ = attach;
   }
 
+  // Indicates whether the top frame party will be considered same-party to the
+  // request URL (regardless of what it is), for the purpose of SameParty
+  // cookies.
+  bool force_ignore_top_frame_party_for_cookies() const {
+    return force_ignore_top_frame_party_for_cookies_;
+  }
+  void set_force_ignore_top_frame_party_for_cookies(bool force) {
+    force_ignore_top_frame_party_for_cookies_ = force;
+  }
+
   // Indicates if the request should be treated as a main frame navigation for
   // SameSite cookie computations.  This flag overrides the IsolationInfo
   // request type associated with fetches from a service worker context.
@@ -319,9 +335,9 @@ class NET_EXPORT URLRequest : public base::SupportsUserData {
   // Note: the initiator can be null for browser-initiated top level
   // navigations. This is different from a unique Origin (e.g. in sandboxed
   // iframes).
-  const base::Optional<url::Origin>& initiator() const { return initiator_; }
+  const absl::optional<url::Origin>& initiator() const { return initiator_; }
   // This method may only be called before Start().
-  void set_initiator(const base::Optional<url::Origin>& initiator);
+  void set_initiator(const absl::optional<url::Origin>& initiator);
 
   // The request method, as an uppercase string.  "GET" is the default value.
   // The request method may only be changed before Start() is called and
@@ -483,7 +499,7 @@ class NET_EXPORT URLRequest : public base::SupportsUserData {
   // Get the SSL connection info.
   const SSLInfo& ssl_info() const { return response_info_.ssl_info; }
 
-  const base::Optional<AuthChallengeInfo>& auth_challenge_info() const;
+  const absl::optional<AuthChallengeInfo>& auth_challenge_info() const;
 
   // Gets timing information related to the request.  Events that have not yet
   // occurred are left uninitialized.  After a second request starts, due to
@@ -529,12 +545,8 @@ class NET_EXPORT URLRequest : public base::SupportsUserData {
   // Access the LOAD_* flags modifying this request (see load_flags.h).
   int load_flags() const { return load_flags_; }
 
-  // Returns PrivacyMode that should be used for the request. Updated every time
-  // the request is redirected.
-  PrivacyMode privacy_mode() const { return privacy_mode_; }
-
-  // Returns whether secure DNS should be disabled for the request.
-  bool disable_secure_dns() const { return disable_secure_dns_; }
+  // Returns the Secure DNS Policy for the request.
+  SecureDnsPolicy secure_dns_policy() const { return secure_dns_policy_; }
 
   void set_maybe_sent_cookies(CookieAccessResultList cookies);
   void set_maybe_stored_cookies(CookieAndLineAccessResultList cookies);
@@ -563,8 +575,9 @@ class NET_EXPORT URLRequest : public base::SupportsUserData {
   // the priority of this request must already be MAXIMUM_PRIORITY.
   void SetLoadFlags(int flags);
 
-  // Sets whether secure DNS should be disabled for the request.
-  void SetDisableSecureDns(bool disable_secure_dns);
+  // Controls the Secure DNS behavior to use when creating the socket for this
+  // request.
+  void SetSecureDnsPolicy(SecureDnsPolicy secure_dns_policy);
 
   // Returns true if the request is "pending" (i.e., if Start() has been called,
   // and the response has not yet been called).
@@ -620,8 +633,8 @@ class NET_EXPORT URLRequest : public base::SupportsUserData {
   // |modified_headers| are changes applied to the request headers after
   // updating them for the redirect.
   void FollowDeferredRedirect(
-      const base::Optional<std::vector<std::string>>& removed_headers,
-      const base::Optional<net::HttpRequestHeaders>& modified_headers);
+      const absl::optional<std::vector<std::string>>& removed_headers,
+      const absl::optional<net::HttpRequestHeaders>& modified_headers);
 
   // One of the following two methods should be called in response to an
   // OnAuthRequired() callback (and only then).
@@ -683,8 +696,7 @@ class NET_EXPORT URLRequest : public base::SupportsUserData {
   }
 
   // The number of bytes in the raw response body (before any decompression,
-  // etc.). This is only available after the final Read completes. Not available
-  // for FTP responses.
+  // etc.). This is only available after the final Read completes.
   int64_t received_response_content_length() const {
     return received_response_content_length_;
   }
@@ -696,14 +708,31 @@ class NET_EXPORT URLRequest : public base::SupportsUserData {
   // Gets the connection attempts made in the process of servicing this
   // URLRequest. Only guaranteed to be valid if called after the request fails
   // or after the response headers are received.
-  void GetConnectionAttempts(ConnectionAttempts* out) const;
-
-  // Gets the over the wire raw header size of the response after https
-  // encryption, 0 for cached responses.
-  int raw_header_size() const { return raw_header_size_; }
+  ConnectionAttempts GetConnectionAttempts() const;
 
   const NetworkTrafficAnnotationTag& traffic_annotation() const {
     return traffic_annotation_;
+  }
+
+  bool Supports(const net::SourceStream::SourceType& type) const {
+    if (!accepted_stream_types_)
+      return true;
+    return accepted_stream_types_->contains(type);
+  }
+
+  const absl::optional<base::flat_set<net::SourceStream::SourceType>>&
+  accepted_stream_types() const {
+    return accepted_stream_types_;
+  }
+
+  void set_accepted_stream_types(
+      const absl::optional<base::flat_set<net::SourceStream::SourceType>>&
+          types) {
+    if (types) {
+      DCHECK(!types->contains(net::SourceStream::SourceType::TYPE_NONE));
+      DCHECK(!types->contains(net::SourceStream::SourceType::TYPE_UNKNOWN));
+    }
+    accepted_stream_types_ = types;
   }
 
   // Sets a callback that will be invoked each time the request is about to
@@ -719,6 +748,10 @@ class NET_EXPORT URLRequest : public base::SupportsUserData {
   // request, the latter will return cached headers, while the callback will be
   // called with a response from the server.
   void SetResponseHeadersCallback(ResponseHeadersCallback callback);
+
+  // Sets a callback that will be invoked each time a 103 Early Hints response
+  // is received from the remote party.
+  void SetEarlyResponseHeadersCallback(ResponseHeadersCallback callback);
 
   // Sets socket tag to be applied to all sockets used to execute this request.
   // Must be set before Start() is called.  Only currently supported for HTTP
@@ -752,9 +785,14 @@ class NET_EXPORT URLRequest : public base::SupportsUserData {
   void set_send_client_certs(bool send_client_certs) {
     send_client_certs_ = send_client_certs;
   }
+  bool send_client_certs() const { return send_client_certs_; }
+
+  bool is_for_websockets() const { return is_for_websockets_; }
 
   void SetIdempotency(Idempotency idempotency) { idempotency_ = idempotency; }
   Idempotency GetIdempotency() const { return idempotency_; }
+
+  static bool DefaultCanUseCookies();
 
   base::WeakPtr<URLRequest> GetWeakPtr();
 
@@ -777,8 +815,8 @@ class NET_EXPORT URLRequest : public base::SupportsUserData {
   // applied to the request headers after updating them for the redirect.
   void Redirect(
       const RedirectInfo& redirect_info,
-      const base::Optional<std::vector<std::string>>& removed_headers,
-      const base::Optional<net::HttpRequestHeaders>& modified_headers);
+      const absl::optional<std::vector<std::string>>& removed_headers,
+      const absl::optional<net::HttpRequestHeaders>& modified_headers);
 
   // Called by URLRequestJob to allow interception when a redirect occurs.
   void NotifyReceivedRedirect(const RedirectInfo& redirect_info,
@@ -797,7 +835,9 @@ class NET_EXPORT URLRequest : public base::SupportsUserData {
              RequestPriority priority,
              Delegate* delegate,
              const URLRequestContext* context,
-             NetworkTrafficAnnotationTag traffic_annotation);
+             NetworkTrafficAnnotationTag traffic_annotation,
+             bool is_for_websockets,
+             absl::optional<net::NetLogSource> net_log_source);
 
   // Resumes or blocks a request paused by the NetworkDelegate::OnBeforeRequest
   // handler. If |blocked| is true, the request is blocked and an error page is
@@ -832,7 +872,8 @@ class NET_EXPORT URLRequest : public base::SupportsUserData {
 
   // These functions delegate to |delegate_|.  See URLRequest::Delegate for the
   // meaning of these functions.
-  int NotifyConnected(const TransportInfo& info);
+  int NotifyConnected(const TransportInfo& info,
+                      CompletionOnceCallback callback);
   void NotifyAuthRequired(std::unique_ptr<AuthChallengeInfo> auth_info);
   void NotifyCertificateRequested(SSLCertRequestInfo* cert_request_info);
   void NotifySSLCertificateError(int net_error,
@@ -840,21 +881,21 @@ class NET_EXPORT URLRequest : public base::SupportsUserData {
                                  bool fatal);
   void NotifyReadCompleted(int bytes_read);
 
-  // These functions delegate to the NetworkDelegate if it is not nullptr.
+  // This function delegates to the NetworkDelegate if it is not nullptr.
   // Otherwise, cookies can be used unless SetDefaultCookiePolicyToBlock() has
   // been called.
-  bool CanGetCookies() const;
   bool CanSetCookie(const net::CanonicalCookie& cookie,
                     CookieOptions* options) const;
-  PrivacyMode DeterminePrivacyMode() const;
 
   // Called just before calling a delegate that may block a request. |type|
   // should be the delegate's event type,
   // e.g. NetLogEventType::NETWORK_DELEGATE_AUTH_REQUIRED.
   void OnCallToDelegate(NetLogEventType type);
   // Called when the delegate lets a request continue.  Also called on
-  // cancellation.
-  void OnCallToDelegateComplete();
+  // cancellation. `error` is an optional error code associated with
+  // completion. It's only for logging purposes, and will not directly cancel
+  // the request if it's a value other than OK.
+  void OnCallToDelegateComplete(int error = OK);
 
   // Records the referrer policy of the given request, bucketed by
   // whether the request is same-origin or not. To save computation,
@@ -865,7 +906,7 @@ class NET_EXPORT URLRequest : public base::SupportsUserData {
   // Contextual information used for this request. Cannot be NULL. This contains
   // most of the dependencies which are shared between requests (disk cache,
   // cookie store, socket pool, etc.)
-  const URLRequestContext* context_;
+  raw_ptr<const URLRequestContext> context_;
 
   // Tracks the time spent in various load states throughout this request.
   NetLogWithSource net_log_;
@@ -879,8 +920,9 @@ class NET_EXPORT URLRequest : public base::SupportsUserData {
   IsolationInfo isolation_info_;
 
   bool force_ignore_site_for_cookies_;
+  bool force_ignore_top_frame_party_for_cookies_;
   bool force_main_frame_for_same_site_cookies_;
-  base::Optional<url::Origin> initiator_;
+  absl::optional<url::Origin> initiator_;
   GURL delegate_redirect_url_;
   std::string method_;  // "GET", "POST", etc. Should be all uppercase.
   std::string referrer_;
@@ -893,12 +935,7 @@ class NET_EXPORT URLRequest : public base::SupportsUserData {
   // Whether the request is allowed to send credentials in general. Set by
   // caller.
   bool allow_credentials_;
-  // Privacy mode for current hop. Based on |allow_credentials_|, |load_flags_|,
-  // and information provided by the NetworkDelegate. Saving cookies can
-  // currently be blocked independently of this field by setting the deprecated
-  // LOAD_DO_NOT_SAVE_COOKIES field in |load_flags_|.
-  PrivacyMode privacy_mode_;
-  bool disable_secure_dns_;
+  SecureDnsPolicy secure_dns_policy_;
 
   CookieAccessResultList maybe_sent_cookies_;
   CookieAndLineAccessResultList maybe_stored_cookies_;
@@ -909,7 +946,9 @@ class NET_EXPORT URLRequest : public base::SupportsUserData {
 
   // Never access methods of the |delegate_| directly. Always use the
   // Notify... methods for this.
-  Delegate* delegate_;
+  raw_ptr<Delegate> delegate_;
+
+  const bool is_for_websockets_;
 
   // Current error status of the job, as a net::Error code. When the job is
   // busy, it is ERR_IO_PENDING. When the job is idle (either completed, or
@@ -979,15 +1018,19 @@ class NET_EXPORT URLRequest : public base::SupportsUserData {
   // The proxy server used for this request, if any.
   ProxyServer proxy_server_;
 
-  // The raw header size of the response.
-  int raw_header_size_;
+  // If not null, the network service will not advertise any stream types
+  // (via Accept-Encoding) that are not listed. Also, it will not attempt
+  // decoding any non-listed stream types.
+  absl::optional<base::flat_set<net::SourceStream::SourceType>>
+      accepted_stream_types_;
 
   const NetworkTrafficAnnotationTag traffic_annotation_;
 
   SocketTag socket_tag_;
 
-  // See Set{Request|Response}HeadersCallback() above for details.
+  // See Set{Request|Response,EarlyResponse}HeadersCallback() above for details.
   RequestHeadersCallback request_headers_callback_;
+  ResponseHeadersCallback early_response_headers_callback_;
   ResponseHeadersCallback response_headers_callback_;
 
   bool upgrade_if_insecure_;
@@ -1000,8 +1043,6 @@ class NET_EXPORT URLRequest : public base::SupportsUserData {
   THREAD_CHECKER(thread_checker_);
 
   base::WeakPtrFactory<URLRequest> weak_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(URLRequest);
 };
 
 }  // namespace net

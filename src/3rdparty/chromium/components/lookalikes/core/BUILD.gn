@@ -16,6 +16,8 @@ jumbo_static_library("core") {
     "//base",
     "//components/pref_registry",
     "//components/prefs:prefs",
+    "//components/reputation/core:core",
+    "//components/reputation/core:proto",
     "//components/security_interstitials/core",
     "//components/security_state/core:features",
     "//components/strings",
@@ -24,6 +26,7 @@ jumbo_static_library("core") {
     "//components/url_formatter/spoof_checks/top_domains:common",
     "//components/url_formatter/spoof_checks/top_domains:top500_domains",
     "//components/url_formatter/spoof_checks/top_domains:top500_domains_header",
+    "//components/version_info:channel",
     "//net",
     "//services/metrics/public/cpp:metrics_cpp",
     "//services/metrics/public/cpp:ukm_builders",
@@ -38,6 +41,8 @@ jumbo_source_set("unit_tests") {
   deps = [
     ":core",
     ":features",
+    "//components/reputation/core",
+    "//components/version_info:channel",
     "//net:test_support",
     "//testing/gtest",
   ]

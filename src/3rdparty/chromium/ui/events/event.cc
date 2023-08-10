@@ -17,7 +17,6 @@
 #include "base/notreached.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/strcat.h"
-#include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
@@ -30,8 +29,8 @@
 #include "ui/events/keycodes/keyboard_code_conversion.h"
 #include "ui/gfx/geometry/point3_f.h"
 #include "ui/gfx/geometry/point_conversions.h"
-#include "ui/gfx/transform.h"
-#include "ui/gfx/transform_util.h"
+#include "ui/gfx/geometry/transform.h"
+#include "ui/gfx/geometry/transform_util.h"
 
 #if defined(USE_OZONE)
 #include "ui/base/ui_base_features.h"                               // nogncheck
@@ -39,7 +38,7 @@
 #include "ui/events/ozone/layout/keyboard_layout_engine_manager.h"  // nogncheck
 #endif
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 #include "ui/events/keycodes/platform_key_map_win.h"
 #endif
 
@@ -69,6 +68,7 @@ SourceEventType EventTypeToLatencySourceEventType(EventType type) {
     case ET_GESTURE_PINCH_BEGIN:
     case ET_GESTURE_PINCH_END:
     case ET_GESTURE_PINCH_UPDATE:
+    case ET_GESTURE_SHORT_PRESS:
     case ET_GESTURE_LONG_PRESS:
     case ET_GESTURE_LONG_TAP:
     case ET_GESTURE_SWIPE:
@@ -152,6 +152,11 @@ uint32_t ScanCodeFromNative(const PlatformEvent& native_event) {
   return event->scan_code();
 }
 #endif  // defined(USE_OZONE)
+
+bool IsNearZero(const float num) {
+  // Epsilon of 1e-10 at 0.
+  return (std::fabs(num) < 1e-10);
+}
 
 }  // namespace
 
@@ -337,11 +342,9 @@ Event::Event(const PlatformEvent& native_event, EventType type, int flags)
   ComputeEventLatencyOS(native_event);
 
 #if defined(USE_OZONE)
-  if (features::IsUsingOzonePlatform()) {
-    source_device_id_ = native_event->source_device_id();
-    if (auto* properties = native_event->properties())
-      properties_ = std::make_unique<Properties>(*properties);
-  }
+  source_device_id_ = native_event->source_device_id();
+  if (auto* properties = native_event->properties())
+    properties_ = std::make_unique<Properties>(*properties);
 #endif
 }
 
@@ -369,7 +372,6 @@ Event& Event::operator=(const Event& rhs) {
     native_event_ = CopyNativeEvent(rhs.native_event_);
     delete_native_event_ = true;
     cancelable_ = rhs.cancelable_;
-    target_ = rhs.target_;
     phase_ = rhs.phase_;
     result_ = rhs.result_;
     source_device_id_ = rhs.source_device_id_;
@@ -451,7 +453,7 @@ std::string LocatedEvent::ToString() const {
 MouseEvent::MouseEvent(const PlatformEvent& native_event)
     : LocatedEvent(native_event),
       changed_button_flags_(GetChangedMouseButtonFlagsFromNative(native_event)),
-#if defined(OS_CHROMEOS) || defined(OS_LINUX)
+#if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_LINUX)
       movement_(GetMouseMovementFromNative(native_event)),
 #endif
       pointer_details_(GetMousePointerDetailsFromNative(native_event)) {
@@ -619,7 +621,8 @@ void MouseEvent::SetClickCount(int click_count) {
 std::string MouseEvent::ToString() const {
   return base::StrCat(
       {LocatedEvent::ToString(), " flags ",
-       base::JoinString(make_span(MouseEventFlagsNames(flags())), " | ")});
+       base::JoinString(base::make_span(MouseEventFlagsNames(flags())),
+                        " | ")});
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -658,7 +661,7 @@ MouseWheelEvent::MouseWheelEvent(
     base::TimeTicks time_stamp,
     int flags,
     int changed_button_flags,
-    const base::Optional<gfx::Vector2d> tick_120ths)
+    const absl::optional<gfx::Vector2d> tick_120ths)
     : MouseEvent(ET_UNKNOWN,
                  location,
                  root_location,
@@ -697,8 +700,8 @@ MouseWheelEvent::MouseWheelEvent(const gfx::Vector2d& offset,
 
 MouseWheelEvent::~MouseWheelEvent() = default;
 
-#if defined(OS_WIN)
-// This value matches windows WHEEL_DELTA.
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_FUCHSIA)
+// This value matches Windows and Fuchsia WHEEL_DELTA.
 // static
 const int MouseWheelEvent::kWheelDelta = 120;
 #else
@@ -760,13 +763,39 @@ void TouchEvent::UpdateForRootTransform(
     const gfx::Transform& inverted_local_transform) {
   LocatedEvent::UpdateForRootTransform(inverted_root_transform,
                                        inverted_local_transform);
-  gfx::DecomposedTransform decomp;
-  bool success = gfx::DecomposeTransform(&decomp, inverted_root_transform);
-  DCHECK(success);
-  if (decomp.scale[0])
-    pointer_details_.radius_x *= decomp.scale[0];
-  if (decomp.scale[1])
-    pointer_details_.radius_y *= decomp.scale[1];
+
+  // We could create a vector and then rely on Transform::TransformVector , but
+  // that ends up creating a 4 dimensional vector and applying a 4 dim
+  // transform. Really what we're looking at is only in the (x,y) plane, and
+  // given that we can run this relatively frequently we will inline execute the
+  // matrix here.
+  const auto& matrix = inverted_root_transform.matrix();
+  const double new_x = fabs(pointer_details_.radius_x * matrix.rc(0, 0) +
+                            pointer_details_.radius_y * matrix.rc(0, 1));
+  const double new_y = fabs(pointer_details_.radius_x * matrix.rc(1, 0) +
+                            pointer_details_.radius_y * matrix.rc(1, 1));
+  pointer_details_.radius_x = new_x;
+  pointer_details_.radius_y = new_y;
+
+  // for stylus touches, tilt needs to be rotated appropriately. We don't handle
+  // screen rotations other than 0/90/180/270, but those should be handled and
+  // translated appropriately. Other rotations leave tilts untouched for now. We
+  // add a small check that tilt is set at all before looking through this
+  // section.
+  if (!IsNearZero(pointer_details_.tilt_x) ||
+      !IsNearZero(pointer_details_.tilt_y)) {
+    if (IsNearZero(matrix.rc(0, 1)) && IsNearZero(matrix.rc(1, 0))) {
+      pointer_details_.tilt_x *= std::copysign(1, matrix.rc(0, 0));
+      pointer_details_.tilt_y *= std::copysign(1, matrix.rc(1, 1));
+    } else if (IsNearZero(matrix.rc(0, 0)) && IsNearZero(matrix.rc(1, 1))) {
+      double new_tilt_x =
+          pointer_details_.tilt_y * std::copysign(1, matrix.rc(0, 1));
+      double new_tilt_y =
+          pointer_details_.tilt_x * std::copysign(1, matrix.rc(1, 0));
+      pointer_details_.tilt_x = new_tilt_x;
+      pointer_details_.tilt_y = new_tilt_y;
+    }
+  }
 }
 
 void TouchEvent::DisableSynchronousHandling() {
@@ -795,7 +824,7 @@ float TouchEvent::ComputeRotationAngle() const {
 
 // static
 KeyEvent* KeyEvent::last_key_event_ = nullptr;
-#if defined(USE_X11) || defined(USE_OZONE)
+#if defined(USE_OZONE)
 KeyEvent* KeyEvent::last_ibus_key_event_ = nullptr;
 #endif
 
@@ -810,6 +839,10 @@ KeyEvent::KeyEvent(const PlatformEvent& native_event, int event_flags)
 #endif  // defined(USE_OZONE)
       code_(CodeFromNative(native_event)),
       is_char_(IsCharFromNative(native_event)) {
+#if defined(USE_OZONE)
+  DCHECK(native_event->IsKeyEvent());
+  key_ = native_event->AsKeyEvent()->key_;
+#endif
   InitializeNative();
 }
 
@@ -840,7 +873,7 @@ KeyEvent::KeyEvent(EventType type,
       is_char_(is_char),
       key_(key) {}
 
-KeyEvent::KeyEvent(base::char16 character,
+KeyEvent::KeyEvent(char16_t character,
                    KeyboardCode key_code,
                    DomCode code,
                    int flags,
@@ -878,6 +911,20 @@ KeyEvent& KeyEvent::operator=(const KeyEvent& rhs) {
 
 KeyEvent::~KeyEvent() = default;
 
+// static
+// For compatibility, this is enabled by default.
+bool KeyEvent::synthesize_key_repeat_enabled_ = true;
+
+// static
+bool KeyEvent::IsSynthesizeKeyRepeatEnabled() {
+  return synthesize_key_repeat_enabled_;
+}
+
+// static
+void KeyEvent::SetSynthesizeKeyRepeatEnabled(bool enabled) {
+  synthesize_key_repeat_enabled_ = enabled;
+}
+
 void KeyEvent::InitializeNative() {
   latency()->AddLatencyNumberWithTimestamp(
       INPUT_EVENT_LATENCY_ORIGINAL_COMPONENT, time_stamp());
@@ -885,12 +932,12 @@ void KeyEvent::InitializeNative() {
 
   // Check if this is a key repeat. This must be called before initial flags
   // processing, e.g: NormalizeFlags(), to avoid issues like crbug.com/1069690.
-  if (IsRepeated(GetLastKeyEvent()))
+  if (synthesize_key_repeat_enabled_ && IsRepeated(GetLastKeyEvent()))
     set_flags(flags() | EF_IS_REPEAT);
 
-#if defined(USE_X11)
+#if BUILDFLAG(IS_LINUX)
   NormalizeFlags();
-#elif defined(OS_WIN)
+#elif BUILDFLAG(IS_WIN)
   // Only Windows has native character events.
   if (is_char_) {
     key_ = DomKey::FromCharacter(static_cast<int32_t>(native_event().wParam));
@@ -916,17 +963,19 @@ void KeyEvent::ApplyLayout() const {
       return;
     }
   }
-  KeyboardCode dummy_key_code;
 
+  if (key_ != DomKey::NONE)
+    return;
+
+  KeyboardCode dummy_key_code;
 #if defined(USE_OZONE)
-  if (features::IsUsingOzonePlatform() &&
-      KeyboardLayoutEngineManager::GetKeyboardLayoutEngine()->Lookup(
+  if (KeyboardLayoutEngineManager::GetKeyboardLayoutEngine()->Lookup(
           code, flags(), &key_, &dummy_key_code)) {
     return;
   }
 #endif
 
-#if !defined(OS_WIN)
+#if !BUILDFLAG(IS_WIN)
   // Native Windows character events always have is_char_ == true,
   // so this is a synthetic or native keystroke event.
   // Therefore, perform only the fallback action.
@@ -969,7 +1018,7 @@ bool KeyEvent::IsRepeated(KeyEvent** last_key_event) {
   DCHECK(last);
   bool is_repeat = false;
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   if (HasNativeEvent()) {
     // Bit 30 of lParam represents the "previous key state". If set, the key
     // was already down, therefore this is an auto-repeat.
@@ -999,11 +1048,11 @@ bool KeyEvent::IsRepeated(KeyEvent** last_key_event) {
 }
 
 KeyEvent** KeyEvent::GetLastKeyEvent() {
-#if defined(USE_X11) || defined(USE_OZONE)
+#if defined(USE_OZONE)
   // Use a different static variable for key events that have non standard
-  // state masks as it may be reposted by an IME. IBUS-GTK uses this field
-  // to detect the re-posted event for example. crbug.com/385873.
-  return properties() && properties()->contains(kPropertyKeyboardIBusFlag)
+  // state masks as it may be reposted by an IME. IBUS-GTK and fcitx-GTK uses
+  // this field to detect the re-posted event for example. crbug.com/385873.
+  return properties() && properties()->contains(kPropertyKeyboardImeFlag)
              ? &last_ibus_key_event_
              : &last_key_event_;
 #else
@@ -1018,7 +1067,7 @@ DomKey KeyEvent::GetDomKey() const {
   return key_;
 }
 
-base::char16 KeyEvent::GetCharacter() const {
+char16_t KeyEvent::GetCharacter() const {
   // Determination of key_ may be done lazily.
   if (key_ == DomKey::NONE)
     ApplyLayout();
@@ -1026,7 +1075,7 @@ base::char16 KeyEvent::GetCharacter() const {
     // Historically ui::KeyEvent has held only BMP characters.
     // Until this explicitly changes, require |key_| to hold a BMP character.
     DomKey::Base utf32_character = key_.ToCharacter();
-    base::char16 ucs2_character = static_cast<base::char16>(utf32_character);
+    char16_t ucs2_character = static_cast<char16_t>(utf32_character);
     DCHECK_EQ(static_cast<DomKey::Base>(ucs2_character), utf32_character);
     // Check if the control character is down. Note that ALTGR is represented
     // on Windows as CTRL|ALT, so we need to make sure that is not set.
@@ -1044,7 +1093,7 @@ base::char16 KeyEvent::GetCharacter() const {
   return 0;
 }
 
-base::char16 KeyEvent::GetText() const {
+char16_t KeyEvent::GetText() const {
   if ((flags() & EF_CONTROL_DOWN) != 0) {
     DomKey key;
     KeyboardCode key_code;
@@ -1054,14 +1103,14 @@ base::char16 KeyEvent::GetText() const {
   return GetUnmodifiedText();
 }
 
-base::char16 KeyEvent::GetUnmodifiedText() const {
+char16_t KeyEvent::GetUnmodifiedText() const {
   if (!is_char_ && (key_code_ == VKEY_RETURN))
     return '\r';
   return GetCharacter();
 }
 
 bool KeyEvent::IsUnicodeKeyCode() const {
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   if (!IsAltDown())
     return false;
   const int key = key_code();
@@ -1105,7 +1154,7 @@ std::string KeyEvent::ToString() const {
   return base::StrCat(
       {Event::ToString(), " key ", base::StringPrintf("(0x%.4x)", key_code_),
        " flags ",
-       base::JoinString(make_span(KeyEventFlagsNames(flags())), " | ")});
+       base::JoinString(base::make_span(KeyEventFlagsNames(flags())), " | ")});
 }
 
 KeyboardCode KeyEvent::GetLocatedWindowsKeyboardCode() const {

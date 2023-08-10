@@ -7,11 +7,14 @@
 
 #include "base/base_export.h"
 #include "base/check_op.h"
-#include "base/macros.h"
+#include "base/dcheck_is_on.h"
 #include "base/synchronization/lock_impl.h"
 #include "base/thread_annotations.h"
-#include "base/threading/platform_thread.h"
 #include "build/build_config.h"
+
+#if DCHECK_IS_ON()
+#include "base/threading/platform_thread_ref.h"
+#endif
 
 namespace base {
 
@@ -23,6 +26,10 @@ class LOCKABLE BASE_EXPORT Lock {
 #if !DCHECK_IS_ON()
   // Optimized wrapper implementation
   Lock() : lock_() {}
+
+  Lock(const Lock&) = delete;
+  Lock& operator=(const Lock&) = delete;
+
   ~Lock() {}
 
   void Acquire() EXCLUSIVE_LOCK_FUNCTION() { lock_.Lock(); }
@@ -66,12 +73,12 @@ class LOCKABLE BASE_EXPORT Lock {
   // Whether Lock mitigates priority inversion when used from different thread
   // priorities.
   static bool HandlesMultipleThreadPriorities() {
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
     // Windows mitigates priority inversion by randomly boosting the priority of
     // ready threads.
     // https://msdn.microsoft.com/library/windows/desktop/ms684831.aspx
     return true;
-#elif defined(OS_POSIX) || defined(OS_FUCHSIA)
+#elif BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
     // POSIX mitigates priority inversion by setting the priority of a thread
     // holding a Lock to the maximum priority of any other thread waiting on it.
     return internal::LockImpl::PriorityInheritanceAvailable();
@@ -102,25 +109,27 @@ class LOCKABLE BASE_EXPORT Lock {
 
   // Platform specific underlying lock implementation.
   internal::LockImpl lock_;
-
-  DISALLOW_COPY_AND_ASSIGN(Lock);
 };
 
 // A helper class that acquires the given Lock while the AutoLock is in scope.
 using AutoLock = internal::BasicAutoLock<Lock>;
+
+// A helper class that tries to acquire the given Lock while the AutoTryLock is
+// in scope.
+using AutoTryLock = internal::BasicAutoTryLock<Lock>;
 
 // AutoUnlock is a helper that will Release() the |lock| argument in the
 // constructor, and re-Acquire() it in the destructor.
 using AutoUnlock = internal::BasicAutoUnlock<Lock>;
 
 // Like AutoLock but is a no-op when the provided Lock* is null. Inspired from
-// absl::MutexLockMaybe. Use this instead of base::Optional<base::AutoLock> to
+// absl::MutexLockMaybe. Use this instead of absl::optional<base::AutoLock> to
 // get around -Wthread-safety-analysis warnings for conditional locking.
 using AutoLockMaybe = internal::BasicAutoLockMaybe<Lock>;
 
 // Like AutoLock but permits Release() of its mutex before destruction.
 // Release() may be called at most once. Inspired from
-// absl::ReleasableMutexLock. Use this instead of base::Optional<base::AutoLock>
+// absl::ReleasableMutexLock. Use this instead of absl::optional<base::AutoLock>
 // to get around -Wthread-safety-analysis warnings for AutoLocks that are
 // explicitly released early (prefer proper scoping to this).
 using ReleasableAutoLock = internal::BasicReleasableAutoLock<Lock>;

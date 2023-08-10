@@ -10,8 +10,8 @@
 #include <vector>
 
 #include "base/gtest_prod_util.h"
-#include "base/macros.h"
-#include "base/scoped_observer.h"
+#include "base/memory/raw_ptr.h"
+#include "base/scoped_observation.h"
 #include "components/sync_device_info/device_info_tracker.h"
 #include "content/public/browser/notification_registrar.h"
 #include "extensions/browser/browser_context_keyed_api_factory.h"
@@ -42,6 +42,11 @@ class SignedInDevicesChangeObserver
  public:
   SignedInDevicesChangeObserver(const std::string& extension_id,
                                 Profile* profile);
+
+  SignedInDevicesChangeObserver(const SignedInDevicesChangeObserver&) = delete;
+  SignedInDevicesChangeObserver& operator=(
+      const SignedInDevicesChangeObserver&) = delete;
+
   virtual ~SignedInDevicesChangeObserver();
 
   void OnDeviceInfoChange() override;
@@ -52,10 +57,8 @@ class SignedInDevicesChangeObserver
 
  private:
   std::string extension_id_;
-  Profile* const profile_;
+  const raw_ptr<Profile> profile_;
   content::NotificationRegistrar registrar_;
-
-  DISALLOW_COPY_AND_ASSIGN(SignedInDevicesChangeObserver);
 };
 
 class SignedInDevicesManager : public BrowserContextKeyedAPI,
@@ -65,6 +68,10 @@ class SignedInDevicesManager : public BrowserContextKeyedAPI,
   // Default constructor used for testing.
   SignedInDevicesManager();
   explicit SignedInDevicesManager(content::BrowserContext* context);
+
+  SignedInDevicesManager(const SignedInDevicesManager&) = delete;
+  SignedInDevicesManager& operator=(const SignedInDevicesManager&) = delete;
+
   ~SignedInDevicesManager() override;
 
   // BrowserContextKeyedAPI implementation.
@@ -92,16 +99,14 @@ class SignedInDevicesManager : public BrowserContextKeyedAPI,
 
   void RemoveChangeObserverForExtension(const std::string& extension_id);
 
-  Profile* const profile_ = nullptr;
+  const raw_ptr<Profile> profile_ = nullptr;
   std::vector<std::unique_ptr<SignedInDevicesChangeObserver>> change_observers_;
 
   // Listen to extension unloaded notification.
-  ScopedObserver<ExtensionRegistry, ExtensionRegistryObserver>
-      extension_registry_observer_{this};
+  base::ScopedObservation<ExtensionRegistry, ExtensionRegistryObserver>
+      extension_registry_observation_{this};
 
   FRIEND_TEST_ALL_PREFIXES(SignedInDevicesManager, UpdateListener);
-
-  DISALLOW_COPY_AND_ASSIGN(SignedInDevicesManager);
 };
 
 }  // namespace extensions

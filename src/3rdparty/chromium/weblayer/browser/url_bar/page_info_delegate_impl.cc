@@ -18,7 +18,7 @@
 #include "weblayer/browser/stateful_ssl_host_state_delegate_factory.h"
 #include "weblayer/browser/subresource_filter_profile_context_factory.h"
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 #include "weblayer/browser/weblayer_impl_android.h"
 #endif
 
@@ -29,8 +29,8 @@ PageInfoDelegateImpl::PageInfoDelegateImpl(content::WebContents* web_contents)
   DCHECK(web_contents_);
 }
 
-permissions::ChooserContextBase* PageInfoDelegateImpl::GetChooserContext(
-    ContentSettingsType type) {
+permissions::ObjectPermissionContextBase*
+PageInfoDelegateImpl::GetChooserContext(ContentSettingsType type) {
   // TODO(crbug.com/1052375): Once WebLayer has USB and Bluetooth support,
   // add more logic here.
   return nullptr;
@@ -44,15 +44,14 @@ PageInfoDelegateImpl::GetPasswordProtectionService() const {
 }
 
 void PageInfoDelegateImpl::OnUserActionOnPasswordUi(
-    content::WebContents* web_contents,
     safe_browsing::WarningAction action) {
   NOTREACHED();
 }
 
-base::string16 PageInfoDelegateImpl::GetWarningDetailText() {
+std::u16string PageInfoDelegateImpl::GetWarningDetailText() {
   // TODO(crbug.com/1052375): Implement.
   NOTREACHED();
-  return base::string16();
+  return std::u16string();
 }
 #endif
 
@@ -60,10 +59,10 @@ permissions::PermissionResult PageInfoDelegateImpl::GetPermissionStatus(
     ContentSettingsType type,
     const GURL& site_url) {
   return PermissionManagerFactory::GetForBrowserContext(GetBrowserContext())
-      ->GetPermissionStatus(type, site_url, site_url);
+      ->GetPermissionStatusForDisplayOnSettingsUI(type, site_url);
 }
 
-#if !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
 bool PageInfoDelegateImpl::CreateInfoBarDelegate() {
   NOTREACHED();
   return false;
@@ -72,6 +71,45 @@ bool PageInfoDelegateImpl::CreateInfoBarDelegate() {
 void PageInfoDelegateImpl::ShowSiteSettings(const GURL& site_url) {
   // TODO(crbug.com/1052375): Implement once site settings code has been
   // componentized.
+  NOTREACHED();
+}
+
+void PageInfoDelegateImpl::OpenCookiesDialog() {
+  // Used for desktop only. Doesn't need implementation for WebLayer.
+  NOTREACHED();
+}
+
+void PageInfoDelegateImpl::OpenCertificateDialog(
+    net::X509Certificate* certificate) {
+  // Used for desktop only. Doesn't need implementation for WebLayer.
+  NOTREACHED();
+}
+
+void PageInfoDelegateImpl::OpenConnectionHelpCenterPage(
+    const ui::Event& event) {
+  // Used for desktop only. Doesn't need implementation for WebLayer.
+  NOTREACHED();
+}
+
+void PageInfoDelegateImpl::OpenSafetyTipHelpCenterPage() {
+  // Used for desktop only. Doesn't need implementation for WebLayer.
+  NOTREACHED();
+}
+
+void PageInfoDelegateImpl::OpenContentSettingsExceptions(
+    ContentSettingsType content_settings_type) {
+  // Used for desktop only. Doesn't need implementation for WebLayer.
+  NOTREACHED();
+}
+
+void PageInfoDelegateImpl::OnPageInfoActionOccurred(
+    PageInfo::PageInfoAction action) {
+  // Used for desktop only. Doesn't need implementation for WebLayer.
+  NOTREACHED();
+}
+
+void PageInfoDelegateImpl::OnUIClosing() {
+  // Used for desktop only. Doesn't need implementation for WebLayer.
   NOTREACHED();
 }
 #endif
@@ -123,8 +161,8 @@ PageInfoDelegateImpl::GetPageSpecificContentSettingsDelegate() {
   return std::make_unique<PageSpecificContentSettingsDelegate>(web_contents_);
 }
 
-#if defined(OS_ANDROID)
-const base::string16 PageInfoDelegateImpl::GetClientApplicationName() {
+#if BUILDFLAG(IS_ANDROID)
+const std::u16string PageInfoDelegateImpl::GetClientApplicationName() {
   return weblayer::GetClientApplicationName();
 }
 #endif

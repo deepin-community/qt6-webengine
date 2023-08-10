@@ -34,17 +34,28 @@ grit("webrtc_logs_resources") {
 }
 
 js_type_check("closure_compile") {
+  closure_flags = default_closure_args + mojom_js_args + [
+                    "js_module_root=" + rebase_path(".", root_build_dir),
+                    "js_module_root=" + rebase_path(
+                            "$root_gen_dir/mojom-webui/chrome/browser/media/history",
+                            root_build_dir),
+                    "js_module_root=" + rebase_path(
+                            "$root_gen_dir/mojom-webui/chrome/browser/media/",
+                            root_build_dir),
+                    "js_module_root=" + rebase_path(
+                            "$root_gen_dir/mojom-webui/services/media_session/public/mojom/",
+                            root_build_dir),
+                  ]
   deps = [
     ":media_data_table",
     ":media_engagement",
-    ":media_feeds",
     ":media_history",
   ]
 }
 
 js_library("media_engagement") {
   deps = [
-    "//chrome/browser/media:mojo_bindings_js_library_for_compile",
+    "//chrome/browser/media:mojo_bindings_webui_js",
     "//ui/webui/resources/js:assert.m",
     "//ui/webui/resources/js:promise_resolver.m",
     "//ui/webui/resources/js:util.m",
@@ -54,22 +65,12 @@ js_library("media_engagement") {
 js_library("media_history") {
   deps = [
     ":media_data_table",
-    "//chrome/browser/media:mojo_bindings_js_library_for_compile",
+    "//chrome/browser/media:mojo_bindings_webui_js",
     "//ui/webui/resources/js:assert.m",
     "//ui/webui/resources/js:promise_resolver.m",
     "//ui/webui/resources/js:util.m",
     "//ui/webui/resources/js/cr:ui.m",
-    "//ui/webui/resources/js/cr/ui:tabs.m",
-  ]
-}
-
-js_library("media_feeds") {
-  deps = [
-    ":media_data_table",
-    "//chrome/browser/media/feeds:mojo_bindings_js_library_for_compile",
-    "//ui/webui/resources/js:assert.m",
-    "//ui/webui/resources/js:promise_resolver.m",
-    "//ui/webui/resources/js:util.m",
+    "//ui/webui/resources/js/cr/ui:tabs",
   ]
 }
 

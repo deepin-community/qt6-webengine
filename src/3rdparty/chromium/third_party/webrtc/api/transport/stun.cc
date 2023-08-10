@@ -31,7 +31,6 @@ namespace cricket {
 namespace {
 
 const int k127Utf8CharactersLengthInBytes = 508;
-const int kDefaultMaxAttributeLength = 508;
 const int kMessageIntegrityAttributeLength = 20;
 const int kTheoreticalMaximumAttributeLength = 65535;
 
@@ -68,12 +67,6 @@ bool LengthValid(int type, int length) {
     case STUN_ATTR_SOFTWARE:
       return length <=
              k127Utf8CharactersLengthInBytes;  // RFC 8489 section 14.14
-    case STUN_ATTR_ORIGIN:
-      // 0x802F is unassigned by IANA.
-      // RESPONSE-ORIGIN is defined in RFC 5780 section 7.3, but does not
-      // specify a maximum length. It's an URL, so return an arbitrary
-      // restriction.
-      return length <= kDefaultMaxAttributeLength;
     case STUN_ATTR_DATA:
       // No length restriction in RFC; it's the content of an UDP datagram,
       // which in theory can be up to 65.535 bytes.
@@ -83,7 +76,7 @@ bool LengthValid(int type, int length) {
       // Return an arbitrary restriction for all other types.
       return length <= kTheoreticalMaximumAttributeLength;
   }
-  RTC_NOTREACHED();
+  RTC_DCHECK_NOTREACHED();
   return true;
 }
 
@@ -94,7 +87,6 @@ const char STUN_ERROR_REASON_BAD_REQUEST[] = "Bad Request";
 const char STUN_ERROR_REASON_UNAUTHORIZED[] = "Unauthorized";
 const char STUN_ERROR_REASON_UNKNOWN_ATTRIBUTE[] = "Unknown Attribute";
 const char STUN_ERROR_REASON_FORBIDDEN[] = "Forbidden";
-const char STUN_ERROR_REASON_STALE_CREDENTIALS[] = "Stale Credentials";
 const char STUN_ERROR_REASON_ALLOCATION_MISMATCH[] = "Allocation Mismatch";
 const char STUN_ERROR_REASON_STALE_NONCE[] = "Stale Nonce";
 const char STUN_ERROR_REASON_WRONG_CREDENTIALS[] = "Wrong Credentials";
@@ -246,6 +238,31 @@ const StunUInt16ListAttribute* StunMessage::GetUnknownAttributes() const {
       GetAttribute(STUN_ATTR_UNKNOWN_ATTRIBUTES));
 }
 
+StunMessage::IntegrityStatus StunMessage::ValidateMessageIntegrity(
+    const std::string& password) {
+  password_ = password;
+  if (GetByteString(STUN_ATTR_MESSAGE_INTEGRITY)) {
+    if (ValidateMessageIntegrityOfType(
+            STUN_ATTR_MESSAGE_INTEGRITY, kStunMessageIntegritySize,
+            buffer_.c_str(), buffer_.size(), password)) {
+      integrity_ = IntegrityStatus::kIntegrityOk;
+    } else {
+      integrity_ = IntegrityStatus::kIntegrityBad;
+    }
+  } else if (GetByteString(STUN_ATTR_GOOG_MESSAGE_INTEGRITY_32)) {
+    if (ValidateMessageIntegrityOfType(
+            STUN_ATTR_GOOG_MESSAGE_INTEGRITY_32, kStunMessageIntegrity32Size,
+            buffer_.c_str(), buffer_.size(), password)) {
+      integrity_ = IntegrityStatus::kIntegrityOk;
+    } else {
+      integrity_ = IntegrityStatus::kIntegrityBad;
+    }
+  } else {
+    integrity_ = IntegrityStatus::kNoIntegrity;
+  }
+  return integrity_;
+}
+
 bool StunMessage::ValidateMessageIntegrity(const char* data,
                                            size_t size,
                                            const std::string& password) {
@@ -353,11 +370,6 @@ bool StunMessage::AddMessageIntegrity(const std::string& password) {
                                    password.size());
 }
 
-bool StunMessage::AddMessageIntegrity(const char* key, size_t keylen) {
-  return AddMessageIntegrityOfType(STUN_ATTR_MESSAGE_INTEGRITY,
-                                   kStunMessageIntegritySize, key, keylen);
-}
-
 bool StunMessage::AddMessageIntegrity32(absl::string_view password) {
   return AddMessageIntegrityOfType(STUN_ATTR_GOOG_MESSAGE_INTEGRITY_32,
                                    kStunMessageIntegrity32Size, password.data(),
@@ -395,6 +407,8 @@ bool StunMessage::AddMessageIntegrityOfType(int attr_type,
 
   // Insert correct HMAC into the attribute.
   msg_integrity_attr->CopyBytes(hmac, attr_size);
+  password_.assign(key, keylen);
+  integrity_ = IntegrityStatus::kIntegrityOk;
   return true;
 }
 
@@ -473,6 +487,9 @@ bool StunMessage::AddFingerprint() {
 }
 
 bool StunMessage::Read(ByteBufferReader* buf) {
+  // Keep a copy of the buffer data around for later verification.
+  buffer_.assign(buf->Data(), buf->Length());
+
   if (!buf->ReadUInt16(&type_)) {
     return false;
   }
@@ -596,8 +613,6 @@ StunAttributeValueType StunMessage::GetAttributeValueType(int type) const {
       return STUN_VALUE_ADDRESS;
     case STUN_ATTR_FINGERPRINT:
       return STUN_VALUE_UINT32;
-    case STUN_ATTR_ORIGIN:
-      return STUN_VALUE_BYTE_STRING;
     case STUN_ATTR_RETRANSMIT_COUNT:
       return STUN_VALUE_UINT32;
     case STUN_ATTR_GOOG_LAST_ICE_CHECK_RECEIVED:

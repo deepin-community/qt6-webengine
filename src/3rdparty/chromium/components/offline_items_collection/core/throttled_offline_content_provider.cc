@@ -19,7 +19,7 @@ const int kDelayBetweenUpdatesMs = 1000;
 ThrottledOfflineContentProvider::ThrottledOfflineContentProvider(
     OfflineContentProvider* provider)
     : ThrottledOfflineContentProvider(
-          base::TimeDelta::FromMilliseconds(kDelayBetweenUpdatesMs),
+          base::Milliseconds(kDelayBetweenUpdatesMs),
           provider) {}
 
 ThrottledOfflineContentProvider::ThrottledOfflineContentProvider(
@@ -30,7 +30,7 @@ ThrottledOfflineContentProvider::ThrottledOfflineContentProvider(
       update_queued_(false),
       wrapped_provider_(provider) {
   DCHECK(wrapped_provider_);
-  observation_.Observe(wrapped_provider_);
+  observation_.Observe(wrapped_provider_.get());
 }
 
 ThrottledOfflineContentProvider::~ThrottledOfflineContentProvider() = default;
@@ -86,7 +86,7 @@ void ThrottledOfflineContentProvider::OnGetAllItemsDone(
 
 void ThrottledOfflineContentProvider::OnGetItemByIdDone(
     SingleItemCallback callback,
-    const base::Optional<OfflineItem>& item) {
+    const absl::optional<OfflineItem>& item) {
   if (item.has_value())
     UpdateItemIfPresent(item.value());
   std::move(callback).Run(item);
@@ -113,7 +113,7 @@ void ThrottledOfflineContentProvider::RenameItem(const ContentId& id,
 
 void ThrottledOfflineContentProvider::ChangeSchedule(
     const ContentId& id,
-    base::Optional<OfflineItemSchedule> schedule) {
+    absl::optional<OfflineItemSchedule> schedule) {
   wrapped_provider_->ChangeSchedule(id, std::move(schedule));
 }
 
@@ -129,8 +129,8 @@ void ThrottledOfflineContentProvider::OnItemRemoved(const ContentId& id) {
 
 void ThrottledOfflineContentProvider::OnItemUpdated(
     const OfflineItem& item,
-    const base::Optional<UpdateDelta>& update_delta) {
-  base::Optional<UpdateDelta> merged = update_delta;
+    const absl::optional<UpdateDelta>& update_delta) {
+  absl::optional<UpdateDelta> merged = update_delta;
   if (updates_.find(item.id) != updates_.end()) {
     merged = UpdateDelta::MergeUpdates(updates_[item.id].second, update_delta);
   }

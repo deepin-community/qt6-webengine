@@ -129,7 +129,6 @@ bool DoUnwind(WireMessage* msg, UnwindingMetadata* metadata, AllocRecord* out) {
     PERFETTO_DLOG("Unable to construct unwindstack::Regs");
     unwindstack::FrameData frame_data{};
     frame_data.function_name = "ERROR READING REGISTERS";
-    frame_data.map_name = "ERROR";
 
     out->frames.clear();
     out->build_ids.clear();
@@ -147,8 +146,8 @@ bool DoUnwind(WireMessage* msg, UnwindingMetadata* metadata, AllocRecord* out) {
   unwindstack::Unwinder unwinder(kMaxFrames, &metadata->fd_maps, regs.get(),
                                  mems);
 #if PERFETTO_BUILDFLAG(PERFETTO_ANDROID_BUILD)
-  unwinder.SetJitDebug(metadata->jit_debug.get());
-  unwinder.SetDexFiles(metadata->dex_files.get());
+  unwinder.SetJitDebug(metadata->GetJitDebug(regs->Arch()));
+  unwinder.SetDexFiles(metadata->GetDexFiles(regs->Arch()));
 #endif
   // Suppress incorrect "variable may be uninitialized" error for if condition
   // after this loop. error_code = LastErrorCode gets run at least once.
@@ -168,8 +167,8 @@ bool DoUnwind(WireMessage* msg, UnwindingMetadata* metadata, AllocRecord* out) {
       ReadFromRawData(regs.get(), alloc_metadata->register_data);
       out->reparsed_map = true;
 #if PERFETTO_BUILDFLAG(PERFETTO_ANDROID_BUILD)
-      unwinder.SetJitDebug(metadata->jit_debug.get());
-      unwinder.SetDexFiles(metadata->dex_files.get());
+      unwinder.SetJitDebug(metadata->GetJitDebug(regs->Arch()));
+      unwinder.SetDexFiles(metadata->GetDexFiles(regs->Arch()));
 #endif
     }
     out->frames.swap(unwinder.frames());  // Provide the unwinder buffer to use.
@@ -191,7 +190,6 @@ bool DoUnwind(WireMessage* msg, UnwindingMetadata* metadata, AllocRecord* out) {
     unwindstack::FrameData frame_data{};
     frame_data.function_name =
         "ERROR " + StringifyLibUnwindstackError(error_code);
-    frame_data.map_name = "ERROR";
 
     out->frames.emplace_back(std::move(frame_data));
     out->build_ids.emplace_back("");
@@ -228,14 +226,14 @@ void UnwindingWorker::OnDisconnect(base::UnixSocket* self) {
   DataSourceInstanceID ds_id = client_data.data_source_instance_id;
 
   client_data_.erase(it);
+  // The erase invalidates the self pointer.
+  self = nullptr;
   if (client_data_.empty()) {
     // We got rid of the last client. Flush and destruct AllocRecords in
     // arena. Disable the arena (will not accept returning borrowed records)
     // in case there are pending AllocRecords on the main thread.
     alloc_record_arena_.Disable();
   }
-  // The erase invalidates the self pointer.
-  self = nullptr;
   delegate_->PostSocketDisconnected(this, ds_id, peer_pid, stats);
 }
 
@@ -413,7 +411,9 @@ void UnwindingWorker::PostDisconnectSocket(pid_t pid) {
 void UnwindingWorker::HandleDisconnectSocket(pid_t pid) {
   auto it = client_data_.find(pid);
   if (it == client_data_.end()) {
-    PERFETTO_DFATAL_OR_ELOG("Trying to disconnect unknown socket.");
+    // This is expected if the client voluntarily disconnects before the
+    // profiling session ended. In that case, there is a race between the main
+    // thread learning about the disconnect and it calling back here.
     return;
   }
   ClientData& client_data = it->second;

@@ -9,12 +9,12 @@
 
 import {assertInstanceof} from 'chrome://resources/js/assert.m.js';
 import {decorate} from 'chrome://resources/js/cr/ui.m.js';
-import {Tab, TabPanel} from 'chrome://resources/js/cr/ui/tabs.m.js';
-import {Tree, TreeItem} from 'chrome://resources/js/cr/ui/tree.m.js';
+import {Tab, TabPanel} from 'chrome://resources/js/cr/ui/tabs.js';
+import {Tree, TreeItem} from 'chrome://resources/js/cr/ui/tree.js';
 import {queryRequiredElement} from 'chrome://resources/js/util.m.js';
 import {String16} from 'chrome://resources/mojo/mojo/public/mojom/base/string16.mojom-webui.js';
 
-import {DescriptorPanel} from './descriptor_panel.js';
+import {DescriptorPanel, renderClassCodeWithDescription} from './descriptor_panel.js';
 
 import {UsbAlternateInterfaceInfo, UsbConfigurationInfo, UsbDeviceInfo, UsbDeviceRemote, UsbEndpointInfo, UsbInterfaceInfo, UsbTransferDirection, UsbTransferType} from './usb_device.mojom-webui.js';
 import {UsbDeviceManagerRemote} from './usb_manager.mojom-webui.js';
@@ -125,7 +125,7 @@ class DevicePage {
     const tabClone = document.importNode(tabTemplate.content, true);
 
     const tab = tabClone.querySelector('tab');
-    if (device.productName) {
+    if (device.productName && device.productName.data.length > 0) {
       tab.textContent = decodeString16(device.productName);
     } else {
       const vendorId = toHex(device.vendorId).slice(2);
@@ -169,9 +169,10 @@ class DevicePage {
    * @private
    */
   async initializeDescriptorPanels_(tabPanel, guid) {
-    const usbDevice = new UsbDeviceRemote;
+    const usbDevice = new UsbDeviceRemote();
     await this.usbManager_.getDevice(
-        guid, usbDevice.$.bindNewPipeAndPassReceiver(), null);
+        guid, /*blocked_interface_classes=*/[],
+        usbDevice.$.bindNewPipeAndPassReceiver(), /*device_client=*/ null);
 
     const deviceDescriptorPanel =
         initialInspectorPanel(tabPanel, 'device-descriptor', usbDevice, guid);
@@ -205,7 +206,8 @@ function renderDeviceTree(device, root) {
   root.add(customTreeItem(`USB Version: ${device.usbVersionMajor}.${
       device.usbVersionMinor}.${device.usbVersionSubminor}`));
 
-  root.add(customTreeItem(`Class Code: ${device.classCode}`));
+  root.add(customTreeItem(
+      `Class Code: ${renderClassCodeWithDescription(device.classCode)}`));
 
   root.add(customTreeItem(`Subclass Code: ${device.subclassCode}`));
 
@@ -302,7 +304,8 @@ function renderAlternatesTreeItem(alternatesArray, root) {
     const alternateItem =
         customTreeItem(`Alternate ${alternate.alternateSetting}`);
 
-    alternateItem.add(customTreeItem(`Class Code: ${alternate.classCode}`));
+    alternateItem.add(customTreeItem(
+        `Class Code: ${renderClassCodeWithDescription(alternate.classCode)}`));
 
     alternateItem.add(
         customTreeItem(`Subclass Code: ${alternate.subclassCode}`));

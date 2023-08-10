@@ -70,7 +70,7 @@
 #include "third_party/blink/renderer/core/layout/layout_theme.h"
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
-#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/json/json_values.h"
 #include "third_party/blink/renderer/platform/text/platform_locale.h"
 #include "third_party/blink/renderer/platform/text/text_break_iterator.h"
@@ -165,7 +165,7 @@ double InputType::ValueAsDate() const {
   return DateComponents::InvalidMilliseconds();
 }
 
-void InputType::SetValueAsDate(const base::Optional<base::Time>&,
+void InputType::SetValueAsDate(const absl::optional<base::Time>&,
                                ExceptionState& exception_state) const {
   exception_state.ThrowDOMException(
       DOMExceptionCode::kInvalidStateError,
@@ -506,7 +506,7 @@ bool InputType::CanSetStringValue() const {
 }
 
 bool InputType::IsKeyboardFocusable() const {
-  return GetElement().IsFocusable();
+  return GetElement().IsBaseElementFocusable();
 }
 
 bool InputType::MayTriggerVirtualKeyboard() const {

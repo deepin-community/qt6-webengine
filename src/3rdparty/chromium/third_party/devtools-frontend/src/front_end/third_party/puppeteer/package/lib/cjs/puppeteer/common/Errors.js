@@ -15,7 +15,10 @@
  * limitations under the License.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.puppeteerErrors = exports.TimeoutError = void 0;
+exports.puppeteerErrors = exports.ProtocolError = exports.TimeoutError = exports.CustomError = void 0;
+/**
+ * @public
+ */
 class CustomError extends Error {
     constructor(message) {
         super(message);
@@ -23,6 +26,7 @@ class CustomError extends Error {
         Error.captureStackTrace(this, this.constructor);
     }
 }
+exports.CustomError = CustomError;
 /**
  * TimeoutError is emitted whenever certain operations are terminated due to timeout.
  *
@@ -36,6 +40,21 @@ class CustomError extends Error {
 class TimeoutError extends CustomError {
 }
 exports.TimeoutError = TimeoutError;
+/**
+ * ProtocolError is emitted whenever there is an error from the protocol.
+ *
+ * @public
+ */
+class ProtocolError extends CustomError {
+    constructor() {
+        super(...arguments);
+        this.originalMessage = '';
+    }
+}
+exports.ProtocolError = ProtocolError;
+/**
+ * @public
+ */
 exports.puppeteerErrors = {
     TimeoutError,
 };

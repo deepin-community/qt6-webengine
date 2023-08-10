@@ -7,6 +7,7 @@
 #include <ostream>
 #include <utility>
 
+#include "base/check.h"
 #include "base/strings/strcat.h"
 
 namespace net {
@@ -17,6 +18,8 @@ base::StringPiece TransportTypeToString(TransportType type) {
       return "TransportType::kDirect";
     case TransportType::kProxied:
       return "TransportType::kProxied";
+    case TransportType::kCached:
+      return "TransportType::kCached";
   }
 
   // We define this here instead of as a `default` clause above so as to force
@@ -27,13 +30,24 @@ base::StringPiece TransportTypeToString(TransportType type) {
 
 TransportInfo::TransportInfo() = default;
 
-TransportInfo::TransportInfo(TransportType type_arg, IPEndPoint endpoint_arg)
-    : type(type_arg), endpoint(std::move(endpoint_arg)) {}
+TransportInfo::TransportInfo(TransportType type_arg,
+                             IPEndPoint endpoint_arg,
+                             std::string accept_ch_frame_arg)
+    : type(type_arg),
+      endpoint(std::move(endpoint_arg)),
+      accept_ch_frame(std::move(accept_ch_frame_arg)) {
+  if (type == TransportType::kCached) {
+    DCHECK_EQ(accept_ch_frame, "");
+  }
+}
+
+TransportInfo::TransportInfo(const TransportInfo&) = default;
 
 TransportInfo::~TransportInfo() = default;
 
 bool TransportInfo::operator==(const TransportInfo& other) const {
-  return type == other.type && endpoint == other.endpoint;
+  return type == other.type && endpoint == other.endpoint &&
+         accept_ch_frame == other.accept_ch_frame;
 }
 
 bool TransportInfo::operator!=(const TransportInfo& other) const {
@@ -46,6 +60,8 @@ std::string TransportInfo::ToString() const {
       TransportTypeToString(type),
       ", endpoint = ",
       endpoint.ToString(),
+      ", accept_ch_frame = ",
+      accept_ch_frame,
       " }",
   });
 }

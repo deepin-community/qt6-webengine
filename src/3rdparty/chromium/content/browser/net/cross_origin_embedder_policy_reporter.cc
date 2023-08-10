@@ -4,6 +4,7 @@
 
 #include "content/browser/net/cross_origin_embedder_policy_reporter.h"
 
+#include "base/strings/string_piece.h"
 #include "base/values.h"
 #include "content/public/browser/storage_partition.h"
 #include "services/network/public/cpp/request_destination.h"
@@ -16,7 +17,7 @@ namespace {
 constexpr char kTypeCoep[] = "coep";
 
 GURL StripUsernameAndPassword(const GURL& url) {
-  url::Replacements<char> replacements;
+  GURL::Replacements replacements;
   replacements.ClearUsername();
   replacements.ClearPassword();
   return url.ReplaceComponents(replacements);
@@ -25,21 +26,29 @@ GURL StripUsernameAndPassword(const GURL& url) {
 }  // namespace
 
 CrossOriginEmbedderPolicyReporter::CrossOriginEmbedderPolicyReporter(
-    StoragePartition* storage_partition,
+    base::WeakPtr<StoragePartition> storage_partition,
     const GURL& context_url,
-    const base::Optional<std::string>& endpoint,
-    const base::Optional<std::string>& report_only_endpoint,
+    const absl::optional<std::string>& endpoint,
+    const absl::optional<std::string>& report_only_endpoint,
+    const base::UnguessableToken& reporting_source,
     const net::NetworkIsolationKey& network_isolation_key)
-    : storage_partition_(storage_partition),
+    : storage_partition_(std::move(storage_partition)),
       context_url_(context_url),
       endpoint_(endpoint),
       report_only_endpoint_(report_only_endpoint),
+      reporting_source_(reporting_source),
       network_isolation_key_(network_isolation_key) {
   DCHECK(storage_partition_);
+  DCHECK(!reporting_source_.is_empty());
 }
 
 CrossOriginEmbedderPolicyReporter::~CrossOriginEmbedderPolicyReporter() =
     default;
+
+void CrossOriginEmbedderPolicyReporter::set_reporting_source(
+    const base::UnguessableToken& reporting_source) {
+  reporting_source_ = reporting_source;
+}
 
 void CrossOriginEmbedderPolicyReporter::QueueCorpViolationReport(
     const GURL& blocked_url,
@@ -68,6 +77,15 @@ void CrossOriginEmbedderPolicyReporter::QueueNavigationReport(
                  report_only);
 }
 
+void CrossOriginEmbedderPolicyReporter::QueueWorkerInitializationReport(
+    const GURL& blocked_url,
+    bool report_only) {
+  GURL url_to_pass = StripUsernameAndPassword(blocked_url);
+  QueueAndNotify({std::make_pair("type", "worker initialization"),
+                  std::make_pair("blockedURL", url_to_pass.spec())},
+                 report_only);
+}
+
 void CrossOriginEmbedderPolicyReporter::Clone(
     mojo::PendingReceiver<network::mojom::CrossOriginEmbedderPolicyReporter>
         receiver) {
@@ -77,7 +95,7 @@ void CrossOriginEmbedderPolicyReporter::Clone(
 void CrossOriginEmbedderPolicyReporter::QueueAndNotify(
     std::initializer_list<std::pair<base::StringPiece, base::StringPiece>> body,
     bool report_only) {
-  const base::Optional<std::string>& endpoint =
+  const absl::optional<std::string>& endpoint =
       report_only ? report_only_endpoint_ : endpoint_;
   const char* const disposition = report_only ? "reporting" : "enforce";
   if (observer_) {
@@ -85,7 +103,7 @@ void CrossOriginEmbedderPolicyReporter::QueueAndNotify(
 
     for (const auto& pair : body) {
       list.push_back(blink::mojom::ReportBodyElement::New(
-          pair.first.as_string(), pair.second.as_string()));
+          std::string(pair.first), std::string(pair.second)));
     }
     list.push_back(
         blink::mojom::ReportBodyElement::New("disposition", disposition));
@@ -100,9 +118,12 @@ void CrossOriginEmbedderPolicyReporter::QueueAndNotify(
     }
     body_to_pass.SetString("disposition", disposition);
 
-    storage_partition_->GetNetworkContext()->QueueReport(
-        kTypeCoep, *endpoint, context_url_, network_isolation_key_,
-        /*user_agent=*/base::nullopt, std::move(body_to_pass));
+    if (auto* storage_partition = storage_partition_.get()) {
+      storage_partition->GetNetworkContext()->QueueReport(
+          kTypeCoep, *endpoint, context_url_, reporting_source_,
+          network_isolation_key_,
+          /*user_agent=*/absl::nullopt, std::move(body_to_pass));
+    }
   }
 }
 

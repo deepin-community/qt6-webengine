@@ -20,7 +20,7 @@
  * Boston, MA 02110-1301, USA.
  *
  * Portions are Copyright (C) 2002 Netscape Communications Corporation.
- * Other contributors: David Baron <dbaron@fas.harvard.edu>
+ * Other contributors: David Baron <dbaron@dbaron.org>
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -53,7 +53,6 @@
 
 #include "third_party/blink/renderer/core/html/html_document.h"
 
-#include "base/stl_util.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_controller.h"
 #include "third_party/blink/renderer/bindings/core/v8/window_proxy.h"
 #include "third_party/blink/renderer/core/dom/document_init.h"
@@ -66,7 +65,7 @@ HTMLDocument::HTMLDocument(const DocumentInit& initializer,
                            DocumentClassFlags extended_document_classes)
     : Document(initializer, kHTMLDocumentClass | extended_document_classes) {
   ClearXMLVersion();
-  if (IsSrcdocDocument() || initializer.ImportsController()) {
+  if (IsSrcdocDocument()) {
     DCHECK(InNoQuirksMode());
     LockCompatibilityMode();
   }
@@ -142,7 +141,7 @@ static HashSet<StringImpl*>* CreateHtmlCaseInsensitiveAttributesSet() {
       &html_names::kTypeAttr,          &html_names::kValignAttr,
       &html_names::kValuetypeAttr,     &html_names::kVlinkAttr};
 
-  attr_set->ReserveCapacityForSize(base::size(case_insensitive_attributes));
+  attr_set->ReserveCapacityForSize(std::size(case_insensitive_attributes));
   for (const QualifiedName* attr : case_insensitive_attributes)
     attr_set->insert(attr->LocalName().Impl());
 

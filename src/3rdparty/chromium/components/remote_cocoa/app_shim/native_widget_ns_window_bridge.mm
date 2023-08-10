@@ -7,7 +7,9 @@
 #import <objc/runtime.h>
 #include <stddef.h>
 #include <stdint.h>
+
 #include <cmath>
+#include <memory>
 
 #include "base/bind.h"
 #include "base/command_line.h"
@@ -15,8 +17,8 @@
 #import "base/mac/foundation_util.h"
 #include "base/mac/mac_util.h"
 #include "base/no_destructor.h"
-#include "base/single_thread_task_runner.h"
 #include "base/strings/sys_string_conversions.h"
+#include "base/task/single_thread_task_runner.h"
 #import "components/remote_cocoa/app_shim/bridged_content_view.h"
 #import "components/remote_cocoa/app_shim/browser_native_widget_window_mac.h"
 #import "components/remote_cocoa/app_shim/certificate_viewer.h"
@@ -26,6 +28,7 @@
 #import "components/remote_cocoa/app_shim/native_widget_ns_window_host_helper.h"
 #include "components/remote_cocoa/app_shim/select_file_dialog_bridge.h"
 #import "components/remote_cocoa/app_shim/views_nswindow_delegate.h"
+#import "components/remote_cocoa/app_shim/window_controls_overlay_nsview.h"
 #import "components/remote_cocoa/app_shim/window_move_loop.h"
 #include "components/remote_cocoa/common/native_widget_ns_window_host.mojom.h"
 #include "mojo/public/cpp/bindings/self_owned_receiver.h"
@@ -49,7 +52,7 @@ using remote_cocoa::mojom::VisibilityTransition;
 using remote_cocoa::mojom::WindowVisibilityState;
 
 namespace {
-constexpr auto kUIPaintTimeout = base::TimeDelta::FromSeconds(5);
+constexpr auto kUIPaintTimeout = base::Seconds(5);
 
 bool AreWindowShadowsDisabled() {
   // When:
@@ -226,6 +229,11 @@ std::map<uint64_t, NativeWidgetNSWindowBridge*>& GetIdToWidgetImplMap() {
   return *id_map;
 }
 
+std::map<NSWindow*, std::u16string>& GetPendingWindowTitleMap() {
+  static base::NoDestructor<std::map<NSWindow*, std::u16string>> map;
+  return *map;
+}
+
 }  // namespace
 
 // static
@@ -305,14 +313,16 @@ NativeWidgetNSWindowBridge::NativeWidgetNSWindowBridge(
     : id_(bridged_native_widget_id),
       host_(host),
       host_helper_(host_helper),
-      text_input_host_(text_input_host) {
+      text_input_host_(text_input_host),
+      ns_weak_factory_(this) {
   DCHECK(GetIdToWidgetImplMap().find(id_) == GetIdToWidgetImplMap().end());
   GetIdToWidgetImplMap().insert(std::make_pair(id_, this));
-  display::Screen::GetScreen()->AddObserver(this);
 }
 
 NativeWidgetNSWindowBridge::~NativeWidgetNSWindowBridge() {
-  display::Screen::GetScreen()->RemoveObserver(this);
+  SetLocalEventMonitorEnabled(false);
+  DCHECK(!key_down_event_monitor_);
+  GetPendingWindowTitleMap().erase(window_.get());
   // The delegate should be cleared already. Note this enforces the precondition
   // that -[NSWindow close] is invoked on the hosted window before the
   // destructor is called.
@@ -413,6 +423,12 @@ void NativeWidgetNSWindowBridge::ShowEmojiPanel() {
   ui::ShowEmojiPanel();
 }
 
+void NativeWidgetNSWindowBridge::CreateFullscreenController() {
+  DCHECK(!fullscreen_controller_);
+  fullscreen_controller_ =
+      std::make_unique<NativeWidgetNSWindowFullscreenController>(this);
+}
+
 void NativeWidgetNSWindowBridge::CreateWindow(
     mojom::CreateWindowParamsPtr params) {
   SetWindow(CreateNSWindow(params.get()));
@@ -422,6 +438,7 @@ void NativeWidgetNSWindowBridge::InitWindow(
     mojom::NativeWidgetNSWindowInitParamsPtr params) {
   modal_type_ = params->modal_type;
   is_translucent_window_ = params->is_translucent;
+  is_headless_mode_window_ = params->is_headless_mode_window;
   pending_restoration_data_ = params->state_restoration_data;
 
   // Register for application hide notifications so that visibility can be
@@ -575,8 +592,13 @@ void NativeWidgetNSWindowBridge::CreateContentView(uint64_t ns_view_id,
 }
 
 void NativeWidgetNSWindowBridge::CloseWindow() {
-  if (has_deferred_window_close_)
-    return;
+  if (fullscreen_controller_) {
+    if (fullscreen_controller_->HasDeferredWindowClose())
+      return;
+  } else {
+    if (has_deferred_window_close_)
+      return;
+  }
 
   // Keep |window| on the stack so that the ObjectiveC block below can capture
   // it and properly increment the reference count bound to the posted task.
@@ -619,9 +641,15 @@ void NativeWidgetNSWindowBridge::CloseWindow() {
   [window orderOut:nil];
 
   // Defer closing windows until after fullscreen transitions complete.
-  if (in_fullscreen_transition_) {
-    has_deferred_window_close_ = true;
-    return;
+  if (fullscreen_controller_) {
+    fullscreen_controller_->OnWindowWantsToClose();
+    if (fullscreen_controller_->HasDeferredWindowClose())
+      return;
+  } else {
+    if (in_fullscreen_transition_) {
+      has_deferred_window_close_ = true;
+      return;
+    }
   }
 
   // Many tests assume that base::RunLoop().RunUntilIdle() is always sufficient
@@ -645,6 +673,37 @@ void NativeWidgetNSWindowBridge::CloseWindowNow() {
 
 void NativeWidgetNSWindowBridge::SetVisibilityState(
     WindowVisibilityState new_state) {
+  // Avoid changing headless mode window visibility state.
+  if (is_headless_mode_window_)
+    return;
+
+  // During session restore this method gets called from RestoreTabsToBrowser()
+  // with new_state = kShowAndActivateWindow. We consume restoration data on our
+  // first time through this method so we can use its existence as an
+  // indication that session restoration is underway. We'll use this later to
+  // decide whether or not to actually honor the WindowVisibilityState change
+  // request. This window may live in the dock, for example, in which case we
+  // don't really want to kShowAndActivateWindow. Even if the window is on the
+  // desktop we still won't want to kShowAndActivateWindow because doing so
+  // might trigger a transition to a different space (and we don't want to
+  // switch spaces on start-up). When session restore determines the Active
+  // window it will also call SetVisibilityState(), on that pass the window
+  // can/will be activated.
+  bool session_restore_in_progress = false;
+
+  // Restore Cocoa window state.
+  if (HasWindowRestorationData()) {
+    NSData* restore_ns_data =
+        [NSData dataWithBytes:pending_restoration_data_.data()
+                       length:pending_restoration_data_.size()];
+    base::scoped_nsobject<NSKeyedUnarchiver> decoder(
+        [[NSKeyedUnarchiver alloc] initForReadingWithData:restore_ns_data]);
+    [window_ restoreStateWithCoder:decoder];
+    pending_restoration_data_.clear();
+
+    session_restore_in_progress = true;
+  }
+
   // Ensure that:
   //  - A window with an invisible parent is not made visible.
   //  - A parent changing visibility updates child window visibility.
@@ -686,20 +745,11 @@ void NativeWidgetNSWindowBridge::SetVisibilityState(
       return;
   }
 
-  if (!pending_restoration_data_.empty()) {
-    NSData* restore_ns_data =
-        [NSData dataWithBytes:pending_restoration_data_.data()
-                       length:pending_restoration_data_.size()];
-    base::scoped_nsobject<NSKeyedUnarchiver> decoder(
-        [[NSKeyedUnarchiver alloc] initForReadingWithData:restore_ns_data]);
-    [window_ restoreStateWithCoder:decoder];
-    pending_restoration_data_.clear();
-
-    // When first showing a window with restoration data, don't activate it.
-    // This avoids switching spaces or un-miniaturizing it right away.
-    // Additional activations act normally.
-    if (new_state == WindowVisibilityState::kShowAndActivateWindow)
-      new_state = WindowVisibilityState::kShowInactive;
+  // Don't activate a window during session restore, to avoid switching spaces
+  // (or pulling it out of the dock) during startup.
+  if (session_restore_in_progress &&
+      new_state == WindowVisibilityState::kShowAndActivateWindow) {
+    new_state = WindowVisibilityState::kShowInactive;
   }
 
   if (IsWindowModalSheet()) {
@@ -751,7 +801,7 @@ void NativeWidgetNSWindowBridge::AcquireCapture() {
   if (!window_visible_)
     return;  // Capture on hidden windows is disallowed.
 
-  mouse_capture_.reset(new CocoaMouseCapture(this));
+  mouse_capture_ = std::make_unique<CocoaMouseCapture>(this);
   host_->OnMouseCaptureActiveChanged(true);
 
   // Initiating global event capture with addGlobalMonitorForEventsMatchingMask:
@@ -769,6 +819,42 @@ void NativeWidgetNSWindowBridge::ReleaseCapture() {
 
 bool NativeWidgetNSWindowBridge::HasCapture() {
   return mouse_capture_ && mouse_capture_->IsActive();
+}
+
+void NativeWidgetNSWindowBridge::SetLocalEventMonitorEnabled(bool enabled) {
+  if (enabled) {
+    // Create the event montitor if it does not exist yet.
+    if (key_down_event_monitor_)
+      return;
+
+    // Capture a WeakPtr via NSObject. This allows the block to detect another
+    // event monitor for the same event deleting `this`.
+    WeakPtrNSObject* handle = ns_weak_factory_.handle();
+    auto block = ^NSEvent*(NSEvent* event) {
+      auto* bridge =
+          ui::WeakPtrNSObjectFactory<NativeWidgetNSWindowBridge>::Get(handle);
+      if (!bridge)
+        return event;
+      std::unique_ptr<ui::Event> ui_event = ui::EventFromNative(event);
+      bool event_handled = false;
+      bridge->host_->DispatchMonitorEvent(std::move(ui_event), &event_handled);
+      return event_handled ? nil : event;
+    };
+    key_down_event_monitor_ =
+        [NSEvent addLocalMonitorForEventsMatchingMask:NSKeyDownMask
+                                              handler:block];
+  } else {
+    // Destroy the event monitor if it exists.
+    if (!key_down_event_monitor_)
+      return;
+
+    [NSEvent removeMonitor:key_down_event_monitor_];
+    key_down_event_monitor_ = nil;
+  }
+}
+
+bool NativeWidgetNSWindowBridge::HasWindowRestorationData() {
+  return !pending_restoration_data_.empty();
 }
 
 bool NativeWidgetNSWindowBridge::RunMoveLoop(const gfx::Vector2d& drag_offset) {
@@ -789,8 +875,8 @@ bool NativeWidgetNSWindowBridge::RunMoveLoop(const gfx::Vector2d& drag_offset) {
   const gfx::Rect frame = gfx::ScreenRectFromNSRect([window_ frame]);
   const gfx::Point mouse_in_screen(frame.x() + drag_offset.x(),
                                    frame.y() + drag_offset.y());
-  window_move_loop_.reset(new CocoaWindowMoveLoop(
-      this, gfx::ScreenPointToNSPoint(mouse_in_screen)));
+  window_move_loop_ = std::make_unique<CocoaWindowMoveLoop>(
+      this, gfx::ScreenPointToNSPoint(mouse_in_screen));
 
   return window_move_loop_->Run();
 
@@ -811,12 +897,16 @@ void NativeWidgetNSWindowBridge::SetCursor(NSCursor* cursor) {
 }
 
 void NativeWidgetNSWindowBridge::OnWindowWillClose() {
-  // If a window closes while in a fullscreen transition, then the window will
-  // hang in a zombie-like state.
-  // https://crbug.com/945237
-  if (in_fullscreen_transition_) {
-    DLOG(ERROR) << "-[NSWindow close] while in fullscreen transition will "
-                   "trigger zombie windows.";
+  if (fullscreen_controller_) {
+    fullscreen_controller_->OnWindowWillClose();
+  } else {
+    // If a window closes while in a fullscreen transition, then the window will
+    // hang in a zombie-like state.
+    // https://crbug.com/945237
+    if (in_fullscreen_transition_) {
+      DLOG(ERROR) << "-[NSWindow close] while in fullscreen transition will "
+                     "trigger zombie windows.";
+    }
   }
 
   [window_ setCommandHandler:nil];
@@ -858,6 +948,7 @@ void NativeWidgetNSWindowBridge::OnWindowWillClose() {
 
 void NativeWidgetNSWindowBridge::OnFullscreenTransitionStart(
     bool target_fullscreen_state) {
+  DCHECK(!fullscreen_controller_);
   DCHECK_NE(target_fullscreen_state, target_fullscreen_state_);
   target_fullscreen_state_ = target_fullscreen_state;
   in_fullscreen_transition_ = true;
@@ -867,6 +958,7 @@ void NativeWidgetNSWindowBridge::OnFullscreenTransitionStart(
 
 void NativeWidgetNSWindowBridge::OnFullscreenTransitionComplete(
     bool actual_fullscreen_state) {
+  DCHECK(!fullscreen_controller_);
   in_fullscreen_transition_ = false;
 
   // Add any children that were skipped during the fullscreen transition.
@@ -891,6 +983,7 @@ void NativeWidgetNSWindowBridge::OnFullscreenTransitionComplete(
 }
 
 void NativeWidgetNSWindowBridge::ToggleDesiredFullscreenState(bool async) {
+  DCHECK(!fullscreen_controller_);
   // If there is currently an animation into or out of fullscreen, then AppKit
   // emits the string "not in fullscreen state" to stdio and does nothing. For
   // this case, schedule a transition back into the desired state when the
@@ -1009,11 +1102,16 @@ void NativeWidgetNSWindowBridge::SetSizeConstraints(const gfx::Size& min_size,
                                                     const gfx::Size& max_size,
                                                     bool is_resizable,
                                                     bool is_maximizable) {
-  // Don't modify the size constraints or fullscreen collection behavior while
-  // in fullscreen or during a transition. OnFullscreenTransitionComplete will
-  // reset these after leaving fullscreen.
-  if (target_fullscreen_state_ || in_fullscreen_transition_)
-    return;
+  if (fullscreen_controller_) {
+    if (!fullscreen_controller_->CanResize())
+      return;
+  } else {
+    // Don't modify the size constraints or fullscreen collection behavior while
+    // in fullscreen or during a transition. OnFullscreenTransitionComplete will
+    // reset these after leaving fullscreen.
+    if (target_fullscreen_state_ || in_fullscreen_transition_)
+      return;
+  }
 
   bool shows_resize_controls =
       is_resizable && (min_size.IsEmpty() || min_size != max_size);
@@ -1113,6 +1211,49 @@ bool NativeWidgetNSWindowBridge::RedispatchKeyEvent(NSEvent* event) {
   return [[window_ commandDispatcher] redispatchKeyEvent:event];
 }
 
+void NativeWidgetNSWindowBridge::CreateWindowControlsOverlayNSView(
+    const mojom::WindowControlsOverlayNSViewType overlay_type) {
+  switch (overlay_type) {
+    case mojom::WindowControlsOverlayNSViewType::kCaptionButtonContainer:
+      caption_buttons_overlay_nsview_.reset(
+          [[WindowControlsOverlayNSView alloc] initWithBridge:this]);
+      [bridged_view_ addSubview:caption_buttons_overlay_nsview_];
+      break;
+    case mojom::WindowControlsOverlayNSViewType::kWebAppFrameToolbar:
+      web_app_frame_toolbar_overlay_nsview_.reset(
+          [[WindowControlsOverlayNSView alloc] initWithBridge:this]);
+      [bridged_view_ addSubview:web_app_frame_toolbar_overlay_nsview_];
+      break;
+  }
+}
+
+void NativeWidgetNSWindowBridge::UpdateWindowControlsOverlayNSView(
+    const gfx::Rect& bounds,
+    const mojom::WindowControlsOverlayNSViewType overlay_type) {
+  switch (overlay_type) {
+    case mojom::WindowControlsOverlayNSViewType::kCaptionButtonContainer:
+      [caption_buttons_overlay_nsview_ updateBounds:bounds];
+      break;
+    case mojom::WindowControlsOverlayNSViewType::kWebAppFrameToolbar:
+      [web_app_frame_toolbar_overlay_nsview_ updateBounds:bounds];
+      break;
+  }
+}
+
+void NativeWidgetNSWindowBridge::RemoveWindowControlsOverlayNSView(
+    const mojom::WindowControlsOverlayNSViewType overlay_type) {
+  switch (overlay_type) {
+    case mojom::WindowControlsOverlayNSViewType::kCaptionButtonContainer:
+      [caption_buttons_overlay_nsview_ removeFromSuperview];
+      caption_buttons_overlay_nsview_.reset();
+      break;
+    case mojom::WindowControlsOverlayNSViewType::kWebAppFrameToolbar:
+      [web_app_frame_toolbar_overlay_nsview_ removeFromSuperview];
+      web_app_frame_toolbar_overlay_nsview_.reset();
+      break;
+  }
+}
+
 NSWindow* NativeWidgetNSWindowBridge::ns_window() {
   return window_.get();
 }
@@ -1141,6 +1282,65 @@ void NativeWidgetNSWindowBridge::OnDisplayMetricsChanged(
 }
 
 ////////////////////////////////////////////////////////////////////////////////
+// NativeWidgetNSWindowBridge, NativeWidgetNSWindowFullscreenController::Client:
+
+void NativeWidgetNSWindowBridge::FullscreenControllerTransitionStart(
+    bool is_target_fullscreen) {
+  host_->OnWindowFullscreenTransitionStart(is_target_fullscreen);
+}
+
+void NativeWidgetNSWindowBridge::FullscreenControllerTransitionComplete(
+    bool is_fullscreen) {
+  DCHECK(!fullscreen_controller_->IsInFullscreenTransition());
+  UpdateWindowGeometry();
+  UpdateWindowDisplay();
+
+  // Add any children that were skipped during the fullscreen transition.
+  OrderChildren();
+  host_->OnWindowFullscreenTransitionComplete(is_fullscreen);
+}
+
+void NativeWidgetNSWindowBridge::FullscreenControllerSetFrame(
+    const gfx::Rect& frame,
+    bool animate,
+    base::TimeDelta& transition_time) {
+  NSRect ns_frame = gfx::ScreenRectToNSRect(frame);
+  if (animate)
+    transition_time = base::Seconds([window_ animationResizeTime:ns_frame]);
+  else
+    transition_time = base::Seconds(0);
+  [window_ setFrame:ns_frame display:NO animate:animate];
+}
+
+void NativeWidgetNSWindowBridge::FullscreenControllerToggleFullscreen() {
+  [window_ toggleFullScreen:nil];
+}
+
+void NativeWidgetNSWindowBridge::FullscreenControllerCloseWindow() {
+  [window_ close];
+}
+
+int64_t NativeWidgetNSWindowBridge::FullscreenControllerGetDisplayId() const {
+  return display::Screen::GetScreen()
+      ->GetDisplayNearestWindow(window_.get())
+      .id();
+}
+
+gfx::Rect NativeWidgetNSWindowBridge::FullscreenControllerGetFrameForDisplay(
+    int64_t display_id) const {
+  display::Display display;
+  if (display::Screen::GetScreen()->GetDisplayWithDisplayId(display_id,
+                                                            &display)) {
+    return display.work_area();
+  }
+  return gfx::Rect();
+}
+
+gfx::Rect NativeWidgetNSWindowBridge::FullscreenControllerGetFrame() const {
+  return gfx::ScreenRectFromNSRect([window_ frame]);
+}
+
+////////////////////////////////////////////////////////////////////////////////
 // NativeWidgetNSWindowBridge, ui::CATransactionObserver
 
 bool NativeWidgetNSWindowBridge::ShouldWaitInPreCommit() {
@@ -1150,6 +1350,14 @@ bool NativeWidgetNSWindowBridge::ShouldWaitInPreCommit() {
     return false;
   if (!bridged_view_)
     return false;
+  if (fullscreen_controller_) {
+    // Suppress synchronous CA transactions during AppKit fullscreen transition
+    // since there is no need for updates during such transition.
+    // Re-layout and re-paint will be done after the transition. See
+    // https://crbug.com/875707 for potiential problems if we don't suppress.
+    if (fullscreen_controller_->IsInFullscreenTransition())
+      return false;
+  }
   return content_dip_size_ != compositor_frame_dip_size_;
 }
 
@@ -1160,8 +1368,9 @@ base::TimeDelta NativeWidgetNSWindowBridge::PreCommitTimeout() {
 ////////////////////////////////////////////////////////////////////////////////
 // NativeWidgetNSWindowBridge, CocoaMouseCaptureDelegate:
 
-void NativeWidgetNSWindowBridge::PostCapturedEvent(NSEvent* event) {
+bool NativeWidgetNSWindowBridge::PostCapturedEvent(NSEvent* event) {
   [bridged_view_ processCapturedMouseEvent:event];
+  return true;
 }
 
 void NativeWidgetNSWindowBridge::OnMouseCaptureLost() {
@@ -1181,9 +1390,40 @@ void NativeWidgetNSWindowBridge::SetVisibleOnAllSpaces(bool always_visible) {
 }
 
 void NativeWidgetNSWindowBridge::SetFullscreen(bool fullscreen) {
+  DCHECK(!fullscreen_controller_);
   if (fullscreen == target_fullscreen_state_)
     return;
   ToggleDesiredFullscreenState();
+}
+
+void NativeWidgetNSWindowBridge::EnterFullscreen(int64_t target_display_id) {
+  DCHECK(fullscreen_controller_);
+  // Going fullscreen implicitly makes the window visible. AppKit does this.
+  // That is, -[NSWindow isVisible] is always true after a call to -[NSWindow
+  // toggleFullScreen:]. Unfortunately, this change happens after AppKit calls
+  // -[NSWindowDelegate windowWillEnterFullScreen:], and AppKit doesn't send
+  // an orderWindow message. So intercepting the implicit change is hard.
+  // Luckily, to trigger externally, the window typically needs to be visible
+  // in the first place. So we can just ensure the window is visible here
+  // instead of relying on AppKit to do it, and not worry that
+  // OnVisibilityChanged() won't be called for externally triggered fullscreen
+  // requests.
+  if (!window_visible_)
+    SetVisibilityState(WindowVisibilityState::kShowInactive);
+
+  // Enable fullscreen collection behavior because:
+  // 1: -[NSWindow toggleFullscreen:] would otherwise be ignored,
+  // 2: the fullscreen button must be enabled so the user can leave
+  // fullscreen. This will be reset when a transition out of fullscreen
+  // completes.
+  gfx::SetNSWindowCanFullscreen(window_, true);
+
+  fullscreen_controller_->EnterFullscreen(target_display_id);
+}
+
+void NativeWidgetNSWindowBridge::ExitFullscreen() {
+  DCHECK(fullscreen_controller_);
+  fullscreen_controller_->ExitFullscreen();
 }
 
 void NativeWidgetNSWindowBridge::SetCanAppearInExistingFullscreenSpaces(
@@ -1218,6 +1458,7 @@ void NativeWidgetNSWindowBridge::SetOpacity(float opacity) {
 
 void NativeWidgetNSWindowBridge::SetWindowLevel(int32_t level) {
   [window_ setLevel:level];
+  [bridged_view_ updateCursorTrackingArea];
 
   // Windows that have a higher window level than NSNormalWindowLevel default to
   // NSWindowCollectionBehaviorTransient. Set the value explicitly here to match
@@ -1267,9 +1508,30 @@ void NativeWidgetNSWindowBridge::MakeFirstResponder() {
   [window_ makeFirstResponder:bridged_view_];
 }
 
-void NativeWidgetNSWindowBridge::SetWindowTitle(const base::string16& title) {
-  NSString* new_title = base::SysUTF16ToNSString(title);
-  [window_ setTitle:new_title];
+void NativeWidgetNSWindowBridge::SetWindowTitle(const std::u16string& title) {
+  // Delay setting the window title until after any menu tracking is complete.
+  if (NSRunLoop.currentRunLoop.currentMode == NSEventTrackingRunLoopMode) {
+    // Install one run loop trigger to handle all the pending titles.
+    if (GetPendingWindowTitleMap().empty()) {
+      CFRunLoopPerformBlock(
+          [NSRunLoop.currentRunLoop getCFRunLoop], kCFRunLoopDefaultMode, ^{
+            for (const auto& pending_title : GetPendingWindowTitleMap()) {
+              pending_title.first.title =
+                  base::SysUTF16ToNSString(pending_title.second);
+            }
+
+            GetPendingWindowTitleMap().clear();
+          });
+    }
+
+    GetPendingWindowTitleMap()[window_.get()] = title;
+  } else {
+    window_.get().title = base::SysUTF16ToNSString(title);
+
+    // In case there is an unfired run loop trigger, erase any pending title so
+    // that the new title now being set doesn't get smashed.
+    GetPendingWindowTitleMap().erase(window_.get());
+  }
 }
 
 void NativeWidgetNSWindowBridge::ClearTouchBar() {
@@ -1401,6 +1663,10 @@ void NativeWidgetNSWindowBridge::UpdateWindowGeometry() {
 }
 
 void NativeWidgetNSWindowBridge::UpdateWindowDisplay() {
+  if (fullscreen_controller_ &&
+      fullscreen_controller_->IsInFullscreenTransition())
+    return;
+
   host_->OnWindowDisplayChanged(
       display::Screen::GetScreen()->GetDisplayNearestWindow(window_.get()));
 }
@@ -1425,14 +1691,31 @@ void NativeWidgetNSWindowBridge::ShowAsModalSheet() {
   // alive (i.e. it has not set the window delegate to nil).
   // TODO(crbug.com/841631): Migrate to `[NSWindow
   // beginSheet:completionHandler:]` instead of this method.
+  auto begin_sheet_closure = base::BindOnce(base::RetainBlock(^{
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
-  [NSApp beginSheet:window_
-      modalForWindow:parent_window
-       modalDelegate:window_
-      didEndSelector:@selector(sheetDidEnd:returnCode:contextInfo:)
-         contextInfo:nullptr];
+    [NSApp beginSheet:window_
+        modalForWindow:parent_window
+         modalDelegate:window_
+        didEndSelector:@selector(sheetDidEnd:returnCode:contextInfo:)
+           contextInfo:nullptr];
 #pragma clang diagnostic pop
+  }));
+
+  if (host_helper_->MustPostTaskToRunModalSheetAnimation()) {
+    // This function is called via mojo when using remote cocoa. Inside the
+    // nested run loop, we will wait for a message providing the correctly-sized
+    // frame for the new sheet. This message will not be processed until we
+    // return from handling this message, because it will coming on the same
+    // pipe. Avoid the resulting hang by posting a task to show the modal
+    // sheet (which will be executed on a fresh stack, which will not block
+    // the message).
+    // https://crbug.com/1234509
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, std::move(begin_sheet_closure));
+  } else {
+    std::move(begin_sheet_closure).Run();
+  }
 }
 
 }  // namespace remote_cocoa

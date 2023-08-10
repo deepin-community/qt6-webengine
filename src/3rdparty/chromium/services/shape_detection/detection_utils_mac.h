@@ -14,13 +14,8 @@
 
 #include "base/callback.h"
 #include "base/mac/scoped_nsobject.h"
-#include "base/macros.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/gfx/geometry/rect_f.h"
-
-#if defined(MAC_OS_X_VERSION_10_13) && MAC_OS_X_VERSION_MIN_REQUIRED >= MAC_OS_X_VERSION_10_13
-#import <Vision/Vision.h>
-#endif
 
 namespace shape_detection {
 
@@ -39,6 +34,9 @@ class API_AVAILABLE(macos(10.13)) VisionAPIAsyncRequestMac {
   // repeating for the instance.
   using Callback =
       base::RepeatingCallback<void(VNRequest* request, NSError* error)>;
+
+  VisionAPIAsyncRequestMac(const VisionAPIAsyncRequestMac&) = delete;
+  VisionAPIAsyncRequestMac& operator=(const VisionAPIAsyncRequestMac&) = delete;
 
   ~VisionAPIAsyncRequestMac();
 
@@ -61,8 +59,6 @@ class API_AVAILABLE(macos(10.13)) VisionAPIAsyncRequestMac {
 
   base::scoped_nsobject<VNRequest> request_;
   const Callback callback_;
-
-  DISALLOW_COPY_AND_ASSIGN(VisionAPIAsyncRequestMac);
 };
 
 }  // namespace shape_detection

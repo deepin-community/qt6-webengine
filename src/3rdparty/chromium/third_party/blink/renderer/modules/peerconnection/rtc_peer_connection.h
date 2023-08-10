@@ -34,9 +34,13 @@
 #include <memory>
 #include <utility>
 
+#include "base/gtest_prod_util.h"
+#include "base/time/time.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/renderer/bindings/core/v8/active_script_wrappable.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_typedefs.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
 #include "third_party/blink/renderer/modules/crypto/normalize_algorithm.h"
 #include "third_party/blink/renderer/modules/event_target_modules.h"
@@ -47,27 +51,30 @@
 #include "third_party/blink/renderer/modules/peerconnection/rtc_peer_connection_handler.h"
 #include "third_party/blink/renderer/modules/peerconnection/rtc_rtp_transceiver.h"
 #include "third_party/blink/renderer/modules/peerconnection/rtc_session_description_enums.h"
-#include "third_party/blink/renderer/platform/heap/heap_allocator.h"
+#include "third_party/blink/renderer/modules/peerconnection/rtp_contributing_source_cache.h"
+#include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_map.h"
+#include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_set.h"
+#include "third_party/blink/renderer/platform/heap/collection_support/heap_vector.h"
+#include "third_party/blink/renderer/platform/heap/prefinalizer.h"
 #include "third_party/blink/renderer/platform/mediastream/media_constraints.h"
 #include "third_party/blink/renderer/platform/peerconnection/rtc_peer_connection_handler_client.h"
 #include "third_party/blink/renderer/platform/peerconnection/rtc_session_description_request.h"
 #include "third_party/blink/renderer/platform/peerconnection/rtc_void_request.h"
 #include "third_party/blink/renderer/platform/scheduler/public/frame_scheduler.h"
 #include "third_party/blink/renderer/platform/scheduler/public/post_cancellable_task.h"
-#include "third_party/blink/renderer/platform/wtf/hash_set.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
 namespace blink {
 
+class Dictionary;
 class ExceptionState;
 class MediaStreamTrack;
-class MediaStreamTrackOrString;
 class RTCAnswerOptions;
 class RTCConfiguration;
-class RTCDtlsTransport;
 class RTCDTMFSender;
 class RTCDataChannel;
 class RTCDataChannelInit;
+class RTCDtlsTransport;
 class RTCIceCandidateInit;
 class RTCIceTransport;
 class RTCOfferOptions;
@@ -82,6 +89,7 @@ class ScriptState;
 class V8RTCPeerConnectionErrorCallback;
 class V8RTCSessionDescriptionCallback;
 class V8RTCStatsCallback;
+class V8UnionMediaStreamTrackOrString;
 class V8VoidFunction;
 
 extern const char kOnlySupportedInUnifiedPlanMessage[];
@@ -206,9 +214,9 @@ class MODULES_EXPORT RTCPeerConnection final
   // Certificate management
   // http://w3c.github.io/webrtc-pc/#sec.cert-mgmt
   static ScriptPromise generateCertificate(
-      ScriptState*,
-      const AlgorithmIdentifier& keygen_algorithm,
-      ExceptionState&);
+      ScriptState* script_state,
+      const V8AlgorithmIdentifier* keygen_algorithm,
+      ExceptionState& exception_state);
 
   ScriptPromise addIceCandidate(ScriptState*,
                                 const RTCIceCandidateInit*,
@@ -225,7 +233,7 @@ class MODULES_EXPORT RTCPeerConnection final
 
   String connectionState() const;
 
-  base::Optional<bool> canTrickleIceCandidates() const;
+  absl::optional<bool> canTrickleIceCandidates() const;
 
   void restartIce();
 
@@ -236,15 +244,7 @@ class MODULES_EXPORT RTCPeerConnection final
   MediaStream* getRemoteStreamById(const String&) const;
   bool IsRemoteStream(MediaStream* stream) const;
 
-  void addStream(ScriptState*,
-                 MediaStream*,
-                 const ScriptValue& media_constraints,
-                 ExceptionState&);
   void addStream(ScriptState*, MediaStream*, ExceptionState&);
-  void AddStream(ScriptState*,
-                 MediaStream*,
-                 const Dictionary& media_constraints,
-                 ExceptionState&);
 
   void removeStream(MediaStream*, ExceptionState&);
 
@@ -269,9 +269,11 @@ class MODULES_EXPORT RTCPeerConnection final
   const HeapVector<Member<RTCRtpTransceiver>>& getTransceivers() const;
   const HeapVector<Member<RTCRtpSender>>& getSenders() const;
   const HeapVector<Member<RTCRtpReceiver>>& getReceivers() const;
-  RTCRtpTransceiver* addTransceiver(const MediaStreamTrackOrString&,
-                                    const RTCRtpTransceiverInit*,
-                                    ExceptionState&);
+  RtpContributingSourceCache& GetRtpContributingSourceCache();
+  RTCRtpTransceiver* addTransceiver(
+      const V8UnionMediaStreamTrackOrString* track_or_kind,
+      const RTCRtpTransceiverInit* init,
+      ExceptionState& exception_state);
   RTCRtpSender* addTrack(MediaStreamTrack*, MediaStreamVector, ExceptionState&);
   void removeTrack(RTCRtpSender*, ExceptionState&);
   DEFINE_ATTRIBUTE_EVENT_LISTENER(track, kTrack)
@@ -330,7 +332,7 @@ class MODULES_EXPORT RTCPeerConnection final
 
   void DidGenerateICECandidate(RTCIceCandidatePlatform*) override;
   void DidFailICECandidate(const String& address,
-                           base::Optional<uint16_t> port,
+                           absl::optional<uint16_t> port,
                            const String& host_candidate,
                            const String& url,
                            int error_code,
@@ -382,11 +384,11 @@ class MODULES_EXPORT RTCPeerConnection final
   // SLD/SRD Helper method, public for testing.
   // This function returns a value that indicates if complex SDP is being used
   // and whether a format is explicitly specified. If the SDP is not complex or
-  // it could not be parsed, base::nullopt is returned.
+  // it could not be parsed, absl::nullopt is returned.
   // When "Complex" SDP (i.e., SDP that has multiple tracks) is used without
   // explicitly specifying the SDP format, there may be errors if the
   // application assumes a format that differs from the actual default format.
-  base::Optional<ComplexSdpCategory> CheckForComplexSdp(
+  absl::optional<ComplexSdpCategory> CheckForComplexSdp(
       const ParsedSessionDescription&) const;
 
   const CallSetupStateTracker& call_setup_state_tracker() const;
@@ -462,7 +464,7 @@ class MODULES_EXPORT RTCPeerConnection final
   void ScheduleDispatchEvent(Event*);
   void ScheduleDispatchEvent(Event*, BoolFunction);
   void DispatchScheduledEvents();
-  MediaStreamTrack* GetTrack(MediaStreamComponent*) const;
+  MediaStreamTrack* GetTrackForTesting(MediaStreamComponent*) const;
   RTCRtpSender* FindSenderForTrackAndStream(MediaStreamTrack*, MediaStream*);
   HeapVector<Member<RTCRtpSender>>::iterator FindSender(
       const RTCRtpSenderPlatform& web_sender);
@@ -605,6 +607,9 @@ class MODULES_EXPORT RTCPeerConnection final
   HeapVector<Member<RTCRtpSender>> rtp_senders_;
   HeapVector<Member<RTCRtpReceiver>> rtp_receivers_;
   HeapVector<Member<RTCRtpTransceiver>> transceivers_;
+  // Always has a value if initialization was successful (the constructor did
+  // not throw an exception).
+  absl::optional<RtpContributingSourceCache> rtp_contributing_source_cache_;
 
   // A map of all webrtc::DtlsTransports that have a corresponding
   // RTCDtlsTransport object. Garbage collection will remove map entries

@@ -11,9 +11,7 @@
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/json/json_string_value_serializer.h"
-#include "base/optional.h"
 #include "base/path_service.h"
-#include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -27,19 +25,22 @@
 #include "extensions/strings/grit/extensions_strings.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "url/gurl.h"
+
+using extensions::mojom::ManifestLocation;
 
 namespace extensions {
 
 namespace {
 
-const char manifest_content[] =
-    "{\n"
-    "  \"name\": \"Underscore folder test\",\n"
-    "  \"version\": \"1.0\",\n"
-    "  \"manifest_version\": 2\n"
-    "}\n";
+constexpr char kManifestContent[] =
+    R"({
+         "name": "Underscore folder test",
+         "version": "1.0",
+         "manifest_version": 3
+       })";
 
 const char kCustomManifest[] = "custom_manifest.json";
 const base::FilePath::CharType kCustomManifestFilename[] =
@@ -48,7 +49,7 @@ const base::FilePath::CharType kCustomManifestFilename[] =
 scoped_refptr<Extension> LoadExtensionManifest(
     const base::DictionaryValue& manifest,
     const base::FilePath& manifest_dir,
-    Manifest::Location location,
+    ManifestLocation location,
     int extra_flags,
     std::string* error) {
   scoped_refptr<Extension> extension =
@@ -59,7 +60,7 @@ scoped_refptr<Extension> LoadExtensionManifest(
 scoped_refptr<Extension> LoadExtensionManifest(
     const std::string& manifest_value,
     const base::FilePath& manifest_dir,
-    Manifest::Location location,
+    ManifestLocation location,
     int extra_flags,
     std::string* error) {
   JSONStringValueDeserializer deserializer(manifest_value);
@@ -83,13 +84,12 @@ void RunUnderscoreDirectoriesTest(
   for (const auto& dir : underscore_directories)
     ASSERT_TRUE(base::CreateDirectory(ext_path.AppendASCII(dir)));
 
-  ASSERT_EQ(static_cast<int>(strlen(manifest_content)),
-            base::WriteFile(ext_path.AppendASCII("manifest.json"),
-                            manifest_content, strlen(manifest_content)));
+  ASSERT_TRUE(
+      base::WriteFile(ext_path.AppendASCII("manifest.json"), kManifestContent));
 
   std::string error;
   scoped_refptr<Extension> extension = file_util::LoadExtension(
-      ext_path, Manifest::UNPACKED, Extension::NO_FLAGS, &error);
+      ext_path, ManifestLocation::kUnpacked, Extension::NO_FLAGS, &error);
   ASSERT_TRUE(extension) << error;
   EXPECT_TRUE(error.empty());
 
@@ -194,7 +194,7 @@ TEST_F(FileUtilTest, LoadExtensionWithValidLocales) {
 
   std::string error;
   scoped_refptr<Extension> extension(file_util::LoadExtension(
-      install_dir, Manifest::UNPACKED, Extension::NO_FLAGS, &error));
+      install_dir, ManifestLocation::kUnpacked, Extension::NO_FLAGS, &error));
   ASSERT_TRUE(extension.get() != nullptr);
   EXPECT_EQ("The first extension that I made.", extension->description());
 }
@@ -206,7 +206,7 @@ TEST_F(FileUtilTest, LoadExtensionWithGzippedLocalesAllowed) {
 
   std::string error;
   scoped_refptr<Extension> extension(file_util::LoadExtension(
-      install_dir, Manifest::COMPONENT, Extension::NO_FLAGS, &error));
+      install_dir, ManifestLocation::kComponent, Extension::NO_FLAGS, &error));
   ASSERT_TRUE(extension.get() != nullptr);
   EXPECT_EQ("The first extension that I made.", extension->description());
   ASSERT_TRUE(error.empty());
@@ -219,7 +219,7 @@ TEST_F(FileUtilTest, LoadExtensionWithGzippedLocalesNotAllowed) {
 
   std::string error;
   scoped_refptr<Extension> extension(file_util::LoadExtension(
-      install_dir, Manifest::UNPACKED, Extension::NO_FLAGS, &error));
+      install_dir, ManifestLocation::kUnpacked, Extension::NO_FLAGS, &error));
   ASSERT_TRUE(extension.get() == nullptr);
   EXPECT_EQ("Catalog file is missing for locale en.", error);
 }
@@ -231,7 +231,7 @@ TEST_F(FileUtilTest, LoadExtensionWithoutLocalesFolder) {
 
   std::string error;
   scoped_refptr<Extension> extension(file_util::LoadExtension(
-      install_dir, Manifest::UNPACKED, Extension::NO_FLAGS, &error));
+      install_dir, ManifestLocation::kUnpacked, Extension::NO_FLAGS, &error));
   ASSERT_FALSE(extension.get() == nullptr);
   EXPECT_TRUE(error.empty());
 }
@@ -258,7 +258,7 @@ TEST_F(FileUtilTest, CheckIllegalFilenamesOnlyReserved) {
   static const base::FilePath::CharType* const folders[] = {
       kLocaleFolder, kPlatformSpecificFolder};
 
-  for (size_t i = 0; i < base::size(folders); i++) {
+  for (size_t i = 0; i < std::size(folders); i++) {
     base::FilePath src_path = temp.GetPath().Append(folders[i]);
     ASSERT_TRUE(base::CreateDirectory(src_path));
   }
@@ -284,7 +284,7 @@ TEST_F(FileUtilTest, CheckIllegalFilenamesReservedAndIllegal) {
 // These tests do not work on Windows, because it is illegal to create a
 // file/directory with a Windows reserved name. Because we cannot create a
 // file that will cause the test to fail, let's skip the test.
-#if !defined(OS_WIN)
+#if !BUILDFLAG(IS_WIN)
 TEST_F(FileUtilTest, CheckIllegalFilenamesDirectoryWindowsReserved) {
   base::ScopedTempDir temp;
   ASSERT_TRUE(temp.CreateUniqueTempDir());
@@ -324,7 +324,7 @@ TEST_F(FileUtilTest, LoadExtensionGivesHelpfullErrorOnMissingManifest) {
 
   std::string error;
   scoped_refptr<Extension> extension(file_util::LoadExtension(
-      install_dir, Manifest::UNPACKED, Extension::NO_FLAGS, &error));
+      install_dir, ManifestLocation::kUnpacked, Extension::NO_FLAGS, &error));
   ASSERT_TRUE(extension.get() == nullptr);
   ASSERT_FALSE(error.empty());
   ASSERT_EQ(manifest_errors::kManifestUnreadable, error);
@@ -338,7 +338,7 @@ TEST_F(FileUtilTest, LoadExtensionGivesHelpfullErrorOnBadManifest) {
 
   std::string error;
   scoped_refptr<Extension> extension(file_util::LoadExtension(
-      install_dir, Manifest::UNPACKED, Extension::NO_FLAGS, &error));
+      install_dir, ManifestLocation::kUnpacked, Extension::NO_FLAGS, &error));
   ASSERT_TRUE(extension.get() == nullptr);
   ASSERT_FALSE(error.empty());
   ASSERT_NE(std::string::npos,
@@ -363,7 +363,7 @@ TEST_F(FileUtilTest, ValidateThemeUTF8) {
       non_ascii_file.c_str());
   std::string error;
   scoped_refptr<Extension> extension = LoadExtensionManifest(
-      kManifest, temp.GetPath(), Manifest::UNPACKED, 0, &error);
+      kManifest, temp.GetPath(), ManifestLocation::kUnpacked, 0, &error);
   ASSERT_TRUE(extension.get()) << error;
 
   std::vector<InstallWarning> warnings;
@@ -377,33 +377,32 @@ TEST_F(FileUtilTest, BackgroundScriptsMustExist) {
   ASSERT_TRUE(temp.CreateUniqueTempDir());
 
   std::unique_ptr<base::DictionaryValue> value(new base::DictionaryValue());
-  value->SetString("name", "test");
-  value->SetString("version", "1");
-  value->SetInteger("manifest_version", 2);
+  value->SetStringKey("name", "test");
+  value->SetStringKey("version", "1");
+  value->SetIntKey("manifest_version", 2);
 
   base::ListValue* scripts =
       value->SetList("background.scripts", std::make_unique<base::ListValue>());
-  scripts->AppendString("foo.js");
+  scripts->Append("foo.js");
 
   std::string error;
   std::vector<InstallWarning> warnings;
   scoped_refptr<Extension> extension = LoadExtensionManifest(
-      *value, temp.GetPath(), Manifest::UNPACKED, 0, &error);
+      *value, temp.GetPath(), ManifestLocation::kUnpacked, 0, &error);
   ASSERT_TRUE(extension.get()) << error;
 
   EXPECT_FALSE(
       file_util::ValidateExtension(extension.get(), &error, &warnings));
-  EXPECT_EQ(
-      l10n_util::GetStringFUTF8(IDS_EXTENSION_LOAD_BACKGROUND_SCRIPT_FAILED,
-                                base::ASCIIToUTF16("foo.js")),
-      error);
+  EXPECT_EQ(l10n_util::GetStringFUTF8(
+                IDS_EXTENSION_LOAD_BACKGROUND_SCRIPT_FAILED, u"foo.js"),
+            error);
   EXPECT_EQ(0U, warnings.size());
 
-  scripts->Clear();
-  scripts->AppendString("http://google.com/foo.js");
+  scripts->ClearList();
+  scripts->Append("http://google.com/foo.js");
 
-  extension = LoadExtensionManifest(*value, temp.GetPath(), Manifest::UNPACKED,
-                                    0, &error);
+  extension = LoadExtensionManifest(*value, temp.GetPath(),
+                                    ManifestLocation::kUnpacked, 0, &error);
   ASSERT_TRUE(extension.get()) << error;
 
   warnings.clear();
@@ -411,7 +410,7 @@ TEST_F(FileUtilTest, BackgroundScriptsMustExist) {
       file_util::ValidateExtension(extension.get(), &error, &warnings));
   EXPECT_EQ(
       l10n_util::GetStringFUTF8(IDS_EXTENSION_LOAD_BACKGROUND_SCRIPT_FAILED,
-                                base::ASCIIToUTF16("http://google.com/foo.js")),
+                                u"http://google.com/foo.js"),
       error);
   EXPECT_EQ(0U, warnings.size());
 }
@@ -443,20 +442,20 @@ TEST_F(FileUtilTest, FindPrivateKeyFiles) {
   base::FilePath src_path = temp.GetPath().AppendASCII("some_dir");
   ASSERT_TRUE(base::CreateDirectory(src_path));
 
-  ASSERT_EQ(static_cast<int>(base::size(private_key)),
+  ASSERT_EQ(static_cast<int>(std::size(private_key)),
             base::WriteFile(src_path.AppendASCII("a_key.pem"), private_key,
-                            base::size(private_key)));
-  ASSERT_EQ(static_cast<int>(base::size(private_key)),
+                            std::size(private_key)));
+  ASSERT_EQ(static_cast<int>(std::size(private_key)),
             base::WriteFile(src_path.AppendASCII("second_key.pem"), private_key,
-                            base::size(private_key)));
+                            std::size(private_key)));
   // Shouldn't find a key with a different extension.
-  ASSERT_EQ(static_cast<int>(base::size(private_key)),
+  ASSERT_EQ(static_cast<int>(std::size(private_key)),
             base::WriteFile(src_path.AppendASCII("key.diff_ext"), private_key,
-                            base::size(private_key)));
+                            std::size(private_key)));
   // Shouldn't find a key that isn't parsable.
-  ASSERT_EQ(static_cast<int>(base::size(private_key)) - 30,
+  ASSERT_EQ(static_cast<int>(std::size(private_key)) - 30,
             base::WriteFile(src_path.AppendASCII("unparsable_key.pem"),
-                            private_key, base::size(private_key) - 30));
+                            private_key, std::size(private_key) - 30));
   std::vector<base::FilePath> private_keys =
       file_util::FindPrivateKeyFiles(temp.GetPath());
   EXPECT_EQ(2U, private_keys.size());
@@ -488,12 +487,9 @@ TEST_F(FileUtilTest, WarnOnPrivateKey) {
                             strlen(private_key)));
 
   std::string error;
-  scoped_refptr<Extension> extension(
-      file_util::LoadExtension(ext_path,
-                               "the_id",
-                               Manifest::EXTERNAL_PREF,
-                               Extension::NO_FLAGS,
-                               &error));
+  scoped_refptr<Extension> extension(file_util::LoadExtension(
+      ext_path, "the_id", ManifestLocation::kExternalPref, Extension::NO_FLAGS,
+      &error));
   ASSERT_TRUE(extension.get()) << error;
   ASSERT_EQ(1u, extension->install_warnings().size());
   EXPECT_THAT(extension->install_warnings(),
@@ -503,11 +499,9 @@ TEST_F(FileUtilTest, WarnOnPrivateKey) {
                       "extension includes the key file.*ext_root.a_key.pem"))));
 
   // Turn the warning into an error with ERROR_ON_PRIVATE_KEY.
-  extension = file_util::LoadExtension(ext_path,
-                                       "the_id",
-                                       Manifest::EXTERNAL_PREF,
-                                       Extension::ERROR_ON_PRIVATE_KEY,
-                                       &error);
+  extension = file_util::LoadExtension(ext_path, "the_id",
+                                       ManifestLocation::kExternalPref,
+                                       Extension::ERROR_ON_PRIVATE_KEY, &error);
   EXPECT_FALSE(extension.get());
   EXPECT_THAT(error,
               testing::ContainsRegex(
@@ -535,8 +529,8 @@ TEST_F(FileUtilTest, SpecifyManifestFile) {
 
   std::string error;
   scoped_refptr<Extension> extension(file_util::LoadExtension(
-      ext_path, kCustomManifestFilename, "the_id", Manifest::EXTERNAL_PREF,
-      Extension::NO_FLAGS, &error));
+      ext_path, kCustomManifestFilename, "the_id",
+      ManifestLocation::kExternalPref, Extension::NO_FLAGS, &error));
   ASSERT_TRUE(extension.get()) << error;
   ASSERT_EQ(0u, extension->install_warnings().size());
 }
@@ -551,7 +545,7 @@ TEST_F(FileUtilTest, CheckZeroLengthAndMissingIconFile) {
 
   std::string error;
   scoped_refptr<Extension> extension(file_util::LoadExtension(
-      ext_dir, Manifest::INTERNAL, Extension::NO_FLAGS, &error));
+      ext_dir, ManifestLocation::kInternal, Extension::NO_FLAGS, &error));
   ASSERT_FALSE(extension);
 }
 
@@ -565,7 +559,7 @@ TEST_F(FileUtilTest, CheckZeroLengthAndMissingIconFileUnpacked) {
 
   std::string error;
   scoped_refptr<Extension> extension(file_util::LoadExtension(
-      ext_dir, Manifest::UNPACKED, Extension::NO_FLAGS, &error));
+      ext_dir, ManifestLocation::kUnpacked, Extension::NO_FLAGS, &error));
   EXPECT_FALSE(extension);
   EXPECT_EQ("Could not load icon 'missing-icon.png' specified in 'icons'.",
             error);
@@ -584,7 +578,7 @@ TEST_F(FileUtilTest, CheckInvisibleIconFileUnpacked) {
   file_util::SetReportErrorForInvisibleIconForTesting(true);
   std::string error;
   scoped_refptr<Extension> extension(file_util::LoadExtension(
-      ext_dir, Manifest::UNPACKED, Extension::NO_FLAGS, &error));
+      ext_dir, ManifestLocation::kUnpacked, Extension::NO_FLAGS, &error));
   file_util::SetReportErrorForInvisibleIconForTesting(false);
   EXPECT_FALSE(extension);
   EXPECT_EQ(
@@ -606,7 +600,7 @@ TEST_F(FileUtilTest, CheckInvisibleIconFilePacked) {
   file_util::SetReportErrorForInvisibleIconForTesting(true);
   std::string error;
   scoped_refptr<Extension> extension(file_util::LoadExtension(
-      ext_dir, Manifest::INTERNAL, Extension::NO_FLAGS, &error));
+      ext_dir, ManifestLocation::kInternal, Extension::NO_FLAGS, &error));
   file_util::SetReportErrorForInvisibleIconForTesting(false);
   EXPECT_TRUE(extension);
   EXPECT_TRUE(error.empty());
@@ -624,7 +618,7 @@ TEST_F(FileUtilTest, ExtensionURLToRelativeFilePath) {
     {URL_PREFIX "%C3%9Cber.html",
      "\xC3\x9C"
      "ber.html"},
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
     {URL_PREFIX "C%3A/simple.html", ""},
 #endif
     {URL_PREFIX "////simple.html", "simple.html"},
@@ -642,7 +636,7 @@ TEST_F(FileUtilTest, ExtensionURLToRelativeFilePath) {
   };
 #undef URL_PREFIX
 
-  for (size_t i = 0; i < base::size(test_cases); ++i) {
+  for (size_t i = 0; i < std::size(test_cases); ++i) {
     GURL url(test_cases[i].url);
     base::FilePath expected_path =
         base::FilePath::FromUTF8Unsafe(test_cases[i].expected_relative_path);

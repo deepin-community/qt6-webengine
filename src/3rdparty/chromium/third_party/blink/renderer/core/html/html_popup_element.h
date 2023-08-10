@@ -28,19 +28,22 @@ class HTMLPopupElement final : public HTMLElement {
   void hide();
   void show();
 
-  Element* AnchorElement() const;
-
-  static void HandleLightDismiss(const Event&);
-
  private:
   void ScheduleHideEvent();
   void MarkStyleDirty();
+  bool IsKeyboardFocusable() const override;
+  bool IsMouseFocusable() const override;
+
+  Node::InsertionNotificationRequest InsertedInto(
+      ContainerNode& insertion_point) override;
+  void RemovedFrom(ContainerNode&) override;
+  void ParserDidSetAttributes() override;
 
   void PushNewPopupElement(HTMLPopupElement*);
   void PopPopupElement(HTMLPopupElement*);
-  HTMLPopupElement* TopmostPopupElement();
 
   bool open_;
+  bool had_initiallyopen_when_parsed_;
 };
 
 }  // namespace blink

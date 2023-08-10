@@ -6,15 +6,14 @@
 
 #include "base/bind.h"
 #include "base/memory/weak_ptr.h"
-#include "base/task/post_task.h"
+#include "base/sequence_checker.h"
+#include "base/threading/sequenced_task_runner_handle.h"
 #include "base/time/time.h"
-#include "components/safe_browsing/core/common/thread_utils.h"
 
 namespace safe_browsing {
 
 SafeBrowsingTokenFetchTracker::SafeBrowsingTokenFetchTracker()
     : weak_ptr_factory_(this) {
-  DCHECK(CurrentlyOnThread(ThreadID::UI));
 }
 
 SafeBrowsingTokenFetchTracker::~SafeBrowsingTokenFetchTracker() {
@@ -26,17 +25,19 @@ SafeBrowsingTokenFetchTracker::~SafeBrowsingTokenFetchTracker() {
 int SafeBrowsingTokenFetchTracker::StartTrackingTokenFetch(
     SafeBrowsingTokenFetcher::Callback on_token_fetched_callback,
     OnTokenFetchTimeoutCallback on_token_fetch_timeout_callback) {
-  DCHECK(CurrentlyOnThread(ThreadID::UI));
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   const int request_id = requests_sent_;
   requests_sent_++;
   callbacks_[request_id] = std::move(on_token_fetched_callback);
-  base::PostDelayedTask(
-      FROM_HERE, CreateTaskTraits(ThreadID::UI),
+  // TODO(crbug.com/1276273): Use base::OneShotTimer here to enabling cancelling
+  // tracking of timeouts when requests complete. The implementation of
+  // OnTokenFetchTimeout can then be correspondingly simplified.
+  base::SequencedTaskRunnerHandle::Get()->PostDelayedTask(
+      FROM_HERE,
       base::BindOnce(&SafeBrowsingTokenFetchTracker::OnTokenFetchTimeout,
                      weak_ptr_factory_.GetWeakPtr(), request_id,
                      std::move(on_token_fetch_timeout_callback)),
-      base::TimeDelta::FromMilliseconds(
-          kTokenFetchTimeoutDelayFromMilliseconds));
+      base::Milliseconds(kTokenFetchTimeoutDelayFromMilliseconds));
 
   return request_id;
 }
@@ -50,6 +51,11 @@ void SafeBrowsingTokenFetchTracker::OnTokenFetchComplete(
 void SafeBrowsingTokenFetchTracker::OnTokenFetchTimeout(
     int request_id,
     OnTokenFetchTimeoutCallback on_token_fetch_timeout_callback) {
+  // The request might have already completed, in which case there
+  // is nothing to be done here.
+  if (!callbacks_.contains(request_id))
+    return;
+
   Finish(request_id, std::string());
 
   std::move(on_token_fetch_timeout_callback).Run(request_id);

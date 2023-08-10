@@ -17,6 +17,8 @@
 
 #include <stdint.h>
 #include <stdlib.h>
+
+#include <memory>
 #include <utility>
 
 #include "base/bind.h"
@@ -27,10 +29,11 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/location.h"
+#include "base/memory/raw_ptr.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/notreached.h"
 #include "base/run_loop.h"
-#include "base/single_thread_task_runner.h"
-#include "base/stl_util.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/test/task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
@@ -105,6 +108,9 @@ class FakeDataChannel {
  public:
   FakeDataChannel()
       : read_buf_len_(0), closed_(false), write_called_after_close_(false) {}
+
+  FakeDataChannel(const FakeDataChannel&) = delete;
+  FakeDataChannel& operator=(const FakeDataChannel&) = delete;
 
   int Read(IOBuffer* buf, int buf_len, CompletionOnceCallback callback) {
     DCHECK(read_callback_.is_null());
@@ -212,8 +218,6 @@ class FakeDataChannel {
   bool write_called_after_close_;
 
   base::WeakPtrFactory<FakeDataChannel> weak_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(FakeDataChannel);
 };
 
 class FakeSocket : public StreamSocket {
@@ -221,6 +225,9 @@ class FakeSocket : public StreamSocket {
   FakeSocket(FakeDataChannel* incoming_channel,
              FakeDataChannel* outgoing_channel)
       : incoming_(incoming_channel), outgoing_(outgoing_channel) {}
+
+  FakeSocket(const FakeSocket&) = delete;
+  FakeSocket& operator=(const FakeSocket&) = delete;
 
   ~FakeSocket() override = default;
 
@@ -294,10 +301,8 @@ class FakeSocket : public StreamSocket {
 
  private:
   NetLogWithSource net_log_;
-  FakeDataChannel* incoming_;
-  FakeDataChannel* outgoing_;
-
-  DISALLOW_COPY_AND_ASSIGN(FakeSocket);
+  raw_ptr<FakeDataChannel> incoming_;
+  raw_ptr<FakeDataChannel> outgoing_;
 };
 
 }  // namespace
@@ -413,8 +418,8 @@ class SSLServerSocketTest : public PlatformTest, public WithTaskEnvironment {
   void CreateSockets() {
     client_socket_.reset();
     server_socket_.reset();
-    channel_1_.reset(new FakeDataChannel());
-    channel_2_.reset(new FakeDataChannel());
+    channel_1_ = std::make_unique<FakeDataChannel>();
+    channel_2_ = std::make_unique<FakeDataChannel>();
     std::unique_ptr<StreamSocket> client_connection =
         std::make_unique<FakeSocket>(channel_1_.get(), channel_2_.get());
     std::unique_ptr<StreamSocket> server_socket =
@@ -1135,7 +1140,7 @@ TEST_F(SSLServerSocketTest, ClientWriteAfterServerClose) {
 
   base::RunLoop run_loop;
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-      FROM_HERE, run_loop.QuitClosure(), base::TimeDelta::FromMilliseconds(10));
+      FROM_HERE, run_loop.QuitClosure(), base::Milliseconds(10));
   run_loop.Run();
 }
 
@@ -1200,7 +1205,7 @@ TEST_F(SSLServerSocketTest, RequireEcdheFlag) {
   };
   SSLContextConfig config;
   config.disabled_cipher_suites.assign(
-      kEcdheCiphers, kEcdheCiphers + base::size(kEcdheCiphers));
+      kEcdheCiphers, kEcdheCiphers + std::size(kEcdheCiphers));
 
   // Legacy RSA key exchange ciphers only exist in TLS 1.2 and below.
   config.version_max = SSL_PROTOCOL_VERSION_TLS1_2;
@@ -1280,7 +1285,7 @@ TEST_F(SSLServerSocketTest, HandshakeServerSSLPrivateKeyRequireEcdhe) {
   };
   SSLContextConfig config;
   config.disabled_cipher_suites.assign(
-      kEcdheCiphers, kEcdheCiphers + base::size(kEcdheCiphers));
+      kEcdheCiphers, kEcdheCiphers + std::size(kEcdheCiphers));
   // TLS 1.3 always works with SSLPrivateKey.
   config.version_max = SSL_PROTOCOL_VERSION_TLS1_2;
   ssl_config_service_->UpdateSSLConfigAndNotify(config);
@@ -1364,6 +1369,51 @@ TEST_P(SSLServerSocketAlpsTest, Alps) {
     EXPECT_FALSE(alps_data_received_by_client.has_value());
     EXPECT_FALSE(alps_data_received_by_server.has_value());
   }
+}
+
+// Test that CancelReadIfReady works.
+TEST_F(SSLServerSocketTest, CancelReadIfReady) {
+  ASSERT_NO_FATAL_FAILURE(CreateContext());
+  ASSERT_NO_FATAL_FAILURE(CreateSockets());
+
+  TestCompletionCallback connect_callback;
+  int client_ret = client_socket_->Connect(connect_callback.callback());
+  TestCompletionCallback handshake_callback;
+  int server_ret = server_socket_->Handshake(handshake_callback.callback());
+  ASSERT_THAT(connect_callback.GetResult(client_ret), IsOk());
+  ASSERT_THAT(handshake_callback.GetResult(server_ret), IsOk());
+
+  // Attempt to read from the server socket. There will not be anything to read.
+  // Cancel the read immediately afterwards.
+  TestCompletionCallback read_callback;
+  auto read_buf = base::MakeRefCounted<IOBuffer>(1);
+  int read_ret =
+      server_socket_->ReadIfReady(read_buf.get(), 1, read_callback.callback());
+  ASSERT_THAT(read_ret, IsError(ERR_IO_PENDING));
+  ASSERT_THAT(server_socket_->CancelReadIfReady(), IsOk());
+
+  // After the client writes data, the server should still not pick up a result.
+  auto write_buf = base::MakeRefCounted<StringIOBuffer>("a");
+  TestCompletionCallback write_callback;
+  ASSERT_EQ(write_callback.GetResult(client_socket_->Write(
+                write_buf.get(), write_buf->size(), write_callback.callback(),
+                TRAFFIC_ANNOTATION_FOR_TESTS)),
+            write_buf->size());
+  base::RunLoop().RunUntilIdle();
+  EXPECT_FALSE(read_callback.have_result());
+
+  // After a canceled read, future reads are still possible.
+  while (true) {
+    TestCompletionCallback read_callback2;
+    read_ret = server_socket_->ReadIfReady(read_buf.get(), 1,
+                                           read_callback2.callback());
+    if (read_ret != ERR_IO_PENDING) {
+      break;
+    }
+    ASSERT_THAT(read_callback2.GetResult(read_ret), IsOk());
+  }
+  ASSERT_EQ(1, read_ret);
+  EXPECT_EQ(read_buf->data()[0], 'a');
 }
 
 }  // namespace net

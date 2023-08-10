@@ -9,9 +9,9 @@
 
 #include "net/base/ip_address.h"
 #include "net/base/ip_endpoint.h"
-#include "net/third_party/quiche/src/quic/platform/api/quic_ip_address.h"
-#include "net/third_party/quiche/src/quic/platform/api/quic_ip_address_family.h"
-#include "net/third_party/quiche/src/quic/platform/api/quic_socket_address.h"
+#include "net/third_party/quiche/src/quiche/quic/platform/api/quic_ip_address.h"
+#include "net/third_party/quiche/src/quiche/quic/platform/api/quic_ip_address_family.h"
+#include "net/third_party/quiche/src/quiche/quic/platform/api/quic_socket_address.h"
 
 namespace net {
 
@@ -57,9 +57,9 @@ inline quic::QuicSocketAddress ToQuicSocketAddress(IPEndPoint address) {
 
   sockaddr_storage result;
   socklen_t size = sizeof(result);
-  bool success =
-      address.ToSockAddr(reinterpret_cast<sockaddr*>(&result), &size);
-  DCHECK(success);
+  if (!address.ToSockAddr(reinterpret_cast<sockaddr*>(&result), &size)) {
+    return quic::QuicSocketAddress();
+  }
   return quic::QuicSocketAddress(result);
 }
 

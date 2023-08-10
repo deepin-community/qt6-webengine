@@ -8,9 +8,13 @@
 #include <stdint.h>
 
 #include <algorithm>
+#include <memory>
 #include <string>
 
 #include "base/command_line.h"
+#include "base/containers/cxx20_erase.h"
+#include "base/memory/raw_ptr.h"
+#include "build/build_config.h"
 #include "gpu/command_buffer/service/buffer_manager.h"
 #include "gpu/command_buffer/service/decoder_context.h"
 #include "gpu/command_buffer/service/framebuffer_manager.h"
@@ -83,7 +87,7 @@ ContextGroup::ContextGroup(
       mailbox_manager_(mailbox_manager),
       memory_tracker_(std::move(memory_tracker)),
       shader_translator_cache_(shader_translator_cache),
-#if defined(OS_MAC)
+#if BUILDFLAG(IS_MAC)
       // Framebuffer completeness is not cacheable on OS X because of dynamic
       // graphics switching.
       // http://crbug.com/180876
@@ -396,11 +400,11 @@ gpu::ContextResult ContextGroup::Initialize(
   // Managers are not used by the passthrough command decoder. Save memory by
   // not allocating them.
   if (!use_passthrough_cmd_decoder_) {
-    texture_manager_.reset(new TextureManager(
+    texture_manager_ = std::make_unique<TextureManager>(
         memory_tracker_.get(), feature_info_.get(), max_texture_size,
         max_cube_map_texture_size, max_rectangle_texture_size,
         max_3d_texture_size, max_array_texture_layers, bind_generates_resource_,
-        progress_reporter_, discardable_manager_));
+        progress_reporter_, discardable_manager_);
   }
 
   const GLint kMinTextureImageUnits = 8;
@@ -562,7 +566,7 @@ class WeakPtrEquals {
   }
 
  private:
-  T* const t_;
+  const raw_ptr<T> t_;
 };
 
 }  // namespace anonymous

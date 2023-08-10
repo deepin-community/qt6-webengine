@@ -18,14 +18,16 @@ namespace init {
 // InitializeGLNoExtensionsOneOff(). For tests possibly
 // InitializeStaticGLBindingsImplementation() +
 // InitializeGLOneOffPlatformImplementation() instead.
-bool InitializeGLOneOffPlatform();
+// |system_device_id| specifies which GPU to use on a multi-GPU system.
+// If its value is 0, use the default GPU of the system.
+bool InitializeGLOneOffPlatform(uint64_t system_device_id);
 
 #if defined(TOOLKIT_QT)
 bool usingSoftwareDynamicGL();
 #endif
 
 // Initializes a particular GL implementation.
-bool InitializeStaticGLBindings(GLImplementation implementation);
+bool InitializeStaticGLBindings(GLImplementationParts implementation);
 
 #if BUILDFLAG(USE_STATIC_ANGLE)
 bool InitializeStaticANGLEEGL();

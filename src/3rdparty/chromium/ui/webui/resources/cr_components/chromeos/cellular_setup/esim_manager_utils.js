@@ -10,25 +10,46 @@
 cr.define('cellular_setup', function() {
   /**
    * Fetches the EUICC's eSIM profiles with status 'Pending'.
-   * @param {!chromeos.cellularSetup.mojom.EuiccRemote} euicc
-   * @return {!Promise<!Array<!chromeos.cellularSetup.mojom.ESimProfileRemote>>}
+   * @param {!ash.cellularSetup.mojom.EuiccRemote} euicc
+   * @return {!Promise<!Array<!ash.cellularSetup.mojom.ESimProfileRemote>>}
    */
   /* #export */ function getPendingESimProfiles(euicc) {
     return euicc.getProfileList().then(response => {
-      return filterForPendingProfiles_(response.profiles);
+      return filterByProfileProperties_(response.profiles, properties => {
+        return properties.state ===
+            ash.cellularSetup.mojom.ProfileState.kPending;
+      });
     });
   }
 
   /**
-   * @private
-   * @param {!Array<!chromeos.cellularSetup.mojom.ESimProfileRemote>} profiles
-   * @return {!Promise<Array<!chromeos.cellularSetup.mojom.ESimProfileRemote>>}
+   * Fetches the EUICC's eSIM profiles with status not 'Pending'.
+   * @param {!ash.cellularSetup.mojom.EuiccRemote} euicc
+   * @return {!Promise<!Array<!ash.cellularSetup.mojom.ESimProfileRemote>>}
    */
-  function filterForPendingProfiles_(profiles) {
+  /* #export */ function getNonPendingESimProfiles(euicc) {
+    return euicc.getProfileList().then(response => {
+      return filterByProfileProperties_(response.profiles, properties => {
+        return properties.state !==
+            ash.cellularSetup.mojom.ProfileState.kPending;
+      });
+    });
+  }
+
+  /**
+   * Filters each profile in profiles by callback, which is given the profile's
+   * properties as an argument and returns true or false. Does not guarantee
+   * that profiles retains the same order.
+   * @private
+   * @param {!Array<!ash.cellularSetup.mojom.ESimProfileRemote>} profiles
+   * @param {function(ash.cellularSetup.mojom.ESimProfileProperties)}
+   *     callback
+   * @return {!Promise<Array<!ash.cellularSetup.mojom.ESimProfileRemote>>}
+   */
+  function filterByProfileProperties_(profiles, callback) {
     const profilePromises = profiles.map(profile => {
       return profile.getProperties().then(response => {
-        if (response.properties.state !==
-            chromeos.cellularSetup.mojom.ProfileState.kPending) {
+        if (!callback(response.properties)) {
           return null;
         }
         return profile;
@@ -42,9 +63,22 @@ cr.define('cellular_setup', function() {
   }
 
   /**
+   * @return {!Promise<number>}
+   */
+  /* #export */ function getNumESimProfiles() {
+    return getEuicc()
+        .then(euicc => {
+          return euicc.getProfileList();
+        })
+        .then(response => {
+          return response.profiles.length;
+        });
+  }
+
+  /**
    * Returns the Euicc that should be used for eSim operations or null
    * if there is none available.
-   * @return {!Promise<?chromeos.cellularSetup.mojom.EuiccRemote>}
+   * @return {!Promise<?ash.cellularSetup.mojom.EuiccRemote>}
    */
   /* #export */ async function getEuicc() {
     const eSimManagerRemote = cellular_setup.getESimManagerRemote();
@@ -52,22 +86,30 @@ cr.define('cellular_setup', function() {
     if (!response || !response.euiccs) {
       return null;
     }
-    // Onboard Euicc always appears at index 0. If useExternalEuicc flag
-    // is set, use the next available Euicc.
-    const euiccIndex = loadTimeData.getBoolean('useExternalEuicc') ? 1 : 0;
-    if (euiccIndex >= response.euiccs.length) {
+    // Always use the first Euicc if Hermes only exposes one Euicc.
+    // If useSecondEuicc flag is set and there are two Euicc available,
+    // use the second available Euicc.
+    if (response.euiccs.length === 0) {
       return null;
     }
+
+    if (response.euiccs.length === 1) {
+      return response.euiccs[0];
+    }
+
+    const euiccIndex = loadTimeData.getBoolean('useSecondEuicc') ? 1 : 0;
     return response.euiccs[euiccIndex];
   }
 
   /**
-   * Returns the eSIM profile with iccid in the first EUICC and null if none
-   * found.
    * @param {string} iccid
-   * @return {!Promise<?chromeos.cellularSetup.mojom.ESimProfileRemote>}
+   * @return {!Promise<?{
+   *       profileRemote: ash.cellularSetup.mojom.ESimProfileRemote,
+   *       profileProperties: ash.cellularSetup.mojom.ESimProfileProperties
+   *     }>} Returns a eSIM profile remote and profile properties for given
+   *         |iccid|.
    */
-  /* #export */ async function getESimProfile(iccid) {
+  async function getESimProfileDetails(iccid) {
     if (!iccid) {
       return null;
     }
@@ -80,19 +122,54 @@ cr.define('cellular_setup', function() {
     const esimProfilesRemotes = await euicc.getProfileList();
 
     for (const profileRemote of esimProfilesRemotes.profiles) {
-      const profileProperties = await profileRemote.getProperties();
+      const profilePropertiesResponse = await profileRemote.getProperties();
+      if (!profilePropertiesResponse || !profilePropertiesResponse.properties) {
+        return null;
+      }
 
-      if (profileProperties.properties.iccid === iccid) {
-        return profileRemote;
+      const profileProperties = profilePropertiesResponse.properties;
+      if (profileProperties.iccid === iccid) {
+        return {profileRemote, profileProperties};
       }
     }
     return null;
+  }
+
+  /**
+   * Returns the eSIM profile with iccid in the first EUICC or null if none
+   * is found.
+   * @param {string} iccid
+   * @return {!Promise<?ash.cellularSetup.mojom.ESimProfileRemote>}
+   */
+  /* #export */ async function getESimProfile(iccid) {
+    const details = await getESimProfileDetails(iccid);
+    if (!details) {
+      return null;
+    }
+    return details.profileRemote;
+  }
+
+  /**
+   * Returns properties for eSIM profile with iccid in the first EUICC or null
+   * if none is found.
+   * @param {string} iccid
+   * @return {!Promise<?ash.cellularSetup.mojom.ESimProfileProperties>}
+   */
+  /* #export */ async function getESimProfileProperties(iccid) {
+    const details = await getESimProfileDetails(iccid);
+    if (!details) {
+      return null;
+    }
+    return details.profileProperties;
   }
 
   // #cr_define_end
   return {
     getEuicc,
     getESimProfile,
+    getESimProfileProperties,
     getPendingESimProfiles,
+    getNonPendingESimProfiles,
+    getNumESimProfiles,
   };
 });

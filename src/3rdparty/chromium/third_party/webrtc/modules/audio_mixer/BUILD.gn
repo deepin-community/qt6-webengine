@@ -39,13 +39,18 @@ rtc_library("audio_mixer_impl") {
   deps = [
     ":audio_frame_manipulator",
     "../../api:array_view",
+    "../../api:rtp_packet_info",
     "../../api:scoped_refptr",
     "../../api/audio:audio_frame_api",
     "../../api/audio:audio_mixer_api",
     "../../audio/utility:audio_frame_operations",
     "../../common_audio",
     "../../rtc_base:checks",
+    "../../rtc_base:logging",
+    "../../rtc_base:macromagic",
+    "../../rtc_base:refcount",
     "../../rtc_base:rtc_base_approved",
+    "../../rtc_base:safe_conversions",
     "../../rtc_base/synchronization:mutex",
     "../../system_wrappers",
     "../../system_wrappers:metrics",
@@ -93,6 +98,7 @@ if (rtc_include_tests) {
       "../../api/audio:audio_frame_api",
       "../../rtc_base:checks",
       "../../rtc_base:rtc_base_approved",
+      "../../rtc_base:safe_conversions",
     ]
   }
 
@@ -104,16 +110,19 @@ if (rtc_include_tests) {
       "audio_mixer_impl_unittest.cc",
       "frame_combiner_unittest.cc",
     ]
-
+    absl_deps = [ "//third_party/abseil-cpp/absl/types:optional" ]
     deps = [
       ":audio_frame_manipulator",
       ":audio_mixer_impl",
       ":audio_mixer_test_utils",
       "../../api:array_view",
+      "../../api:rtp_packet_info",
       "../../api/audio:audio_mixer_api",
+      "../../api/units:timestamp",
       "../../audio/utility:audio_frame_operations",
       "../../rtc_base:checks",
       "../../rtc_base:rtc_base_approved",
+      "../../rtc_base:stringutils",
       "../../rtc_base:task_queue_for_test",
       "../../test:test_support",
     ]

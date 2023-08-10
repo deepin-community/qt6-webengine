@@ -8,12 +8,11 @@
 #include <memory>
 
 #include "base/callback.h"
-#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/tick_clock.h"
 #include "base/time/time.h"
-#include "media/base/video_frame_feedback.h"
+#include "media/capture/video/video_capture_feedback.h"
 #include "media/cast/cast_config.h"
 #include "media/cast/cast_sender.h"
 #include "media/cast/common/rtp_time.h"
@@ -44,10 +43,12 @@ class VideoSender : public FrameSender {
               const FrameSenderConfig& video_config,
               StatusChangeCallback status_change_cb,
               const CreateVideoEncodeAcceleratorCallback& create_vea_cb,
-              const CreateVideoEncodeMemoryCallback& create_video_encode_mem_cb,
               CastTransport* const transport_sender,
               PlayoutDelayChangeCB playout_delay_change_cb,
               media::VideoCaptureFeedbackCB feedback_callback);
+
+  VideoSender(const VideoSender&) = delete;
+  VideoSender& operator=(const VideoSender&) = delete;
 
   ~VideoSender() override;
 
@@ -115,8 +116,6 @@ class VideoSender : public FrameSender {
 
   // NOTE: Weak pointers must be invalidated before all other member variables.
   base::WeakPtrFactory<VideoSender> weak_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(VideoSender);
 };
 
 }  // namespace cast

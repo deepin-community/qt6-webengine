@@ -7,6 +7,7 @@
 #include <memory>
 #include <utility>
 
+#include "ash/constants/ash_features.h"
 #include "ash/constants/ash_pref_names.h"
 #include "base/bind.h"
 #include "base/callback.h"
@@ -18,11 +19,11 @@
 #include "base/system/sys_info.h"
 #include "base/time/time.h"
 #include "base/values.h"
+#include "chrome/browser/ash/child_accounts/edu_coexistence_tos_store_utils.h"
+#include "chrome/browser/ash/login/login_pref_names.h"
+#include "chrome/browser/ash/policy/core/user_cloud_policy_manager_ash.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browser_process_platform_part.h"
-#include "chrome/browser/chromeos/child_accounts/edu_coexistence_tos_store_utils.h"
-#include "chrome/browser/chromeos/login/login_pref_names.h"
-#include "chrome/browser/chromeos/policy/user_cloud_policy_manager_chromeos.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/signin/chrome_device_id_helper.h"
@@ -33,11 +34,12 @@
 #include "chrome/common/chrome_constants.h"
 #include "components/policy/core/common/cloud/cloud_policy_core.h"
 #include "components/policy/proto/device_management_backend.pb.h"
+#include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
 #include "components/session_manager/core/session_manager.h"
+#include "components/signin/public/base/consent_level.h"
 #include "components/signin/public/identity_manager/access_token_info.h"
 #include "components/signin/public/identity_manager/account_info.h"
-#include "components/signin/public/identity_manager/consent_level.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "content/public/browser/web_ui.h"
 #include "google_apis/gaia/gaia_constants.h"
@@ -109,8 +111,8 @@ base::Time GetSigninTime() {
 // required.
 std::string GetDeviceIdForActiveUserProfile() {
   Profile* profile = ProfileManager::GetActiveUserProfile();
-  const policy::UserCloudPolicyManagerChromeOS* policy_manager =
-      profile->GetUserCloudPolicyManagerChromeOS();
+  const policy::UserCloudPolicyManagerAsh* policy_manager =
+      profile->GetUserCloudPolicyManagerAsh();
   if (!policy_manager)
     return std::string();
 
@@ -127,6 +129,12 @@ std::string GetDeviceIdForActiveUserProfile() {
 }
 
 }  // namespace
+
+void EduCoexistenceLoginHandler::RegisterProfilePrefs(
+    PrefRegistrySimple* registry) {
+  registry->RegisterStringPref(ash::prefs::kEduCoexistenceId,
+                               std::string() /* default_value */);
+}
 
 EduCoexistenceLoginHandler::EduCoexistenceLoginHandler(
     const base::RepeatingClosure& close_dialog_closure)
@@ -145,7 +153,6 @@ EduCoexistenceLoginHandler::EduCoexistenceLoginHandler(
 
   OAuth2AccessTokenManager::ScopeSet scopes;
   scopes.insert(GaiaConstants::kKidsSupervisionSetupChildOAuth2Scope);
-  scopes.insert(GaiaConstants::kKidManagementOAuth2Scope);
   scopes.insert(GaiaConstants::kAccountsReauthOAuth2Scope);
   scopes.insert(GaiaConstants::kAuditRecordingOAuth2Scope);
   scopes.insert(GaiaConstants::kClearCutOAuth2Scope);
@@ -159,7 +166,7 @@ EduCoexistenceLoginHandler::EduCoexistenceLoginHandler(
               &EduCoexistenceLoginHandler::OnOAuthAccessTokensFetched,
               base::Unretained(this)),
           signin::PrimaryAccountAccessTokenFetcher::Mode::kWaitUntilAvailable,
-          signin::ConsentLevel::kNotRequired);
+          signin::ConsentLevel::kSync);
 }
 
 EduCoexistenceLoginHandler::~EduCoexistenceLoginHandler() {
@@ -176,22 +183,22 @@ void EduCoexistenceLoginHandler::RegisterMessages() {
       web_ui(), /* is_onboarding */ session_manager::SessionManager::Get()
                     ->IsUserSessionBlocked());
 
-  web_ui()->RegisterMessageCallback(
+  web_ui()->RegisterDeprecatedMessageCallback(
       "initializeEduArgs",
       base::BindRepeating(&EduCoexistenceLoginHandler::InitializeEduArgs,
                           base::Unretained(this)));
 
-  web_ui()->RegisterMessageCallback(
+  web_ui()->RegisterDeprecatedMessageCallback(
       "consentValid",
       base::BindRepeating(&EduCoexistenceLoginHandler::ConsentValid,
                           base::Unretained(this)));
 
-  web_ui()->RegisterMessageCallback(
+  web_ui()->RegisterDeprecatedMessageCallback(
       "consentLogged",
       base::BindRepeating(&EduCoexistenceLoginHandler::ConsentLogged,
                           base::Unretained(this)));
 
-  web_ui()->RegisterMessageCallback(
+  web_ui()->RegisterDeprecatedMessageCallback(
       "error", base::BindRepeating(&EduCoexistenceLoginHandler::OnError,
                                    base::Unretained(this)));
 }
@@ -209,8 +216,8 @@ void EduCoexistenceLoginHandler::OnRefreshTokenUpdatedForAccount(
 
   Profile* profile = ProfileManager::GetActiveUserProfile();
 
-  edu_coexistence::UpdateAcceptedToSVersionPref(
-      profile, edu_coexistence::UserConsentInfo(
+  ash::edu_coexistence::UpdateAcceptedToSVersionPref(
+      profile, ash::edu_coexistence::UserConsentInfo(
                    account_info.gaia, terms_of_service_version_number_));
 
   EduCoexistenceStateTracker::Get()->OnWebUiStateChanged(
@@ -251,7 +258,7 @@ void EduCoexistenceLoginHandler::InitializeEduArgs(
     const base::ListValue* args) {
   AllowJavascript();
 
-  initialize_edu_args_callback_ = args->GetList()[0].GetString();
+  initialize_edu_args_callback_ = args->GetListDeprecated()[0].GetString();
 
   if (in_error_state_) {
     FireWebUIListener(kOnErrorWebUIListener);
@@ -272,7 +279,7 @@ void EduCoexistenceLoginHandler::SendInitializeEduArgs() {
   base::Value params(base::Value::Type::DICTIONARY);
 
   const std::string& app_locale = g_browser_process->GetApplicationLocale();
-  params.SetStringKey("h1", app_locale);
+  params.SetStringKey("hl", app_locale);
 
   params.SetStringKey("url", GetEduCoexistenceURL());
 
@@ -285,10 +292,14 @@ void EduCoexistenceLoginHandler::SendInitializeEduArgs() {
   params.SetStringKey("eduCoexistenceId", GetOrCreateEduCoexistenceUserId());
   params.SetStringKey("platformVersion",
                       base::SysInfo::OperatingSystemVersion());
-  params.SetStringKey("releaseChannel", chrome::GetChannelName());
+  // Extended stable channel is not supported on Chrome OS Ash.
+  params.SetStringKey("releaseChannel", chrome::GetChannelName(
+                                            chrome::WithExtendedStable(false)));
   params.SetStringKey("deviceId", GetDeviceIdForActiveUserProfile());
 
   params.SetDoubleKey("signinTime", GetSigninTime().ToJsTimeIgnoringNull());
+  // TODO(crbug.com/1202135): Remove along with JS part.
+  params.SetBoolKey("newOobeLayoutEnabled", true);
 
   // If the secondary edu account is being reauthenticated, the email address
   // will be provided via the url of the webcontent. Example
@@ -310,7 +321,7 @@ void EduCoexistenceLoginHandler::SendInitializeEduArgs() {
 
   ResolveJavascriptCallback(base::Value(initialize_edu_args_callback_.value()),
                             std::move(params));
-  initialize_edu_args_callback_ = base::nullopt;
+  initialize_edu_args_callback_ = absl::nullopt;
 }
 
 void EduCoexistenceLoginHandler::ConsentValid(const base::ListValue* args) {
@@ -321,31 +332,30 @@ void EduCoexistenceLoginHandler::ConsentValid(const base::ListValue* args) {
 }
 
 void EduCoexistenceLoginHandler::ConsentLogged(const base::ListValue* args) {
-  if (!args || args->GetList().size() == 0)
+  if (!args || args->GetListDeprecated().size() == 0)
     return;
 
   DCHECK(!in_error_state_);
 
-  account_added_callback_ = args->GetList()[0].GetString();
+  account_added_callback_ = args->GetListDeprecated()[0].GetString();
 
-  const base::Value::ConstListView& arguments = args->GetList()[1].GetList();
+  const base::Value::ConstListView& arguments =
+      args->GetListDeprecated()[1].GetListDeprecated();
 
   edu_account_email_ = arguments[0].GetString();
   terms_of_service_version_number_ = arguments[1].GetString();
 
+  // Notify EduCoexistenceStateTracker that consent has been logged.
   EduCoexistenceStateTracker::Get()->OnConsentLogged(web_ui(),
                                                      edu_account_email_);
-
-  EduCoexistenceStateTracker::Get()->OnWebUiStateChanged(
-      web_ui(), EduCoexistenceStateTracker::FlowResult::kConsentLogged);
 }
 
 void EduCoexistenceLoginHandler::OnError(const base::ListValue* args) {
   AllowJavascript();
-  if (!args || args->GetList().size() == 0)
+  if (!args || args->GetListDeprecated().size() == 0)
     return;
   in_error_state_ = true;
-  const base::Value::ConstListView& arguments = args->GetList();
+  const base::Value::ConstListView& arguments = args->GetListDeprecated();
   for (const base::Value& message : arguments) {
     DCHECK(message.is_string());
     LOG(ERROR) << message.GetString();

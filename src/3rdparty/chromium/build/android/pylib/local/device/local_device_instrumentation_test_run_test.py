@@ -1,4 +1,4 @@
-#!/usr/bin/env vpython
+#!/usr/bin/env vpython3
 # Copyright 2017 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
@@ -6,6 +6,7 @@
 """Tests for local_device_instrumentation_test_run."""
 
 # pylint: disable=protected-access
+
 
 import unittest
 
@@ -18,7 +19,7 @@ from pylib.local.device import local_device_instrumentation_test_run
 class LocalDeviceInstrumentationTestRunTest(unittest.TestCase):
 
   def setUp(self):
-    super(LocalDeviceInstrumentationTestRunTest, self).setUp()
+    super().setUp()
     self._env = mock_environment.MockEnvironment()
     self._ti = mock_test_instance.MockTestInstance()
     self._obj = (

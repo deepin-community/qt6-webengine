@@ -8,14 +8,16 @@
 #include "base/mac/objc_release_properties.h"
 #include "base/mac/scoped_nsobject.h"
 #include "base/notreached.h"
+#include "base/strings/sys_string_conversions.h"
+#include "build/build_config.h"
 #include "net/base/mac/url_conversions.h"
 
-#if defined(OS_IOS)
+#if BUILDFLAG(IS_IOS)
 #include "components/handoff/pref_names_ios.h"
 #include "components/pref_registry/pref_registry_syncable.h"  // nogncheck
 #endif
 
-#if defined(OS_MAC)
+#if BUILDFLAG(IS_MAC)
 #include "base/mac/mac_util.h"
 #endif
 
@@ -40,7 +42,7 @@
 
 @synthesize userActivity = _userActivity;
 
-#if defined(OS_IOS)
+#if BUILDFLAG(IS_IOS)
 + (void)registerBrowserStatePrefs:(user_prefs::PrefRegistrySyncable*)registry {
   registry->RegisterBooleanPref(
       prefs::kIosHandoffToOtherDevices, true,
@@ -51,9 +53,9 @@
 - (instancetype)init {
   self = [super init];
   if (self) {
-#if defined(OS_MAC)
+#if BUILDFLAG(IS_MAC)
     _origin = handoff::ORIGIN_MAC;
-#elif defined(OS_IOS)
+#elif BUILDFLAG(IS_IOS)
     _origin = handoff::ORIGIN_IOS;
 #else
     NOTREACHED();
@@ -70,6 +72,13 @@
 - (void)updateActiveURL:(const GURL&)url {
   _activeURL = url;
   [self updateUserActivity];
+}
+
+- (void)updateActiveTitle:(const std::u16string&)title {
+  // Assume the activity has already been created since the page navigation
+  // will complete before the page title loads. No need to re-create it, just
+  // set the title. If the activity has not been created, ignore the update.
+  self.userActivity.title = base::SysUTF16ToNSString(title);
 }
 
 - (BOOL)shouldUseActiveURL {
@@ -104,11 +113,15 @@
 
 @end
 
-#if defined(OS_IOS)
+#if BUILDFLAG(IS_IOS)
 @implementation HandoffManager (TestingOnly)
 
 - (NSURL*)userActivityWebpageURL {
   return self.userActivity.webpageURL;
+}
+
+- (NSString*)userActivityTitle {
+  return self.userActivity.title;
 }
 
 @end

@@ -11,6 +11,7 @@
 #include "fxjs/cfx_v8.h"
 #include "fxjs/js_resources.h"
 #include "fxjs/xfa/cfxjse_value.h"
+#include "v8/include/v8-primitive.h"
 #include "xfa/fxfa/parser/cxfa_document.h"
 #include "xfa/fxfa/parser/cxfa_template.h"
 
@@ -47,7 +48,7 @@ CJS_Result CJX_Template::remerge(
   if (!params.empty())
     return CJS_Result::Failure(JSMessage::kParamError);
 
-  GetDocument()->DoDataRemerge(true);
+  GetDocument()->DoDataRemerge();
   return CJS_Result::Success();
 }
 

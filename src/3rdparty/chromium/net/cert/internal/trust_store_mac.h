@@ -68,6 +68,17 @@ class NET_EXPORT TrustStoreMac : public TrustStore {
     // One of the trustSettings dictionaries contained a
     // kSecTrustSettingsAllowedError key.
     TRUST_SETTINGS_DICT_CONTAINS_ALLOWED_ERROR = 1 << 10,
+
+    // SecTrustSettingsCopyTrustSettings returned a value other than
+    // errSecSuccess or errSecItemNotFound.
+    COPY_TRUST_SETTINGS_ERROR = 1 << 11,
+  };
+
+  enum class TrustImplType {
+    kUnknown = 0,
+    kDomainCache = 1,
+    kSimple = 2,
+    kLruCache = 3,
   };
 
   class ResultDebugData : public base::SupportsUserData::Data {
@@ -75,7 +86,7 @@ class NET_EXPORT TrustStoreMac : public TrustStore {
     static const ResultDebugData* Get(const base::SupportsUserData* debug_data);
     static ResultDebugData* GetOrCreate(base::SupportsUserData* debug_data);
 
-    void UpdateTrustDebugInfo(int trust_debug_info);
+    void UpdateTrustDebugInfo(int trust_debug_info, TrustImplType impl_type);
 
     // base::SupportsUserData::Data implementation:
     std::unique_ptr<Data> Clone() override;
@@ -85,14 +96,26 @@ class NET_EXPORT TrustStoreMac : public TrustStore {
     // union of all the TrustDebugInfo flags.
     int combined_trust_debug_info() const { return combined_trust_debug_info_; }
 
+    // Returns an enum representing which trust implementation was used.
+    TrustImplType trust_impl() const { return trust_impl_; }
+
    private:
     int combined_trust_debug_info_ = 0;
+
+    TrustImplType trust_impl_ = TrustImplType::kUnknown;
   };
 
   // Creates a TrustStoreMac which will find anchors that are trusted for
   // |policy_oid|. For list of possible policy values, see:
   // https://developer.apple.com/reference/security/1667150-certificate_key_and_trust_servic/1670151-standard_policies_for_specific_c?language=objc
-  explicit TrustStoreMac(CFStringRef policy_oid);
+  // |impl| selects which internal implementation is used for checking trust
+  // settings, and the interpretation of |cache_size| varies depending on
+  // |impl|.
+  TrustStoreMac(CFStringRef policy_oid, TrustImplType impl, size_t cache_size);
+
+  TrustStoreMac(const TrustStoreMac&) = delete;
+  TrustStoreMac& operator=(const TrustStoreMac&) = delete;
+
   ~TrustStoreMac() override;
 
   // Initializes the trust cache, if it isn't already initialized.
@@ -105,19 +128,21 @@ class NET_EXPORT TrustStoreMac : public TrustStore {
   // TrustStore implementation:
   void SyncGetIssuersOf(const ParsedCertificate* cert,
                         ParsedCertificateList* issuers) override;
-  void GetTrust(const scoped_refptr<ParsedCertificate>& cert,
-                CertificateTrust* trust,
-                base::SupportsUserData* debug_data) const override;
+  CertificateTrust GetTrust(const ParsedCertificate* cert,
+                            base::SupportsUserData* debug_data) const override;
 
  private:
-  FRIEND_TEST_ALL_PREFIXES(TrustStoreMacTest, MultiRootNotTrusted);
-  FRIEND_TEST_ALL_PREFIXES(TrustStoreMacTest, SystemCerts);
+  class TrustImpl;
+  class TrustImplDomainCache;
+  class TrustImplNoCache;
+  class TrustImplLRUCache;
 
-  class TrustCache;
+  FRIEND_TEST_ALL_PREFIXES(TrustStoreMacImplTest, MultiRootNotTrusted);
 
   // Finds certificates in the OS keychains whose Subject matches |name_data|.
-  // The result is an array of SecCertificateRef.
-  static base::ScopedCFTypeRef<CFArrayRef>
+  // The result is an array of CRYPTO_BUFFERs containing the DER certificate
+  // data.
+  static std::vector<bssl::UniquePtr<CRYPTO_BUFFER>>
   FindMatchingCertificatesForMacNormalizedSubject(CFDataRef name_data);
 
   // Returns the OS-normalized issuer of |cert|.
@@ -127,9 +152,7 @@ class NET_EXPORT TrustStoreMac : public TrustStore {
   static base::ScopedCFTypeRef<CFDataRef> GetMacNormalizedIssuer(
       const ParsedCertificate* cert);
 
-  std::unique_ptr<TrustCache> trust_cache_;
-
-  DISALLOW_COPY_AND_ASSIGN(TrustStoreMac);
+  std::unique_ptr<TrustImpl> trust_cache_;
 };
 
 }  // namespace net

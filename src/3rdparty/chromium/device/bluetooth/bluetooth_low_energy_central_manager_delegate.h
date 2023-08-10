@@ -11,7 +11,7 @@
 
 #include "build/build_config.h"
 
-#if !defined(OS_IOS)
+#if !BUILDFLAG(IS_IOS)
 #import <IOBluetooth/IOBluetooth.h>
 #endif
 
@@ -29,9 +29,10 @@ class BluetoothLowEnergyDiscoveryManagerMac;
   std::unique_ptr<device::BluetoothLowEnergyCentralManagerBridge> _bridge;
 }
 
-- (id)initWithDiscoveryManager:
-          (device::BluetoothLowEnergyDiscoveryManagerMac*)discovery_manager
-                    andAdapter:(device::BluetoothAdapterMac*)adapter;
+- (instancetype)initWithDiscoveryManager:
+                    (device::BluetoothLowEnergyDiscoveryManagerMac*)
+                        discovery_manager
+                              andAdapter:(device::BluetoothAdapterMac*)adapter;
 
 @end
 

@@ -13,6 +13,7 @@
 #include "core/fpdfapi/parser/cpdf_reference.h"
 #include "core/fpdfdoc/cpdf_numbertree.h"
 #include "core/fpdfdoc/cpdf_structelement.h"
+#include "core/fxcrt/stl_util.h"
 
 namespace {
 
@@ -55,7 +56,7 @@ void CPDF_StructTree::LoadPageTree(const CPDF_Dictionary* pPageDict) {
   if (pKids->IsDictionary())
     dwKids = 1;
   else if (const CPDF_Array* pArray = pKids->AsArray())
-    dwKids = pArray->size();
+    dwKids = fxcrt::CollectionSize<uint32_t>(*pArray);
   else
     return;
 
@@ -93,7 +94,7 @@ RetainPtr<CPDF_StructElement> CPDF_StructTree::AddPageNode(
   if (it != map->end())
     return it->second;
 
-  auto pElement = pdfium::MakeRetain<CPDF_StructElement>(this, nullptr, pDict);
+  auto pElement = pdfium::MakeRetain<CPDF_StructElement>(this, pDict);
   (*map)[pDict] = pElement;
   const CPDF_Dictionary* pParent = pDict->GetDictFor("P");
   if (!pParent || pParent->GetNameFor("Type") == "StructTreeRoot") {
@@ -107,15 +108,11 @@ RetainPtr<CPDF_StructElement> CPDF_StructTree::AddPageNode(
   if (!pParentElement)
     return pElement;
 
-  bool bSave = false;
-  for (CPDF_StructKid& kid : *pParentElement->GetKids()) {
-    if (kid.m_Type == CPDF_StructKid::kElement && kid.m_pDict == pDict) {
-      kid.m_pElement = pElement;
-      bSave = true;
-    }
-  }
-  if (!bSave)
+  if (!pParentElement->UpdateKidIfElement(pDict, pElement.Get()))
     map->erase(pDict);
+
+  pElement->SetParent(pParentElement.Get());
+
   return pElement;
 }
 

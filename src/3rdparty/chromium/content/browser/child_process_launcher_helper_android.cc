@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include <memory>
+#include <tuple>
 
 #include "base/android/apk_assets.h"
 #include "base/android/application_status_listener.h"
@@ -11,7 +12,6 @@
 #include "base/i18n/icu_util.h"
 #include "base/logging.h"
 #include "base/metrics/field_trial.h"
-#include "base/task/post_task.h"
 #include "content/browser/child_process_launcher.h"
 #include "content/browser/child_process_launcher_helper.h"
 #include "content/browser/child_process_launcher_helper_posix.h"
@@ -25,6 +25,7 @@
 #include "content/public/browser/site_isolation_policy.h"
 #include "content/public/common/content_descriptors.h"
 #include "content/public/common/content_switches.h"
+#include "sandbox/policy/features.h"
 #include "sandbox/policy/switches.h"
 
 using base::android::AttachCurrentThread;
@@ -61,9 +62,9 @@ void ChildProcessLauncherHelper::BeforeLaunchOnClientThread() {
          !command_line()->HasSwitch(sandbox::policy::switches::kNoSandbox));
 }
 
-base::Optional<mojo::NamedPlatformChannel>
+absl::optional<mojo::NamedPlatformChannel>
 ChildProcessLauncherHelper::CreateNamedPlatformChannelOnClientThread() {
-  return base::nullopt;
+  return absl::nullopt;
 }
 
 std::unique_ptr<PosixFileDescriptorInfo>
@@ -83,12 +84,6 @@ ChildProcessLauncherHelper::GetFilesToMap() {
   base::MemoryMappedFile::Region icu_region;
   int fd = base::i18n::GetIcuDataFileHandle(&icu_region);
   files_to_register->ShareWithRegion(kAndroidICUDataDescriptor, fd, icu_region);
-  base::MemoryMappedFile::Region icu_extra_region;
-  int extra_fd = base::i18n::GetIcuExtraDataFileHandle(&icu_extra_region);
-  if (extra_fd != -1) {
-    files_to_register->ShareWithRegion(kAndroidICUExtraDataDescriptor, extra_fd,
-                                       icu_extra_region);
-  }
 #endif  // ICU_UTIL_DATA_IMPL == ICU_UTIL_DATA_FILE
 
   return files_to_register;
@@ -132,7 +127,7 @@ ChildProcessLauncherHelper::LaunchProcessOnLauncherThread(
     const auto& region = files_to_register->GetRegionAt(i);
     bool auto_close = files_to_register->OwnsFD(fd);
     if (auto_close) {
-      ignore_result(files_to_register->ReleaseFD(fd).release());
+      std::ignore = files_to_register->ReleaseFD(fd).release();
     }
 
     ScopedJavaLocalRef<jobject> j_file_info =
@@ -142,10 +137,11 @@ ChildProcessLauncherHelper::LaunchProcessOnLauncherThread(
     env->SetObjectArrayElement(j_file_infos.obj(), i, j_file_info.obj());
   }
 
+  AddRef();  // Balanced by OnChildProcessStarted.
   java_peer_.Reset(Java_ChildProcessLauncherHelperImpl_createAndStart(
       env, reinterpret_cast<intptr_t>(this), j_argv, j_file_infos,
       can_use_warm_up_connection));
-  AddRef();  // Balanced by OnChildProcessStarted.
+
   client_task_runner_->PostTask(
       FROM_HERE,
       base::BindOnce(
@@ -195,9 +191,6 @@ static void JNI_ChildProcessLauncherHelperImpl_SetTerminationInfo(
     jboolean killed_by_us,
     jboolean clean_exit,
     jboolean exception_during_init,
-    jint remaining_process_with_strong_binding,
-    jint remaining_process_with_moderate_binding,
-    jint remaining_process_with_waived_binding,
     jint reverse_rank) {
   ChildProcessTerminationInfo* info =
       reinterpret_cast<ChildProcessTerminationInfo*>(termination_info_ptr);
@@ -206,12 +199,6 @@ static void JNI_ChildProcessLauncherHelperImpl_SetTerminationInfo(
   info->was_killed_intentionally_by_browser = killed_by_us;
   info->threw_exception_during_init = exception_during_init;
   info->clean_exit = clean_exit;
-  info->remaining_process_with_strong_binding =
-      remaining_process_with_strong_binding;
-  info->remaining_process_with_moderate_binding =
-      remaining_process_with_moderate_binding;
-  info->remaining_process_with_waived_binding =
-      remaining_process_with_waived_binding;
   info->best_effort_reverse_rank = reverse_rank;
 }
 
@@ -222,6 +209,15 @@ JNI_ChildProcessLauncherHelperImpl_ServiceGroupImportanceEnabled(JNIEnv* env) {
          SiteIsolationPolicy::UseDedicatedProcessesForAllSites() ||
          SiteIsolationPolicy::AreDynamicIsolatedOriginsEnabled() ||
          SiteIsolationPolicy::ArePreloadedIsolatedOriginsEnabled();
+}
+
+static jboolean JNI_ChildProcessLauncherHelperImpl_IsNetworkSandboxEnabled(
+    JNIEnv* env) {
+  // We may want to call ContentBrowserClient::ShouldSandboxNetworkService,
+  // but that needs to be called on the UI thread. This function is called on
+  // the launcher thread, not UI thread. Hence we use
+  // sandbox::policy::features::IsNetworkSandboxEnabled.
+  return sandbox::policy::features::IsNetworkSandboxEnabled();
 }
 
 // static

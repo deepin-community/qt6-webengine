@@ -17,6 +17,7 @@
 #ifndef LIBGAV1_SRC_UTILS_DYNAMIC_BUFFER_H_
 #define LIBGAV1_SRC_UTILS_DYNAMIC_BUFFER_H_
 
+#include <cstddef>
 #include <memory>
 #include <new>
 
@@ -45,6 +46,8 @@ class DynamicBuffer {
     size_ = size;
     return true;
   }
+
+  size_t size() const { return size_; }
 
  private:
   std::unique_ptr<T[]> buffer_;

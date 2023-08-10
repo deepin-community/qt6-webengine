@@ -4,6 +4,7 @@
 
 #include "third_party/blink/renderer/core/layout/layout_multi_column_spanner_placeholder.h"
 
+#include "third_party/blink/renderer/core/css/resolver/style_resolver.h"
 #include "third_party/blink/renderer/core/layout/layout_multi_column_flow_thread.h"
 
 namespace blink {
@@ -24,7 +25,8 @@ LayoutMultiColumnSpannerPlaceholder::CreateAnonymous(
     const ComputedStyle& parent_style,
     LayoutBox& layout_object_in_flow_thread) {
   LayoutMultiColumnSpannerPlaceholder* new_spanner =
-      new LayoutMultiColumnSpannerPlaceholder(&layout_object_in_flow_thread);
+      MakeGarbageCollected<LayoutMultiColumnSpannerPlaceholder>(
+          &layout_object_in_flow_thread);
   Document& document = layout_object_in_flow_thread.GetDocument();
   new_spanner->SetDocumentForAnonymous(&document);
   new_spanner->UpdateProperties(parent_style);
@@ -35,6 +37,11 @@ LayoutMultiColumnSpannerPlaceholder::LayoutMultiColumnSpannerPlaceholder(
     LayoutBox* layout_object_in_flow_thread)
     : LayoutBox(nullptr),
       layout_object_in_flow_thread_(layout_object_in_flow_thread) {}
+
+void LayoutMultiColumnSpannerPlaceholder::Trace(Visitor* visitor) const {
+  visitor->Trace(layout_object_in_flow_thread_);
+  LayoutBox::Trace(visitor);
+}
 
 void LayoutMultiColumnSpannerPlaceholder::
     LayoutObjectInFlowThreadStyleDidChange(const ComputedStyle* old_style) {
@@ -64,8 +71,8 @@ void LayoutMultiColumnSpannerPlaceholder::UpdateProperties(
     const ComputedStyle& parent_style) {
   NOT_DESTROYED();
   scoped_refptr<ComputedStyle> new_style =
-      ComputedStyle::CreateAnonymousStyleWithDisplay(parent_style,
-                                                     EDisplay::kBlock);
+      GetDocument().GetStyleResolver().CreateAnonymousStyleWithDisplay(
+          parent_style, EDisplay::kBlock);
   CopyMarginProperties(*new_style, layout_object_in_flow_thread_->StyleRef());
   SetStyle(std::move(new_style));
 }

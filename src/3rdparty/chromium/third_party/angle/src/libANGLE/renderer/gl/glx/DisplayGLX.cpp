@@ -334,7 +334,7 @@ egl::Error DisplayGLX::initialize(egl::Display *display)
         }
     }
 
-    syncXCommands();
+    syncXCommands(false);
 
     mRenderer.reset(new RendererGLX(std::move(functionsGL), eglAttributes, this));
     const gl::Version &maxVersion = mRenderer->getMaxSupportedESVersion();
@@ -825,9 +825,9 @@ gl::Version DisplayGLX::getMaxSupportedESVersion() const
     return mRenderer->getMaxSupportedESVersion();
 }
 
-void DisplayGLX::syncXCommands() const
+void DisplayGLX::syncXCommands(bool alwaysSync) const
 {
-    if (mUsesNewXDisplay)
+    if (mUsesNewXDisplay || alwaysSync)
     {
         XSync(mGLX.getDisplay(), False);
     }
@@ -1077,6 +1077,11 @@ void DisplayGLX::populateFeatureList(angle::FeatureList *features)
 RendererGL *DisplayGLX::getRenderer() const
 {
     return mRenderer.get();
+}
+
+bool DisplayGLX::isX11() const
+{
+    return true;
 }
 
 }  // namespace rx

@@ -16,7 +16,8 @@
 namespace ui {
 
 bool GLOzoneEGL::InitializeGLOneOffPlatform() {
-  if (!gl::GLSurfaceEGL::InitializeOneOff(GetNativeDisplay())) {
+  if (!gl::GLSurfaceEGL::InitializeOneOff(GetNativeDisplay(),
+                                          /*system_device_id=*/0)) {
     LOG(ERROR) << "GLSurfaceEGL::InitializeOneOff failed.";
     return false;
   }
@@ -24,11 +25,11 @@ bool GLOzoneEGL::InitializeGLOneOffPlatform() {
 }
 
 bool GLOzoneEGL::InitializeStaticGLBindings(
-    gl::GLImplementation implementation) {
+    const gl::GLImplementationParts& implementation) {
   if (!LoadGLES2Bindings(implementation))
     return false;
 
-  gl::SetGLImplementation(implementation);
+  gl::SetGLImplementationParts(implementation);
   gl::InitializeStaticGLBindingsGL();
   gl::InitializeStaticGLBindingsEGL();
 

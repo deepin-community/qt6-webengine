@@ -13,7 +13,7 @@
 #include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/html/html_element.h"
 #include "third_party/blink/renderer/core/testing/page_test_base.h"
-#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 
 namespace blink {
 
@@ -207,7 +207,7 @@ TEST_F(CustomPropertyTest, GetCSSPropertyName) {
 
 TEST_F(CustomPropertyTest, SupportsGuaranteedInvalid) {
   RegisterProperty(GetDocument(), "--universal", "*", "foo", true);
-  RegisterProperty(GetDocument(), "--no-initial", "*", base::nullopt, true);
+  RegisterProperty(GetDocument(), "--no-initial", "*", absl::nullopt, true);
   RegisterProperty(GetDocument(), "--length", "<length>", "0px", true);
 
   CustomProperty unregistered("--unregistered", GetDocument());
@@ -223,7 +223,7 @@ TEST_F(CustomPropertyTest, SupportsGuaranteedInvalid) {
 
 TEST_F(CustomPropertyTest, HasInitialValue) {
   RegisterProperty(GetDocument(), "--universal", "*", "foo", true);
-  RegisterProperty(GetDocument(), "--no-initial", "*", base::nullopt, true);
+  RegisterProperty(GetDocument(), "--no-initial", "*", absl::nullopt, true);
   RegisterProperty(GetDocument(), "--length", "<length>", "0px", true);
 
   CustomProperty unregistered("--unregistered", GetDocument());

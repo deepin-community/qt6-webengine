@@ -16,6 +16,7 @@
 #include "base/strings/string_piece.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/metrics/histogram_tester.h"
+#include "base/time/time.h"
 #include "components/domain_reliability/beacon.h"
 #include "components/domain_reliability/dispatcher.h"
 #include "components/domain_reliability/scheduler.h"
@@ -28,8 +29,6 @@
 namespace domain_reliability {
 namespace {
 
-using base::DictionaryValue;
-using base::ListValue;
 using base::Value;
 
 typedef std::vector<const DomainReliabilityBeacon*> BeaconVector;
@@ -53,7 +52,7 @@ std::unique_ptr<DomainReliabilityBeacon> MakeCustomizedBeacon(
   beacon->details.quic_broken = true;
   beacon->details.quic_port_migration_detected = quic_port_migration_detected;
   beacon->http_response_code = -1;
-  beacon->elapsed = base::TimeDelta::FromMilliseconds(250);
+  beacon->elapsed = base::Milliseconds(250);
   beacon->start_time = time->NowTicks() - beacon->elapsed;
   beacon->upload_depth = 0;
   beacon->sample_rate = 1.0;
@@ -85,36 +84,39 @@ std::string StatusFromInt(int i) {
   return base::StringPrintf("status%i.test", i);
 }
 
-template <typename ValueType,
-          bool (DictionaryValue::*GetValueType)(base::StringPiece, ValueType*)
-              const>
+template <typename ValueTypeFindResult,
+          typename ValueType,
+          ValueTypeFindResult (Value::*FindValueType)(base::StringPiece) const>
 struct HasValue {
-  bool operator()(const DictionaryValue& dict,
+  bool operator()(const Value& dict,
                   const std::string& key,
                   ValueType expected_value) {
-    ValueType actual_value;
-    bool got_value = (dict.*GetValueType)(key, &actual_value);
-    if (got_value)
-      EXPECT_EQ(expected_value, actual_value);
-    return got_value && (expected_value == actual_value);
+    ValueTypeFindResult actual_value = (dict.*FindValueType)(key);
+    if (actual_value)
+      EXPECT_EQ(expected_value, *actual_value);
+    return actual_value && (expected_value == *actual_value);
   }
 };
 
-HasValue<bool, &DictionaryValue::GetBoolean> HasBooleanValue;
-HasValue<double, &DictionaryValue::GetDouble> HasDoubleValue;
-HasValue<int, &DictionaryValue::GetInteger> HasIntegerValue;
-HasValue<std::string, &DictionaryValue::GetString> HasStringValue;
+HasValue<absl::optional<bool>, bool, &Value::FindBoolPath> HasBooleanValue;
+HasValue<absl::optional<double>, double, &Value::FindDoublePath> HasDoubleValue;
+HasValue<absl::optional<int>, int, &Value::FindIntPath> HasIntegerValue;
+HasValue<const std::string*, std::string, &Value::FindStringPath>
+    HasStringValue;
 
 bool GetEntryFromReport(const Value* report,
                         size_t index,
-                        const DictionaryValue** entry_out) {
-  const DictionaryValue* report_dict;
-  const ListValue* entries;
-
-  return report &&
-         report->GetAsDictionary(&report_dict) &&
-         report_dict->GetList("entries", &entries) &&
-         entries->GetDictionary(index, entry_out);
+                        const Value** entry_out) {
+  if (!report || !report->is_dict())
+    return false;
+  const Value* entries = report->FindListKey("entries");
+  if (!entries || index >= entries->GetListDeprecated().size())
+    return false;
+  const Value& entry = entries->GetListDeprecated()[index];
+  if (!entry.is_dict())
+    return false;
+  *entry_out = &entry;
+  return true;
 }
 
 class DomainReliabilityContextTest : public testing::Test {
@@ -134,13 +136,13 @@ class DomainReliabilityContextTest : public testing::Test {
     // Make sure that the last network change does not overlap requests
     // made in test cases, which start 250ms in the past (see |MakeBeacon|).
     last_network_change_time_ = time_.NowTicks();
-    time_.Advance(base::TimeDelta::FromSeconds(1));
+    time_.Advance(base::Seconds(1));
   }
 
   void InitContext(std::unique_ptr<const DomainReliabilityConfig> config) {
-    context_.reset(new DomainReliabilityContext(
+    context_ = std::make_unique<DomainReliabilityContext>(
         &time_, params_, upload_reporter_string_, &last_network_change_time_,
-        upload_allowed_callback_, &dispatcher_, &uploader_, std::move(config)));
+        upload_allowed_callback_, &dispatcher_, &uploader_, std::move(config));
   }
 
   void ShutDownContext() { context_.reset(); }
@@ -150,9 +152,7 @@ class DomainReliabilityContextTest : public testing::Test {
   base::TimeDelta retry_interval() const {
     return params_.upload_retry_interval;
   }
-  base::TimeDelta zero_delta() const {
-    return base::TimeDelta::FromMicroseconds(0);
-  }
+  base::TimeDelta zero_delta() const { return base::Microseconds(0); }
 
   bool upload_allowed_callback_pending() const {
     return !upload_allowed_result_callback_.is_null();
@@ -363,7 +363,7 @@ TEST_F(DomainReliabilityContextTest, ReportUpload) {
 
   std::unique_ptr<Value> value =
       base::JSONReader::ReadDeprecated(upload_report());
-  const DictionaryValue* entry;
+  const Value* entry;
   ASSERT_TRUE(GetEntryFromReport(value.get(), 0, &entry));
   EXPECT_TRUE(HasStringValue(*entry, "failure_data.custom_error",
                              "net::ERR_CONNECTION_RESET"));
@@ -688,7 +688,7 @@ TEST_F(DomainReliabilityContextTest, NetworkChanged) {
 
   std::unique_ptr<Value> value =
       base::JSONReader::ReadDeprecated(upload_report());
-  const DictionaryValue* entry;
+  const Value* entry;
   ASSERT_TRUE(GetEntryFromReport(value.get(), 0, &entry));
   EXPECT_TRUE(HasBooleanValue(*entry, "network_changed", true));
 
@@ -719,7 +719,7 @@ TEST_F(DomainReliabilityContextTest,
 
   std::unique_ptr<Value> value =
       base::JSONReader::ReadDeprecated(upload_report());
-  const DictionaryValue* entry;
+  const Value* entry;
   ASSERT_TRUE(GetEntryFromReport(value.get(), 0, &entry));
 
   EXPECT_TRUE(HasBooleanValue(*entry, "quic_broken", true));
@@ -753,7 +753,7 @@ TEST_F(DomainReliabilityContextTest,
 
   std::unique_ptr<Value> value =
       base::JSONReader::ReadDeprecated(upload_report());
-  const DictionaryValue* entry;
+  const Value* entry;
   ASSERT_TRUE(GetEntryFromReport(value.get(), 0, &entry));
 
   EXPECT_TRUE(HasStringValue(*entry, "status", "tcp.connection_reset"));
@@ -788,7 +788,7 @@ TEST_F(DomainReliabilityContextTest,
 
   std::unique_ptr<Value> value =
       base::JSONReader::ReadDeprecated(upload_report());
-  const DictionaryValue* entry;
+  const Value* entry;
   ASSERT_TRUE(GetEntryFromReport(value.get(), 0, &entry));
   EXPECT_TRUE(HasBooleanValue(*entry, "quic_broken", true));
   EXPECT_TRUE(HasStringValue(*entry, "status", "tcp.connection_reset"));
@@ -834,7 +834,7 @@ TEST_F(DomainReliabilityContextTest, FractionalSampleRate) {
 
   std::unique_ptr<Value> value =
       base::JSONReader::ReadDeprecated(upload_report());
-  const DictionaryValue* entry;
+  const Value* entry;
   ASSERT_TRUE(GetEntryFromReport(value.get(), 0, &entry));
   EXPECT_TRUE(HasDoubleValue(*entry, "sample_rate", 0.5));
 
@@ -929,7 +929,7 @@ TEST_F(DomainReliabilityContextTest, ExpiredBeaconDoesNotUpload) {
   base::HistogramTester histograms;
   InitContext(MakeTestConfig());
   std::unique_ptr<DomainReliabilityBeacon> beacon = MakeBeacon(&time_);
-  time_.Advance(base::TimeDelta::FromHours(2));
+  time_.Advance(base::Hours(2));
   context_->OnBeacon(std::move(beacon));
 
   time_.Advance(max_delay());
@@ -952,12 +952,12 @@ TEST_F(DomainReliabilityContextTest, EvictOldestBeacon) {
 
   std::unique_ptr<DomainReliabilityBeacon> oldest_beacon = MakeBeacon(&time_);
   const DomainReliabilityBeacon* oldest_beacon_ptr = oldest_beacon.get();
-  time_.Advance(base::TimeDelta::FromSeconds(1));
+  time_.Advance(base::Seconds(1));
   context_->OnBeacon(std::move(oldest_beacon));
 
   for (size_t i = 0; i < DomainReliabilityContext::kMaxQueuedBeacons; ++i) {
     std::unique_ptr<DomainReliabilityBeacon> beacon = MakeBeacon(&time_);
-    time_.Advance(base::TimeDelta::FromSeconds(1));
+    time_.Advance(base::Seconds(1));
     context_->OnBeacon(std::move(beacon));
   }
 

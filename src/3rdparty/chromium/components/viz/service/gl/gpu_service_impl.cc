@@ -13,10 +13,12 @@
 #include "base/command_line.h"
 #include "base/feature_list.h"
 #include "base/no_destructor.h"
-#include "base/task/post_task.h"
+#include "base/observer_list.h"
+#include "base/synchronization/waitable_event.h"
+#include "base/task/task_runner_util.h"
 #include "base/task/thread_pool.h"
-#include "base/task_runner_util.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "base/unguessable_token.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
 #include "components/viz/common/features.h"
@@ -46,17 +48,20 @@
 #include "ipc/ipc_channel_handle.h"
 #include "ipc/ipc_sync_channel.h"
 #include "ipc/ipc_sync_message_filter.h"
+#include "media/base/media_log.h"
 #include "media/gpu/buildflags.h"
 #include "media/gpu/gpu_video_accelerator_util.h"
 #include "media/gpu/gpu_video_encode_accelerator_factory.h"
 #include "media/gpu/ipc/service/gpu_video_decode_accelerator.h"
 #include "media/gpu/ipc/service/media_gpu_channel_manager.h"
+#include "media/mojo/services/gpu_mojo_media_client.h"
 #include "media/mojo/services/mojo_video_encode_accelerator_provider.h"
 #include "mojo/public/cpp/bindings/self_owned_receiver.h"
 #include "skia/buildflags.h"
 #include "third_party/skia/include/gpu/GrDirectContext.h"
 #include "third_party/skia/include/gpu/gl/GrGLAssembleInterface.h"
 #include "third_party/skia/include/gpu/gl/GrGLInterface.h"
+#include "ui/base/ui_base_features.h"
 #include "ui/gl/gl_context.h"
 #include "ui/gl/gl_implementation.h"
 #include "ui/gl/gl_switches.h"
@@ -70,27 +75,36 @@
 #include "media/gpu/vaapi/vaapi_image_decode_accelerator_worker.h"
 #endif  // BUILDFLAG(USE_VAAPI)
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 #include "components/viz/service/gl/throw_uncaught_exception.h"
 #include "media/base/android/media_codec_util.h"
 #endif
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "components/arc/video_accelerator/gpu_arc_video_decode_accelerator.h"
-#include "components/arc/video_accelerator/gpu_arc_video_encode_accelerator.h"
-#include "components/arc/video_accelerator/gpu_arc_video_protected_buffer_allocator.h"
-#include "components/arc/video_accelerator/protected_buffer_manager.h"
-#include "components/arc/video_accelerator/protected_buffer_manager_proxy.h"
 #include "components/chromeos_camera/gpu_mjpeg_decode_accelerator_factory.h"
 #include "components/chromeos_camera/mojo_jpeg_encode_accelerator_service.h"
 #include "components/chromeos_camera/mojo_mjpeg_decode_accelerator_service.h"
+
+#if BUILDFLAG(USE_CHROMEOS_MEDIA_ACCELERATION)
+#include "ash/components/arc/video_accelerator/gpu_arc_video_decode_accelerator.h"
+#if BUILDFLAG(USE_VAAPI) || BUILDFLAG(USE_V4L2_CODEC)
+#include "ash/components/arc/video_accelerator/gpu_arc_video_decoder.h"
+#endif
+#include "ash/components/arc/video_accelerator/gpu_arc_video_encode_accelerator.h"
+#include "ash/components/arc/video_accelerator/gpu_arc_video_protected_buffer_allocator.h"
+#include "ash/components/arc/video_accelerator/protected_buffer_manager.h"
+#include "ash/components/arc/video_accelerator/protected_buffer_manager_proxy.h"
+#endif  // BUILDFLAG(USE_CHROMEOS_MEDIA_ACCELERATION)
+
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
+#include "mojo/public/cpp/system/platform_handle.h"
+#include "ui/gl/dcomp_surface_registry.h"
 #include "ui/gl/direct_composition_surface_win.h"
 #endif
 
-#if defined(OS_APPLE)
+#if BUILDFLAG(IS_APPLE)
 #include "ui/base/cocoa/quartz_util.h"
 #endif
 
@@ -206,7 +220,10 @@ class LogMessageManager {
   }
 
   // Called when it's no longer safe to invoke |log_callback_|.
-  void ShutdownLogging() { logging::SetLogMessageHandler(nullptr); }
+  void ShutdownLogging() {
+    logging::SetLogMessageHandler(nullptr);
+    log_callback_.Reset();
+  }
 
  private:
   base::Lock message_lock_;
@@ -258,7 +275,7 @@ void GetVideoCapabilities(const gpu::GpuPreferences& gpu_preferences,
   // Due to https://crbug.com/709631, we don't want to query Android video
   // decode/encode capabilities during startup. The renderer needs this info
   // though, so assume some baseline capabilities.
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   // Note: Video encoding on Android relies on MediaCodec, so all cases
   // where it's disabled for decoding it is also disabled for encoding.
   if (gpu_preferences.disable_accelerated_video_decode ||
@@ -284,19 +301,30 @@ void GetVideoCapabilities(const gpu::GpuPreferences& gpu_preferences,
     vea_profile.profile = gpu::H264PROFILE_BASELINE;
     encoding_profiles.push_back(vea_profile);
   }
-#endif
+#endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
 
   // Note: Since Android doesn't have to support PPAPI/Flash, we have not
   // returned the decoder profiles here since https://crrev.com/665999.
-#else
-  gpu_info->video_decode_accelerator_capabilities =
-      media::GpuVideoDecodeAccelerator::GetCapabilities(gpu_preferences,
-                                                        gpu_workarounds);
+#else   // BUILDFLAG(IS_ANDROID)
+
+  // GpuMojoMediaClient controls which decoder is actually being used, so
+  // it should be the source of truth for supported profiles.
+  auto maybe_decoder_configs =
+      media::GpuMojoMediaClient::GetSupportedVideoDecoderConfigsStatic(
+          gpu_preferences, gpu_workarounds, *gpu_info);
+
+  if (maybe_decoder_configs.has_value()) {
+    gpu_info->video_decode_accelerator_supported_profiles =
+        media::GpuVideoAcceleratorUtil::ConvertMediaConfigsToGpuDecodeProfiles(
+            *maybe_decoder_configs);
+  }
+
   gpu_info->video_encode_accelerator_supported_profiles =
       media::GpuVideoAcceleratorUtil::ConvertMediaToGpuEncodeProfiles(
           media::GpuVideoEncodeAcceleratorFactory::GetSupportedProfiles(
-              gpu_preferences, gpu_workarounds));
-#endif
+              gpu_preferences, gpu_workarounds,
+              /*populate_extended_info=*/false));
+#endif  // BUILDFLAG(IS_ANDROID)
 }
 
 // Returns a callback which does a PostTask to run |callback| on the |runner|
@@ -323,18 +351,20 @@ GpuServiceImpl::GpuServiceImpl(
     scoped_refptr<base::SingleThreadTaskRunner> io_runner,
     const gpu::GpuFeatureInfo& gpu_feature_info,
     const gpu::GpuPreferences& gpu_preferences,
-    const base::Optional<gpu::GPUInfo>& gpu_info_for_hardware_gpu,
-    const base::Optional<gpu::GpuFeatureInfo>&
+    const absl::optional<gpu::GPUInfo>& gpu_info_for_hardware_gpu,
+    const absl::optional<gpu::GpuFeatureInfo>&
         gpu_feature_info_for_hardware_gpu,
     const gfx::GpuExtraInfo& gpu_extra_info,
     gpu::VulkanImplementation* vulkan_implementation,
-    base::OnceCallback<void(base::Optional<ExitCode>)> exit_callback)
+    base::OnceCallback<void(ExitCode)> exit_callback)
     : main_runner_(base::ThreadTaskRunnerHandle::Get()),
       io_runner_(std::move(io_runner)),
       watchdog_thread_(std::move(watchdog_thread)),
       gpu_preferences_(gpu_preferences),
       gpu_info_(gpu_info),
       gpu_feature_info_(gpu_feature_info),
+      gpu_driver_bug_workarounds_(
+          gpu_feature_info.enabled_gpu_driver_bug_workarounds),
       gpu_info_for_hardware_gpu_(gpu_info_for_hardware_gpu),
       gpu_feature_info_for_hardware_gpu_(gpu_feature_info_for_hardware_gpu),
       gpu_extra_info_(gpu_extra_info),
@@ -345,9 +375,10 @@ GpuServiceImpl::GpuServiceImpl(
   DCHECK(!io_runner_->BelongsToCurrentThread());
   DCHECK(exit_callback_);
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS_ASH) && BUILDFLAG(USE_CHROMEOS_MEDIA_ACCELERATION)
   protected_buffer_manager_ = new arc::ProtectedBufferManager();
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS_ASH) &&
+        // BUILDFLAG(USE_CHROMEOS_MEDIA_ACCELERATION)
 
   GrContextOptions context_options =
       GetDefaultGrContextOptions(gpu_preferences_.gr_context_type);
@@ -372,12 +403,7 @@ GpuServiceImpl::GpuServiceImpl(
         vulkan_implementation_, gpu_preferences_.vulkan_heap_memory_limit,
         gpu_preferences_.vulkan_sync_cpu_memory_limit,
         (is_native_vulkan && is_native_gl) ? &gpu_info : nullptr);
-    if (vulkan_context_provider_) {
-      // If Vulkan is supported, then OOP-R is supported.
-      gpu_info_.oop_rasterization_supported = true;
-      gpu_feature_info_.status_values[gpu::GPU_FEATURE_TYPE_OOP_RASTERIZATION] =
-          gpu::kGpuFeatureStatusEnabled;
-    } else {
+    if (!vulkan_context_provider_) {
       DLOG(ERROR) << "Failed to create Vulkan context provider.";
     }
   }
@@ -386,11 +412,7 @@ GpuServiceImpl::GpuServiceImpl(
 #if BUILDFLAG(SKIA_USE_DAWN)
   if (gpu_preferences_.gr_context_type == gpu::GrContextType::kDawn) {
     dawn_context_provider_ = DawnContextProvider::Create();
-    if (dawn_context_provider_) {
-      gpu_info_.oop_rasterization_supported = true;
-      gpu_feature_info_.status_values[gpu::GPU_FEATURE_TYPE_OOP_RASTERIZATION] =
-          gpu::kGpuFeatureStatusEnabled;
-    } else {
+    if (!dawn_context_provider_) {
       DLOG(ERROR) << "Failed to create Dawn context provider.";
     }
   }
@@ -401,14 +423,14 @@ GpuServiceImpl::GpuServiceImpl(
       media::VaapiImageDecodeAcceleratorWorker::Create();
 #endif  // BUILDFLAG(USE_VAAPI_IMAGE_CODECS)
 
-#if defined(OS_APPLE)
+#if BUILDFLAG(IS_APPLE)
   if (gpu_feature_info_.status_values[gpu::GPU_FEATURE_TYPE_METAL] ==
       gpu::kGpuFeatureStatusEnabled) {
     metal_context_provider_ = MetalContextProvider::Create(context_options);
   }
 #endif
 
-#if defined(OS_WIN) && !defined(TOOLKIT_QT)
+#if BUILDFLAG(IS_WIN) && !defined(TOOLKIT_QT)
   auto info_callback = base::BindRepeating(
       &GpuServiceImpl::UpdateOverlayAndHDRInfo, weak_ptr_factory_.GetWeakPtr());
   gl::DirectCompositionSurfaceWin::SetOverlayHDRGpuInfoUpdateCallback(
@@ -428,7 +450,9 @@ GpuServiceImpl::~GpuServiceImpl() {
   is_exiting_.Set();
 
   bind_task_tracker_.TryCancelAll();
-  GetLogMessageManager()->ShutdownLogging();
+
+  if (!in_host_process())
+    GetLogMessageManager()->ShutdownLogging();
 
   // Destroy the receiver on the IO thread.
   {
@@ -447,6 +471,7 @@ GpuServiceImpl::~GpuServiceImpl() {
   if (watchdog_thread_)
     watchdog_thread_->OnGpuProcessTearDown();
 
+  compositor_gpu_thread_.reset();
   media_gpu_channel_manager_.reset();
   gpu_channel_manager_.reset();
 
@@ -546,14 +571,22 @@ void GpuServiceImpl::InitializeWithHost(
     // When using real buffers for testing overlay configurations, we need
     // access to SharedImageManager on the viz thread to obtain the buffer
     // corresponding to a mailbox.
-    bool thread_safe_manager = features::ShouldUseRealBuffersForPageFlipTest();
+    const bool display_context_on_another_thread = features::IsDrDcEnabled();
+    bool thread_safe_manager = display_context_on_another_thread;
+    // Raw draw needs to access shared image backing on the compositor thread.
+    thread_safe_manager |= features::IsUsingRawDraw();
+#if defined(USE_OZONE)
+    thread_safe_manager |= features::ShouldUseRealBuffersForPageFlipTest();
+#endif
     owned_shared_image_manager_ = std::make_unique<gpu::SharedImageManager>(
-        thread_safe_manager, false /* display_context_on_another_thread */);
+        thread_safe_manager, display_context_on_another_thread);
     shared_image_manager = owned_shared_image_manager_.get();
+#if defined(USE_OZONE)
   } else {
     // With this feature enabled, we don't expect to receive an external
     // SharedImageManager.
     DCHECK(!features::ShouldUseRealBuffersForPageFlipTest());
+#endif
   }
 
   shutdown_event_ = shutdown_event;
@@ -564,8 +597,8 @@ void GpuServiceImpl::InitializeWithHost(
     shutdown_event_ = owned_shutdown_event_.get();
   }
 
-  scheduler_ = std::make_unique<gpu::Scheduler>(
-      main_runner_, sync_point_manager, gpu_preferences_);
+  scheduler_ =
+      std::make_unique<gpu::Scheduler>(sync_point_manager, gpu_preferences_);
 
   // Defer creation of the render thread. This is to prevent it from handling
   // IPC messages before the sandbox has been enabled and all other necessary
@@ -578,10 +611,20 @@ void GpuServiceImpl::InitializeWithHost(
       image_decode_accelerator_worker_.get(), vulkan_context_provider(),
       metal_context_provider_.get(), dawn_context_provider());
 
-  media_gpu_channel_manager_.reset(
-      new media::MediaGpuChannelManager(gpu_channel_manager_.get()));
-  if (watchdog_thread())
-    watchdog_thread()->AddPowerObserver();
+  media_gpu_channel_manager_ = std::make_unique<media::MediaGpuChannelManager>(
+      gpu_channel_manager_.get());
+
+  // Create and Initialize compositor gpu thread.
+  compositor_gpu_thread_ = CompositorGpuThread::Create(
+      gpu_channel_manager_.get(),
+#if BUILDFLAG(ENABLE_VULKAN)
+      vulkan_implementation_,
+      vulkan_context_provider_ ? vulkan_context_provider_->GetDeviceQueue()
+                               : nullptr,
+#else
+      nullptr, nullptr,
+#endif
+      !!watchdog_thread_);
 }
 
 void GpuServiceImpl::Bind(
@@ -624,6 +667,12 @@ void GpuServiceImpl::FlushPreInitializeLogMessages(mojom::GpuHost* gpu_host) {
   GetLogMessageManager()->FlushMessages(gpu_host);
 }
 
+void GpuServiceImpl::SetVisibilityChangedCallback(
+    VisibilityChangedCallback callback) {
+  DCHECK(main_runner_->BelongsToCurrentThread());
+  visibility_changed_callback_ = std::move(callback);
+}
+
 void GpuServiceImpl::RecordLogMessage(int severity,
                                       const std::string& header,
                                       const std::string& message) {
@@ -632,6 +681,7 @@ void GpuServiceImpl::RecordLogMessage(int severity,
 }
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(USE_CHROMEOS_MEDIA_ACCELERATION)
 void GpuServiceImpl::CreateArcVideoDecodeAccelerator(
     mojo::PendingReceiver<arc::mojom::VideoDecodeAccelerator> vda_receiver) {
   DCHECK(io_runner_->BelongsToCurrentThread());
@@ -640,6 +690,15 @@ void GpuServiceImpl::CreateArcVideoDecodeAccelerator(
       base::BindOnce(
           &GpuServiceImpl::CreateArcVideoDecodeAcceleratorOnMainThread,
           weak_ptr_, std::move(vda_receiver)));
+}
+
+void GpuServiceImpl::CreateArcVideoDecoder(
+    mojo::PendingReceiver<arc::mojom::VideoDecoder> vd_receiver) {
+  DCHECK(io_runner_->BelongsToCurrentThread());
+  main_runner_->PostTask(
+      FROM_HERE,
+      base::BindOnce(&GpuServiceImpl::CreateArcVideoDecoderOnMainThread,
+                     weak_ptr_, std::move(vd_receiver)));
 }
 
 void GpuServiceImpl::CreateArcVideoEncodeAccelerator(
@@ -675,12 +734,22 @@ void GpuServiceImpl::CreateArcProtectedBufferManager(
 
 void GpuServiceImpl::CreateArcVideoDecodeAcceleratorOnMainThread(
     mojo::PendingReceiver<arc::mojom::VideoDecodeAccelerator> vda_receiver) {
-  DCHECK(main_runner_->BelongsToCurrentThread());
+  CHECK(main_runner_->BelongsToCurrentThread());
   mojo::MakeSelfOwnedReceiver(
       std::make_unique<arc::GpuArcVideoDecodeAccelerator>(
           gpu_preferences_, gpu_channel_manager_->gpu_driver_bug_workarounds(),
           protected_buffer_manager_),
       std::move(vda_receiver));
+}
+
+void GpuServiceImpl::CreateArcVideoDecoderOnMainThread(
+    mojo::PendingReceiver<arc::mojom::VideoDecoder> vd_receiver) {
+  DCHECK(main_runner_->BelongsToCurrentThread());
+#if BUILDFLAG(USE_VAAPI) || BUILDFLAG(USE_V4L2_CODEC)
+  mojo::MakeSelfOwnedReceiver(
+      std::make_unique<arc::GpuArcVideoDecoder>(protected_buffer_manager_),
+      std::move(vd_receiver));
+#endif
 }
 
 void GpuServiceImpl::CreateArcVideoEncodeAcceleratorOnMainThread(
@@ -714,6 +783,7 @@ void GpuServiceImpl::CreateArcProtectedBufferManagerOnMainThread(
           protected_buffer_manager_),
       std::move(pbm_receiver));
 }
+#endif  // BUILDFLAG(USE_CHROMEOS_MEDIA_ACCELERATION)
 
 void GpuServiceImpl::CreateJpegDecodeAccelerator(
     mojo::PendingReceiver<chromeos_camera::mojom::MjpegDecodeAccelerator>
@@ -731,6 +801,22 @@ void GpuServiceImpl::CreateJpegEncodeAccelerator(
       std::move(jea_receiver));
 }
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+
+#if BUILDFLAG(IS_WIN)
+void GpuServiceImpl::RegisterDCOMPSurfaceHandle(
+    mojo::PlatformHandle surface_handle,
+    RegisterDCOMPSurfaceHandleCallback callback) {
+  auto token =
+      gl::DCOMPSurfaceRegistry::GetInstance()->RegisterDCOMPSurfaceHandle(
+          surface_handle.TakeHandle());
+  std::move(callback).Run(token);
+}
+
+void GpuServiceImpl::UnregisterDCOMPSurfaceHandle(
+    const base::UnguessableToken& token) {
+  gl::DCOMPSurfaceRegistry::GetInstance()->UnregisterDCOMPSurfaceHandle(token);
+}
+#endif  // BUILDFLAG(IS_WIN)
 
 void GpuServiceImpl::CreateVideoEncodeAcceleratorProvider(
     mojo::PendingReceiver<media::mojom::VideoEncodeAcceleratorProvider>
@@ -759,7 +845,7 @@ void GpuServiceImpl::CreateGpuMemoryBuffer(
 void GpuServiceImpl::DestroyGpuMemoryBuffer(gfx::GpuMemoryBufferId id,
                                             int client_id,
                                             const gpu::SyncToken& sync_token) {
-  if (io_runner_->BelongsToCurrentThread()) {
+  if (!main_runner_->BelongsToCurrentThread()) {
     main_runner_->PostTask(
         FROM_HERE, base::BindOnce(&GpuServiceImpl::DestroyGpuMemoryBuffer,
                                   weak_ptr_, id, client_id, sync_token));
@@ -819,7 +905,7 @@ void GpuServiceImpl::RequestHDRStatusOnMainThread(
     RequestHDRStatusCallback callback) {
   DCHECK(main_runner_->BelongsToCurrentThread());
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   hdr_enabled_ = gl::DirectCompositionSurfaceWin::IsHDRSupported();
 #endif
   io_runner_->PostTask(FROM_HERE,
@@ -828,34 +914,27 @@ void GpuServiceImpl::RequestHDRStatusOnMainThread(
 
 void GpuServiceImpl::RegisterDisplayContext(
     gpu::DisplayContext* display_context) {
-  DCHECK(main_runner_->BelongsToCurrentThread());
   display_contexts_.AddObserver(display_context);
 }
 
 void GpuServiceImpl::UnregisterDisplayContext(
     gpu::DisplayContext* display_context) {
-  DCHECK(main_runner_->BelongsToCurrentThread());
   display_contexts_.RemoveObserver(display_context);
 }
 
 void GpuServiceImpl::LoseAllContexts() {
-  DCHECK(main_runner_->BelongsToCurrentThread());
-
   if (IsExiting())
     return;
-
   for (auto& display_context : display_contexts_)
     display_context.MarkContextLost();
   gpu_channel_manager_->LoseAllContexts();
 }
 
 void GpuServiceImpl::DidCreateContextSuccessfully() {
-  DCHECK(main_runner_->BelongsToCurrentThread());
   gpu_host_->DidCreateContextSuccessfully();
 }
 
 void GpuServiceImpl::DidCreateOffscreenContext(const GURL& active_url) {
-  DCHECK(main_runner_->BelongsToCurrentThread());
   gpu_host_->DidCreateOffscreenContext(active_url);
 }
 
@@ -878,11 +957,10 @@ void GpuServiceImpl::DidDestroyOffscreenContext(const GURL& active_url) {
 void GpuServiceImpl::DidLoseContext(bool offscreen,
                                     gpu::error::ContextLostReason reason,
                                     const GURL& active_url) {
-  DCHECK(main_runner_->BelongsToCurrentThread());
   gpu_host_->DidLoseContext(offscreen, reason, active_url);
 }
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 void GpuServiceImpl::DidUpdateOverlayInfo(
     const gpu::OverlayInfo& overlay_info) {
   gpu_host_->DidUpdateOverlayInfo(gpu_info_.overlay_info);
@@ -896,19 +974,30 @@ void GpuServiceImpl::DidUpdateHDRStatus(bool hdr_enabled) {
 void GpuServiceImpl::StoreShaderToDisk(int client_id,
                                        const std::string& key,
                                        const std::string& shader) {
-  DCHECK(main_runner_->BelongsToCurrentThread());
   gpu_host_->StoreShaderToDisk(client_id, key, shader);
 }
 
 void GpuServiceImpl::MaybeExitOnContextLost() {
-  MaybeExit(true);
+  DCHECK(main_runner_->BelongsToCurrentThread());
+
+  // We can't restart the GPU process when running in the host process.
+  if (in_host_process())
+    return;
+
+  if (IsExiting() || !exit_callback_)
+    return;
+
+  LOG(ERROR) << "Exiting GPU process because some drivers can't recover "
+                "from errors. GPU process will restart shortly.";
+  is_exiting_.Set();
+  std::move(exit_callback_).Run(ExitCode::RESULT_CODE_GPU_EXIT_ON_CONTEXT_LOST);
 }
 
 bool GpuServiceImpl::IsExiting() const {
   return is_exiting_.IsSet();
 }
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 void GpuServiceImpl::SendCreatedChildWindow(gpu::SurfaceHandle parent_window,
                                             gpu::SurfaceHandle child_window) {
   // This can be called from main or display compositor thread.
@@ -933,16 +1022,19 @@ void GpuServiceImpl::EstablishGpuChannel(int32_t client_id,
     if (gpu::IsReservedClientId(client_id)) {
       // This returns a null handle, which is treated by the client as a failure
       // case.
-      std::move(callback).Run(mojo::ScopedMessagePipeHandle());
+      std::move(callback).Run(mojo::ScopedMessagePipeHandle(), gpu::GPUInfo(),
+                              gpu::GpuFeatureInfo());
       return;
     }
 
     EstablishGpuChannelCallback wrap_callback = base::BindOnce(
         [](scoped_refptr<base::SingleThreadTaskRunner> runner,
-           EstablishGpuChannelCallback cb,
-           mojo::ScopedMessagePipeHandle handle) {
+           EstablishGpuChannelCallback cb, mojo::ScopedMessagePipeHandle handle,
+           const gpu::GPUInfo& gpu_info,
+           const gpu::GpuFeatureInfo& gpu_feature_info) {
           runner->PostTask(FROM_HERE,
-                           base::BindOnce(std::move(cb), std::move(handle)));
+                           base::BindOnce(std::move(cb), std::move(handle),
+                                          gpu_info, gpu_feature_info));
         },
         io_runner_, std::move(callback));
     main_runner_->PostTask(
@@ -953,25 +1045,44 @@ void GpuServiceImpl::EstablishGpuChannel(int32_t client_id,
     return;
   }
 
+  auto channel_token = base::UnguessableToken::Create();
   gpu::GpuChannel* gpu_channel = gpu_channel_manager_->EstablishChannel(
-      client_id, client_tracing_id, is_gpu_host, cache_shaders_on_disk);
+      channel_token, client_id, client_tracing_id, is_gpu_host,
+      cache_shaders_on_disk);
 
   if (!gpu_channel) {
     // This returns a null handle, which is treated by the client as a failure
     // case.
-    std::move(callback).Run(mojo::ScopedMessagePipeHandle());
+    std::move(callback).Run(mojo::ScopedMessagePipeHandle(), gpu::GPUInfo(),
+                            gpu::GpuFeatureInfo());
     return;
   }
   mojo::MessagePipe pipe;
   gpu_channel->Init(pipe.handle0.release(), shutdown_event_);
 
-  media_gpu_channel_manager_->AddChannel(client_id);
+  media_gpu_channel_manager_->AddChannel(client_id, channel_token);
 
-  std::move(callback).Run(std::move(pipe.handle1));
+  std::move(callback).Run(std::move(pipe.handle1), gpu_info_,
+                          gpu_feature_info_);
+}
+
+void GpuServiceImpl::SetChannelClientPid(int32_t client_id,
+                                         base::ProcessId client_pid) {
+  if (io_runner_->BelongsToCurrentThread()) {
+    main_runner_->PostTask(FROM_HERE,
+                           base::BindOnce(&GpuServiceImpl::SetChannelClientPid,
+                                          weak_ptr_, client_id, client_pid));
+    return;
+  }
+
+  // Note that the GpuService client must be trusted by definition, so DCHECKing
+  // this condition is reasonable.
+  DCHECK_NE(client_pid, base::kNullProcessId);
+  gpu_channel_manager_->SetChannelClientPid(client_id, client_pid);
 }
 
 void GpuServiceImpl::CloseChannel(int32_t client_id) {
-  if (io_runner_->BelongsToCurrentThread()) {
+  if (!main_runner_->BelongsToCurrentThread()) {
     main_runner_->PostTask(
         FROM_HERE,
         base::BindOnce(&GpuServiceImpl::CloseChannel, weak_ptr_, client_id));
@@ -983,7 +1094,7 @@ void GpuServiceImpl::CloseChannel(int32_t client_id) {
 void GpuServiceImpl::LoadedShader(int32_t client_id,
                                   const std::string& key,
                                   const std::string& data) {
-  if (io_runner_->BelongsToCurrentThread()) {
+  if (!main_runner_->BelongsToCurrentThread()) {
     main_runner_->PostTask(
         FROM_HERE, base::BindOnce(&GpuServiceImpl::LoadedShader, weak_ptr_,
                                   client_id, key, data));
@@ -992,35 +1103,53 @@ void GpuServiceImpl::LoadedShader(int32_t client_id,
   gpu_channel_manager_->PopulateShaderCache(client_id, key, data);
 }
 
+void GpuServiceImpl::SetWakeUpGpuClosure(base::RepeatingClosure closure) {
+  wake_up_closure_ = std::move(closure);
+}
+
 void GpuServiceImpl::WakeUpGpu() {
-  if (io_runner_->BelongsToCurrentThread()) {
-    main_runner_->PostTask(
-        FROM_HERE, base::BindOnce(&GpuServiceImpl::WakeUpGpu, weak_ptr_));
+  if (wake_up_closure_)
+    wake_up_closure_.Run();
+  if (main_runner_->BelongsToCurrentThread()) {
+    WakeUpGpuOnMainThread();
     return;
   }
-#if defined(OS_ANDROID)
-  gpu_channel_manager_->WakeUpGpu();
+  main_runner_->PostTask(
+      FROM_HERE,
+      base::BindOnce(&GpuServiceImpl::WakeUpGpuOnMainThread, weak_ptr_));
+}
+
+void GpuServiceImpl::WakeUpGpuOnMainThread() {
+  if (gpu_feature_info_.IsWorkaroundEnabled(gpu::WAKE_UP_GPU_BEFORE_DRAWING)) {
+#if BUILDFLAG(IS_ANDROID)
+    gpu_channel_manager_->WakeUpGpu();
 #else
-  NOTREACHED() << "WakeUpGpu() not supported on this platform.";
+    NOTREACHED() << "WakeUpGpu() not supported on this platform.";
 #endif
+  }
 }
 
 void GpuServiceImpl::GpuSwitched(gl::GpuPreference active_gpu_heuristic) {
+  if (!main_runner_->BelongsToCurrentThread()) {
+    main_runner_->PostTask(
+        FROM_HERE, base::BindOnce(&GpuServiceImpl::GpuSwitched, weak_ptr_,
+                                  active_gpu_heuristic));
+    return;
+  }
   DVLOG(1) << "GPU: GPU has switched";
+
+  if (watchdog_thread_)
+    watchdog_thread_->ReportProgress();
+
   if (!in_host_process()) {
     ui::GpuSwitchingManager::GetInstance()->NotifyGpuSwitched(
         active_gpu_heuristic);
-  }
-  if (io_runner_->BelongsToCurrentThread()) {
-    main_runner_->PostTask(
-        FROM_HERE, base::BindOnce(&GpuServiceImpl::UpdateGPUInfoGL, weak_ptr_));
-    return;
   }
   GpuServiceImpl::UpdateGPUInfoGL();
 }
 
 void GpuServiceImpl::DisplayAdded() {
-  if (io_runner_->BelongsToCurrentThread()) {
+  if (!main_runner_->BelongsToCurrentThread()) {
     main_runner_->PostTask(
         FROM_HERE, base::BindOnce(&GpuServiceImpl::DisplayAdded, weak_ptr_));
     return;
@@ -1032,7 +1161,7 @@ void GpuServiceImpl::DisplayAdded() {
 }
 
 void GpuServiceImpl::DisplayRemoved() {
-  if (io_runner_->BelongsToCurrentThread()) {
+  if (!main_runner_->BelongsToCurrentThread()) {
     main_runner_->PostTask(
         FROM_HERE, base::BindOnce(&GpuServiceImpl::DisplayRemoved, weak_ptr_));
     return;
@@ -1044,7 +1173,7 @@ void GpuServiceImpl::DisplayRemoved() {
 }
 
 void GpuServiceImpl::DisplayMetricsChanged() {
-  if (io_runner_->BelongsToCurrentThread()) {
+  if (!main_runner_->BelongsToCurrentThread()) {
     main_runner_->PostTask(
         FROM_HERE,
         base::BindOnce(&GpuServiceImpl::DisplayMetricsChanged, weak_ptr_));
@@ -1057,7 +1186,7 @@ void GpuServiceImpl::DisplayMetricsChanged() {
 }
 
 void GpuServiceImpl::DestroyAllChannels() {
-  if (io_runner_->BelongsToCurrentThread()) {
+  if (!main_runner_->BelongsToCurrentThread()) {
     main_runner_->PostTask(
         FROM_HERE,
         base::BindOnce(&GpuServiceImpl::DestroyAllChannels, weak_ptr_));
@@ -1069,8 +1198,8 @@ void GpuServiceImpl::DestroyAllChannels() {
 
 void GpuServiceImpl::OnBackgroundCleanup() {
 // Currently only called on Android.
-#if defined(OS_ANDROID)
-  if (io_runner_->BelongsToCurrentThread()) {
+#if BUILDFLAG(IS_ANDROID)
+  if (!main_runner_->BelongsToCurrentThread()) {
     main_runner_->PostTask(
         FROM_HERE,
         base::BindOnce(&GpuServiceImpl::OnBackgroundCleanup, weak_ptr_));
@@ -1087,6 +1216,8 @@ void GpuServiceImpl::OnBackgrounded() {
   DCHECK(io_runner_->BelongsToCurrentThread());
   if (watchdog_thread_)
     watchdog_thread_->OnBackgrounded();
+  if (compositor_gpu_thread_)
+    compositor_gpu_thread_->OnBackgrounded();
 
   main_runner_->PostTask(
       FROM_HERE,
@@ -1095,14 +1226,39 @@ void GpuServiceImpl::OnBackgrounded() {
 
 void GpuServiceImpl::OnBackgroundedOnMainThread() {
   gpu_channel_manager_->OnApplicationBackgrounded();
+
+  if (visibility_changed_callback_) {
+    visibility_changed_callback_.Run(false);
+    if (gpu_preferences_.enable_gpu_benchmarking_extension) {
+      ++gpu_info_.visibility_callback_call_count;
+      UpdateGPUInfoGL();
+    }
+  }
 }
 
 void GpuServiceImpl::OnForegrounded() {
+  DCHECK(io_runner_->BelongsToCurrentThread());
   if (watchdog_thread_)
     watchdog_thread_->OnForegrounded();
+  if (compositor_gpu_thread_)
+    compositor_gpu_thread_->OnForegrounded();
+
+  main_runner_->PostTask(
+      FROM_HERE,
+      base::BindOnce(&GpuServiceImpl::OnForegroundedOnMainThread, weak_ptr_));
 }
 
-#if !defined(OS_ANDROID)
+void GpuServiceImpl::OnForegroundedOnMainThread() {
+  if (visibility_changed_callback_) {
+    visibility_changed_callback_.Run(true);
+    if (gpu_preferences_.enable_gpu_benchmarking_extension) {
+      ++gpu_info_.visibility_callback_call_count;
+      UpdateGPUInfoGL();
+    }
+  }
+}
+
+#if !BUILDFLAG(IS_ANDROID)
 void GpuServiceImpl::OnMemoryPressure(
     ::base::MemoryPressureListener::MemoryPressureLevel level) {
   // Forward the notification to the registry of MemoryPressureListeners.
@@ -1110,7 +1266,7 @@ void GpuServiceImpl::OnMemoryPressure(
 }
 #endif
 
-#if defined(OS_APPLE)
+#if BUILDFLAG(IS_APPLE)
 void GpuServiceImpl::BeginCATransaction() {
   DCHECK(io_runner_->BelongsToCurrentThread());
   main_runner_->PostTask(FROM_HERE, base::BindOnce(&ui::BeginCATransaction));
@@ -1144,18 +1300,11 @@ void GpuServiceImpl::Hang() {
 
 void GpuServiceImpl::ThrowJavaException() {
   DCHECK(io_runner_->BelongsToCurrentThread());
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   ThrowUncaughtException();
 #else
   NOTREACHED() << "Java exception not supported on this platform.";
 #endif
-}
-
-void GpuServiceImpl::Stop(StopCallback callback) {
-  DCHECK(io_runner_->BelongsToCurrentThread());
-  main_runner_->PostTaskAndReply(
-      FROM_HERE, base::BindOnce(&GpuServiceImpl::MaybeExit, weak_ptr_, false),
-      std::move(callback));
 }
 
 void GpuServiceImpl::StartPeakMemoryMonitorOnMainThread(uint32_t sequence_num) {
@@ -1173,36 +1322,11 @@ void GpuServiceImpl::GetPeakMemoryUsageOnMainThread(
                                       std::move(allocation_per_source)));
 }
 
-void GpuServiceImpl::MaybeExit(bool for_context_loss) {
-  DCHECK(main_runner_->BelongsToCurrentThread());
-
-  // We can't restart the GPU process when running in the host process.
-  if (in_host_process())
-    return;
-
-  if (IsExiting() || !exit_callback_)
-    return;
-
-  if (for_context_loss) {
-    LOG(ERROR) << "Exiting GPU process because some drivers can't recover "
-                  "from errors. GPU process will restart shortly.";
-  }
-  is_exiting_.Set();
-  // For the unsandboxed GPU info collection process used for info collection,
-  // if we exit immediately, then the reply message could be lost. That's why
-  // the |exit_callback_| takes the boolean argument.
-  if (for_context_loss)
-    std::move(exit_callback_)
-        .Run(ExitCode::RESULT_CODE_GPU_EXIT_ON_CONTEXT_LOST);
-  else
-    std::move(exit_callback_).Run(base::nullopt);
-}
-
 gpu::Scheduler* GpuServiceImpl::GetGpuScheduler() {
   return scheduler_.get();
 }
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 void GpuServiceImpl::UpdateOverlayAndHDRInfo() {
   gpu::OverlayInfo old_overlay_info = gpu_info_.overlay_info;
   gpu::CollectHardwareOverlayInfo(&gpu_info_.overlay_info);
@@ -1217,6 +1341,30 @@ void GpuServiceImpl::UpdateOverlayAndHDRInfo() {
   hdr_enabled_ = gl::DirectCompositionSurfaceWin::IsHDRSupported();
   if (old_hdr_enabled_status != hdr_enabled_)
     DidUpdateHDRStatus(hdr_enabled_);
+}
+#endif
+
+void GpuServiceImpl::GetDawnInfo(GetDawnInfoCallback callback) {
+  DCHECK(io_runner_->BelongsToCurrentThread());
+
+  main_runner_->PostTask(
+      FROM_HERE, base::BindOnce(&GpuServiceImpl::GetDawnInfoOnMain,
+                                base::Unretained(this), std::move(callback)));
+}
+
+void GpuServiceImpl::GetDawnInfoOnMain(GetDawnInfoCallback callback) {
+  DCHECK(main_runner_->BelongsToCurrentThread());
+
+  std::vector<std::string> dawn_info_list;
+  gpu::CollectDawnInfo(gpu_preferences_, &dawn_info_list);
+
+  io_runner_->PostTask(FROM_HERE,
+                       base::BindOnce(std::move(callback), dawn_info_list));
+}
+
+#if BUILDFLAG(IS_ANDROID)
+void GpuServiceImpl::SetHostProcessId(base::ProcessId pid) {
+  host_process_id_ = pid;
 }
 #endif
 

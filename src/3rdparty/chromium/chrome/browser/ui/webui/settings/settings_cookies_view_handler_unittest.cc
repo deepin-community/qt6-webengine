@@ -13,6 +13,7 @@
 #include "components/browsing_data/content/mock_cookie_helper.h"
 #include "components/browsing_data/content/mock_local_storage_helper.h"
 #include "content/public/test/test_web_ui.h"
+#include "third_party/blink/public/common/storage_key/storage_key.h"
 
 namespace {
 
@@ -58,7 +59,6 @@ class CookiesViewHandlerTest : public ChromeRenderViewHostTestHarness {
         mock_browsing_data_cookie_helper,
         /*database_helper=*/nullptr, mock_browsing_data_local_storage_helper,
         /*session_storage_helper=*/nullptr,
-        /*appcache_helper=*/nullptr,
         /*indexed_db_helper=*/nullptr,
         /*file_system_helper=*/nullptr,
         /*quota_helper=*/nullptr,
@@ -69,10 +69,10 @@ class CookiesViewHandlerTest : public ChromeRenderViewHostTestHarness {
     auto mock_cookies_tree_model = std::make_unique<CookiesTreeModel>(
         std::move(container), profile()->GetExtensionSpecialStoragePolicy());
 
-    mock_browsing_data_local_storage_helper->AddLocalStorageForOrigin(
-        url::Origin::Create(GURL(kTestOrigin1)), 2);
-    mock_browsing_data_local_storage_helper->AddLocalStorageForOrigin(
-        url::Origin::Create(GURL(kTestOrigin2)), 3);
+    mock_browsing_data_local_storage_helper->AddLocalStorageForStorageKey(
+        blink::StorageKey::CreateFromStringForTesting(kTestOrigin1), 2);
+    mock_browsing_data_local_storage_helper->AddLocalStorageForStorageKey(
+        blink::StorageKey::CreateFromStringForTesting(kTestOrigin2), 3);
 
     mock_browsing_data_cookie_helper->AddCookieSamples(GURL(kTestOrigin1),
                                                        kTestCookie1);
@@ -90,9 +90,9 @@ class CookiesViewHandlerTest : public ChromeRenderViewHostTestHarness {
 
   void SetupHandlerWithTreeModel() {
     SetupTreeModelForTesting();
-    base::ListValue reload_args;
-    reload_args.AppendString(kCallbackId);
-    handler()->HandleReloadCookies(&reload_args);
+    base::Value reload_args(base::Value::Type::LIST);
+    reload_args.Append(kCallbackId);
+    handler()->HandleReloadCookies(reload_args.GetList());
 
     // The handler will post a task to recreate the tree model.
     task_environment()->RunUntilIdle();
@@ -132,18 +132,18 @@ TEST_F(CookiesViewHandlerTest, SingleRequestDuringBatch) {
   constexpr char kReloadCallbackID[] = "reload-cookies-callback";
   constexpr char kGetDisplaylistCallbackID[] = "get-display-list-callback";
 
-  base::ListValue reload_args;
-  reload_args.AppendString(kReloadCallbackID);
-  handler()->HandleReloadCookies(&reload_args);
+  base::Value reload_args(base::Value::Type::LIST);
+  reload_args.Append(kReloadCallbackID);
+  handler()->HandleReloadCookies(reload_args.GetList());
   task_environment()->RunUntilIdle();
 
   // At the point the handler will have recreated the model (using the provided
   // test model) and will be awaiting batch end. Performing another request
   // should result in it not being satisfied, and instead being queued.
-  base::ListValue get_display_list_args;
-  get_display_list_args.AppendString(kGetDisplaylistCallbackID);
-  get_display_list_args.AppendString("");
-  handler()->HandleGetDisplayList(&get_display_list_args);
+  base::Value get_display_list_args(base::Value::Type::LIST);
+  get_display_list_args.Append(kGetDisplaylistCallbackID);
+  get_display_list_args.Append("");
+  handler()->HandleGetDisplayList(get_display_list_args.GetList());
   task_environment()->RunUntilIdle();
 
   // Because the tree model hasn't completed the batch, no callback should
@@ -169,7 +169,7 @@ TEST_F(CookiesViewHandlerTest, SingleRequestDuringBatch) {
             get_display_list_response.arg1()->GetString());
   ASSERT_TRUE(get_display_list_response.arg2()->GetBool());
   base::Value::ConstListView local_data_list =
-      get_display_list_response.arg3()->GetList();
+      get_display_list_response.arg3()->GetListDeprecated();
   ASSERT_EQ(2U, local_data_list.size());
   EXPECT_EQ(kTestHost1, local_data_list[0].FindKey("site")->GetString());
   EXPECT_EQ(kTestHost2, local_data_list[1].FindKey("site")->GetString());
@@ -184,37 +184,37 @@ TEST_F(CookiesViewHandlerTest, NoStarvation) {
   std::string current_filter = kTestHost1;
   auto get_display_list_new_filter =
       base::BindLambdaForTesting([&](std::string callback_id) {
-        base::ListValue args;
-        args.AppendString(callback_id);
+        base::Value args(base::Value::Type::LIST);
+        args.Append(callback_id);
         current_filter = current_filter == kTestHost1 ? "" : kTestHost1;
-        args.AppendString(kTestHost1);
-        handler()->HandleGetDisplayList(&args);
+        args.Append(kTestHost1);
+        handler()->HandleGetDisplayList(args.GetList());
       });
   auto get_display_list_same_filter =
       base::BindLambdaForTesting([&](std::string callback_id) {
-        base::ListValue args;
-        args.AppendString(callback_id);
-        args.AppendString(current_filter);
-        handler()->HandleGetDisplayList(&args);
+        base::Value args(base::Value::Type::LIST);
+        args.Append(callback_id);
+        args.Append(current_filter);
+        handler()->HandleGetDisplayList(args.GetList());
       });
   auto get_cookie_details =
       base::BindLambdaForTesting([&](std::string callback_id) {
-        base::ListValue args;
-        args.AppendString(callback_id);
-        args.AppendString(kTestHost1);
-        handler()->HandleGetCookieDetails(&args);
+        base::Value args(base::Value::Type::LIST);
+        args.Append(callback_id);
+        args.Append(kTestHost1);
+        handler()->HandleGetCookieDetails(args.GetList());
       });
   auto reload_cookies =
       base::BindLambdaForTesting([&](std::string callback_id) {
-        base::ListValue args;
-        args.AppendString(callback_id);
-        handler()->HandleReloadCookies(&args);
+        base::Value args(base::Value::Type::LIST);
+        args.Append(callback_id);
+        handler()->HandleReloadCookies(args.GetList());
       });
   auto remove_third_party =
       base::BindLambdaForTesting([&](std::string callback_id) {
-        base::ListValue args;
-        args.AppendString(callback_id);
-        handler()->HandleRemoveThirdParty(&args);
+        base::Value args(base::Value::Type::LIST);
+        args.Append(callback_id);
+        handler()->HandleRemoveThirdParty(args.GetList());
       });
   // Include a dummy request which allows the request queue to be cleared. This
   // ensures that requests may be queued up both during, and outside of, batch
@@ -267,10 +267,10 @@ TEST_F(CookiesViewHandlerTest, ImmediateTreeOperation) {
   // previously results in a tree being created before the request is handled.
   SetupTreeModelForTesting();
 
-  base::ListValue args;
-  args.AppendString(kCallbackId);
-  args.AppendString(kTestHost1);
-  handler()->HandleGetCookieDetails(&args);
+  base::Value args(base::Value::Type::LIST);
+  args.Append(kCallbackId);
+  args.Append(kTestHost1);
+  handler()->HandleGetCookieDetails(args.GetList());
   task_environment()->RunUntilIdle();
 
   // At this point the handler should have queued the creation of a tree and
@@ -285,7 +285,7 @@ TEST_F(CookiesViewHandlerTest, ImmediateTreeOperation) {
   EXPECT_EQ("cr.webUIResponse", data.function_name());
   ASSERT_TRUE(data.arg2()->GetBool());
 
-  base::Value::ConstListView cookies_list = data.arg3()->GetList();
+  base::Value::ConstListView cookies_list = data.arg3()->GetListDeprecated();
   ASSERT_EQ(2UL, cookies_list.size());
   EXPECT_EQ("cookie", cookies_list[0].FindKey("type")->GetString());
   EXPECT_EQ("local_storage", cookies_list[1].FindKey("type")->GetString());
@@ -297,36 +297,38 @@ TEST_F(CookiesViewHandlerTest, HandleGetDisplayList) {
 
   // Retrieve a filtered list.
   {
-    base::ListValue args;
-    args.AppendString(kCallbackId);
-    args.AppendString(kTestHost1);
+    base::Value args(base::Value::Type::LIST);
+    args.Append(kCallbackId);
+    args.Append(kTestHost1);
 
-    handler()->HandleGetDisplayList(&args);
+    handler()->HandleGetDisplayList(args.GetList());
     task_environment()->RunUntilIdle();
 
     const content::TestWebUI::CallData& data = *web_ui()->call_data().back();
     EXPECT_EQ("cr.webUIResponse", data.function_name());
     EXPECT_EQ(kCallbackId, data.arg1()->GetString());
     ASSERT_TRUE(data.arg2()->GetBool());
-    base::Value::ConstListView local_data_list = data.arg3()->GetList();
+    base::Value::ConstListView local_data_list =
+        data.arg3()->GetListDeprecated();
     ASSERT_EQ(1U, local_data_list.size());
     EXPECT_EQ(kTestHost1, local_data_list[0].FindKey("site")->GetString());
   }
 
   // Remove the filter and confirm the full list is returned.
   {
-    base::ListValue args;
-    args.AppendString(kCallbackId);
-    args.AppendString("");
+    base::Value args(base::Value::Type::LIST);
+    args.Append(kCallbackId);
+    args.Append("");
 
-    handler()->HandleGetDisplayList(&args);
+    handler()->HandleGetDisplayList(args.GetList());
     task_environment()->RunUntilIdle();
 
     const content::TestWebUI::CallData& data = *web_ui()->call_data().back();
     EXPECT_EQ("cr.webUIResponse", data.function_name());
     EXPECT_EQ(kCallbackId, data.arg1()->GetString());
     ASSERT_TRUE(data.arg2()->GetBool());
-    base::Value::ConstListView local_data_list = data.arg3()->GetList();
+    base::Value::ConstListView local_data_list =
+        data.arg3()->GetListDeprecated();
     ASSERT_EQ(2U, local_data_list.size());
     EXPECT_EQ(kTestHost1, local_data_list[0].FindKey("site")->GetString());
     EXPECT_EQ(kTestHost2, local_data_list[1].FindKey("site")->GetString());
@@ -340,41 +342,43 @@ TEST_F(CookiesViewHandlerTest, HandleRemoveShownItems) {
 
   // Apply a filter to the list and confirm it is returned.
   {
-    base::ListValue args;
-    args.AppendString(kCallbackId);
-    args.AppendString(kTestHost2);
-    handler()->HandleGetDisplayList(&args);
+    base::Value args(base::Value::Type::LIST);
+    args.Append(kCallbackId);
+    args.Append(kTestHost2);
+    handler()->HandleGetDisplayList(args.GetList());
     task_environment()->RunUntilIdle();
 
     const content::TestWebUI::CallData& data = *web_ui()->call_data().back();
     EXPECT_EQ("cr.webUIResponse", data.function_name());
     EXPECT_EQ(kCallbackId, data.arg1()->GetString());
     ASSERT_TRUE(data.arg2()->GetBool());
-    base::Value::ConstListView local_data_list = data.arg3()->GetList();
+    base::Value::ConstListView local_data_list =
+        data.arg3()->GetListDeprecated();
     ASSERT_EQ(1U, local_data_list.size());
     EXPECT_EQ(kTestHost2, local_data_list[0].FindKey("site")->GetString());
   }
 
   // Remove displayed items.
   {
-    base::ListValue args;
-    handler()->HandleRemoveShownItems(&args);
+    base::Value args(base::Value::Type::LIST);
+    handler()->HandleRemoveShownItems(args.GetList());
     task_environment()->RunUntilIdle();
   }
 
   // Remove the filter and confirm unremoved items are returned.
   {
-    base::ListValue args;
-    args.AppendString(kCallbackId);
-    args.AppendString("");
-    handler()->HandleGetDisplayList(&args);
+    base::Value args(base::Value::Type::LIST);
+    args.Append(kCallbackId);
+    args.Append("");
+    handler()->HandleGetDisplayList(args.GetList());
     task_environment()->RunUntilIdle();
 
     const content::TestWebUI::CallData& data = *web_ui()->call_data().back();
     EXPECT_EQ("cr.webUIResponse", data.function_name());
     EXPECT_EQ(kCallbackId, data.arg1()->GetString());
     ASSERT_TRUE(data.arg2()->GetBool());
-    base::Value::ConstListView local_data_list = data.arg3()->GetList();
+    base::Value::ConstListView local_data_list =
+        data.arg3()->GetListDeprecated();
     ASSERT_EQ(1U, local_data_list.size());
     EXPECT_EQ(kTestHost1, local_data_list[0].FindKey("site")->GetString());
   }
@@ -383,10 +387,10 @@ TEST_F(CookiesViewHandlerTest, HandleRemoveShownItems) {
 TEST_F(CookiesViewHandlerTest, HandleGetCookieDetails) {
   // Ensure that the cookie details are correctly returned for a site.
   SetupHandlerWithTreeModel();
-  base::ListValue args;
-  args.AppendString(kCallbackId);
-  args.AppendString(kTestHost1);
-  handler()->HandleGetCookieDetails(&args);
+  base::Value args(base::Value::Type::LIST);
+  args.Append(kCallbackId);
+  args.Append(kTestHost1);
+  handler()->HandleGetCookieDetails(args.GetList());
   task_environment()->RunUntilIdle();
 
   const content::TestWebUI::CallData& data = *web_ui()->call_data().back();
@@ -394,7 +398,7 @@ TEST_F(CookiesViewHandlerTest, HandleGetCookieDetails) {
   EXPECT_EQ("cr.webUIResponse", data.function_name());
   ASSERT_TRUE(data.arg2()->GetBool());
 
-  base::Value::ConstListView cookies_list = data.arg3()->GetList();
+  base::Value::ConstListView cookies_list = data.arg3()->GetListDeprecated();
   ASSERT_EQ(2UL, cookies_list.size());
   EXPECT_EQ("cookie", cookies_list[0].FindKey("type")->GetString());
   EXPECT_EQ("local_storage", cookies_list[1].FindKey("type")->GetString());
@@ -404,9 +408,9 @@ TEST_F(CookiesViewHandlerTest, HandleRemoveAll) {
   // Ensure that RemoveAll removes all cookies & storage.
   SetupHandlerWithTreeModel();
   {
-    base::ListValue args;
-    args.AppendString(kCallbackId);
-    handler()->HandleRemoveAll(&args);
+    base::Value args(base::Value::Type::LIST);
+    args.Append(kCallbackId);
+    handler()->HandleRemoveAll(args.GetList());
     task_environment()->RunUntilIdle();
 
     const content::TestWebUI::CallData& data = *web_ui()->call_data().back();
@@ -417,17 +421,18 @@ TEST_F(CookiesViewHandlerTest, HandleRemoveAll) {
 
   // Ensure returned display list is empty.
   {
-    base::ListValue args;
-    args.AppendString(kCallbackId);
-    args.AppendString("");
-    handler()->HandleGetDisplayList(&args);
+    base::Value args(base::Value::Type::LIST);
+    args.Append(kCallbackId);
+    args.Append("");
+    handler()->HandleGetDisplayList(args.GetList());
     task_environment()->RunUntilIdle();
 
     const content::TestWebUI::CallData& data = *web_ui()->call_data().back();
     EXPECT_EQ("cr.webUIResponse", data.function_name());
     EXPECT_EQ(kCallbackId, data.arg1()->GetString());
     ASSERT_TRUE(data.arg2()->GetBool());
-    base::Value::ConstListView local_data_list = data.arg3()->GetList();
+    base::Value::ConstListView local_data_list =
+        data.arg3()->GetListDeprecated();
     ASSERT_EQ(0U, local_data_list.size());
   }
 }
@@ -440,14 +445,14 @@ TEST_F(CookiesViewHandlerTest, HandleRemoveItem) {
   // Get the appropriate path for removal.
   std::string node_path_id;
   {
-    base::ListValue args;
-    args.AppendString(kCallbackId);
-    args.AppendString(kTestHost1);
-    handler()->HandleGetCookieDetails(&args);
+    base::Value args(base::Value::Type::LIST);
+    args.Append(kCallbackId);
+    args.Append(kTestHost1);
+    handler()->HandleGetCookieDetails(args.GetList());
     task_environment()->RunUntilIdle();
 
     const content::TestWebUI::CallData& data = *web_ui()->call_data().back();
-    base::Value::ConstListView cookies_list = data.arg3()->GetList();
+    base::Value::ConstListView cookies_list = data.arg3()->GetListDeprecated();
     ASSERT_EQ(2UL, cookies_list.size());
     // Find the entry item associated with the kTestCookie1 cookie.
     for (const auto& cookie : cookies_list) {
@@ -458,9 +463,9 @@ TEST_F(CookiesViewHandlerTest, HandleRemoveItem) {
 
   // Remove path and ensure that the removed item listener fires.
   {
-    base::ListValue args;
-    args.AppendString(node_path_id);
-    handler()->HandleRemoveItem(&args);
+    base::Value args(base::Value::Type::LIST);
+    args.Append(node_path_id);
+    handler()->HandleRemoveItem(args.GetList());
     task_environment()->RunUntilIdle();
 
     // Removal should fire an update event.
@@ -472,14 +477,14 @@ TEST_F(CookiesViewHandlerTest, HandleRemoveItem) {
 
   // Ensure that the removed item is no longer present in cookie details.
   {
-    base::ListValue args;
-    args.AppendString(kCallbackId);
-    args.AppendString(kTestHost1);
-    handler()->HandleGetCookieDetails(&args);
+    base::Value args(base::Value::Type::LIST);
+    args.Append(kCallbackId);
+    args.Append(kTestHost1);
+    handler()->HandleGetCookieDetails(args.GetList());
     task_environment()->RunUntilIdle();
 
     const content::TestWebUI::CallData& data = *web_ui()->call_data().back();
-    base::Value::ConstListView cookies_list = data.arg3()->GetList();
+    base::Value::ConstListView cookies_list = data.arg3()->GetListDeprecated();
     ASSERT_EQ(1UL, cookies_list.size());
     EXPECT_EQ("local_storage", cookies_list[0].FindKey("type")->GetString());
   }
@@ -490,9 +495,9 @@ TEST_F(CookiesViewHandlerTest, HandleRemoveSite) {
 
   // Check that removing a single site works.
   {
-    base::ListValue args;
-    args.AppendString(kTestHost1);
-    handler()->HandleRemoveSite(&args);
+    base::Value args(base::Value::Type::LIST);
+    args.Append(kTestHost1);
+    handler()->HandleRemoveSite(args.GetList());
     task_environment()->RunUntilIdle();
 
     // Removal should fire an update event.
@@ -503,17 +508,18 @@ TEST_F(CookiesViewHandlerTest, HandleRemoveSite) {
 
   // Check that the removed site is no longer present in the display list.
   {
-    base::ListValue args;
-    args.AppendString(kCallbackId);
-    args.AppendString("");
-    handler()->HandleGetDisplayList(&args);
+    base::Value args(base::Value::Type::LIST);
+    args.Append(kCallbackId);
+    args.Append("");
+    handler()->HandleGetDisplayList(args.GetList());
     task_environment()->RunUntilIdle();
 
     const content::TestWebUI::CallData& data = *web_ui()->call_data().back();
     EXPECT_EQ("cr.webUIResponse", data.function_name());
     EXPECT_EQ(kCallbackId, data.arg1()->GetString());
     ASSERT_TRUE(data.arg2()->GetBool());
-    base::Value::ConstListView local_data_list = data.arg3()->GetList();
+    base::Value::ConstListView local_data_list =
+        data.arg3()->GetListDeprecated();
     ASSERT_EQ(1U, local_data_list.size());
     EXPECT_EQ(kTestHost2, local_data_list[0].FindKey("site")->GetString());
   }

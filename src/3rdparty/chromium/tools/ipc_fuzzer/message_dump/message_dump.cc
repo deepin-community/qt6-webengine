@@ -10,8 +10,8 @@
 #include "ipc/ipc_channel_proxy.h"
 #include "tools/ipc_fuzzer/message_lib/message_file.h"
 
-#if defined(OS_WIN)
-#define PidToStringType base::NumberToString16
+#if BUILDFLAG(IS_WIN)
+#define PidToStringType base::NumberToWString
 #define MESSAGE_DUMP_EXPORT __declspec(dllexport)
 #else
 #define PidToStringType base::NumberToString

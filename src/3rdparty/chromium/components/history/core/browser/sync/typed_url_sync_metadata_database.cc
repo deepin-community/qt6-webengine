@@ -8,6 +8,9 @@
 
 #include "base/big_endian.h"
 #include "base/logging.h"
+#include "base/ranges/algorithm.h"
+#include "components/sync/model/metadata_batch.h"
+#include "components/sync/protocol/entity_metadata.pb.h"
 #include "sql/meta_table.h"
 #include "sql/statement.h"
 
@@ -101,7 +104,8 @@ URLID TypedURLSyncMetadataDatabase::StorageKeyToURLID(
     const std::string& storage_key) {
   URLID storage_key_int = 0;
   DCHECK_EQ(storage_key.size(), sizeof(storage_key_int));
-  base::ReadBigEndian(storage_key.data(), &storage_key_int);
+  base::ReadBigEndian(reinterpret_cast<const uint8_t*>(storage_key.data()),
+                      &storage_key_int);
   // Make sure storage_key_int is set.
   DCHECK_NE(storage_key_int, 0);
   return storage_key_int;
@@ -122,8 +126,7 @@ bool TypedURLSyncMetadataDatabase::InitSyncTable() {
 bool TypedURLSyncMetadataDatabase::
     CleanTypedURLOrphanedMetadataForMigrationToVersion40(
         const std::vector<URLID>& sorted_valid_rowids) {
-  DCHECK(
-      std::is_sorted(sorted_valid_rowids.begin(), sorted_valid_rowids.end()));
+  DCHECK(base::ranges::is_sorted(sorted_valid_rowids));
   std::vector<URLID> invalid_metadata_rowids;
   auto valid_rowids_iter = sorted_valid_rowids.begin();
 
@@ -131,15 +134,15 @@ bool TypedURLSyncMetadataDatabase::
       "SELECT storage_key FROM typed_url_sync_metadata ORDER BY storage_key"));
   while (sorted_metadata_rowids.Step()) {
     URLID metadata_rowid = sorted_metadata_rowids.ColumnInt64(0);
-    // Both collections are sorted, we check whether |metadata_rowid| is valid
+    // Both collections are sorted, we check whether `metadata_rowid` is valid
     // by iterating both at the same time.
 
-    // First, skip all valid IDs that are omitted in |sorted_metadata_rowids|.
+    // First, skip all valid IDs that are omitted in `sorted_metadata_rowids`.
     while (valid_rowids_iter != sorted_valid_rowids.end() &&
            *valid_rowids_iter < metadata_rowid) {
       valid_rowids_iter++;
     }
-    // Now, is |metadata_rowid| invalid?
+    // Now, is `metadata_rowid` invalid?
     if (valid_rowids_iter == sorted_valid_rowids.end() ||
         *valid_rowids_iter != metadata_rowid) {
       invalid_metadata_rowids.push_back(metadata_rowid);

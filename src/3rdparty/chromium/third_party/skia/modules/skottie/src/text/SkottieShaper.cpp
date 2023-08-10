@@ -10,13 +10,17 @@
 #include "include/core/SkFontMetrics.h"
 #include "include/core/SkFontMgr.h"
 #include "include/core/SkTextBlob.h"
+#include "include/private/SkTPin.h"
 #include "include/private/SkTemplates.h"
 #include "modules/skshaper/include/SkShaper.h"
+#include "modules/skunicode/include/SkUnicode.h"
 #include "src/core/SkTLazy.h"
 #include "src/core/SkTextBlobPriv.h"
 #include "src/utils/SkUTF.h"
 
+#include <algorithm>
 #include <limits.h>
+#include <numeric>
 
 namespace skottie {
 namespace {
@@ -29,8 +33,6 @@ SkRect ComputeBlobBounds(const sk_sp<SkTextBlob>& blob) {
     }
 
     SkAutoSTArray<16, SkRect> glyphBounds;
-
-    SkTextBlobRunIterator it(blob.get());
 
     for (SkTextBlobRunIterator it(blob.get()); !it.done(); it.next()) {
         glyphBounds.reset(SkToInt(it.glyphCount()));
@@ -45,6 +47,12 @@ SkRect ComputeBlobBounds(const sk_sp<SkTextBlob>& blob) {
 
     return bounds;
 }
+
+static bool is_whitespace(char c) {
+    // TODO: we've been getting away with this simple heuristic,
+    // but ideally we should use SkUicode::isWhiteSpace().
+    return c == ' ' || c == '\t' || c == '\r' || c == '\n';
+};
 
 // Helper for interfacing with SkShaper: buffers shaper-fed runs and performs
 // per-line position adjustments (for external line breaking, horizontal alignment, etc).
@@ -116,7 +124,54 @@ public:
     void commitLine() override {
         fOffset.fY += fDesc.fLineHeight;
 
-        // TODO: justification adjustments
+        // Observed AE handling of whitespace, for alignment purposes:
+        //
+        //   - leading whitespace contributes to alignment
+        //   - trailing whitespace is ignored
+        //   - auto line breaking retains all separating whitespace on the first line (no artificial
+        //     leading WS is created).
+        auto adjust_trailing_whitespace = [this]() {
+            // For left-alignment, trailing WS doesn't make any difference.
+            if (fLineRuns.empty() || fDesc.fHAlign == SkTextUtils::Align::kLeft_Align) {
+                return;
+            }
+
+            // Technically, trailing whitespace could span multiple runs, but realistically,
+            // SkShaper has no reason to split it.  Hence we're only checking the last run.
+            size_t ws_count = 0;
+            for (size_t i = 0; i < fLineRuns.back().fGlyphCount; ++i) {
+                if (is_whitespace(fUTF8[fLineClusters[SkToInt(fLineGlyphCount - i - 1)]])) {
+                    ++ws_count;
+                } else {
+                    break;
+                }
+            }
+
+            // No trailing whitespace.
+            if (!ws_count) {
+                return;
+            }
+
+            // Compute the cumulative whitespace advance.
+            fAdvanceBuffer.resize(ws_count);
+            fLineRuns.back().fFont.getWidths(fLineGlyphs.data() + fLineGlyphCount - ws_count,
+                                             SkToInt(ws_count), fAdvanceBuffer.data(), nullptr);
+
+            const auto ws_advance = std::accumulate(fAdvanceBuffer.begin(),
+                                                    fAdvanceBuffer.end(),
+                                                    0.0f);
+
+            // Offset needed to compensate for whitespace.
+            const auto offset = ws_advance*-fHAlignFactor;
+
+            // Shift the whole line horizontally by the computed offset.
+            std::transform(fLinePos.data(),
+                           fLinePos.data() + fLineGlyphCount,
+                           fLinePos.data(),
+                           [&offset](SkPoint pos) { return SkPoint{pos.fX + offset, pos.fY}; });
+        };
+
+        adjust_trailing_whitespace();
 
         const auto commit_proc = (fDesc.fFlags & Shaper::Flags::kFragmentGlyphs)
             ? &BlobMaker::commitFragementedRun
@@ -258,11 +313,6 @@ private:
                               const SkPoint* pos,
                               const uint32_t* clusters,
                               uint32_t line_index) {
-
-        static const auto is_whitespace = [](char c) {
-            return c == ' ' || c == '\t' || c == '\r' || c == '\n';
-        };
-
         float ascent = 0;
 
         if (fDesc.fFlags & Shaper::Flags::kTrackFragmentAdvanceAscent) {
@@ -313,7 +363,7 @@ private:
             blob_buffer.glyphs[i] = glyphs[i];
             fResult.fMissingGlyphCount += (glyphs[i] == kMissingGlyphID);
         }
-        sk_careful_memcpy(blob_buffer.pos   , pos   , rec.fGlyphCount * sizeof(SkPoint));
+        sk_careful_memcpy(blob_buffer.pos, pos, rec.fGlyphCount * sizeof(SkPoint));
     }
 
     static float HAlignFactor(SkTextUtils::Align align) {
@@ -331,7 +381,7 @@ private:
         return fDesc.fAscent ? fDesc.fAscent : fFirstLineAscent;
     }
 
-    static constexpr SkGlyphID kMissingGlyphID = 0;
+    inline static constexpr SkGlyphID kMissingGlyphID = 0;
 
     const Shaper::TextDesc&   fDesc;
     const SkRect&             fBox;
@@ -385,6 +435,22 @@ Shaper::Result ShapeImpl(const SkString& txt, const Shaper::TextDesc& desc,
     return blobMaker.finalize(shaped_size);
 }
 
+bool result_fits(const Shaper::Result& res, const SkSize& res_size,
+                 const SkRect& box, const Shaper::TextDesc& desc) {
+    // optional max line count constraint
+    if (desc.fMaxLines) {
+        const auto line_count = res.fFragments.empty()
+                ? 0
+                : res.fFragments.back().fLineIndex + 1;
+        if (line_count > desc.fMaxLines) {
+            return false;
+        }
+    }
+
+    // geometric constraint
+    return res_size.width() <= box.width() && res_size.height() <= box.height();
+}
+
 Shaper::Result ShapeToFit(const SkString& txt, const Shaper::TextDesc& orig_desc,
                           const SkRect& box, const sk_sp<SkFontMgr>& fontmgr) {
     Shaper::Result best_result;
@@ -395,9 +461,12 @@ Shaper::Result ShapeToFit(const SkString& txt, const Shaper::TextDesc& orig_desc
 
     auto desc = orig_desc;
 
-    float in_scale = 0,                                 // maximum scale that fits inside
-         out_scale = std::numeric_limits<float>::max(), // minimum scale that doesn't fit
-         try_scale = 1;                                 // current probe
+    const auto min_scale = std::max(desc.fMinTextSize / desc.fTextSize, 0.0f),
+               max_scale = std::max(desc.fMaxTextSize / desc.fTextSize, min_scale);
+
+    float in_scale = min_scale,                          // maximum scale that fits inside
+         out_scale = max_scale,                          // minimum scale that doesn't fit
+         try_scale = SkTPin(1.0f, min_scale, max_scale); // current probe
 
     // Perform a binary search for the best vertical fit (SkShaper already handles
     // horizontal fitting), starting with the specified text size.
@@ -415,37 +484,77 @@ Shaper::Result ShapeToFit(const SkString& txt, const Shaper::TextDesc& orig_desc
         SkSize res_size = {0, 0};
         auto res = ShapeImpl(txt, desc, box, fontmgr, &res_size);
 
-        if (res_size.width() > box.width() || res_size.height() > box.height()) {
+        const auto prev_scale = try_scale;
+        if (!result_fits(res, res_size, box, desc)) {
             out_scale = try_scale;
-            try_scale = (in_scale == 0)
-                    ? try_scale * 0.5f // initial in_scale not found yet - search exponentially
-                    : (in_scale + out_scale) * 0.5f; // in_scale found - binary search
+            try_scale = (in_scale == min_scale)
+                    // initial in_scale not found yet - search exponentially
+                    ? std::max(min_scale, try_scale * 0.5f)
+                    // in_scale found - binary search
+                    : (in_scale + out_scale) * 0.5f;
         } else {
             // It fits - so it's a candidate.
             best_result = std::move(res);
+            best_result.fScale = try_scale;
 
             in_scale = try_scale;
-            try_scale = (out_scale == std::numeric_limits<float>::max())
-                    ? try_scale * 2 // initial out_scale not found yet - search exponentially
-                    : (in_scale + out_scale) * 0.5f; // out_scale found - binary search
+            try_scale = (out_scale == max_scale)
+                    // initial out_scale not found yet - search exponentially
+                    ? std::min(max_scale, try_scale * 2)
+                    // out_scale found - binary search
+                    : (in_scale + out_scale) * 0.5f;
+        }
+
+        if (try_scale == prev_scale) {
+            // no more progress
+            break;
         }
     }
 
     return best_result;
 }
 
+
+// Applies capitalization rules.
+class AdjustedText {
+public:
+    AdjustedText(const SkString& txt, const Shaper::TextDesc& desc)
+        : fText(txt) {
+        switch (desc.fCapitalization) {
+        case Shaper::Capitalization::kNone:
+            break;
+        case Shaper::Capitalization::kUpperCase:
+#ifdef SK_UNICODE_AVAILABLE
+            if (auto skuni = SkUnicode::Make()) {
+                *fText.writable() = skuni->toUpper(*fText);
+            }
+#endif
+            break;
+        }
+    }
+
+    operator const SkString&() const { return *fText; }
+
+private:
+    SkTCopyOnFirstWrite<SkString> fText;
+};
+
 } // namespace
 
-Shaper::Result Shaper::Shape(const SkString& txt, const TextDesc& desc, const SkPoint& point,
+Shaper::Result Shaper::Shape(const SkString& orig_txt, const TextDesc& desc, const SkPoint& point,
                              const sk_sp<SkFontMgr>& fontmgr) {
+    const AdjustedText txt(orig_txt, desc);
+
     return (desc.fResize == ResizePolicy::kScaleToFit ||
             desc.fResize == ResizePolicy::kDownscaleToFit) // makes no sense in point mode
             ? Result()
             : ShapeImpl(txt, desc, SkRect::MakeEmpty().makeOffset(point.x(), point.y()), fontmgr);
 }
 
-Shaper::Result Shaper::Shape(const SkString& txt, const TextDesc& desc, const SkRect& box,
+Shaper::Result Shaper::Shape(const SkString& orig_txt, const TextDesc& desc, const SkRect& box,
                              const sk_sp<SkFontMgr>& fontmgr) {
+    const AdjustedText txt(orig_txt, desc);
+
     switch(desc.fResize) {
     case ResizePolicy::kNone:
         return ShapeImpl(txt, desc, box, fontmgr);
@@ -455,7 +564,7 @@ Shaper::Result Shaper::Shape(const SkString& txt, const TextDesc& desc, const Sk
         SkSize size;
         auto result = ShapeImpl(txt, desc, box, fontmgr, &size);
 
-        return (size.width() <= box.width() && size.height() <= box.height())
+        return result_fits(result, size, box, desc)
                 ? result
                 : ShapeToFit(txt, desc, box, fontmgr);
     }

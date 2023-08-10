@@ -33,7 +33,6 @@
 
 #include <memory>
 
-#include "base/macros.h"
 #include "base/threading/thread_checker.h"
 #include "third_party/blink/public/mojom/service_worker/controller_service_worker.mojom-blink.h"
 #include "third_party/blink/public/mojom/service_worker/dispatch_fetch_event_params.mojom-blink.h"
@@ -52,21 +51,19 @@ class ServiceWorkerGlobalScope;
 class WebEmbeddedWorkerImpl;
 class WebServiceWorkerContextClient;
 
-// This class is created and destructed on the main thread, but live most
-// of its time as a resident of the worker thread. All methods other than its
-// ctor/dtor and Detach() are called on the worker thread.
+// This class is created and destructed on an "initiator thread" (the
+// background ThreadPool thread that WebEmbeddedWorkerImpl run on), but lives
+// most of its time as a resident of the service worker thread. All methods
+// other than its ctor/dtor and Detach() are called on the service worker
+// thread.
 //
 // This implements WebServiceWorkerContextProxy, which connects ServiceWorker's
 // WorkerGlobalScope and embedder/chrome, and implements ServiceWorker-specific
-// events/upcall methods that are to be called by embedder/chromium,
-// e.g. onfetch.
+// events/upcall methods that are to be called by embedder/chromium, e.g.
+// onfetch.
 //
 // An instance of this class is supposed to outlive until
-// workerThreadTerminated() is called by its corresponding
-// WorkerGlobalScope.
-//
-// TODO(bashi): Update the above comment and method comments once we move
-// creation of this class off the main thread.
+// workerThreadTerminated() is called by its corresponding WorkerGlobalScope.
 class ServiceWorkerGlobalScopeProxy final : public WebServiceWorkerContextProxy,
                                             public WorkerReportingProxy {
  public:
@@ -74,6 +71,11 @@ class ServiceWorkerGlobalScopeProxy final : public WebServiceWorkerContextProxy,
                                 WebServiceWorkerContextClient&,
                                 scoped_refptr<base::SingleThreadTaskRunner>
                                     parent_thread_default_task_runner);
+
+  ServiceWorkerGlobalScopeProxy(const ServiceWorkerGlobalScopeProxy&) = delete;
+  ServiceWorkerGlobalScopeProxy& operator=(
+      const ServiceWorkerGlobalScopeProxy&) = delete;
+
   ~ServiceWorkerGlobalScopeProxy() override;
 
   // WebServiceWorkerContextProxy overrides:
@@ -138,8 +140,8 @@ class ServiceWorkerGlobalScopeProxy final : public WebServiceWorkerContextProxy,
   // Detaches this proxy object entirely from the outside world, clearing out
   // all references.
   //
-  // It is called on the main thread during WebEmbeddedWorkerImpl finalization
-  // _after_ the worker thread using the proxy has been terminated.
+  // It is called on the initiator thread during WebEmbeddedWorkerImpl
+  // finalization _after_ the worker thread using the proxy has been terminated.
   void Detach();
 
   void TerminateWorkerContext();
@@ -160,8 +162,6 @@ class ServiceWorkerGlobalScopeProxy final : public WebServiceWorkerContextProxy,
   CrossThreadPersistent<ServiceWorkerGlobalScope> worker_global_scope_;
 
   THREAD_CHECKER(worker_thread_checker_);
-
-  DISALLOW_COPY_AND_ASSIGN(ServiceWorkerGlobalScopeProxy);
 };
 
 // TODO(leonhsl): This is only used by ServiceWorkerGlobalScope for calling

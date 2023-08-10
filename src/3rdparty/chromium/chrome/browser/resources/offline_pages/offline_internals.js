@@ -296,7 +296,7 @@ function initialize() {
               saveUrls[i] + ' has been added to queue.\n';
           $('url').value = '';
           counter--;
-          if (counter == 0) {
+          if (counter === 0) {
             browserProxy.getRequestQueue().then(fillRequestQueue);
           }
         } else {
@@ -315,9 +315,6 @@ function initialize() {
     browserProxy.cancelNwake()
         .then(setPrefetchResult)
         .catch(prefetchResultError);
-  };
-  $('show-notification').onclick = function() {
-    browserProxy.showPrefetchNotification().then(setPrefetchResult);
   };
   $('generate-page-bundle').onclick = function() {
     browserProxy.generatePageBundle($('generate-urls').value)

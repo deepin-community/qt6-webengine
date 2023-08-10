@@ -11,21 +11,11 @@
 const path = require('path');
 
 const FRONT_END_DIRECTORY = path.join(__dirname, '..', '..', '..', 'front_end');
-const UNITTESTS_DIRECTORY = path.join(__dirname, '..', '..', '..', 'test', 'unittests');
 const INSPECTOR_OVERLAY_DIRECTORY = path.join(__dirname, '..', '..', '..', 'front_end', 'inspector_overlay');
-const COMPONENT_DOCS_DIRECTORY = path.join(FRONT_END_DIRECTORY, 'component_docs');
-
-const EXEMPTED_THIRD_PARTY_MODULES = new Set([
-  // wasmparser is exempt as it doesn't expose all its modules from the root file
-  path.join(FRONT_END_DIRECTORY, 'third_party', 'wasmparser'),
-  // acorn is exempt as it doesn't expose all its modules from the root file
-  path.join(FRONT_END_DIRECTORY, 'third_party', 'acorn'),
-  // acorn-loose is exempt as it doesn't expose all its modules from the root file
-  path.join(FRONT_END_DIRECTORY, 'third_party', 'acorn-loose'),
-]);
+const COMPONENT_DOCS_DIRECTORY = path.join(FRONT_END_DIRECTORY, 'ui', 'components', 'docs');
 
 const CROSS_NAMESPACE_MESSAGE =
-    'Incorrect cross-namespace import: "{{importPath}}". Use "import * as Namespace from \'../namespace/namespace.js\';" instead.';
+    'Incorrect cross-namespace import: "{{importPathForErrorMessage}}". Use "import * as Namespace from \'../namespace/namespace.js\';" instead.';
 
 // ------------------------------------------------------------------------------
 // Rule Definition
@@ -51,7 +41,7 @@ function computeTopLevelFolder(fileName) {
   return namespaceName.substring(0, namespaceName.indexOf(path.sep));
 }
 
-function checkImportExtension(importPath, context, node) {
+function checkImportExtension(importPath, importPathForErrorMessage, context, node) {
   // import * as fs from 'fs';
   if (!importPath.startsWith('.')) {
     return;
@@ -60,12 +50,12 @@ function checkImportExtension(importPath, context, node) {
   if (!importPath.endsWith('.js') && !importPath.endsWith('.mjs')) {
     context.report({
       node,
-      message: 'Missing file extension for import "{{importPath}}"',
+      message: 'Missing file extension for import "{{importPathForErrorMessage}}"',
       data: {
-        importPath,
+        importPathForErrorMessage,
       },
       fix(fixer) {
-        return fixer.replaceText(node.source, `'${importPath}.js'`);
+        return fixer.replaceText(node.source, `'${importPathForErrorMessage}.js'`);
       }
     });
   }
@@ -73,10 +63,10 @@ function checkImportExtension(importPath, context, node) {
 
 function nodeSpecifiersSpecialImportsOnly(specifiers) {
   return specifiers.length === 1 && specifiers[0].type === 'ImportSpecifier' &&
-      ['ls', 'assertNotNull'].includes(specifiers[0].imported.name);
+      ['ls', 'assertNotNullOrUndefined'].includes(specifiers[0].imported.name);
 }
 
-function checkStarImport(context, node, importPath, importingFileName, exportingFileName) {
+function checkStarImport(context, node, importPath, importPathForErrorMessage, importingFileName, exportingFileName) {
   if (isModuleEntrypoint(importingFileName)) {
     return;
   }
@@ -93,29 +83,35 @@ function checkStarImport(context, node, importPath, importingFileName, exporting
     return;
   }
 
-  const isSameFolder = computeTopLevelFolder(importingFileName) === computeTopLevelFolder(exportingFileName);
+  const isSameFolder = path.dirname(importingFileName) === path.dirname(exportingFileName);
 
   const invalidSameFolderUsage = isSameFolder && isModuleEntrypoint(exportingFileName);
   const invalidCrossFolderUsage = !isSameFolder && !isModuleEntrypoint(exportingFileName);
 
   if (invalidSameFolderUsage) {
-    context.report({
-      node,
-      message:
-          'Incorrect same-namespace import: "{{importPath}}". Use "import { Symbol } from \'./relative-file.js\';" instead.',
-      data: {
-        importPath,
-      },
-    });
+    // Meta files import their entrypoints and are considered separate entrypoints.
+    // Additionally, any file ending with `-entrypoint.ts` is considered an entrypoint as well.
+    // Therefore, they are allowed to import using a same-namespace star-import.
+    const importingFileIsEntrypoint =
+        importingFileName.endsWith('-entrypoint.ts') || importingFileName.endsWith('-meta.ts');
+
+    if (!importingFileIsEntrypoint) {
+      context.report({
+        node,
+        message:
+            'Incorrect same-namespace import: "{{importPathForErrorMessage}}". Use "import { Symbol } from \'./relative-file.js\';" instead.',
+        data: {
+          importPathForErrorMessage,
+        },
+      });
+    }
   }
 
   if (invalidCrossFolderUsage) {
     context.report({
       node,
       message: CROSS_NAMESPACE_MESSAGE,
-      data: {
-        importPath,
-      },
+      data: {importPathForErrorMessage},
     });
   }
 }
@@ -144,12 +140,14 @@ module.exports = {
         }
         const importPath = path.normalize(node.source.value);
 
-        checkImportExtension(importPath, context, node);
+        const importPathForErrorMessage = node.source.value.replace(/\\/g, '/');
+        checkImportExtension(importPath, importPathForErrorMessage, context, node);
       },
       ImportDeclaration(node) {
         const importPath = path.normalize(node.source.value);
+        const importPathForErrorMessage = node.source.value.replace(/\\/g, '/');
 
-        checkImportExtension(importPath, context, node);
+        checkImportExtension(node.source.value, importPathForErrorMessage, context, node);
 
         // Accidental relative URL:
         // import * as Root from 'front_end/root/root.js';
@@ -166,12 +164,6 @@ module.exports = {
           });
         }
 
-        const importingFileIsUnitTestFile = importingFileName.startsWith(UNITTESTS_DIRECTORY);
-        const importingFileIsComponentDocsFile = importingFileName.startsWith(COMPONENT_DOCS_DIRECTORY);
-        if (!importingFileName.startsWith(FRONT_END_DIRECTORY) && !importingFileIsUnitTestFile) {
-          return;
-        }
-
         if (importingFileName.startsWith(INSPECTOR_OVERLAY_DIRECTORY)) {
           return;
         }
@@ -182,32 +174,14 @@ module.exports = {
 
         const exportingFileName = path.resolve(path.dirname(importingFileName), importPath);
 
-        const importMatchesExemptThirdParty =
-            Array.from(EXEMPTED_THIRD_PARTY_MODULES)
-                .some(exemptModulePath => exportingFileName.startsWith(exemptModulePath));
-
-        if (importMatchesExemptThirdParty) {
-          /* We don't impose any rules on third_party DEPS which do not expose
-           * all functionality in a single entrypoint
-           */
-          return;
-        }
-        if (importPath.includes('/front_end/') && !importingFileIsUnitTestFile && !importingFileIsComponentDocsFile) {
-          context.report({
-            node,
-            message:
-                'Invalid relative import: an import should not include the "front_end" directory. If you are in a unit test, you should import from the module entrypoint.',
-          });
-        }
-
-        if (importPath.endsWith(path.join('platform', 'platform.js')) &&
+        if (importPathForErrorMessage.endsWith('platform/platform.js') &&
             nodeSpecifiersSpecialImportsOnly(node.specifiers)) {
           /* We allow direct importing of the ls and assertNotNull utility as it's so frequently used. */
           return;
         }
 
         if (isStarAsImportSpecifier(node.specifiers)) {
-          checkStarImport(context, node, importPath, importingFileName, exportingFileName);
+          checkStarImport(context, node, importPath, importPathForErrorMessage, importingFileName, exportingFileName);
         } else {
           if (computeTopLevelFolder(importingFileName) !== computeTopLevelFolder(exportingFileName)) {
             let message = CROSS_NAMESPACE_MESSAGE;
@@ -225,20 +199,10 @@ module.exports = {
               node,
               message,
               data: {
-                importPath,
+                importPathForErrorMessage,
               },
             });
           } else if (isModuleEntrypoint(importingFileName)) {
-            /**
-             * We allow ui/utils/utils.js to get away with this because it's not
-             * really a proper entry point and should be folded properly into
-             * the UI module, as it's exposed via `UI.Utils.X`.
-             * TODO * (https://crbug.com/1148274) tidy up the utils and remove this
-             * special case.
-             */
-            if (importingFileName.includes(['ui', 'utils', 'utils.js'].join(path.sep))) {
-              return;
-            }
             if (importingFileName.includes(['test_setup', 'test_setup.ts'].join(path.sep)) &&
                 importPath.includes([path.sep, 'helpers', path.sep].join(''))) {
               /** Within test files we allow the direct import of test helpers.
@@ -248,12 +212,17 @@ module.exports = {
                */
               return;
             }
+
+            if (importPath.endsWith('.css.js')) {
+              // We allow files to import CSS files within the same module.
+              return;
+            }
             context.report({
               node,
               message:
-                  'Incorrect same-namespace import: "{{importPath}}". Use "import * as File from \'./File.js\';" instead.',
+                  'Incorrect same-namespace import: "{{importPathForErrorMessage}}". Use "import * as File from \'./File.js\';" instead.',
               data: {
-                importPath,
+                importPathForErrorMessage,
               }
             });
           }

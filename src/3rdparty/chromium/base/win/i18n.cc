@@ -6,6 +6,8 @@
 
 #include <windows.h>
 
+#include <ostream>
+
 #include "base/check_op.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_split.h"
@@ -31,7 +33,7 @@ bool GetPreferredUILanguageList(GetPreferredUILanguages_Fn function,
   }
 
   std::wstring buffer(buffer_length, '\0');
-  if (!function(call_flags, &language_count, base::data(buffer),
+  if (!function(call_flags, &language_count, std::data(buffer),
                 &buffer_length) ||
       !language_count) {
     DPCHECK(!language_count) << "Failed getting preferred UI languages.";

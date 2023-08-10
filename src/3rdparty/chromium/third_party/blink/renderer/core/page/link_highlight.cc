@@ -73,9 +73,9 @@ LocalFrame* LinkHighlight::MainFrame() const {
              : nullptr;
 }
 
-void LinkHighlight::StartHighlightAnimationIfNeeded() {
+void LinkHighlight::UpdateOpacityAndRequestAnimation() {
   if (impl_)
-    impl_->StartHighlightAnimationIfNeeded();
+    impl_->UpdateOpacityAndRequestAnimation();
 
   if (auto* local_frame = MainFrame())
     GetPage().GetChromeClient().ScheduleAnimation(local_frame->View());
@@ -99,8 +99,7 @@ void LinkHighlight::WillCloseAnimationHost() {
   animation_host_ = nullptr;
 }
 
-bool LinkHighlight::NeedsHighlightEffectInternal(
-    const LayoutObject& object) const {
+bool LinkHighlight::IsHighlightingInternal(const LayoutObject& object) const {
   DCHECK(impl_);
   return &object == impl_->GetLayoutObject();
 }
@@ -118,6 +117,12 @@ void LinkHighlight::UpdateAfterPrePaint() {
 void LinkHighlight::Paint(GraphicsContext& context) const {
   if (impl_)
     impl_->Paint(context);
+}
+
+void LinkHighlight::UpdateAfterPaint(
+    const PaintArtifactCompositor* paint_artifact_compositor) {
+  if (impl_)
+    impl_->UpdateAfterPaint(paint_artifact_compositor);
 }
 
 }  // namespace blink

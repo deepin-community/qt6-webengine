@@ -8,10 +8,12 @@
 #include "base/command_line.h"
 #include "base/feature_list.h"
 #include "base/json/json_reader.h"
+#include "base/strings/stringprintf.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/values.h"
 #include "build/build_config.h"
+#include "build/chromeos_buildflags.h"
 #include "content/browser/browser_main_loop.h"
 #include "content/browser/renderer_host/media/media_stream_manager.h"
 #include "content/browser/web_contents/web_contents_impl.h"
@@ -31,7 +33,7 @@
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "services/audio/public/mojom/testing_api.mojom.h"
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 #include "base/win/windows_version.h"
 #endif
 
@@ -104,6 +106,8 @@ class WebRtcGetUserMediaBrowserTest : public WebRtcContentBrowserTestBase {
   WebRtcGetUserMediaBrowserTest() {
     // Automatically grant device permission.
     AppendUseFakeUIForMediaStreamFlag();
+    scoped_feature_list_.InitAndEnableFeature(
+        features::kUserMediaCaptureOnFocus);
   }
   ~WebRtcGetUserMediaBrowserTest() override {}
 
@@ -139,14 +143,13 @@ class WebRtcGetUserMediaBrowserTest : public WebRtcContentBrowserTestBase {
     ASSERT_TRUE(parsed_json.value) << parsed_json.error_message;
     EXPECT_EQ(parsed_json.value->type(), base::Value::Type::LIST);
 
-    base::ListValue* values;
-    ASSERT_TRUE(parsed_json.value->GetAsList(&values));
+    ASSERT_TRUE(parsed_json.value->is_list());
 
-    for (auto it = values->begin(); it != values->end(); ++it) {
+    for (const auto& entry : parsed_json.value->GetListDeprecated()) {
       const base::DictionaryValue* dict;
       std::string kind;
       std::string device_id;
-      ASSERT_TRUE(it->GetAsDictionary(&dict));
+      ASSERT_TRUE(entry.GetAsDictionary(&dict));
       ASSERT_TRUE(dict->GetString("kind", &kind));
       ASSERT_TRUE(dict->GetString("id", &device_id));
       ASSERT_FALSE(device_id.empty());
@@ -162,7 +165,7 @@ class WebRtcGetUserMediaBrowserTest : public WebRtcContentBrowserTestBase {
   }
 
  private:
-  base::test::ScopedFeatureList audio_service_features_;
+  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 // These tests will all make a getUserMedia call with different constraints and
@@ -274,8 +277,8 @@ IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
   ExecuteJavascriptAndWaitForOk("getUserMediaAndRenderInSeveralVideoTags();");
 }
 
-// TODO(crbug.com/571389): Flaky on TSAN bots.
-#if defined(OS_LINUX) || defined(OS_CHROMEOS)
+// TODO(crbug.com/571389, crbug.com/1241538): Flaky on TSAN bots and macOS.
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_MAC)
 #define MAYBE_GetUserMediaWithMandatorySourceID \
   DISABLED_GetUserMediaWithMandatorySourceID
 #else
@@ -340,8 +343,16 @@ IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
                     kGetUserMediaAndExpectFailure, "", video_ids[0])));
 }
 
+// TODO(crbug.com/1239385): Flaky on Mac.
+#if BUILDFLAG(IS_MAC)
+#define MAYBE_GetUserMediaWithInvalidOptionalSourceID \
+  DISABLED_GetUserMediaWithInvalidOptionalSourceID
+#else
+#define MAYBE_GetUserMediaWithInvalidOptionalSourceID \
+  GetUserMediaWithInvalidOptionalSourceID
+#endif
 IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
-                       GetUserMediaWithInvalidOptionalSourceID) {
+                       MAYBE_GetUserMediaWithInvalidOptionalSourceID) {
   ASSERT_TRUE(embedded_test_server()->Start());
 
   std::vector<std::string> audio_ids;
@@ -373,7 +384,10 @@ IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
           video_ids[0])));
 }
 
-IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest, TwoGetUserMediaAndStop) {
+// Sheriff 2021-08-10, test is flaky.
+// See https://crbug.com/1238334.
+IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
+                       DISABLED_TwoGetUserMediaAndStop) {
   ASSERT_TRUE(embedded_test_server()->Start());
 
   GURL url(embedded_test_server()->GetURL("/media/getusermedia.html"));
@@ -498,14 +512,6 @@ IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
             ExecuteJavascriptAndReturnResult(gum_with_vga_constraints));
 }
 
-#if defined(OS_ANDROID) && defined(NDEBUG)
-#define MAYBE_TraceVideoCaptureControllerPerformanceDuringGetUserMedia \
-  DISABLED_TraceVideoCaptureControllerPerformanceDuringGetUserMedia
-#else
-#define MAYBE_TraceVideoCaptureControllerPerformanceDuringGetUserMedia \
-  TraceVideoCaptureControllerPerformanceDuringGetUserMedia
-#endif
-
 // This test calls getUserMedia and checks for aspect ratio behavior.
 IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
                        TestGetUserMediaAspectRatio4To3) {
@@ -582,8 +588,17 @@ IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
 
 // This test calls getUserMedia in an iframe and immediately close the iframe
 // in the scope of the failure callback.
-IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
-                       VideoWithBadConstraintsInIFrameAndCloseInFailureCb) {
+// Flaky on lacros-chrome and mac bots. http://crbug.com/1196389
+#if BUILDFLAG(IS_CHROMEOS_LACROS) || BUILDFLAG(IS_MAC)
+#define MAYBE_VideoWithBadConstraintsInIFrameAndCloseInFailureCb \
+  DISABLED_VideoWithBadConstraintsInIFrameAndCloseInFailureCb
+#else
+#define MAYBE_VideoWithBadConstraintsInIFrameAndCloseInFailureCb \
+  VideoWithBadConstraintsInIFrameAndCloseInFailureCb
+#endif
+IN_PROC_BROWSER_TEST_F(
+    WebRtcGetUserMediaBrowserTest,
+    MAYBE_VideoWithBadConstraintsInIFrameAndCloseInFailureCb) {
   ASSERT_TRUE(embedded_test_server()->Start());
 
   GURL url(embedded_test_server()->GetURL("/media/getusermedia.html"));
@@ -602,8 +617,17 @@ IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
   ExecuteJavascriptAndWaitForOk(call);
 }
 
+// TODO(http://crbug.com/1205560): This test is flaky on mac bots. Re-enable the
+// test after fixing the issue.
+#if BUILDFLAG(IS_MAC)
+#define MAYBE_InvalidSourceIdInIFrameAndCloseInFailureCb \
+  DISABLED_InvalidSourceIdInIFrameAndCloseInFailureCb
+#else
+#define MAYBE_InvalidSourceIdInIFrameAndCloseInFailureCb \
+  InvalidSourceIdInIFrameAndCloseInFailureCb
+#endif
 IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
-                       InvalidSourceIdInIFrameAndCloseInFailureCb) {
+                       MAYBE_InvalidSourceIdInIFrameAndCloseInFailureCb) {
   ASSERT_TRUE(embedded_test_server()->Start());
 
   GURL url(embedded_test_server()->GetURL("/media/getusermedia.html"));
@@ -739,7 +763,7 @@ IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
 
 // Flaky on Win, see https://crbug.com/915135
 // Flaky on Linux, see https://crbug.com/952381
-#if defined(OS_WIN) || defined(OS_LINUX) || defined(OS_CHROMEOS)
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
 #define MAYBE_ApplyConstraintsNonDevice DISABLED_ApplyConstraintsNonDevice
 #else
 #define MAYBE_ApplyConstraintsNonDevice ApplyConstraintsNonDevice
@@ -760,8 +784,9 @@ IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
   ExecuteJavascriptAndWaitForOk("concurrentGetUserMediaStop()");
 }
 
+// TODO(crbug.com/1087081) : Flaky on all platforms.
 IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
-                       GetUserMediaAfterStopElementCapture) {
+                       DISABLED_GetUserMediaAfterStopElementCapture) {
   ASSERT_TRUE(embedded_test_server()->Start());
   GURL url(embedded_test_server()->GetURL("/media/getusermedia.html"));
   EXPECT_TRUE(NavigateToURL(shell(), url));
@@ -776,8 +801,9 @@ IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
   ExecuteJavascriptAndWaitForOk("getUserMediaEchoCancellationOnAndOff()");
 }
 
+// TODO(crbug.com/1087081) : Flaky on all platforms.
 IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
-                       GetUserMediaEchoCancellationOnAndOffAndVideo) {
+                       DISABLED_GetUserMediaEchoCancellationOnAndOffAndVideo) {
   ASSERT_TRUE(embedded_test_server()->Start());
   GURL url(embedded_test_server()->GetURL("/media/getusermedia.html"));
   EXPECT_TRUE(NavigateToURL(shell(), url));

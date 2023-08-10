@@ -8,12 +8,11 @@
 #include <memory>
 #include <string>
 
-#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observation.h"
-#include "chrome/browser/apps/app_service/app_service_proxy.h"
-#include "chrome/browser/chromeos/arc/session/arc_session_manager.h"
-#include "chrome/browser/chromeos/arc/session/arc_session_manager_observer.h"
+#include "chrome/browser/apps/app_service/app_service_proxy_forward.h"
+#include "chrome/browser/ash/arc/session/arc_session_manager.h"
+#include "chrome/browser/ash/arc/session/arc_session_manager_observer.h"
 #include "chrome/browser/ui/app_list/arc/arc_app_list_prefs.h"
 #include "chrome/browser/ui/webui/settings/settings_page_ui_handler.h"
 
@@ -32,6 +31,10 @@ class AndroidAppsHandler : public ::settings::SettingsPageUIHandler,
  public:
   explicit AndroidAppsHandler(Profile* profile,
                               apps::AppServiceProxy* app_service_proxy);
+
+  AndroidAppsHandler(const AndroidAppsHandler&) = delete;
+  AndroidAppsHandler& operator=(const AndroidAppsHandler&) = delete;
+
   ~AndroidAppsHandler() override;
 
   // SettingsPageUIHandler
@@ -51,10 +54,10 @@ class AndroidAppsHandler : public ::settings::SettingsPageUIHandler,
 
  private:
   std::unique_ptr<base::DictionaryValue> BuildAndroidAppsInfo();
-  void HandleRequestAndroidAppsInfo(const base::ListValue* args);
+  void HandleRequestAndroidAppsInfo(const base::Value::List& args);
   void HandleAppChanged(const std::string& app_id);
   void SendAndroidAppsInfo();
-  void ShowAndroidAppsSettings(const base::ListValue* args);
+  void ShowAndroidAppsSettings(const base::Value::List& args);
   int64_t GetDisplayIdForCurrentProfile();
 
   base::ScopedObservation<ArcAppListPrefs, ArcAppListPrefs::Observer>
@@ -65,8 +68,6 @@ class AndroidAppsHandler : public ::settings::SettingsPageUIHandler,
   Profile* profile_;  // unowned
   apps::AppServiceProxy* app_service_proxy_;
   base::WeakPtrFactory<AndroidAppsHandler> weak_ptr_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(AndroidAppsHandler);
 };
 
 }  // namespace settings

@@ -84,6 +84,12 @@ void WebBundleInterceptorForFile::OnMetadataReady(
   }
   DCHECK(reader_);
   primary_url_ = reader_->GetPrimaryURL();
+  if (primary_url_.is_empty()) {
+    web_bundle_utils::CompleteWithInvalidWebBundleError(
+        std::move(forwarding_client_), frame_tree_node_id_,
+        web_bundle_utils::kNoPrimaryUrlErrorMessage);
+    return;
+  }
   url_loader_factory_ = std::make_unique<WebBundleURLLoaderFactory>(
       std::move(reader_), frame_tree_node_id_);
 
@@ -102,7 +108,7 @@ void WebBundleInterceptorForFile::StartResponse(
   network::ResourceRequest new_resource_request = resource_request;
   new_resource_request.url = primary_url_;
   url_loader_factory_->CreateLoaderAndStart(
-      std::move(receiver), /*routing_id=*/0, /*request_id=*/0, /*options=*/0,
+      std::move(receiver), /*request_id=*/0, /*options=*/0,
       new_resource_request, std::move(client),
       net::MutableNetworkTrafficAnnotationTag(
           web_bundle_utils::kTrafficAnnotation));

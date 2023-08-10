@@ -20,6 +20,7 @@
 #include "ui/aura/window.h"
 #include "ui/compositor/compositor.h"
 #include "ui/gfx/buffer_types.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/widget/widget.h"
 
 namespace exo {
@@ -34,7 +35,7 @@ std::unique_ptr<gfx::GpuMemoryBuffer> CreateGpuMemoryBuffer(
       ->context_factory()
       ->GetGpuMemoryBufferManager()
       ->CreateGpuMemoryBuffer(size, format, gfx::BufferUsage::GPU_READ,
-                              gpu::kNullSurfaceHandle);
+                              gpu::kNullSurfaceHandle, nullptr);
 }
 
 void DestroyFullscreenShellSurface(
@@ -57,7 +58,7 @@ TEST_F(FullscreenShellSurfaceTest, SurfaceDestroyedCallback) {
 
   // Change the surface so the commit has an actual change otherwise it triggers
   // a DCHECK during frame submission.
-  surface->SetViewport(gfx::Size(64, 64));
+  surface->SetViewport(gfx::SizeF(64, 64));
   surface->Commit();
 
   EXPECT_TRUE(fullscreen_surface.get());
@@ -216,7 +217,7 @@ TEST_F(FullscreenShellSurfaceTest, BoundsWithPartiallyOffscreenSubSurface) {
   auto surface = std::make_unique<Surface>();
   auto sub_surface = std::make_unique<SubSurface>(surface.get(), parent.get());
   surface->Attach(buffer.get());
-  sub_surface->SetPosition(gfx::Point(-50, -50));
+  sub_surface->SetPosition(gfx::PointF(-50, -50));
 
   parent->Commit();
   // Make sure the sub-surface doesn't affect the Fullscreen Shell's Window
@@ -232,14 +233,16 @@ TEST_F(FullscreenShellSurfaceTest, SetAXChildTree) {
   std::unique_ptr<FullscreenShellSurface> fullscreen_surface(
       new FullscreenShellSurface());
   fullscreen_surface->SetSurface(surface.get());
+  const views::ViewAccessibility& view_accessibility =
+      fullscreen_surface->GetContentsView()->GetViewAccessibility();
   ui::AXNodeData node_data;
-  fullscreen_surface->GetAccessibleNodeData(&node_data);
+  view_accessibility.GetAccessibleNodeData(&node_data);
   EXPECT_FALSE(
       node_data.HasStringAttribute(ax::mojom::StringAttribute::kChildTreeId));
 
   ui::AXTreeID tree_id = ui::AXTreeID::CreateNewAXTreeID();
   fullscreen_surface->SetChildAxTreeId(tree_id);
-  fullscreen_surface->GetAccessibleNodeData(&node_data);
+  view_accessibility.GetAccessibleNodeData(&node_data);
   EXPECT_TRUE(
       node_data.HasStringAttribute(ax::mojom::StringAttribute::kChildTreeId));
 }

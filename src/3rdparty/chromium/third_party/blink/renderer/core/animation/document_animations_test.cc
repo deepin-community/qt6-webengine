@@ -11,6 +11,7 @@
 #include "third_party/blink/renderer/core/frame/web_local_frame_impl.h"
 #include "third_party/blink/renderer/core/testing/core_unit_test_helper.h"
 #include "third_party/blink/renderer/platform/animation/compositor_animation_timeline.h"
+#include "third_party/blink/renderer/platform/heap/thread_state.h"
 
 using ::testing::_;
 using ::testing::Mock;
@@ -26,7 +27,7 @@ class MockAnimationTimeline : public AnimationTimeline {
   MOCK_CONST_METHOD0(IsActive, bool());
   MOCK_METHOD0(ZeroTime, AnimationTimeDelta());
   MOCK_METHOD0(InitialStartTimeForAnimations,
-               base::Optional<base::TimeDelta>());
+               absl::optional<base::TimeDelta>());
   MOCK_METHOD0(NeedsAnimationTimingUpdate, bool());
   MOCK_CONST_METHOD0(HasOutdatedAnimation, bool());
   MOCK_CONST_METHOD0(HasAnimations, bool());

@@ -109,7 +109,7 @@ void DevToolsWindowTesting::WaitForDevToolsWindowLoad(DevToolsWindow* window) {
     window->ready_for_test_callback_ = runner->QuitClosure();
     runner->Run();
   }
-  base::string16 harness = base::UTF8ToUTF16(
+  std::u16string harness = base::UTF8ToUTF16(
       content::DevToolsFrontendHost::GetFrontendResource(kHarnessScript));
   window->main_web_contents_->GetMainFrame()->ExecuteJavaScript(
       harness, base::NullCallback());
@@ -118,17 +118,28 @@ void DevToolsWindowTesting::WaitForDevToolsWindowLoad(DevToolsWindow* window) {
 // static
 DevToolsWindow* DevToolsWindowTesting::OpenDevToolsWindowSync(
     content::WebContents* inspected_web_contents,
+    Profile* profile,
     bool is_docked) {
   std::string settings = is_docked ?
       "{\"isUnderTest\": true, \"currentDockState\":\"\\\"bottom\\\"\"}" :
       "{\"isUnderTest\": true, \"currentDockState\":\"\\\"undocked\\\"\"}";
   scoped_refptr<content::DevToolsAgentHost> agent(
       content::DevToolsAgentHost::GetOrCreateFor(inspected_web_contents));
-  DevToolsWindow::ToggleDevToolsWindow(
-        inspected_web_contents, true, DevToolsToggleAction::Show(), settings);
+  DevToolsWindow::ToggleDevToolsWindow(inspected_web_contents, profile, true,
+                                       DevToolsToggleAction::Show(), settings);
   DevToolsWindow* window = DevToolsWindow::FindDevToolsWindow(agent.get());
   WaitForDevToolsWindowLoad(window);
   return window;
+}
+
+// static
+DevToolsWindow* DevToolsWindowTesting::OpenDevToolsWindowSync(
+    content::WebContents* inspected_web_contents,
+    bool is_docked) {
+  return OpenDevToolsWindowSync(
+      inspected_web_contents,
+      DevToolsWindow::GetProfileForDevToolsWindow(inspected_web_contents),
+      is_docked);
 }
 
 // static

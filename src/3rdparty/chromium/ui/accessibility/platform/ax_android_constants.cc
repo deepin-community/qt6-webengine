@@ -28,6 +28,7 @@ const char kAXMultiAutoCompleteTextViewClassname[] =
 const char kAXPagerClassname[] = "android.support.v4.view.ViewPager";
 const char kAXProgressBarClassname[] = "android.widget.ProgressBar";
 const char kAXRadioButtonClassname[] = "android.widget.RadioButton";
+const char kAXRadioGroupClassname[] = "android.widget.RadioGroup";
 const char kAXScrollViewClassname[] = "android.widget.ScrollView";
 const char kAXSeekBarClassname[] = "android.widget.SeekBar";
 const char kAXSpinnerClassname[] = "android.widget.Spinner";
@@ -38,6 +39,6 @@ const char kAXToggleButtonClassname[] = "android.widget.ToggleButton";
 const char kAXViewClassname[] = "android.view.View";
 const char kAXViewGroupClassname[] = "android.view.ViewGroup";
 const char kAXWebViewClassname[] = "android.webkit.WebView";
-const base::char16 kSecurePasswordBullet = 0x2022;
+const char16_t kSecurePasswordBullet = 0x2022;
 
 }  // namespace ui

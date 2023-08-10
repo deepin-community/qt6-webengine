@@ -4,20 +4,14 @@
 
 // https://gpuweb.github.io/gpuweb/
 
-enum GPUFeatureName {
-    "pipeline-statistics-query",
-    "texture-compression-bc",
-    "timestamp-query",
-    "shader-float16"
-};
-
 [
-    Exposed(Window WebGPU, Worker WebGPU)
+    Exposed(Window WebGPU, DedicatedWorker WebGPU),
+    SecureContext
 ] interface GPUAdapter {
     [HighEntropy=Direct, MeasureAs=GPUAdapter_Name] readonly attribute DOMString name;
-    [SameObject] readonly attribute FrozenArray<GPUFeatureName> features;
-    // Deprecated
-    [CallWith=ExecutionContext, SameObject] readonly attribute FrozenArray<GPUFeatureName> extensions;
+    [SameObject] readonly attribute GPUSupportedFeatures features;
+    [SameObject] readonly attribute GPUSupportedLimits limits;
+    readonly attribute boolean isFallbackAdapter;
 
     [CallWith=ScriptState] Promise<GPUDevice> requestDevice(optional GPUDeviceDescriptor descriptor = {});
 };

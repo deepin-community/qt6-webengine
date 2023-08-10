@@ -14,6 +14,8 @@
 
 #include "base/check.h"
 #include "base/notreached.h"
+#include "base/test/task_environment.h"
+#include "build/build_config.h"
 #include "media/base/audio_parameters.h"
 #include "media/base/decrypt_config.h"
 #include "media/base/eme_constants.h"
@@ -75,15 +77,12 @@ class TestKeySystemPropertiesBase : public KeySystemProperties {
   }
 
   EmeConfigRule GetRobustnessConfigRule(
+      const std::string& key_system,
       EmeMediaType media_type,
-      const std::string& requested_robustness) const override {
+      const std::string& requested_robustness,
+      const bool* /*hw_secure_requirement*/) const override {
     return requested_robustness.empty() ? EmeConfigRule::SUPPORTED
                                         : EmeConfigRule::NOT_SUPPORTED;
-  }
-
-  EmeSessionTypeSupport GetPersistentUsageRecordSessionSupport()
-      const override {
-    return EmeSessionTypeSupport::NOT_SUPPORTED;
   }
 };
 
@@ -91,7 +90,7 @@ class AesKeySystemProperties : public TestKeySystemPropertiesBase {
  public:
   AesKeySystemProperties(const std::string& name) : name_(name) {}
 
-  std::string GetKeySystemName() const override { return name_; }
+  std::string GetBaseKeySystemName() const override { return name_; }
 
   EmeConfigRule GetEncryptionSchemeConfigRule(
       EncryptionScheme encryption_scheme) const override {
@@ -121,7 +120,7 @@ class AesKeySystemProperties : public TestKeySystemPropertiesBase {
 
 class ExternalKeySystemProperties : public TestKeySystemPropertiesBase {
  public:
-  std::string GetKeySystemName() const override { return kExternal; }
+  std::string GetBaseKeySystemName() const override { return kExternal; }
 
   // Pretend clear (unencrypted) and 'cenc' content are always supported. But
   // 'cbcs' is not supported by hardware secure codecs.
@@ -144,8 +143,10 @@ class ExternalKeySystemProperties : public TestKeySystemPropertiesBase {
   }
 
   EmeConfigRule GetRobustnessConfigRule(
+      const std::string& key_system,
       EmeMediaType media_type,
-      const std::string& requested_robustness) const override {
+      const std::string& requested_robustness,
+      const bool* /*hw_secure_requirement*/) const override {
     if (requested_robustness == kRobustnessSupported)
       return EmeConfigRule::SUPPORTED;
     else if (requested_robustness == kRobustnessSecureCodecsRequired)
@@ -211,7 +212,7 @@ bool IsSupportedKeySystem(const std::string& key_system) {
 
 EmeConfigRule GetRobustnessConfigRule(const std::string& requested_robustness) {
   return KeySystems::GetInstance()->GetRobustnessConfigRule(
-      kExternal, EmeMediaType::VIDEO, requested_robustness);
+      kExternal, EmeMediaType::VIDEO, requested_robustness, nullptr);
 }
 
 // Adds test container and codec masks.
@@ -240,66 +241,40 @@ void AddContainerAndCodecMasksForTest() {
   is_test_masks_added = true;
 }
 
-bool CanRunExternalKeySystemTests() {
-#if defined(OS_ANDROID)
-  if (HasPlatformDecoderSupport())
-    return true;
-
-  EXPECT_FALSE(IsSupportedKeySystem(kExternal));
-  return false;
-#else
-  return true;
-#endif
-}
-
 class TestMediaClient : public MediaClient {
  public:
   TestMediaClient();
   ~TestMediaClient() override;
 
   // MediaClient implementation.
-  bool IsKeySystemsUpdateNeeded() final;
-  void AddSupportedKeySystems(std::vector<std::unique_ptr<KeySystemProperties>>*
-                                  key_systems_properties) override;
+  void GetSupportedKeySystems(GetSupportedKeySystemsCB cb) final;
   bool IsSupportedAudioType(const media::AudioType& type) final;
   bool IsSupportedVideoType(const media::VideoType& type) final;
   bool IsSupportedBitstreamAudioCodec(AudioCodec codec) final;
-
-  // Helper function to test the case where IsKeySystemsUpdateNeeded() is true
-  // after AddSupportedKeySystems() is called.
-  void SetKeySystemsUpdateNeeded();
 
   // Helper function to disable "kExternal" key system support so that we can
   // test the key system update case.
   void DisableExternalKeySystemSupport();
 
-  base::Optional<::media::AudioRendererAlgorithmParameters>
+  absl::optional<::media::AudioRendererAlgorithmParameters>
   GetAudioRendererAlgorithmParameters(AudioParameters audio_parameters) final;
 
  private:
-  bool is_update_needed_;
-  bool supports_external_key_system_;
+  KeySystemPropertiesVector GetSupportedKeySystemsInternal();
+
+  GetSupportedKeySystemsCB get_supported_key_systems_cb_;
+  bool supports_external_key_system_ = true;
 };
 
-TestMediaClient::TestMediaClient()
-    : is_update_needed_(true), supports_external_key_system_(true) {}
-
+TestMediaClient::TestMediaClient() = default;
 TestMediaClient::~TestMediaClient() = default;
 
-bool TestMediaClient::IsKeySystemsUpdateNeeded() {
-  return is_update_needed_;
-}
+void TestMediaClient::GetSupportedKeySystems(GetSupportedKeySystemsCB cb) {
+  // Save the callback for future updates.
+  DCHECK(!get_supported_key_systems_cb_);
+  get_supported_key_systems_cb_ = cb;
 
-void TestMediaClient::AddSupportedKeySystems(
-    std::vector<std::unique_ptr<KeySystemProperties>>* key_systems) {
-  DCHECK(is_update_needed_);
-
-  key_systems->emplace_back(new AesKeySystemProperties(kUsesAes));
-
-  if (supports_external_key_system_)
-    key_systems->emplace_back(new ExternalKeySystemProperties());
-
-  is_update_needed_ = false;
+  get_supported_key_systems_cb_.Run(GetSupportedKeySystemsInternal());
 }
 
 bool TestMediaClient::IsSupportedAudioType(const media::AudioType& type) {
@@ -314,18 +289,26 @@ bool TestMediaClient::IsSupportedBitstreamAudioCodec(AudioCodec codec) {
   return false;
 }
 
-void TestMediaClient::SetKeySystemsUpdateNeeded() {
-  is_update_needed_ = true;
-}
-
 void TestMediaClient::DisableExternalKeySystemSupport() {
   supports_external_key_system_ = false;
+  get_supported_key_systems_cb_.Run(GetSupportedKeySystemsInternal());
 }
 
-base::Optional<::media::AudioRendererAlgorithmParameters>
+absl::optional<::media::AudioRendererAlgorithmParameters>
 TestMediaClient::GetAudioRendererAlgorithmParameters(
     AudioParameters audio_parameters) {
-  return base::nullopt;
+  return absl::nullopt;
+}
+
+KeySystemPropertiesVector TestMediaClient::GetSupportedKeySystemsInternal() {
+  KeySystemPropertiesVector key_systems;
+
+  key_systems.emplace_back(new AesKeySystemProperties(kUsesAes));
+
+  if (supports_external_key_system_)
+    key_systems.emplace_back(new ExternalKeySystemProperties());
+
+  return key_systems;
 }
 
 }  // namespace
@@ -372,7 +355,13 @@ class KeySystemsTest : public testing::Test {
     SetMediaClient(&test_media_client_);
   }
 
-  void SetUp() override { AddContainerAndCodecMasksForTest(); }
+  void SetUp() override {
+    AddContainerAndCodecMasksForTest();
+
+    base::RunLoop run_loop;
+    KeySystems::GetInstance()->UpdateIfNeeded(run_loop.QuitClosure());
+    run_loop.Run();
+  }
 
   ~KeySystemsTest() override {
     // Clear the use of |test_media_client_|, which was set in SetUp().
@@ -382,8 +371,11 @@ class KeySystemsTest : public testing::Test {
   }
 
   void UpdateClientKeySystems() {
-    test_media_client_.SetKeySystemsUpdateNeeded();
     test_media_client_.DisableExternalKeySystemSupport();
+
+    base::RunLoop run_loop;
+    KeySystems::GetInstance()->UpdateIfNeeded(run_loop.QuitClosure());
+    run_loop.Run();
   }
 
   typedef std::vector<std::string> CodecVector;
@@ -422,6 +414,8 @@ class KeySystemsTest : public testing::Test {
   const CodecVector& mixed_codecs() const { return mixed_codecs_; }
 
  private:
+  base::test::TaskEnvironment task_environment_;
+
   const CodecVector no_codecs_;
   CodecVector vp8_codec_;
   CodecVector vp80_codec_;
@@ -640,9 +634,6 @@ TEST_F(KeySystemsTest,
 //
 
 TEST_F(KeySystemsTest, Basic_ExternalDecryptor) {
-  if (!CanRunExternalKeySystemTests())
-    return;
-
   EXPECT_TRUE(IsSupportedKeySystem(kExternal));
   EXPECT_TRUE(IsSupportedKeySystemWithMediaMimeType(kVideoWebM, no_codecs(),
                                                     kExternal));
@@ -653,9 +644,6 @@ TEST_F(KeySystemsTest, Basic_ExternalDecryptor) {
 TEST_F(
     KeySystemsTest,
     IsSupportedKeySystemWithMediaMimeType_ExternalDecryptor_TypesContainer1) {
-  if (!CanRunExternalKeySystemTests())
-    return;
-
   // Valid video types.
   EXPECT_TRUE(IsSupportedKeySystemWithMediaMimeType(kVideoWebM, no_codecs(),
                                                     kExternal));
@@ -708,9 +696,6 @@ TEST_F(
 TEST_F(
     KeySystemsTest,
     IsSupportedKeySystemWithMediaMimeType_ExternalDecryptor_TypesContainer2) {
-  if (!CanRunExternalKeySystemTests())
-    return;
-
   // Valid video types.
   EXPECT_TRUE(
       IsSupportedKeySystemWithMediaMimeType(kVideoFoo, no_codecs(), kExternal));
@@ -758,9 +743,6 @@ TEST_F(
 
 TEST_F(KeySystemsTest,
        IsSupportedKeySystem_ExternalDecryptor_EncryptionSchemes) {
-  if (!CanRunExternalKeySystemTests())
-    return;
-
   ExpectEncryptionSchemeConfigRule(kExternal, EncryptionScheme::kUnencrypted,
                                    EmeConfigRule::SUPPORTED);
   ExpectEncryptionSchemeConfigRule(kExternal, EncryptionScheme::kCenc,
@@ -771,12 +753,21 @@ TEST_F(KeySystemsTest,
 
 TEST_F(KeySystemsTest, KeySystemNameForUMA) {
   EXPECT_EQ("ClearKey", GetKeySystemNameForUMA(kClearKey));
+  EXPECT_EQ("ClearKey", GetKeySystemNameForUMA(kClearKey, false));
+  EXPECT_EQ("ClearKey", GetKeySystemNameForUMA(kClearKey, true));
   EXPECT_EQ("Widevine", GetKeySystemNameForUMA(kWidevineKeySystem));
+  EXPECT_EQ("Widevine.SoftwareSecure",
+            GetKeySystemNameForUMA(kWidevineKeySystem, false));
+  EXPECT_EQ("Widevine.HardwareSecure",
+            GetKeySystemNameForUMA(kWidevineKeySystem, true));
   EXPECT_EQ("Unknown", GetKeySystemNameForUMA("Foo"));
+  EXPECT_EQ("Unknown", GetKeySystemNameForUMA("Foo", false));
+  EXPECT_EQ("Unknown", GetKeySystemNameForUMA("Foo", true));
 
   // External Clear Key never has a UMA name.
-  if (CanRunExternalKeySystemTests())
-    EXPECT_EQ("Unknown", GetKeySystemNameForUMA(kExternalClearKey));
+  EXPECT_EQ("Unknown", GetKeySystemNameForUMA(kExternalClearKey));
+  EXPECT_EQ("Unknown", GetKeySystemNameForUMA(kExternalClearKey, false));
+  EXPECT_EQ("Unknown", GetKeySystemNameForUMA(kExternalClearKey, true));
 }
 
 TEST_F(KeySystemsTest, KeySystemsUpdate) {
@@ -784,25 +775,19 @@ TEST_F(KeySystemsTest, KeySystemsUpdate) {
   EXPECT_TRUE(
       IsSupportedKeySystemWithMediaMimeType(kVideoWebM, no_codecs(), kUsesAes));
 
-  if (CanRunExternalKeySystemTests()) {
-    EXPECT_TRUE(IsSupportedKeySystem(kExternal));
-    EXPECT_TRUE(IsSupportedKeySystemWithMediaMimeType(kVideoWebM, no_codecs(),
-                                                      kExternal));
-  }
+  EXPECT_TRUE(IsSupportedKeySystem(kExternal));
+  EXPECT_TRUE(IsSupportedKeySystemWithMediaMimeType(kVideoWebM, no_codecs(),
+                                                    kExternal));
 
   UpdateClientKeySystems();
 
   EXPECT_TRUE(IsSupportedKeySystem(kUsesAes));
   EXPECT_TRUE(
       IsSupportedKeySystemWithMediaMimeType(kVideoWebM, no_codecs(), kUsesAes));
-  if (CanRunExternalKeySystemTests())
-    EXPECT_FALSE(IsSupportedKeySystem(kExternal));
+  EXPECT_FALSE(IsSupportedKeySystem(kExternal));
 }
 
 TEST_F(KeySystemsTest, GetContentTypeConfigRule) {
-  if (!CanRunExternalKeySystemTests())
-    return;
-
   EXPECT_EQ(EmeConfigRule::SUPPORTED,
             GetRobustnessConfigRule(kRobustnessSupported));
   EXPECT_EQ(EmeConfigRule::NOT_SUPPORTED,
@@ -812,9 +797,6 @@ TEST_F(KeySystemsTest, GetContentTypeConfigRule) {
 }
 
 TEST_F(KeySystemsTest, HardwareSecureCodecs) {
-  if (!CanRunExternalKeySystemTests())
-    return;
-
   EXPECT_EQ(EmeConfigRule::HW_SECURE_CODECS_NOT_ALLOWED,
             GetVideoContentTypeConfigRule(kVideoWebM, vp8_codec(), kUsesAes));
   EXPECT_EQ(

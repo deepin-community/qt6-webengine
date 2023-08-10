@@ -14,9 +14,10 @@
 
 #include "base/callback_forward.h"
 #include "base/memory/ref_counted.h"
-#include "base/optional.h"
 #include "base/version.h"
+#include "components/crx_file/crx_verifier.h"
 #include "components/update_client/update_client_errors.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 // The UpdateClient class is a facade with a simple interface. The interface
 // exposes a few APIs to install a CRX or update a group of CRXs.
@@ -188,9 +189,12 @@ class CrxInstaller : public base::RefCountedThreadSafe<CrxInstaller> {
   };
 
   struct InstallParams {
-    InstallParams(const std::string& run, const std::string& arguments);
+    InstallParams(const std::string& run,
+                  const std::string& arguments,
+                  const std::string& server_install_data);
     std::string run;
     std::string arguments;
+    std::string server_install_data;
   };
 
   using ProgressCallback = base::RepeatingCallback<void(int progress)>;
@@ -283,6 +287,21 @@ struct CrxComponent {
   // the CRX is installed.
   base::Version version;
 
+  // Optional. This additional parameter ("ap") is sent to the server, which
+  // often uses it to distinguish between variants of the software that were
+  // chosen at install time.
+  std::string ap;
+
+  // If nonempty, the brand is an uppercase 4-letter string that describes the
+  // flavor, branding, or provenance of the software.
+  std::string brand;
+
+  // If populated, the `install_data_index` is sent to the update server as part
+  // of the `data` element. The server will provide corresponding installer data
+  // in the update response. This data is then provided to the installer when
+  // running it.
+  std::string install_data_index;
+
   std::string fingerprint;  // Optional.
   std::string name;         // Optional.
 
@@ -294,22 +313,20 @@ struct CrxComponent {
 
   // Specifies that the CRX can be background-downloaded in some cases.
   // The default for this value is |true|.
-  bool allows_background_download;
+  bool allows_background_download = true;
 
   // Specifies that the update checks and pings associated with this component
   // require confidentiality. The default for this value is |true|. As a side
   // note, the confidentiality of the downloads is enforced by the server,
   // which only returns secure download URLs in this case.
-  bool requires_network_encryption;
+  bool requires_network_encryption = true;
 
   // Specifies the strength of package validation required for the item.
-  crx_file::VerifierFormat crx_format_requirement;
+  crx_file::VerifierFormat crx_format_requirement =
+      crx_file::VerifierFormat::CRX3_WITH_PUBLISHER_PROOF;
 
-  // True if the component allows enabling or disabling updates by group policy.
-  // This member should be set to |false| for data, non-binary components, such
-  // as CRLSet, Supervised User Whitelists, STH Set, Origin Trials, and File
-  // Type Policies.
-  bool supports_group_policy_enable_component_updates;
+  // True if and only if this item may be updated.
+  bool updates_enabled = true;
 
   // Reasons why this component/extension is disabled.
   std::vector<int> disabled_reasons;
@@ -328,6 +345,19 @@ struct CrxComponent {
   // the component. This optional field is typically populated by policy and is
   // only populated on managed devices.
   std::string channel;
+
+  // A version prefix sent to the server in the case of version pinning. The
+  // server should not respond with an update to a version that does not match
+  // this prefix. If no prefix is specified, the client will accept any version.
+  std::string target_version_prefix;
+
+  // An indicator sent to the server to advise whether it may perform a version
+  // downgrade of this item.
+  bool rollback_allowed = false;
+
+  // An indicator sent to the server to advise whether it may perform an
+  // over-install on this item.
+  bool same_version_update_allowed = false;
 };
 
 // Called when a non-blocking call of UpdateClient completes.
@@ -346,7 +376,7 @@ class UpdateClient : public base::RefCountedThreadSafe<UpdateClient> {
   // skip the component, and instead, they must insert a `nullopt` value in
   // the output vector.
   using CrxDataCallback =
-      base::OnceCallback<std::vector<base::Optional<CrxComponent>>(
+      base::OnceCallback<std::vector<absl::optional<CrxComponent>>(
           const std::vector<std::string>& ids)>;
 
   // Called when state changes occur during an Install or Update call.
@@ -446,23 +476,13 @@ class UpdateClient : public base::RefCountedThreadSafe<UpdateClient> {
                       bool is_foreground,
                       Callback callback) = 0;
 
-  // Sends an uninstall ping for the CRX identified by |id| and |version|. The
-  // |reason| parameter is defined by the caller. The current implementation of
-  // this function only sends a best-effort, fire-and-forget ping. It has no
-  // other side effects regarding installs or updates done through an instance
-  // of this class.
-  virtual void SendUninstallPing(const std::string& id,
-                                 const base::Version& version,
+  // Sends an uninstall ping for `crx_component`. `reason` is sent to the server
+  // to indicate the cause of the uninstallation. The current implementation of
+  // this function only sends a best-effort ping. It has no other side effects
+  // regarding installs or updates done through an instance of this class.
+  virtual void SendUninstallPing(const CrxComponent& crx_component,
                                  int reason,
                                  Callback callback) = 0;
-
-  // Sends a registration ping for the CRX identified by |id| and |version|.
-  // The current implementation of this function only sends a best-effort,
-  // fire-and-forget ping. It has no other side effects regarding installs or
-  // updates done through an instance of this class.
-  virtual void SendRegistrationPing(const std::string& id,
-                                    const base::Version& version,
-                                    Callback callback) = 0;
 
   // Returns status details about a CRX update. The function returns true in
   // case of success and false in case of errors, such as |id| was

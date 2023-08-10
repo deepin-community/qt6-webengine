@@ -14,19 +14,22 @@
 
 #include "base/compiler_specific.h"
 #include "base/gtest_prod_util.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
-#include "base/optional.h"
 #include "base/time/time.h"
 #include "net/base/auth.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/net_error_details.h"
 #include "net/base/net_export.h"
+#include "net/base/privacy_mode.h"
 #include "net/cookies/cookie_inclusion_status.h"
+#include "net/cookies/cookie_partition_key.h"
+#include "net/cookies/first_party_set_metadata.h"
 #include "net/http/http_request_info.h"
 #include "net/socket/connection_attempts.h"
 #include "net/url_request/url_request_job.h"
 #include "net/url_request/url_request_throttler_entry_interface.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace net {
 
@@ -49,7 +52,12 @@ class NET_EXPORT_PRIVATE URLRequestHttpJob : public URLRequestJob {
   // them. Never returns nullptr.
   static std::unique_ptr<URLRequestJob> Create(URLRequest* request);
 
+  URLRequestHttpJob(const URLRequestHttpJob&) = delete;
+  URLRequestHttpJob& operator=(const URLRequestHttpJob&) = delete;
+
   void SetRequestHeadersCallback(RequestHeadersCallback callback) override;
+  void SetEarlyResponseHeadersCallback(
+      ResponseHeadersCallback callback) override;
   void SetResponseHeadersCallback(ResponseHeadersCallback callback) override;
 
  protected:
@@ -62,7 +70,7 @@ class NET_EXPORT_PRIVATE URLRequestHttpJob : public URLRequestJob {
   void SetPriority(RequestPriority priority) override;
   void Start() override;
   void Kill() override;
-  void GetConnectionAttempts(ConnectionAttempts* out) const override;
+  ConnectionAttempts GetConnectionAttempts() const override;
   void CloseConnectionOnDestruction() override;
   std::unique_ptr<SourceStream> SetUpSourceStream() override;
 
@@ -105,8 +113,15 @@ class NET_EXPORT_PRIVATE URLRequestHttpJob : public URLRequestJob {
 
   void DestroyTransaction();
 
+  // Computes the PrivacyMode that should be associated with this leg of the
+  // request. Must be recomputed on redirects.
+  PrivacyMode DeterminePrivacyMode() const;
+
   void AddExtraHeaders();
   void AddCookieHeaderAndStart();
+  void AnnotateAndMoveUserBlockedCookies(
+      CookieAccessResultList& maybe_included_cookies,
+      CookieAccessResultList& excluded_cookies) const;
   void SaveCookiesAndNotifyHeadersComplete(int result);
 
   // Processes the Strict-Transport-Security header, if one exists.
@@ -121,11 +136,14 @@ class NET_EXPORT_PRIVATE URLRequestHttpJob : public URLRequestJob {
   void OnHeadersReceivedCallback(int result);
   void OnStartCompleted(int result);
   void OnReadCompleted(int result);
-  void NotifyBeforeStartTransactionCallback(int result);
+  void NotifyBeforeStartTransactionCallback(
+      int result,
+      const absl::optional<HttpRequestHeaders>& headers);
   // This just forwards the call to URLRequestJob::NotifyConnected().
   // We need it because that method is protected and cannot be bound in a
   // callback in this class.
-  int NotifyConnectedCallback(const TransportInfo& info);
+  int NotifyConnectedCallback(const TransportInfo& info,
+                              CompletionOnceCallback callback);
 
   void RestartTransactionWithAuth(const AuthCredentials& credentials);
 
@@ -170,7 +188,7 @@ class NET_EXPORT_PRIVATE URLRequestHttpJob : public URLRequestJob {
   void MaybeStartTransactionInternal(int result);
   void StartTransactionInternal();
 
-  void RecordPerfHistograms(CompletionCause reason);
+  void RecordCompletionHistograms(CompletionCause reason);
   void DoneWithRequest(CompletionCause reason);
 
   // Callback functions for Cookie Monster
@@ -180,7 +198,7 @@ class NET_EXPORT_PRIVATE URLRequestHttpJob : public URLRequestJob {
 
   // Another Cookie Monster callback
   void OnSetCookieResult(const CookieOptions& options,
-                         base::Optional<CanonicalCookie> cookie,
+                         absl::optional<CanonicalCookie> cookie,
                          std::string cookie_string,
                          CookieAccessResult access_result);
   int num_cookie_lines_left_;
@@ -194,13 +212,32 @@ class NET_EXPORT_PRIVATE URLRequestHttpJob : public URLRequestJob {
   bool ShouldFixMismatchedContentLength(int rv) const;
 
   // Returns the effective response headers, considering that they may be
-  // overridden by |override_response_headers_|.
+  // overridden by `override_response_headers_` or
+  // `override_response_info_::headers`.
   HttpResponseHeaders* GetResponseHeaders() const;
+
+  // Called after getting the FirstPartySetMetadata during Start for this job.
+  void OnGotFirstPartySetMetadata(
+      FirstPartySetMetadata first_party_set_metadata);
+
+  // Returns true iff this request leg should include the Cookie header. Note
+  // that cookies may still be eventually blocked by the CookieAccessDelegate
+  // even if this method returns true.
+  bool ShouldAddCookieHeader() const;
+
+  // Returns true if partitioned cookies are enabled and can be accessed and/or
+  // set.
+  bool IsPartitionedCookiesEnabled() const;
 
   RequestPriority priority_;
 
   HttpRequestInfo request_info_;
-  const HttpResponseInfo* response_info_;
+  raw_ptr<const HttpResponseInfo> response_info_;
+
+  // Used for any logic, e.g. DNS-based scheme upgrade, that needs to synthesize
+  // response info to override the real response info. Transaction should be
+  // cleared before setting.
+  std::unique_ptr<HttpResponseInfo> override_response_info_;
 
   // Auth states for proxy and origin server.
   AuthState proxy_auth_state_;
@@ -234,12 +271,12 @@ class NET_EXPORT_PRIVATE URLRequestHttpJob : public URLRequestJob {
   // Ordinarily the original URL's fragment is copied during redirects, unless
   // the destination URL already has one. However, the NetworkDelegate can
   // override this behavior by setting |preserve_fragment_on_redirect_url_|:
-  // * If set to base::nullopt, the default behavior is used.
+  // * If set to absl::nullopt, the default behavior is used.
   // * If the final URL in the redirect chain matches
   //     |preserve_fragment_on_redirect_url_|, its fragment unchanged. So this
   //     is basically a way for the embedder to force a redirect not to copy the
   //     original URL's fragment when the original URL had one.
-  base::Optional<GURL> preserve_fragment_on_redirect_url_;
+  absl::optional<GURL> preserve_fragment_on_redirect_url_;
 
   // Flag used to verify that |this| is not deleted while we are awaiting
   // a callback from the NetworkDelegate. Used as a fail-fast mechanism.
@@ -248,7 +285,7 @@ class NET_EXPORT_PRIVATE URLRequestHttpJob : public URLRequestJob {
   // to inform the NetworkDelegate that it may not call back.
   bool awaiting_callback_;
 
-  const HttpUserAgentSettings* http_user_agent_settings_;
+  raw_ptr<const HttpUserAgentSettings> http_user_agent_settings_;
 
   // Keeps track of total received bytes over the network from transactions used
   // by this job that have already been destroyed.
@@ -258,11 +295,26 @@ class NET_EXPORT_PRIVATE URLRequestHttpJob : public URLRequestJob {
   int64_t total_sent_bytes_from_previous_transactions_;
 
   RequestHeadersCallback request_headers_callback_;
+  ResponseHeadersCallback early_response_headers_callback_;
   ResponseHeadersCallback response_headers_callback_;
 
-  base::WeakPtrFactory<URLRequestHttpJob> weak_factory_{this};
+  // The First-Party Set metadata associated with this job. Set when the job is
+  // started.
+  FirstPartySetMetadata first_party_set_metadata_;
 
-  DISALLOW_COPY_AND_ASSIGN(URLRequestHttpJob);
+  // The cookie partition key for the request. Partitioned cookies should be set
+  // using this key and only partitioned cookies with this partition key should
+  // be sent. The cookie partition key is optional(nullopt) if cookie
+  // partitioning is not enabled, or if the NIK has no top-frame site.
+  //
+  // Unpartitioned cookies are unaffected by this field.
+  //
+  // The two layers of `optional` are because the `cookie_partition_key_` is
+  // lazily computed, and might be "nothing". We want to be able to distinguish
+  // "uncomputed" from "nothing".
+  absl::optional<absl::optional<CookiePartitionKey>> cookie_partition_key_;
+
+  base::WeakPtrFactory<URLRequestHttpJob> weak_factory_{this};
 };
 
 }  // namespace net

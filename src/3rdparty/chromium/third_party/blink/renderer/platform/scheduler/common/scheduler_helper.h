@@ -6,10 +6,8 @@
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_SCHEDULER_COMMON_SCHEDULER_HELPER_H_
 
 #include <stddef.h>
-#include <memory>
 
 #include "base/logging.h"
-#include "base/macros.h"
 #include "base/task/sequence_manager/sequence_manager.h"
 #include "base/task/simple_task_executor.h"
 #include "base/threading/thread_checker.h"
@@ -34,7 +32,13 @@ class PLATFORM_EXPORT SchedulerHelper
   // object is destroyed.
   explicit SchedulerHelper(
       base::sequence_manager::SequenceManager* sequence_manager);
+  SchedulerHelper(const SchedulerHelper&) = delete;
+  SchedulerHelper& operator=(const SchedulerHelper&) = delete;
   ~SchedulerHelper() override;
+
+  // Must be called before invoking AttachToCurrentThread().
+  void InitDefaultTaskRunner(
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner);
 
   // Must be invoked before running any task from the scheduler, on the thread
   // that will run these tasks. Setups the ThreadChecker and the TaskExecutor.
@@ -49,8 +53,9 @@ class PLATFORM_EXPORT SchedulerHelper
   void SetTimerSlack(base::TimerSlack timer_slack);
 
   // Returns the task runner for the default task queue.
-  virtual const scoped_refptr<base::SingleThreadTaskRunner>&
-  DefaultTaskRunner() = 0;
+  const scoped_refptr<base::SingleThreadTaskRunner>& DefaultTaskRunner() {
+    return default_task_runner_;
+  }
 
   // Returns the task runner for the control task queue.  Tasks posted to this
   // queue are executed with the highest priority. Care must be taken to avoid
@@ -102,11 +107,10 @@ class PLATFORM_EXPORT SchedulerHelper
   void ReclaimMemory();
 
   // Accessor methods.
-  base::sequence_manager::TimeDomain* real_time_domain() const;
-  void RegisterTimeDomain(base::sequence_manager::TimeDomain* time_domain);
-  void UnregisterTimeDomain(base::sequence_manager::TimeDomain* time_domain);
+  absl::optional<base::sequence_manager::WakeUp> GetNextWakeUp() const;
+  void SetTimeDomain(base::sequence_manager::TimeDomain* time_domain);
+  void ResetTimeDomain();
   bool GetAndClearSystemIsQuiescentBit();
-  double GetSamplingRateForRecordingCPUTime() const;
   bool HasCPUTimingForEachTask() const;
 
   bool ShouldRecordTaskUkm(bool task_has_thread_time) {
@@ -120,16 +124,7 @@ class PLATFORM_EXPORT SchedulerHelper
   }
 
  protected:
-  void InitDefaultQueues(
-      scoped_refptr<base::sequence_manager::TaskQueue> default_task_queue,
-      scoped_refptr<base::sequence_manager::TaskQueue> control_task_queue,
-      TaskType default_task_type);
-
   virtual void ShutdownAllQueues() {}
-
-  const scoped_refptr<base::SingleThreadTaskRunner>& default_task_runner() {
-    return default_task_runner_;
-  }
 
   THREAD_CHECKER(thread_checker_);
   base::sequence_manager::SequenceManager* sequence_manager_;  // NOT OWNED
@@ -142,9 +137,7 @@ class PLATFORM_EXPORT SchedulerHelper
   Observer* observer_;  // NOT OWNED
 
   UkmTaskSampler ukm_task_sampler_;
-  base::Optional<base::SimpleTaskExecutor> simple_task_executor_;
-
-  DISALLOW_COPY_AND_ASSIGN(SchedulerHelper);
+  absl::optional<base::SimpleTaskExecutor> simple_task_executor_;
 };
 
 }  // namespace scheduler

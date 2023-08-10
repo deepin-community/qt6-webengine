@@ -12,7 +12,7 @@
 #include "components/metrics/metrics_log_uploader.h"
 #include "components/metrics/metrics_provider.h"
 #include "components/metrics/ukm_demographic_metrics_provider.h"
-#include "components/sync/driver/sync_service.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/metrics_proto/chrome_user_metrics_extension.pb.h"
 #include "third_party/metrics_proto/user_demographics.pb.h"
 
@@ -20,6 +20,10 @@ class PrefService;
 
 namespace base {
 struct Feature;
+}
+
+namespace syncer {
+class SyncService;
 }
 
 namespace metrics {
@@ -61,6 +65,11 @@ class DemographicMetricsProvider : public MetricsProvider,
   DemographicMetricsProvider(
       std::unique_ptr<ProfileClient> profile_client,
       MetricsLogUploader::MetricServiceType metrics_service_type);
+
+  DemographicMetricsProvider(const DemographicMetricsProvider&) = delete;
+  DemographicMetricsProvider& operator=(const DemographicMetricsProvider&) =
+      delete;
+
   ~DemographicMetricsProvider() override;
 
   // Provides the synced user's noised birth year and gender to a metrics report
@@ -72,7 +81,7 @@ class DemographicMetricsProvider : public MetricsProvider,
   void ProvideSyncedUserNoisedBirthYearAndGender(ReportType* report) {
     DCHECK(report);
 
-    base::Optional<UserDemographics> user_demographics =
+    absl::optional<UserDemographics> user_demographics =
         ProvideSyncedUserNoisedBirthYearAndGender();
     if (user_demographics.has_value()) {
       report->mutable_user_demographics()->set_birth_year(
@@ -95,7 +104,7 @@ class DemographicMetricsProvider : public MetricsProvider,
 
  private:
   // Provides the synced user's noised birth year and gender.
-  base::Optional<UserDemographics> ProvideSyncedUserNoisedBirthYearAndGender();
+  absl::optional<UserDemographics> ProvideSyncedUserNoisedBirthYearAndGender();
 
   void LogUserDemographicsStatusInHistogram(UserDemographicsStatus status);
 
@@ -104,8 +113,6 @@ class DemographicMetricsProvider : public MetricsProvider,
   // The type of the metrics service for which to emit the user demographics
   // status histogram (e.g., UMA).
   const MetricsLogUploader::MetricServiceType metrics_service_type_;
-
-  DISALLOW_COPY_AND_ASSIGN(DemographicMetricsProvider);
 };
 
 }  // namespace metrics

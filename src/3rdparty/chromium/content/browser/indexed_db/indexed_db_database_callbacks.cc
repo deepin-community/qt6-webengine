@@ -7,14 +7,12 @@
 #include <utility>
 
 #include "base/bind.h"
-#include "base/task/post_task.h"
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "content/browser/indexed_db/indexed_db_context_impl.h"
 #include "content/browser/indexed_db/indexed_db_database_error.h"
 #include "content/browser/indexed_db/indexed_db_dispatcher_host.h"
 #include "content/browser/indexed_db/indexed_db_transaction.h"
-
-using blink::mojom::IDBDatabaseCallbacksAssociatedPtrInfo;
+#include "third_party/blink/public/common/storage_key/storage_key.h"
 
 namespace content {
 
@@ -81,7 +79,8 @@ void IndexedDBDatabaseCallbacks::OnComplete(
   if (complete_)
     return;
 
-  indexed_db_context_->TransactionComplete(transaction.database()->origin());
+  indexed_db_context_->TransactionComplete(
+      transaction.database()->storage_key());
   if (callbacks_)
     callbacks_->Complete(transaction.id());
 }

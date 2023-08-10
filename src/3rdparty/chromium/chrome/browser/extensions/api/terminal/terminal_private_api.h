@@ -9,13 +9,17 @@
 #include <string>
 #include <vector>
 
-#include "chrome/browser/chromeos/crostini/crostini_simple_types.h"
+#include "chrome/browser/ash/crostini/crostini_simple_types.h"
 #include "chrome/browser/profiles/profile.h"
+#include "components/value_store/value_store.h"
 #include "extensions/browser/browser_context_keyed_api_factory.h"
 #include "extensions/browser/extension_function.h"
-#include "extensions/browser/value_store/value_store.h"
 
 class PrefChangeRegistrar;
+
+namespace crostini {
+struct ContainerId;
+}  // namespace crostini
 
 namespace extensions {
 
@@ -24,6 +28,10 @@ class CrostiniStartupStatus;
 class TerminalPrivateAPI : public BrowserContextKeyedAPI {
  public:
   explicit TerminalPrivateAPI(content::BrowserContext* context);
+
+  TerminalPrivateAPI(const TerminalPrivateAPI&) = delete;
+  TerminalPrivateAPI& operator=(const TerminalPrivateAPI&) = delete;
+
   ~TerminalPrivateAPI() override;
 
   // BrowserContextKeyedAPI implementation.
@@ -38,8 +46,6 @@ class TerminalPrivateAPI : public BrowserContextKeyedAPI {
 
   content::BrowserContext* const context_;
   std::unique_ptr<PrefChangeRegistrar> pref_change_registrar_;
-
-  DISALLOW_COPY_AND_ASSIGN(TerminalPrivateAPI);
 };
 
 // Opens new terminal process. Returns the new terminal id.
@@ -47,6 +53,7 @@ class TerminalPrivateOpenTerminalProcessFunction : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("terminalPrivate.openTerminalProcess",
                              TERMINALPRIVATE_OPENTERMINALPROCESS)
+  TerminalPrivateOpenTerminalProcessFunction();
 
  protected:
   ~TerminalPrivateOpenTerminalProcessFunction() override;
@@ -60,7 +67,6 @@ class TerminalPrivateOpenTerminalProcessFunction : public ExtensionFunction {
 
  private:
   void OnCrostiniRestarted(
-      std::unique_ptr<CrostiniStartupStatus> startup_status,
       const std::string& user_id_hash,
       base::CommandLine cmdline,
       crostini::CrostiniResult result);
@@ -89,6 +95,8 @@ class TerminalPrivateOpenTerminalProcessFunction : public ExtensionFunction {
                                 base::CommandLine cmdline,
                                 const std::string& user_id_hash);
   void RespondOnUIThread(bool success, const std::string& terminal_id);
+  std::unique_ptr<CrostiniStartupStatus> startup_status_;
+  std::unique_ptr<crostini::ContainerId> container_id_;
 };
 
 // Opens new vmshell process. Returns the new terminal id.
@@ -134,7 +142,6 @@ class TerminalPrivateCloseTerminalProcessFunction : public ExtensionFunction {
   ExtensionFunction::ResponseAction Run() override;
 
  private:
-  void CloseOnRegistryTaskRunner(const std::string& terminal_id);
   void RespondOnUIThread(bool success);
 };
 
@@ -192,35 +199,46 @@ class TerminalPrivateOpenOptionsPageFunction : public ExtensionFunction {
   ExtensionFunction::ResponseAction Run() override;
 };
 
-class TerminalPrivateGetSettingsFunction : public ExtensionFunction {
+class TerminalPrivateOpenSettingsSubpageFunction : public ExtensionFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION("terminalPrivate.getSettings",
-                             TERMINALPRIVATE_GETSETTINGS)
+  DECLARE_EXTENSION_FUNCTION("terminalPrivate.openSettingsSubpage",
+                             TERMINALPRIVATE_OPENSETTINGSSUBPAGE)
 
  protected:
-  ~TerminalPrivateGetSettingsFunction() override;
+  ~TerminalPrivateOpenSettingsSubpageFunction() override;
 
   ExtensionFunction::ResponseAction Run() override;
 };
 
-class TerminalPrivateSetSettingsFunction : public ExtensionFunction {
+class TerminalPrivateGetOSInfoFunction : public ExtensionFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION("terminalPrivate.setSettings",
-                             TERMINALPRIVATE_SETSETTINGS)
+  DECLARE_EXTENSION_FUNCTION("terminalPrivate.getOSInfo",
+                             TERMINALPRIVATE_GETOSINFO)
 
  protected:
-  ~TerminalPrivateSetSettingsFunction() override;
+  ~TerminalPrivateGetOSInfoFunction() override;
 
   ExtensionFunction::ResponseAction Run() override;
 };
 
-class TerminalPrivateGetA11yStatusFunction : public ExtensionFunction {
+class TerminalPrivateGetPrefsFunction : public ExtensionFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION("terminalPrivate.getA11yStatus",
-                             TERMINALPRIVATE_GETA11YSTATUS)
+  DECLARE_EXTENSION_FUNCTION("terminalPrivate.getPrefs",
+                             TERMINALPRIVATE_GETPREFS)
 
  protected:
-  ~TerminalPrivateGetA11yStatusFunction() override;
+  ~TerminalPrivateGetPrefsFunction() override;
+
+  ExtensionFunction::ResponseAction Run() override;
+};
+
+class TerminalPrivateSetPrefsFunction : public ExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("terminalPrivate.setPrefs",
+                             TERMINALPRIVATE_SETPREFS)
+
+ protected:
+  ~TerminalPrivateSetPrefsFunction() override;
 
   ExtensionFunction::ResponseAction Run() override;
 };

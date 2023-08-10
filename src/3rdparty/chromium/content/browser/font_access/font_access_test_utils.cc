@@ -9,16 +9,15 @@ namespace content {
 TestFontAccessPermissionManager::TestFontAccessPermissionManager() = default;
 TestFontAccessPermissionManager::~TestFontAccessPermissionManager() = default;
 
-int TestFontAccessPermissionManager::RequestPermission(
+void TestFontAccessPermissionManager::RequestPermission(
     PermissionType permissions,
     RenderFrameHost* render_frame_host,
     const GURL& requesting_origin,
     bool user_gesture,
     PermissionCallback callback) {
-  EXPECT_EQ(permissions, PermissionType::FONT_ACCESS);
+  EXPECT_EQ(permissions, PermissionType::LOCAL_FONTS);
   EXPECT_TRUE(user_gesture);
   request_callback_.Run(std::move(callback));
-  return 0;
 }
 
 blink::mojom::PermissionStatus
@@ -26,6 +25,13 @@ TestFontAccessPermissionManager::GetPermissionStatusForFrame(
     PermissionType permission,
     RenderFrameHost* render_frame_host,
     const GURL& requesting_origin) {
+  return permission_status_for_frame_;
+}
+
+blink::mojom::PermissionStatus
+TestFontAccessPermissionManager::GetPermissionStatusForCurrentDocument(
+    PermissionType permission,
+    RenderFrameHost* render_frame_host) {
   return permission_status_for_frame_;
 }
 

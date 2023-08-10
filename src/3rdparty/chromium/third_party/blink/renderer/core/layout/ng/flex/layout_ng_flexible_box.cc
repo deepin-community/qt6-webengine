@@ -5,8 +5,9 @@
 #include "third_party/blink/renderer/core/layout/ng/flex/layout_ng_flexible_box.h"
 
 #include "third_party/blink/renderer/core/html/forms/html_select_element.h"
-#include "third_party/blink/renderer/core/layout/layout_analyzer.h"
+#include "third_party/blink/renderer/core/inspector/inspector_trace_events.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
+#include "third_party/blink/renderer/core/layout/ng/flex/ng_flex_layout_algorithm.h"
 #include "third_party/blink/renderer/core/layout/ng/ng_block_node.h"
 #include "third_party/blink/renderer/core/layout/ng/ng_constraint_space.h"
 #include "third_party/blink/renderer/core/layout/ng/ng_layout_result.h"
@@ -35,8 +36,6 @@ bool LayoutNGFlexibleBox::HasLeftOverflow() const {
 }
 
 void LayoutNGFlexibleBox::UpdateBlockLayout(bool relayout_children) {
-  LayoutAnalyzer::BlockScope analyzer(*this);
-
   if (IsOutOfFlowPositioned()) {
     UpdateOutOfFlowBlockLayout();
     return;
@@ -76,6 +75,18 @@ bool LayoutNGFlexibleBox::IsChildAllowed(LayoutObject* object,
     return object->GetNode() == &select->InnerElement();
   }
   return LayoutNGMixin<LayoutBlock>::IsChildAllowed(object, style);
+}
+
+void LayoutNGFlexibleBox::SetNeedsLayoutForDevtools() {
+  SetNeedsLayout(layout_invalidation_reason::kDevtools);
+  SetNeedsDevtoolsInfo(true);
+}
+
+const DevtoolsFlexInfo* LayoutNGFlexibleBox::FlexLayoutData() const {
+  const wtf_size_t fragment_count = PhysicalFragmentCount();
+  DCHECK_GE(fragment_count, 1u);
+  // Currently, devtools data is on the first fragment of a fragmented flexbox.
+  return GetLayoutResult(0)->FlexLayoutData();
 }
 
 void LayoutNGFlexibleBox::RemoveChild(LayoutObject* child) {

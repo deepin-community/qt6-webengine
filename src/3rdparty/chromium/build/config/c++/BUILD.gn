@@ -6,18 +6,7 @@ import("//buildtools/deps_revisions.gni")
 
 assert(use_custom_libcxx, "should only be used if use_custom_libcxx is set")
 
-declare_args() {
-  # lldb pretty printing only works when libc++ is built in the __1 (or __ndk1)
-  # namespaces.  For pretty printing to work out-of-the-box on Mac (where lldb
-  # is primarily used), this flag is set to false to build with the __1
-  # namespace (to maintain ABI compatibility, this implies building without
-  # _LIBCPP_ABI_UNSTABLE).  This is not necessary on non-component builds
-  # because we leave the ABI version set to __1 in that case because libc++
-  # symbols are not exported.
-  # TODO(thomasanderson): Set this to true by default once rL352899 is available
-  # in MacOS's lldb.
-  libcxx_abi_unstable = !(is_apple && is_debug && is_component_build)
-}
+libcxx_abi_unstable = true
 
 # TODO(xiaohuic): https://crbug/917533 Crashes on internal ChromeOS build.
 # Do unconditionally once the underlying problem is fixed.
@@ -33,6 +22,7 @@ config("runtime_library") {
   cflags = []
   cflags_cc = []
   defines = []
+  include_dirs = []
   ldflags = []
   libs = []
 
@@ -60,12 +50,9 @@ config("runtime_library") {
     }
   }
 
-  defines += [
-    "_LIBCPP_ENABLE_NODISCARD",
+  defines += [ "_LIBCPP_ENABLE_NODISCARD" ]
 
-    # TODO(crbug.com/1166707): libc++ requires this macro.
-    "_LIBCPP_HAS_NO_VENDOR_AVAILABILITY_ANNOTATIONS",
-  ]
+  include_dirs += [ "//buildtools/third_party/libc++" ]
 
   # Work around a symbol conflict between GRPC and the Fuchsia SDK.
   # TODO(crbug.com/1166970): Remove this when resolved.
@@ -103,13 +90,6 @@ config("runtime_library") {
     # and can also result in build failures if libc++'s name for a library
     # does not match ours.
     defines += [ "_LIBCPP_NO_AUTO_LINK" ]
-
-    if (is_component_build) {
-      # TODO(crbug.com/1090975): Disable the exclude_from_explicit_instantiation
-      # to work around compiler bugs in the interaction between it and
-      # dllimport/dllexport.
-      defines += [ "_LIBCPP_HIDE_FROM_ABI=_LIBCPP_HIDDEN" ]
-    }
 
     # Add a debug visualizer for Microsoft's debuggers so that they can display
     # libc++ types well.

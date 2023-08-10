@@ -10,8 +10,8 @@
 #include <algorithm>
 #include <utility>
 
+#include "base/memory/raw_ptr.h"
 #include "base/memory/shared_memory_mapping.h"
-#include "base/strings/stringprintf.h"
 #include "base/trace_event/process_memory_dump.h"
 #include "base/trace_event/trace_event.h"
 #include "base/trace_event/traced_value.h"
@@ -38,7 +38,7 @@ class BitmapSoftwareBacking : public ResourcePool::SoftwareBacking {
                                          importance);
   }
 
-  LayerTreeFrameSink* frame_sink;
+  raw_ptr<LayerTreeFrameSink> frame_sink;
   base::WritableSharedMemoryMapping mapping;
 };
 
@@ -86,6 +86,10 @@ class BitmapRasterBufferImpl : public RasterBuffer {
  private:
   const gfx::Size resource_size_;
   const gfx::ColorSpace color_space_;
+
+  // `pixels_` is not a raw_ptr<...> for performance reasons: pointee is never
+  // protected by BackupRefPtr, because the pointer comes either from using
+  // `mmap`, MapViewOfFile or base::AllocPages directly.
   void* const pixels_;
   bool resource_has_previous_content_;
 };

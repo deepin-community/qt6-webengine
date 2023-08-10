@@ -11,9 +11,10 @@ static constexpr int kDefaultTransitionDurationMs = 225;
 }  // namespace
 
 Transition::Transition()
-    : duration(
-          base::TimeDelta::FromMilliseconds(kDefaultTransitionDurationMs)) {}
+    : duration(base::Milliseconds(kDefaultTransitionDurationMs)) {}
 
-Transition::~Transition() {}
+Transition::Transition(const Transition&) = default;
+Transition::Transition(Transition&&) = default;
+Transition::~Transition() = default;
 
 }  // namespace gfx

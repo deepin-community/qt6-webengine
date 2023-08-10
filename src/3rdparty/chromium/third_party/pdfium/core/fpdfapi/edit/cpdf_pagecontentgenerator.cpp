@@ -9,6 +9,7 @@
 #include <map>
 #include <memory>
 #include <set>
+#include <sstream>
 #include <tuple>
 #include <utility>
 
@@ -19,6 +20,8 @@
 #include "core/fpdfapi/font/cpdf_type1font.h"
 #include "core/fpdfapi/page/cpdf_contentmarks.h"
 #include "core/fpdfapi/page/cpdf_docpagedata.h"
+#include "core/fpdfapi/page/cpdf_form.h"
+#include "core/fpdfapi/page/cpdf_formobject.h"
 #include "core/fpdfapi/page/cpdf_image.h"
 #include "core/fpdfapi/page/cpdf_imageobject.h"
 #include "core/fpdfapi/page/cpdf_page.h"
@@ -35,9 +38,10 @@
 #include "core/fpdfapi/parser/fpdf_parser_decode.h"
 #include "core/fpdfapi/parser/fpdf_parser_utility.h"
 #include "third_party/base/check.h"
+#include "third_party/base/containers/contains.h"
 #include "third_party/base/notreached.h"
+#include "third_party/base/numerics/safe_conversions.h"
 #include "third_party/base/span.h"
-#include "third_party/base/stl_util.h"
 
 namespace {
 
@@ -71,7 +75,7 @@ void CPDF_PageContentGenerator::GenerateContent() {
   UpdateContentStreams(GenerateModifiedStreams());
 }
 
-std::map<int32_t, std::unique_ptr<std::ostringstream>>
+std::map<int32_t, fxcrt::ostringstream>
 CPDF_PageContentGenerator::GenerateModifiedStreams() {
   // Make sure default graphics are created.
   GetOrCreateDefaultGraphics();
@@ -87,23 +91,21 @@ CPDF_PageContentGenerator::GenerateModifiedStreams() {
                            marked_dirty_streams.end());
 
   // Start regenerating dirty streams.
-  std::map<int32_t, std::unique_ptr<std::ostringstream>> streams;
+  std::map<int32_t, fxcrt::ostringstream> streams;
   std::set<int32_t> empty_streams;
   std::unique_ptr<const CPDF_ContentMarks> empty_content_marks =
       std::make_unique<CPDF_ContentMarks>();
   std::map<int32_t, const CPDF_ContentMarks*> current_content_marks;
 
   for (int32_t dirty_stream : all_dirty_streams) {
-    std::unique_ptr<std::ostringstream> buf =
-        std::make_unique<std::ostringstream>();
+    fxcrt::ostringstream buf;
 
     // Set the default graphic state values
-    *buf << "q\n";
+    buf << "q\n";
     if (!m_pObjHolder->GetLastCTM().IsIdentity())
-      *buf << m_pObjHolder->GetLastCTM().GetInverse() << " cm\n";
+      buf << m_pObjHolder->GetLastCTM().GetInverse() << " cm\n";
 
-    ProcessDefaultGraphics(buf.get());
-
+    ProcessDefaultGraphics(&buf);
     streams[dirty_stream] = std::move(buf);
     empty_streams.insert(dirty_stream);
     current_content_marks[dirty_stream] = empty_content_marks.get();
@@ -116,7 +118,7 @@ CPDF_PageContentGenerator::GenerateModifiedStreams() {
     if (it == streams.end())
       continue;
 
-    std::ostringstream* buf = it->second.get();
+    fxcrt::ostringstream* buf = &it->second;
     empty_streams.erase(stream_index);
     current_content_marks[stream_index] = ProcessContentMarks(
         buf, pPageObj.Get(), current_content_marks[stream_index]);
@@ -125,7 +127,7 @@ CPDF_PageContentGenerator::GenerateModifiedStreams() {
 
   // Finish dirty streams.
   for (int32_t dirty_stream : all_dirty_streams) {
-    std::ostringstream* buf = streams[dirty_stream].get();
+    fxcrt::ostringstream* buf = &streams[dirty_stream];
     if (pdfium::Contains(empty_streams, dirty_stream)) {
       // Clear to show that this stream needs to be deleted.
       buf->str("");
@@ -141,8 +143,7 @@ CPDF_PageContentGenerator::GenerateModifiedStreams() {
 }
 
 void CPDF_PageContentGenerator::UpdateContentStreams(
-    const std::map<int32_t, std::unique_ptr<std::ostringstream>>&
-        new_stream_data) {
+    std::map<int32_t, fxcrt::ostringstream>&& new_stream_data) {
   // If no streams were regenerated or removed, nothing to do here.
   if (new_stream_data.empty())
     return;
@@ -151,10 +152,11 @@ void CPDF_PageContentGenerator::UpdateContentStreams(
 
   for (auto& pair : new_stream_data) {
     int32_t stream_index = pair.first;
-    std::ostringstream* buf = pair.second.get();
+    fxcrt::ostringstream* buf = &pair.second;
 
     if (stream_index == CPDF_PageObject::kNoContentStream) {
-      int new_stream_index = page_content_manager.AddStream(buf);
+      int new_stream_index =
+          pdfium::base::checked_cast<int>(page_content_manager.AddStream(buf));
       UpdateStreamlessPageObjects(new_stream_index);
       continue;
     }
@@ -177,20 +179,18 @@ ByteString CPDF_PageContentGenerator::RealizeResource(
     const CPDF_Object* pResource,
     const ByteString& bsType) const {
   DCHECK(pResource);
-  if (!m_pObjHolder->m_pResources) {
-    m_pObjHolder->m_pResources.Reset(
-        m_pDocument->NewIndirect<CPDF_Dictionary>());
+  if (!m_pObjHolder->GetResources()) {
+    m_pObjHolder->SetResources(m_pDocument->NewIndirect<CPDF_Dictionary>());
     m_pObjHolder->GetDict()->SetNewFor<CPDF_Reference>(
         "Resources", m_pDocument.Get(),
-        m_pObjHolder->m_pResources->GetObjNum());
+        m_pObjHolder->GetResources()->GetObjNum());
   }
-  CPDF_Dictionary* pResList = m_pObjHolder->m_pResources->GetDictFor(bsType);
-  if (!pResList)
-    pResList = m_pObjHolder->m_pResources->SetNewFor<CPDF_Dictionary>(bsType);
 
+  CPDF_Dictionary* pResList =
+      GetOrCreateDict(m_pObjHolder->GetResources(), bsType);
   ByteString name;
   int idnum = 1;
-  while (1) {
+  while (true) {
     name = ByteString::Format("FX%c%d", bsType[0], idnum);
     if (!pResList->KeyExist(name))
       break;
@@ -202,7 +202,7 @@ ByteString CPDF_PageContentGenerator::RealizeResource(
   return name;
 }
 
-bool CPDF_PageContentGenerator::ProcessPageObjects(std::ostringstream* buf) {
+bool CPDF_PageContentGenerator::ProcessPageObjects(fxcrt::ostringstream* buf) {
   bool bDirty = false;
   std::unique_ptr<const CPDF_ContentMarks> empty_content_marks =
       std::make_unique<CPDF_ContentMarks>();
@@ -229,12 +229,11 @@ void CPDF_PageContentGenerator::UpdateStreamlessPageObjects(
 }
 
 const CPDF_ContentMarks* CPDF_PageContentGenerator::ProcessContentMarks(
-    std::ostringstream* buf,
+    fxcrt::ostringstream* buf,
     const CPDF_PageObject* pPageObj,
     const CPDF_ContentMarks* pPrev) {
-  const CPDF_ContentMarks* pNext = &pPageObj->m_ContentMarks;
-
-  size_t first_different = pPrev->FindFirstDifference(pNext);
+  const CPDF_ContentMarks* pNext = pPageObj->GetContentMarks();
+  const size_t first_different = pPrev->FindFirstDifference(pNext);
 
   // Close all marks that are in prev but not in next.
   // Technically we should iterate backwards to close from the top to the
@@ -281,7 +280,7 @@ const CPDF_ContentMarks* CPDF_PageContentGenerator::ProcessContentMarks(
 }
 
 void CPDF_PageContentGenerator::FinishMarks(
-    std::ostringstream* buf,
+    fxcrt::ostringstream* buf,
     const CPDF_ContentMarks* pContentMarks) {
   // Technically we should iterate backwards to close from the top to the
   // bottom, but since the EMC operators do not identify which mark they are
@@ -290,10 +289,12 @@ void CPDF_PageContentGenerator::FinishMarks(
     *buf << "EMC\n";
 }
 
-void CPDF_PageContentGenerator::ProcessPageObject(std::ostringstream* buf,
+void CPDF_PageContentGenerator::ProcessPageObject(fxcrt::ostringstream* buf,
                                                   CPDF_PageObject* pPageObj) {
   if (CPDF_ImageObject* pImageObject = pPageObj->AsImage())
     ProcessImage(buf, pImageObject);
+  else if (CPDF_FormObject* pFormObj = pPageObj->AsForm())
+    ProcessForm(buf, pFormObj);
   else if (CPDF_PathObject* pPathObj = pPageObj->AsPath())
     ProcessPath(buf, pPathObj);
   else if (CPDF_TextObject* pTextObj = pPageObj->AsText())
@@ -301,13 +302,12 @@ void CPDF_PageContentGenerator::ProcessPageObject(std::ostringstream* buf,
   pPageObj->SetDirty(false);
 }
 
-void CPDF_PageContentGenerator::ProcessImage(std::ostringstream* buf,
+void CPDF_PageContentGenerator::ProcessImage(fxcrt::ostringstream* buf,
                                              CPDF_ImageObject* pImageObj) {
   if ((pImageObj->matrix().a == 0 && pImageObj->matrix().b == 0) ||
       (pImageObj->matrix().c == 0 && pImageObj->matrix().d == 0)) {
     return;
   }
-  *buf << "q " << pImageObj->matrix() << " cm ";
 
   RetainPtr<CPDF_Image> pImage = pImageObj->GetImage();
   if (pImage->IsInline())
@@ -316,6 +316,8 @@ void CPDF_PageContentGenerator::ProcessImage(std::ostringstream* buf,
   CPDF_Stream* pStream = pImage->GetStream();
   if (!pStream)
     return;
+
+  *buf << "q " << pImageObj->matrix() << " cm ";
 
   bool bWasInline = pStream->IsInline();
   if (bWasInline)
@@ -330,6 +332,23 @@ void CPDF_PageContentGenerator::ProcessImage(std::ostringstream* buf,
   *buf << "/" << PDF_NameEncode(name) << " Do Q\n";
 }
 
+void CPDF_PageContentGenerator::ProcessForm(fxcrt::ostringstream* buf,
+                                            CPDF_FormObject* pFormObj) {
+  if ((pFormObj->form_matrix().a == 0 && pFormObj->form_matrix().b == 0) ||
+      (pFormObj->form_matrix().c == 0 && pFormObj->form_matrix().d == 0)) {
+    return;
+  }
+
+  const CPDF_Stream* pStream = pFormObj->form()->GetStream();
+  if (!pStream)
+    return;
+
+  *buf << "q\n" << pFormObj->form_matrix() << " cm ";
+
+  ByteString name = RealizeResource(pStream, "XObject");
+  *buf << "/" << PDF_NameEncode(name) << " Do Q\n";
+}
+
 // Processing path construction with operators from Table 4.9 of PDF spec 1.7:
 // "re" appends a rectangle (here, used only if the whole path is a rectangle)
 // "m" moves current point to the given coordinates
@@ -338,9 +357,9 @@ void CPDF_PageContentGenerator::ProcessImage(std::ostringstream* buf,
 // points as the Bezier control points
 // Note: "l", "c" change the current point
 // "h" closes the subpath (appends a line from current to starting point)
-void CPDF_PageContentGenerator::ProcessPathPoints(std::ostringstream* buf,
+void CPDF_PageContentGenerator::ProcessPathPoints(fxcrt::ostringstream* buf,
                                                   CPDF_Path* pPath) {
-  pdfium::span<const FX_PATHPOINT> points = pPath->GetPoints();
+  pdfium::span<const CFX_Path::Point> points = pPath->GetPoints();
   if (pPath->IsRect()) {
     CFX_PointF diff = points[2].m_Point - points[0].m_Point;
     *buf << points[0].m_Point << " " << diff << " re";
@@ -352,16 +371,16 @@ void CPDF_PageContentGenerator::ProcessPathPoints(std::ostringstream* buf,
 
     *buf << points[i].m_Point;
 
-    FXPT_TYPE point_type = points[i].m_Type;
-    if (point_type == FXPT_TYPE::MoveTo) {
+    CFX_Path::Point::Type point_type = points[i].m_Type;
+    if (point_type == CFX_Path::Point::Type::kMove) {
       *buf << " m";
-    } else if (point_type == FXPT_TYPE::LineTo) {
+    } else if (point_type == CFX_Path::Point::Type::kLine) {
       *buf << " l";
-    } else if (point_type == FXPT_TYPE::BezierTo) {
+    } else if (point_type == CFX_Path::Point::Type::kBezier) {
       if (i + 2 >= points.size() ||
-          !points[i].IsTypeAndOpen(FXPT_TYPE::BezierTo) ||
-          !points[i + 1].IsTypeAndOpen(FXPT_TYPE::BezierTo) ||
-          points[i + 2].m_Type != FXPT_TYPE::BezierTo) {
+          !points[i].IsTypeAndOpen(CFX_Path::Point::Type::kBezier) ||
+          !points[i + 1].IsTypeAndOpen(CFX_Path::Point::Type::kBezier) ||
+          points[i + 2].m_Type != CFX_Path::Point::Type::kBezier) {
         // If format is not supported, close the path and paint
         *buf << " h";
         break;
@@ -380,7 +399,7 @@ void CPDF_PageContentGenerator::ProcessPathPoints(std::ostringstream* buf,
 // Path painting operators: "S", "n", "B", "f", "B*", "f*", depending on
 // the filling mode and whether we want stroking the path or not.
 // "Q" restores the graphics state imposed by the ProcessGraphics method.
-void CPDF_PageContentGenerator::ProcessPath(std::ostringstream* buf,
+void CPDF_PageContentGenerator::ProcessPath(fxcrt::ostringstream* buf,
                                             CPDF_PathObject* pPathObj) {
   ProcessGraphics(buf, pPathObj);
 
@@ -406,7 +425,7 @@ void CPDF_PageContentGenerator::ProcessPath(std::ostringstream* buf,
 // "W" and "W*" modify the clipping path using the nonzero winding rule and
 // even-odd rules, respectively.
 // "q" saves the graphics state, so that the settings can later be reversed
-void CPDF_PageContentGenerator::ProcessGraphics(std::ostringstream* buf,
+void CPDF_PageContentGenerator::ProcessGraphics(fxcrt::ostringstream* buf,
                                                 CPDF_PageObject* pPageObj) {
   *buf << "q ";
   float fillColor[3];
@@ -423,10 +442,10 @@ void CPDF_PageContentGenerator::ProcessGraphics(std::ostringstream* buf,
   if (lineWidth != 1.0f)
     WriteFloat(*buf, lineWidth) << " w ";
   CFX_GraphStateData::LineCap lineCap = pPageObj->m_GraphState.GetLineCap();
-  if (lineCap != CFX_GraphStateData::LineCapButt)
+  if (lineCap != CFX_GraphStateData::LineCap::kButt)
     *buf << static_cast<int>(lineCap) << " J ";
   CFX_GraphStateData::LineJoin lineJoin = pPageObj->m_GraphState.GetLineJoin();
-  if (lineJoin != CFX_GraphStateData::LineJoinMiter)
+  if (lineJoin != CFX_GraphStateData::LineJoin::kMiter)
     *buf << static_cast<int>(lineJoin) << " j ";
 
   const CPDF_ClipPath& clip_path = pPageObj->m_ClipPath;
@@ -462,9 +481,10 @@ void CPDF_PageContentGenerator::ProcessGraphics(std::ostringstream* buf,
   }
 
   ByteString name;
-  auto it = m_pObjHolder->m_GraphicsMap.find(graphD);
-  if (it != m_pObjHolder->m_GraphicsMap.end()) {
-    name = it->second;
+  absl::optional<ByteString> maybe_name =
+      m_pObjHolder->GraphicsMapSearch(graphD);
+  if (maybe_name.has_value()) {
+    name = std::move(maybe_name.value());
   } else {
     auto gsDict = pdfium::MakeRetain<CPDF_Dictionary>();
     if (graphD.fillAlpha != 1.0f)
@@ -479,16 +499,16 @@ void CPDF_PageContentGenerator::ProcessGraphics(std::ostringstream* buf,
     }
     CPDF_Object* pDict = m_pDocument->AddIndirectObject(gsDict);
     name = RealizeResource(pDict, "ExtGState");
-    m_pObjHolder->m_GraphicsMap[graphD] = name;
+    m_pObjHolder->GraphicsMapInsert(graphD, name);
   }
   *buf << "/" << PDF_NameEncode(name) << " gs ";
 }
 
 void CPDF_PageContentGenerator::ProcessDefaultGraphics(
-    std::ostringstream* buf) {
+    fxcrt::ostringstream* buf) {
   *buf << "0 0 0 RG 0 0 0 rg 1 w "
-       << static_cast<int>(CFX_GraphStateData::LineCapButt) << " J "
-       << static_cast<int>(CFX_GraphStateData::LineJoinMiter) << " j\n";
+       << static_cast<int>(CFX_GraphStateData::LineCap::kButt) << " J "
+       << static_cast<int>(CFX_GraphStateData::LineJoin::kMiter) << " j\n";
   ByteString name = GetOrCreateDefaultGraphics();
   *buf << "/" << PDF_NameEncode(name) << " gs ";
 }
@@ -498,20 +518,19 @@ ByteString CPDF_PageContentGenerator::GetOrCreateDefaultGraphics() const {
   defaultGraphics.fillAlpha = 1.0f;
   defaultGraphics.strokeAlpha = 1.0f;
   defaultGraphics.blendType = BlendMode::kNormal;
-  auto it = m_pObjHolder->m_GraphicsMap.find(defaultGraphics);
 
-  // If default graphics already exists, return it.
-  if (it != m_pObjHolder->m_GraphicsMap.end())
-    return it->second;
+  absl::optional<ByteString> maybe_name =
+      m_pObjHolder->GraphicsMapSearch(defaultGraphics);
+  if (maybe_name.has_value())
+    return maybe_name.value();
 
-  // Otherwise, create them.
   auto gsDict = pdfium::MakeRetain<CPDF_Dictionary>();
   gsDict->SetNewFor<CPDF_Number>("ca", defaultGraphics.fillAlpha);
   gsDict->SetNewFor<CPDF_Number>("CA", defaultGraphics.strokeAlpha);
   gsDict->SetNewFor<CPDF_Name>("BM", "Normal");
   CPDF_Object* pDict = m_pDocument->AddIndirectObject(gsDict);
   ByteString name = RealizeResource(pDict, "ExtGState");
-  m_pObjHolder->m_GraphicsMap[defaultGraphics] = name;
+  m_pObjHolder->GraphicsMapInsert(defaultGraphics, name);
   return name;
 }
 
@@ -520,7 +539,7 @@ ByteString CPDF_PageContentGenerator::GetOrCreateDefaultGraphics() const {
 // Tf sets the font name (from Font in Resources) and font size.
 // Tr sets the text rendering mode.
 // Tj sets the actual text, <####...> is used when specifying charcodes.
-void CPDF_PageContentGenerator::ProcessText(std::ostringstream* buf,
+void CPDF_PageContentGenerator::ProcessText(fxcrt::ostringstream* buf,
                                             CPDF_TextObject* pTextObj) {
   ProcessGraphics(buf, pTextObj);
   *buf << "BT " << pTextObj->GetTextMatrix() << " Tm ";
@@ -542,10 +561,11 @@ void CPDF_PageContentGenerator::ProcessText(std::ostringstream* buf,
     return;
   }
   data.baseFont = pFont->GetBaseFontName();
-  auto it = m_pObjHolder->m_FontsMap.find(data);
+
   ByteString dictName;
-  if (it != m_pObjHolder->m_FontsMap.end()) {
-    dictName = it->second;
+  absl::optional<ByteString> maybe_name = m_pObjHolder->FontsMapSearch(data);
+  if (maybe_name.has_value()) {
+    dictName = std::move(maybe_name.value());
   } else {
     CPDF_Object* pIndirectFont = pFont->GetFontDict();
     if (pIndirectFont->IsInline()) {
@@ -561,7 +581,7 @@ void CPDF_PageContentGenerator::ProcessText(std::ostringstream* buf,
       pIndirectFont = m_pDocument->AddIndirectObject(pFontDict);
     }
     dictName = RealizeResource(pIndirectFont, "Font");
-    m_pObjHolder->m_FontsMap[data] = dictName;
+    m_pObjHolder->FontsMapInsert(data, dictName);
   }
   *buf << "/" << PDF_NameEncode(dictName) << " ";
   WriteFloat(*buf, pTextObj->GetFontSize()) << " Tf ";
@@ -571,6 +591,6 @@ void CPDF_PageContentGenerator::ProcessText(std::ostringstream* buf,
     if (charcode != CPDF_Font::kInvalidCharCode)
       pFont->AppendChar(&text, charcode);
   }
-  *buf << PDF_EncodeString(text, true) << " Tj ET";
+  *buf << PDF_HexEncodeString(text.AsStringView()) << " Tj ET";
   *buf << " Q\n";
 }

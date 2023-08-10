@@ -6,6 +6,7 @@
 
 #include <vector>
 
+#include "base/notreached.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/sessions/core/serialized_navigation_driver.h"
 #include "components/sync/base/time.h"
@@ -19,6 +20,13 @@ using sessions::SerializedNavigationEntry;
 // The previous referrer policy value corresponding to |Never|.
 // See original constant in serialized_navigation_entry.cc.
 const int kObsoleteReferrerPolicyNever = 2;
+
+// Some pages embed the favicon image itself in the URL, using the data: scheme.
+// These cases, or more generally any favicon URL that is unreasonably large,
+// should simply be ignored, because it otherwise runs into the risk that the
+// entire tab may fail to sync due to max size limits imposed by the sync
+// server. And after all, the favicon is somewhat optional.
+const int kMaxFaviconUrlSizeToSync = 2048;
 
 sync_pb::SyncEnums_PageTransition ToSyncPageTransition(
     ui::PageTransition transition_type) {
@@ -63,8 +71,6 @@ sync_pb::SyncEnums_PageTransition ToSyncPageTransition(
     case ui::PAGE_TRANSITION_FROM_ADDRESS_BAR:
     case ui::PAGE_TRANSITION_HOME_PAGE:
     case ui::PAGE_TRANSITION_FROM_API:
-    case ui::PAGE_TRANSITION_FROM_API_2:
-    case ui::PAGE_TRANSITION_FROM_API_3:
     case ui::PAGE_TRANSITION_CHAIN_START:
     case ui::PAGE_TRANSITION_CHAIN_END:
     case ui::PAGE_TRANSITION_CLIENT_REDIRECT:
@@ -235,8 +241,10 @@ sync_pb::TabNavigation SessionNavigationToSyncData(
 
   sync_data.set_http_status_code(navigation.http_status_code());
 
-  if (navigation.favicon_url().is_valid())
+  if (navigation.favicon_url().is_valid() &&
+      navigation.favicon_url().spec().size() <= kMaxFaviconUrlSizeToSync) {
     sync_data.set_favicon_url(navigation.favicon_url().spec());
+  }
 
   if (navigation.blocked_state() != SerializedNavigationEntry::STATE_INVALID) {
     sync_data.set_blocked_state(
@@ -247,11 +255,6 @@ sync_pb::TabNavigation SessionNavigationToSyncData(
   sync_data.set_password_state(
       static_cast<sync_pb::TabNavigation_PasswordState>(
           navigation.password_state()));
-
-  for (const std::string& content_pack_category :
-       navigation.content_pack_categories()) {
-    sync_data.add_content_pack_categories(content_pack_category);
-  }
 
   // Copy all redirect chain entries except the last URL (which should match
   // the virtual_url).
@@ -270,7 +273,7 @@ sync_pb::TabNavigation SessionNavigationToSyncData(
     }
   }
 
-  const base::Optional<SerializedNavigationEntry::ReplacedNavigationEntryData>&
+  const absl::optional<SerializedNavigationEntry::ReplacedNavigationEntryData>&
       replaced_entry_data = navigation.replaced_entry_data();
   if (replaced_entry_data.has_value()) {
     sync_pb::ReplacedNavigation* replaced_navigation =
@@ -301,6 +304,7 @@ void SetSessionTabFromSyncData(const sync_pb::SessionTab& sync_data,
   tab->user_agent_override = sessions::SerializedUserAgentOverride();
   tab->timestamp = timestamp;
   tab->navigations.clear();
+  tab->navigations.reserve(sync_data.navigation_size());
   for (int i = 0; i < sync_data.navigation_size(); ++i) {
     tab->navigations.push_back(
         SessionNavigationFromSyncData(i, sync_data.navigation(i)));
@@ -310,7 +314,7 @@ void SetSessionTabFromSyncData(const sync_pb::SessionTab& sync_data,
 
 sync_pb::SessionTab SessionTabToSyncData(
     const sessions::SessionTab& tab,
-    base::Optional<sync_pb::SessionWindow::BrowserType> browser_type) {
+    absl::optional<sync_pb::SessionWindow::BrowserType> browser_type) {
   sync_pb::SessionTab sync_data;
   sync_data.set_tab_id(tab.tab_id.id());
   sync_data.set_window_id(tab.window_id.id());
@@ -327,9 +331,9 @@ sync_pb::SessionTab SessionTabToSyncData(
   return sync_data;
 }
 
-SyncedSessionWindow::SyncedSessionWindow() {}
+SyncedSessionWindow::SyncedSessionWindow() = default;
 
-SyncedSessionWindow::~SyncedSessionWindow() {}
+SyncedSessionWindow::~SyncedSessionWindow() = default;
 
 sync_pb::SessionWindow SyncedSessionWindow::ToSessionWindowProto() const {
   sync_pb::SessionWindow sync_data;
@@ -346,13 +350,13 @@ sync_pb::SessionWindow SyncedSessionWindow::ToSessionWindowProto() const {
 SyncedSession::SyncedSession()
     : session_tag("invalid"), device_type(sync_pb::SyncEnums::TYPE_UNSET) {}
 
-SyncedSession::~SyncedSession() {}
+SyncedSession::~SyncedSession() = default;
 
 sync_pb::SessionHeader SyncedSession::ToSessionHeaderProto() const {
   sync_pb::SessionHeader header;
-  for (const auto& window_pair : windows) {
+  for (const auto& [window_id, window] : windows) {
     sync_pb::SessionWindow* w = header.add_window();
-    w->CopyFrom(window_pair.second->ToSessionWindowProto());
+    w->CopyFrom(window->ToSessionWindowProto());
   }
   header.set_client_name(session_name);
   header.set_device_type(device_type);

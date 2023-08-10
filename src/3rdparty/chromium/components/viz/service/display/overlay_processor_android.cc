@@ -132,7 +132,7 @@ void OverlayProcessorAndroid::OverlayPresentationComplete() {
   pending_overlay_locks_.pop_front();
 }
 
-void OverlayProcessorAndroid::CheckOverlaySupport(
+void OverlayProcessorAndroid::CheckOverlaySupportImpl(
     const OverlayProcessorInterface::OutputSurfaceOverlayPlane* primary_plane,
     OverlayCandidateList* candidates) {
   // For pre-SurfaceControl Android we should not have output surface as overlay
@@ -172,6 +172,7 @@ void OverlayProcessorAndroid::CheckOverlaySupport(
     promotion_hint_info_map_[candidate.resource_id] = candidate.display_rect;
   }
 }
+
 gfx::Rect OverlayProcessorAndroid::GetOverlayDamageRectForOutputSurface(
     const OverlayCandidate& overlay) const {
   return ToEnclosedRect(overlay.display_rect);
@@ -187,11 +188,6 @@ void OverlayProcessorAndroid::NotifyOverlayPromotion(
     DisplayResourceProvider* resource_provider,
     const CandidateList& candidates,
     const QuadList& quad_list) {
-  // No need to notify overlay promotion if not any resource wants promotion
-  // hints.
-  if (!resource_provider->DoAnyResourcesWantPromotionHints())
-    return;
-
   // If we don't have a processor_on_gpu_, there is nothing to send the overlay
   // promotions to.
   if (!processor_on_gpu_) {
@@ -210,6 +206,11 @@ void OverlayProcessorAndroid::NotifyOverlayPromotion(
     if (!resource_provider->DoesResourceWantPromotionHint(id))
       continue;
     promotion_hint_requestor_set.insert(id);
+  }
+
+  if (promotion_hint_requestor_set.empty()) {
+    promotion_hint_info_map_.clear();
+    return;
   }
 
   base::flat_set<gpu::Mailbox> promotion_denied;

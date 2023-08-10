@@ -5,17 +5,26 @@
 #ifndef COMPONENTS_SEARCH_ENGINES_SEARCH_TERMS_DATA_H_
 #define COMPONENTS_SEARCH_ENGINES_SEARCH_TERMS_DATA_H_
 
+#include <memory>
 #include <string>
 
 #include "base/compiler_specific.h"
-#include "base/macros.h"
-#include "base/strings/string16.h"
 
 // All data needed by TemplateURLRef::ReplaceSearchTerms which typically may
 // only be accessed on the UI thread.
 class SearchTermsData {
  public:
+  // Utility function that takes a snapshot of a different SearchTermsData
+  // instance. This is used to access SearchTermsData off the UI thread, or to
+  // copy the SearchTermsData for lifetime reasons.
+  static std::unique_ptr<SearchTermsData> MakeSnapshot(
+      const SearchTermsData* original_data);
+
   SearchTermsData();
+
+  SearchTermsData(const SearchTermsData&) = delete;
+  SearchTermsData& operator=(const SearchTermsData&) = delete;
+
   virtual ~SearchTermsData();
 
   // Returns the value to use for replacements of type GOOGLE_BASE_URL.  This
@@ -37,7 +46,7 @@ class SearchTermsData {
 
   // Returns the value for the Chrome Omnibox rlz.  This implementation returns
   // the empty string.
-  virtual base::string16 GetRlzParameterValue(bool from_app_list) const;
+  virtual std::u16string GetRlzParameterValue(bool from_app_list) const;
 
   // The optional client parameter passed with Google search requests.  This
   // implementation returns the empty string.
@@ -45,9 +54,8 @@ class SearchTermsData {
 
   // The suggest client parameter ("client") passed with Google suggest
   // requests.  See GetSuggestRequestIdentifier() for more details.
-  // |from_ntp| is true if the search is made from a non-searchbox NTP surface.
   // This implementation returns the empty string.
-  virtual std::string GetSuggestClient(bool from_ntp) const;
+  virtual std::string GetSuggestClient() const;
 
   // The suggest request identifier parameter ("gs_ri") passed with Google
   // suggest requests.   Along with suggestclient (See GetSuggestClient()),
@@ -70,9 +78,6 @@ class SearchTermsData {
   // Estimates dynamic memory usage.
   // See base/trace_event/memory_usage_estimator.h for more info.
   virtual size_t EstimateMemoryUsage() const;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(SearchTermsData);
 };
 
 #endif  // COMPONENTS_SEARCH_ENGINES_SEARCH_TERMS_DATA_H_

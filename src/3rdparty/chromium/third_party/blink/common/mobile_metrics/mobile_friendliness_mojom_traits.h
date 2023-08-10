@@ -17,8 +17,9 @@ class StructTraits<blink::mojom::MobileFriendlinessDataView,
   static bool viewport_device_width(const blink::MobileFriendliness& mf) {
     return mf.viewport_device_width;
   }
-  static double viewport_initial_scale(const blink::MobileFriendliness& mf) {
-    return mf.viewport_initial_scale;
+  static double viewport_initial_scale_x10(
+      const blink::MobileFriendliness& mf) {
+    return mf.viewport_initial_scale_x10;
   }
   static int viewport_hardcoded_width(const blink::MobileFriendliness& mf) {
     return mf.viewport_hardcoded_width;
@@ -28,6 +29,13 @@ class StructTraits<blink::mojom::MobileFriendlinessDataView,
   }
   static int small_text_ratio(const blink::MobileFriendliness& mf) {
     return mf.small_text_ratio;
+  }
+  static int text_content_outside_viewport_percentage(
+      const blink::MobileFriendliness& mf) {
+    return mf.text_content_outside_viewport_percentage;
+  }
+  static int bad_tap_targets_ratio(const blink::MobileFriendliness& mf) {
+    return mf.bad_tap_targets_ratio;
   }
   static bool Read(blink::mojom::MobileFriendlinessDataView data,
                    blink::MobileFriendliness* mf);

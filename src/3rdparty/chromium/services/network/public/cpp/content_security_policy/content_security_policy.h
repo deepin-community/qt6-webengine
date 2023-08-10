@@ -42,11 +42,11 @@ void AddContentSecurityPolicyFromHeaders(
     std::vector<mojom::ContentSecurityPolicyPtr>* out);
 
 COMPONENT_EXPORT(NETWORK_CPP)
-void AddContentSecurityPolicyFromHeaders(
+std::vector<mojom::ContentSecurityPolicyPtr> ParseContentSecurityPolicies(
     base::StringPiece header,
     mojom::ContentSecurityPolicyType type,
-    const GURL& base_url,
-    std::vector<mojom::ContentSecurityPolicyPtr>* out);
+    mojom::ContentSecurityPolicySource source,
+    const GURL& base_url);
 
 // Parse and return the Allow-CSP-From header value from |headers|.
 COMPONENT_EXPORT(NETWORK_CPP)
@@ -60,11 +60,13 @@ COMPONENT_EXPORT(NETWORK_CPP)
 bool CheckContentSecurityPolicy(const mojom::ContentSecurityPolicyPtr& policy,
                                 mojom::CSPDirectiveName directive,
                                 const GURL& url,
+                                const GURL& url_before_redirects,
                                 bool has_followed_redirect,
                                 bool is_response_check,
                                 CSPContext* context,
                                 const mojom::SourceLocationPtr& source_location,
-                                bool is_form_submission);
+                                bool is_form_submission,
+                                bool is_opaque_fenced_frame = false);
 
 // Return true if the set of |policies| contains one "Upgrade-Insecure-request"
 // directive.
@@ -106,13 +108,15 @@ COMPONENT_EXPORT(NETWORK_CPP)
 std::string ToString(mojom::CSPDirectiveName name);
 
 // Return true if the response allows the embedder to enforce arbitrary policy
-// on its behalf.
-// Specification: https://w3c.github.io/webappsec-cspee/#origin-allowed
+// on its behalf. |required_csp| is modified so that its self_origin matches the
+// correct origin. Specification:
+// https://w3c.github.io/webappsec-cspee/#origin-allowed
 COMPONENT_EXPORT(NETWORK_CPP)
 bool AllowsBlanketEnforcementOfRequiredCSP(
     const url::Origin& request_origin,
     const GURL& response_url,
-    const network::mojom::AllowCSPFromHeaderValue* allow_csp_from);
+    const network::mojom::AllowCSPFromHeaderValue* allow_csp_from,
+    network::mojom::ContentSecurityPolicyPtr& required_csp);
 
 }  // namespace network
 

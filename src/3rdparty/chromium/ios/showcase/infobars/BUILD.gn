@@ -39,7 +39,6 @@ source_set("constants") {
 }
 
 source_set("eg2_tests") {
-  defines = [ "CHROME_EARL_GREY_2" ]
   configs += [
     "//build/config/compiler:enable_arc",
     "//build/config/ios:xctest_config",
@@ -51,6 +50,7 @@ source_set("eg2_tests") {
   ]
   deps = [
     ":constants",
+    "//base",
     "//ios/chrome/browser/ui/infobars/banners:public",
     "//ios/chrome/browser/ui/infobars/modals:public",
     "//ios/showcase/test:eg2_test",

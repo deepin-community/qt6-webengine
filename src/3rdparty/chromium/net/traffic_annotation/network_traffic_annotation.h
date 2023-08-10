@@ -12,6 +12,10 @@
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
 
+#if BUILDFLAG(IS_ANDROID)
+#include "base/android/scoped_java_ref.h"
+#endif
+
 namespace {
 
 // Recursively compute hash code of the given string as a constant expression.
@@ -73,6 +77,13 @@ struct NetworkTrafficAnnotationTag {
       const PartialNetworkTrafficAnnotationTag& partial_annotation,
       const char (&proto)[N3]);
 
+#if BUILDFLAG(IS_ANDROID)
+  // Allows C++ methods to receive a Java NetworkTrafficAnnotationTag via JNI,
+  // and convert it to the C++ version.
+  static NetworkTrafficAnnotationTag FromJavaAnnotation(
+      int32_t unique_id_hash_code);
+#endif
+
   friend struct MutableNetworkTrafficAnnotationTag;
 
  private:
@@ -130,7 +141,7 @@ struct PartialNetworkTrafficAnnotationTag {
 // debugging, or auditing tasks. Unique ids should include only alphanumeric
 // characters and underline.
 // |proto| is a text-encoded NetworkTrafficAnnotation protobuf (see
-// tools/traffic_annotation/traffic_annotation.proto)
+// chrome/browser/privacy/traffic_annotation.proto)
 //
 // An empty and a sample template for the text-encoded protobuf can be found in
 // tools/traffic_annotation/sample_traffic_annotation.cc.
@@ -360,7 +371,7 @@ struct MutablePartialNetworkTrafficAnnotationTag {
 }  // namespace net
 
 // Placeholder for unannotated usages.
-#if !defined(OS_WIN) && !defined(OS_LINUX) && !defined(OS_CHROMEOS)
+#if !BUILDFLAG(IS_WIN) && !BUILDFLAG(IS_LINUX) && !BUILDFLAG(IS_CHROMEOS)
 #define TRAFFIC_ANNOTATION_WITHOUT_PROTO(ANNOTATION_ID) \
   net::DefineNetworkTrafficAnnotation(ANNOTATION_ID, "No proto yet.")
 #endif
@@ -373,14 +384,12 @@ struct MutablePartialNetworkTrafficAnnotationTag {
 // TRAFFIC_ANNOTATION_FOR_TESTS.
 // TODO(crbug.com/1052397): Revisit once build flag switch of lacros-chrome is
 // complete.
-#if !defined(OS_WIN) && !(defined(OS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS))
+#if !BUILDFLAG(IS_WIN) && \
+    !(BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS))
 
 #define NO_TRAFFIC_ANNOTATION_YET \
   net::DefineNetworkTrafficAnnotation("undefined", "Nothing here yet.")
 
-#define NO_PARTIAL_TRAFFIC_ANNOTATION_YET                              \
-  net::DefinePartialNetworkTrafficAnnotation("undefined", "undefined", \
-                                             "Nothing here yet.")
 #endif
 
 #define MISSING_TRAFFIC_ANNOTATION     \

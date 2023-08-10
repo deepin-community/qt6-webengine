@@ -21,6 +21,7 @@ component("public") {
     "base_file.h",
     "download_content.h",
     "download_create_info.h",
+    "download_danger_type.cc",
     "download_danger_type.h",
     "download_destination_observer.cc",
     "download_destination_observer.h",
@@ -38,6 +39,7 @@ component("public") {
     "download_item_impl.h",
     "download_item_impl_delegate.h",
     "download_item_rename_handler.h",
+    "download_item_rename_progress_update.h",
     "download_job.h",
     "download_job_factory.h",
     "download_path_reservation_tracker.h",
@@ -76,9 +78,11 @@ component("public") {
     "//base",
     "//components/download/network",
     "//components/download/public/background_service:public",
+    "//components/enterprise/common:download_item_reroute_info",
     "//components/services/quarantine/public/mojom",
     "//mojo/public/cpp/bindings",
     "//services/network/public/cpp",
+    "//services/network/public/mojom:url_loader_base",
   ]
 
   deps = [
@@ -100,6 +104,14 @@ component("public") {
 
   if (is_win && is_component_build) {
     ldflags = [ "/IGNORE:4217" ]
+  }
+
+  if (is_chromeos) {
+    sources += [
+      "download_item_utils.cc",
+      "download_item_utils.h",
+    ]
+    deps += [ "//chromeos/crosapi/mojom" ]
   }
 }
 

@@ -7,10 +7,10 @@
 #include <list>
 
 #include "base/memory/ptr_util.h"
+#include "base/memory/raw_ptr.h"
 #include "base/test/mock_callback.h"
 #include "base/test/task_environment.h"
 #include "base/threading/sequenced_task_runner_handle.h"
-#include "gpu/command_buffer/service/abstract_texture_impl_shared_context_state.h"
 #include "gpu/ipc/common/command_buffer_id.h"
 #include "media/gpu/android/mock_shared_image_video_provider.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -30,7 +30,8 @@ class PooledSharedImageVideoProviderTest : public testing::Test {
     // PooledSharedImageVideoProvider::GpuHelper
     void OnImageReturned(const gpu::SyncToken& sync_token,
                          scoped_refptr<CodecImageHolder> codec_image_holder,
-                         base::OnceClosure cb) override {
+                         base::OnceClosure cb,
+                         scoped_refptr<gpu::RefCountedLock> lock) override {
       *sync_token_out_ = sync_token;
 
       // Run the output cb.
@@ -38,7 +39,7 @@ class PooledSharedImageVideoProviderTest : public testing::Test {
     }
 
    private:
-    gpu::SyncToken* sync_token_out_ = nullptr;
+    raw_ptr<gpu::SyncToken> sync_token_out_ = nullptr;
   };
 
   PooledSharedImageVideoProviderTest() = default;
@@ -53,7 +54,8 @@ class PooledSharedImageVideoProviderTest : public testing::Test {
     mock_provider_raw_ = mock_provider.get();
 
     provider_ = base::WrapUnique(new PooledSharedImageVideoProvider(
-        std::move(mock_gpu_helper), std::move(mock_provider)));
+        std::move(mock_gpu_helper), std::move(mock_provider),
+        /*lock=*/nullptr));
   }
 
   // Return an ImageReadyCB that saves the ImageRecord in |image_records_|.
@@ -70,7 +72,7 @@ class PooledSharedImageVideoProviderTest : public testing::Test {
   // |mock_provider_raw_|.  Have |mock_provider_raw_| return an image, too.
   void RequestAndProvideImage(const SharedImageVideoProvider::ImageSpec& spec) {
     EXPECT_CALL(*mock_provider_raw_, MockRequestImage()).Times(1);
-    provider_->RequestImage(SaveImageRecordCB(), spec, texture_owner_);
+    provider_->RequestImage(SaveImageRecordCB(), spec);
     base::RunLoop().RunUntilIdle();
     Mock::VerifyAndClearExpectations(mock_provider_raw_);
     mock_provider_raw_->ProvideOneRequestedImage();
@@ -83,7 +85,7 @@ class PooledSharedImageVideoProviderTest : public testing::Test {
   // Provider under test.
   std::unique_ptr<PooledSharedImageVideoProvider> provider_;
 
-  MockSharedImageVideoProvider* mock_provider_raw_ = nullptr;
+  raw_ptr<MockSharedImageVideoProvider> mock_provider_raw_ = nullptr;
   gpu::SyncToken sync_token_;
 
   scoped_refptr<gpu::TextureOwner> texture_owner_;
@@ -155,7 +157,7 @@ TEST_F(PooledSharedImageVideoProviderTest, RequestImageReusesReturnedImages) {
 
   // Shouldn't call MockRequestImage a third time.
   EXPECT_CALL(*mock_provider_raw_, MockRequestImage()).Times(0);
-  provider_->RequestImage(SaveImageRecordCB(), spec, texture_owner_);
+  provider_->RequestImage(SaveImageRecordCB(), spec);
   base::RunLoop().RunUntilIdle();
   EXPECT_EQ(image_records_.size(), 2u);
 }
@@ -164,7 +166,7 @@ TEST_F(PooledSharedImageVideoProviderTest,
        DeletingProviderWithOutstandingImagesDoesntCrash) {
   // Destroying |provider_| with outstanding images shouldn't break anything.
   SharedImageVideoProvider::ImageSpec spec(gfx::Size(1, 1), 0u);
-  provider_->RequestImage(SaveImageRecordCB(), spec, texture_owner_);
+  provider_->RequestImage(SaveImageRecordCB(), spec);
   base::RunLoop().RunUntilIdle();
   provider_.reset();
   base::RunLoop().RunUntilIdle();
@@ -229,8 +231,8 @@ TEST_F(PooledSharedImageVideoProviderTest, InFlightSpecChangeProvidesImage) {
 
   // Request both images before providing either.
   EXPECT_CALL(*mock_provider_raw_, MockRequestImage()).Times(2);
-  provider_->RequestImage(SaveImageRecordCB(), spec_1, texture_owner_);
-  provider_->RequestImage(SaveImageRecordCB(), spec_2, texture_owner_);
+  provider_->RequestImage(SaveImageRecordCB(), spec_1);
+  provider_->RequestImage(SaveImageRecordCB(), spec_2);
   base::RunLoop().RunUntilIdle();
 
   // Provide the |spec_1| image.  Nothing should be released since it should

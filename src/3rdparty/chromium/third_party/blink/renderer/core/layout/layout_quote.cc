@@ -23,10 +23,10 @@
 
 #include <algorithm>
 
-#include "base/stl_util.h"
 #include "third_party/blink/renderer/core/dom/pseudo_element.h"
 #include "third_party/blink/renderer/core/layout/layout_text_fragment.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
+#include "third_party/blink/renderer/core/layout/ng/inline/layout_ng_text_combine.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
 
@@ -47,6 +47,13 @@ LayoutQuote::~LayoutQuote() {
   DCHECK(!attached_);
   DCHECK(!next_);
   DCHECK(!previous_);
+}
+
+void LayoutQuote::Trace(Visitor* visitor) const {
+  visitor->Trace(next_);
+  visitor->Trace(previous_);
+  visitor->Trace(owning_pseudo_);
+  LayoutInline::Trace(visitor);
 }
 
 void LayoutQuote::WillBeDestroyed() {
@@ -237,7 +244,7 @@ const QuotesData* QuotesDataForLanguage(const AtomicString& lang) {
     return nullptr;
 
   // This could be just a hash table, but doing that adds 200k to LayoutQuote.o
-  Language* languages_end = g_languages + base::size(g_languages);
+  Language* languages_end = g_languages + std::size(g_languages);
   std::string lowercase_lang = lang.LowerASCII().Utf8();
   Language key = {lowercase_lang.c_str(), 0, 0, 0, 0, nullptr};
   Language* match = std::lower_bound(g_languages, languages_end, key);
@@ -287,7 +294,9 @@ void LayoutQuote::UpdateText() {
 
   LayoutTextFragment* fragment = FindFragmentChild();
   if (fragment) {
-    fragment->SetStyle(Style());
+    fragment->SetStyle(IsA<LayoutNGTextCombine>(fragment->Parent())
+                           ? fragment->Parent()->Style()
+                           : Style());
     fragment->SetContentString(text_.Impl());
   } else {
     LegacyLayout legacy =
@@ -301,13 +310,13 @@ void LayoutQuote::UpdateText() {
 
 LayoutTextFragment* LayoutQuote::FindFragmentChild() const {
   NOT_DESTROYED();
-  // We walk from the end of the child list because, if we've had a first-letter
-  // LayoutObject inserted then the remaining text will be at the end.
-  while (LayoutObject* child = LastChild()) {
-    if (auto* fragment = DynamicTo<LayoutTextFragment>(child))
-      return fragment;
-  }
-
+  // TODO(yosin): Once we support ::first-letter for <q>, we should change
+  // this function. See http://crbug.com/1206577
+  auto* const last_child = LastChild();
+  if (auto* fragment = DynamicTo<LayoutTextFragment>(last_child))
+    return fragment;
+  if (auto* combine = DynamicTo<LayoutNGTextCombine>(last_child))
+    return DynamicTo<LayoutTextFragment>(combine->FirstChild());
   return nullptr;
 }
 
@@ -351,8 +360,18 @@ void LayoutQuote::AttachQuote() {
     return;
   }
 
+  // TODO(crbug.com/882385): Implement style containment for quotes. For now,
+  // make sure we don't crash for container queries. If we are inside a size
+  // query container, don't connect to previous quote, and don't set it as the
+  // LayoutQuoteHead for the LayoutView.
+  bool found_container_root = false;
+
   for (LayoutObject* predecessor = PreviousInPreOrder(); predecessor;
        predecessor = predecessor->PreviousInPreOrder()) {
+    if (predecessor->CanMatchSizeContainerQueries()) {
+      found_container_root = true;
+      break;
+    }
     // Skip unattached predecessors to avoid having stale m_previous pointers
     // if the previous node is never attached and is then destroyed.
     if (!predecessor->IsQuote() || !To<LayoutQuote>(predecessor)->IsAttached())
@@ -365,7 +384,7 @@ void LayoutQuote::AttachQuote() {
     break;
   }
 
-  if (!previous_) {
+  if (!previous_ && !found_container_root) {
     next_ = View()->LayoutQuoteHead();
     View()->SetLayoutQuoteHead(this);
     if (next_)

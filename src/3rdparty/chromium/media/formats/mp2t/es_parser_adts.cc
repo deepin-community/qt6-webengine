@@ -9,7 +9,6 @@
 #include <vector>
 
 #include "base/logging.h"
-#include "base/optional.h"
 #include "base/strings/string_number_conversions.h"
 #include "media/base/audio_timestamp_helper.h"
 #include "media/base/bit_reader.h"
@@ -21,6 +20,7 @@
 #include "media/formats/common/offset_byte_queue.h"
 #include "media/formats/mp2t/mp2t_common.h"
 #include "media/formats/mpeg/adts_constants.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace media {
 
@@ -263,8 +263,8 @@ bool EsParserAdts::UpdateAudioConfiguration(const uint8_t* adts_header,
   scheme = init_encryption_scheme_;
 #endif
   AudioDecoderConfig audio_decoder_config(
-      kCodecAAC, kSampleFormatS16, channel_layout, extended_samples_per_second,
-      extra_data, scheme);
+      AudioCodec::kAAC, kSampleFormatS16, channel_layout,
+      extended_samples_per_second, extra_data, scheme);
 
   if (!audio_decoder_config.IsValidConfig()) {
     DVLOG(1) << "Invalid config: "

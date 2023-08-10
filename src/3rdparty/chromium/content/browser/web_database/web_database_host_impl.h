@@ -5,11 +5,14 @@
 #ifndef CONTENT_BROWSER_WEB_DATABASE_WEB_DATABASE_HOST_IMPL_H_
 #define CONTENT_BROWSER_WEB_DATABASE_WEB_DATABASE_HOST_IMPL_H_
 
+#include <stdint.h>
+
 #include <string>
 
 #include "base/callback_forward.h"
-#include "base/strings/string16.h"
+#include "base/memory/scoped_refptr.h"
 #include "build/build_config.h"
+#include "components/services/storage/public/cpp/quota_error_or.h"
 #include "content/common/content_export.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
@@ -19,6 +22,10 @@
 namespace url {
 class Origin;
 }  // namespace url
+
+namespace storage {
+struct BucketInfo;
+}  // namespace storage
 
 namespace content {
 
@@ -35,57 +42,41 @@ class CONTENT_EXPORT WebDatabaseHostImpl
       scoped_refptr<storage::DatabaseTracker> db_tracker,
       mojo::PendingReceiver<blink::mojom::WebDatabaseHost> receiver);
 
- private:
-  FRIEND_TEST_ALL_PREFIXES(WebDatabaseHostImplTest, BadMessagesUnauthorized);
-  FRIEND_TEST_ALL_PREFIXES(WebDatabaseHostImplTest, BadMessagesInvalid);
-  FRIEND_TEST_ALL_PREFIXES(WebDatabaseHostImplTest, ProcessShutdown);
-
   // blink::mojom::WebDatabaseHost:
-  void OpenFile(const base::string16& vfs_file_name,
+  void OpenFile(const std::u16string& vfs_file_name,
                 int32_t desired_flags,
                 OpenFileCallback callback) override;
-
-  void DeleteFile(const base::string16& vfs_file_name,
+  void DeleteFile(const std::u16string& vfs_file_name,
                   bool sync_dir,
                   DeleteFileCallback callback) override;
-
-  void GetFileAttributes(const base::string16& vfs_file_name,
+  void GetFileAttributes(const std::u16string& vfs_file_name,
                          GetFileAttributesCallback callback) override;
-
-  void GetFileSize(const base::string16& vfs_file_name,
-                   GetFileSizeCallback callback) override;
-
-  void SetFileSize(const base::string16& vfs_file_name,
+  void SetFileSize(const std::u16string& vfs_file_name,
                    int64_t expected_size,
                    SetFileSizeCallback callback) override;
-
   void GetSpaceAvailable(const url::Origin& origin,
                          GetSpaceAvailableCallback callback) override;
-
   void Opened(const url::Origin& origin,
-              const base::string16& database_name,
-              const base::string16& database_description,
-              int64_t estimated_size) override;
-
+              const std::u16string& database_name,
+              const std::u16string& database_description) override;
   void Modified(const url::Origin& origin,
-                const base::string16& database_name) override;
-
+                const std::u16string& database_name) override;
   void Closed(const url::Origin& origin,
-              const base::string16& database_name) override;
-
+              const std::u16string& database_name) override;
   void HandleSqliteError(const url::Origin& origin,
-                         const base::string16& database_name,
+                         const std::u16string& database_name,
                          int32_t error) override;
 
-  // DatabaseTracker::Observer callbacks (tracker sequence)
+  // DatabaseTracker::Observer:
   void OnDatabaseSizeChanged(const std::string& origin_identifier,
-                             const base::string16& database_name,
+                             const std::u16string& database_name,
                              int64_t database_size) override;
   void OnDatabaseScheduledForDeletion(
       const std::string& origin_identifier,
-      const base::string16& database_name) override;
+      const std::u16string& database_name) override;
 
-  void DatabaseDeleteFile(const base::string16& vfs_file_name,
+ private:
+  void DatabaseDeleteFile(const std::u16string& vfs_file_name,
                           bool sync_dir,
                           DeleteFileCallback callback,
                           int reschedule_count);
@@ -97,17 +88,20 @@ class CONTENT_EXPORT WebDatabaseHostImpl
 
   // blink::mojom::WebDatabaseHost methods called after ValidateOrigin()
   // successfully validates the origin.
-  void OpenFileValidated(const base::string16& vfs_file_name,
+  void OpenFileValidated(const std::u16string& vfs_file_name,
                          int32_t desired_flags,
                          OpenFileCallback callback);
 
-  void GetFileAttributesValidated(const base::string16& vfs_file_name,
+  void OpenFileWithBucketCreated(
+      const std::u16string& vfs_file_name,
+      int32_t desired_flags,
+      OpenFileCallback callback,
+      storage::QuotaErrorOr<storage::BucketInfo> bucket);
+
+  void GetFileAttributesValidated(const std::u16string& vfs_file_name,
                                   GetFileAttributesCallback callback);
 
-  void GetFileSizeValidated(const base::string16& vfs_file_name,
-                            GetFileSizeCallback callback);
-
-  void SetFileSizeValidated(const base::string16& vfs_file_name,
+  void SetFileSizeValidated(const std::u16string& vfs_file_name,
                             int64_t expected_size,
                             SetFileSizeCallback callback);
 
@@ -115,18 +109,17 @@ class CONTENT_EXPORT WebDatabaseHostImpl
                                   GetSpaceAvailableCallback callback);
 
   void OpenedValidated(const url::Origin& origin,
-                       const base::string16& database_name,
-                       const base::string16& database_description,
-                       int64_t estimated_size);
+                       const std::u16string& database_name,
+                       const std::u16string& database_description);
 
   void ModifiedValidated(const url::Origin& origin,
-                         const base::string16& database_name);
+                         const std::u16string& database_name);
 
   void ClosedValidated(const url::Origin& origin,
-                       const base::string16& database_name);
+                       const std::u16string& database_name);
 
   void HandleSqliteErrorValidated(const url::Origin& origin,
-                                  const base::string16& database_name,
+                                  const std::u16string& database_name,
                                   int32_t error);
 
   // Asynchronously calls |callback| but only if |process_id_| has permission to
@@ -137,7 +130,7 @@ class CONTENT_EXPORT WebDatabaseHostImpl
 
   // As above, but for calls where the origin is embedded in a VFS filename.
   // Empty filenames signalling a temp file are permitted.
-  void ValidateOrigin(const base::string16& vfs_file_name,
+  void ValidateOrigin(const std::u16string& vfs_file_name,
                       base::OnceClosure callback);
   // Our render process host ID, used to bind to the correct render process.
   const int process_id_;

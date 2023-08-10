@@ -6,35 +6,19 @@
 
 #include <d3d11_1.h>
 
+#include "base/memory/shared_memory_mapping.h"
+#include "base/win/scoped_handle.h"
 #include "components/viz/common/resources/resource_format_utils.h"
 #include "gpu/command_buffer/common/shared_image_usage.h"
+#include "gpu/command_buffer/service/dxgi_shared_handle_manager.h"
 #include "gpu/command_buffer/service/shared_image_backing_d3d.h"
 #include "ui/gfx/buffer_format_util.h"
 #include "ui/gl/direct_composition_surface_win.h"
-#include "ui/gl/gl_angle_util_win.h"
 #include "ui/gl/gl_bindings.h"
 
 namespace gpu {
 
 namespace {
-
-class ScopedRestoreTexture2D {
- public:
-  explicit ScopedRestoreTexture2D(gl::GLApi* api) : api_(api) {
-    GLint binding = 0;
-    api->glGetIntegervFn(GL_TEXTURE_BINDING_2D, &binding);
-    prev_binding_ = binding;
-  }
-
-  ~ScopedRestoreTexture2D() {
-    api_->glBindTextureFn(GL_TEXTURE_2D, prev_binding_);
-  }
-
- private:
-  gl::GLApi* const api_;
-  GLuint prev_binding_ = 0;
-  DISALLOW_COPY_AND_ASSIGN(ScopedRestoreTexture2D);
-};
 
 bool ClearBackBuffer(Microsoft::WRL::ComPtr<IDXGISwapChain1>& swap_chain,
                      Microsoft::WRL::ComPtr<ID3D11Device>& d3d11_device) {
@@ -65,7 +49,8 @@ bool ClearBackBuffer(Microsoft::WRL::ComPtr<IDXGISwapChain1>& swap_chain,
   return true;
 }
 
-base::Optional<DXGI_FORMAT> VizFormatToDXGIFormat(
+// Only RGBA formats supported by CreateSharedImage.
+absl::optional<DXGI_FORMAT> GetSupportedRGBAFormat(
     viz::ResourceFormat viz_resource_format) {
   switch (viz_resource_format) {
     case viz::RGBA_F16:
@@ -74,16 +59,104 @@ base::Optional<DXGI_FORMAT> VizFormatToDXGIFormat(
       return DXGI_FORMAT_B8G8R8A8_UNORM;
     case viz::RGBA_8888:
       return DXGI_FORMAT_R8G8B8A8_UNORM;
+    case viz::RED_8:
+      return DXGI_FORMAT_R8_UNORM;
+    case viz::RG_88:
+      return DXGI_FORMAT_R8G8_UNORM;
     default:
       NOTREACHED();
       return {};
   }
 }
 
+// Formats supported by CreateSharedImage(GMB) and CreateSharedImageVideoPlanes.
+DXGI_FORMAT GetDXGIFormat(gfx::BufferFormat buffer_format) {
+  switch (buffer_format) {
+    case gfx::BufferFormat::RGBA_8888:
+      return DXGI_FORMAT_R8G8B8A8_UNORM;
+    case gfx::BufferFormat::BGRA_8888:
+      return DXGI_FORMAT_B8G8R8A8_UNORM;
+    case gfx::BufferFormat::RGBA_F16:
+      return DXGI_FORMAT_R16G16B16A16_FLOAT;
+    case gfx::BufferFormat::YUV_420_BIPLANAR:
+      return DXGI_FORMAT_NV12;
+    default:
+      NOTREACHED();
+      return DXGI_FORMAT_UNKNOWN;
+  }
+}
+
+// Formats supported by CreateSharedImage(GMB) and CreateSharedImageVideoPlanes.
+DXGI_FORMAT GetDXGITypelessFormat(gfx::BufferFormat buffer_format) {
+  switch (buffer_format) {
+    case gfx::BufferFormat::RGBA_8888:
+      return DXGI_FORMAT_R8G8B8A8_TYPELESS;
+    case gfx::BufferFormat::BGRA_8888:
+      return DXGI_FORMAT_B8G8R8A8_TYPELESS;
+    case gfx::BufferFormat::RGBA_F16:
+      return DXGI_FORMAT_R16G16B16A16_TYPELESS;
+    default:
+      return DXGI_FORMAT_UNKNOWN;
+  }
+}
+
+scoped_refptr<DXGISharedHandleState> ValidateAndOpenSharedHandle(
+    DXGISharedHandleManager* dxgi_shared_handle_manager,
+    gfx::GpuMemoryBufferHandle handle,
+    gfx::BufferFormat format,
+    const gfx::Size& size) {
+  if (handle.type != gfx::DXGI_SHARED_HANDLE || !handle.dxgi_handle.IsValid()) {
+    DLOG(ERROR) << "Invalid handle with type: " << handle.type;
+    return nullptr;
+  }
+
+  if (!handle.dxgi_token.has_value()) {
+    DLOG(ERROR) << "Missing token for DXGI handle";
+    return nullptr;
+  }
+
+  if (!gpu::IsImageSizeValidForGpuMemoryBufferFormat(size, format)) {
+    DLOG(ERROR) << "Invalid image size " << size.ToString() << " for "
+                << gfx::BufferFormatToString(format);
+    return nullptr;
+  }
+
+  scoped_refptr<DXGISharedHandleState> dxgi_shared_handle_state =
+      dxgi_shared_handle_manager->GetOrCreateSharedHandleState(
+          std::move(handle.dxgi_token.value()), std::move(handle.dxgi_handle));
+  if (!dxgi_shared_handle_state) {
+    DLOG(ERROR) << "Failed to open DXGI shared handle";
+    return nullptr;
+  }
+
+  D3D11_TEXTURE2D_DESC desc = {};
+  dxgi_shared_handle_state->d3d11_texture()->GetDesc(&desc);
+
+  // TODO: Add checks for device specific limits.
+  if (desc.Width != static_cast<UINT>(size.width()) ||
+      desc.Height != static_cast<UINT>(size.height())) {
+    DLOG(ERROR) << "Size must match texture being opened";
+    return nullptr;
+  }
+
+  if ((desc.Format != GetDXGIFormat(format)) &&
+      (desc.Format != GetDXGITypelessFormat(format))) {
+    DLOG(ERROR) << "Format must match texture being opened";
+    return nullptr;
+  }
+
+  return dxgi_shared_handle_state;
+}
+
 }  // anonymous namespace
 
-SharedImageBackingFactoryD3D::SharedImageBackingFactoryD3D()
-    : d3d11_device_(gl::QueryD3D11DeviceObjectFromANGLE()) {}
+SharedImageBackingFactoryD3D::SharedImageBackingFactoryD3D(
+    Microsoft::WRL::ComPtr<ID3D11Device> d3d11_device,
+    scoped_refptr<DXGISharedHandleManager> dxgi_shared_handle_manager)
+    : d3d11_device_(std::move(d3d11_device)),
+      dxgi_shared_handle_manager_(std::move(dxgi_shared_handle_manager)) {
+  DCHECK(d3d11_device_);
+}
 
 SharedImageBackingFactoryD3D::~SharedImageBackingFactoryD3D() = default;
 
@@ -106,80 +179,6 @@ SharedImageBackingFactoryD3D::SwapChainBackings::operator=(
 bool SharedImageBackingFactoryD3D::IsSwapChainSupported() {
   return gl::DirectCompositionSurfaceWin::IsDirectCompositionSupported() &&
          gl::DirectCompositionSurfaceWin::IsSwapChainTearingSupported();
-}
-
-std::unique_ptr<SharedImageBacking> SharedImageBackingFactoryD3D::MakeBacking(
-    const Mailbox& mailbox,
-    viz::ResourceFormat format,
-    const gfx::Size& size,
-    const gfx::ColorSpace& color_space,
-    GrSurfaceOrigin surface_origin,
-    SkAlphaType alpha_type,
-    uint32_t usage,
-    Microsoft::WRL::ComPtr<IDXGISwapChain1> swap_chain,
-    size_t buffer_index,
-    Microsoft::WRL::ComPtr<ID3D11Texture2D> d3d11_texture,
-    base::win::ScopedHandle shared_handle) {
-  gl::GLApi* const api = gl::g_current_gl_context;
-  ScopedRestoreTexture2D scoped_restore(api);
-
-  const GLenum target = GL_TEXTURE_2D;
-  GLuint service_id = 0;
-  api->glGenTexturesFn(1, &service_id);
-  api->glBindTextureFn(target, service_id);
-  api->glTexParameteriFn(target, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-  api->glTexParameteriFn(target, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-  api->glTexParameteriFn(target, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-  api->glTexParameteriFn(target, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
-  Microsoft::WRL::ComPtr<IDXGIKeyedMutex> dxgi_keyed_mutex;
-
-  if (swap_chain) {
-    DCHECK(!d3d11_texture);
-    DCHECK(!shared_handle.IsValid());
-    const HRESULT hr =
-        swap_chain->GetBuffer(buffer_index, IID_PPV_ARGS(&d3d11_texture));
-    if (FAILED(hr)) {
-      DLOG(ERROR) << "GetBuffer failed with error " << std::hex;
-      return nullptr;
-    }
-  } else if (shared_handle.IsValid()) {
-    // Keyed mutexes are required for Dawn interop but are not used
-    // for XR composition where fences are used instead.
-    d3d11_texture.As(&dxgi_keyed_mutex);
-  }
-  DCHECK(d3d11_texture);
-
-  // The GL internal format can differ from the underlying swap chain format
-  // e.g. RGBA8 or RGB8 instead of BGRA8.
-  const GLenum internal_format = viz::GLInternalFormat(format);
-  const GLenum data_type = viz::GLDataType(format);
-  const GLenum data_format = viz::GLDataFormat(format);
-  auto image = base::MakeRefCounted<gl::GLImageD3D>(
-      size, internal_format, data_type, d3d11_texture, swap_chain);
-  DCHECK_EQ(image->GetDataFormat(), data_format);
-  if (!image->Initialize()) {
-    DLOG(ERROR) << "GLImageD3D::Initialize failed";
-    return nullptr;
-  }
-  if (!image->BindTexImage(target)) {
-    DLOG(ERROR) << "GLImageD3D::BindTexImage failed";
-    return nullptr;
-  }
-
-  scoped_refptr<gles2::TexturePassthrough> texture =
-      base::MakeRefCounted<gles2::TexturePassthrough>(service_id, target);
-  texture->SetLevelImage(target, 0, image.get());
-  GLint texture_memory_size = 0;
-  api->glGetTexParameterivFn(target, GL_MEMORY_SIZE_ANGLE,
-                             &texture_memory_size);
-  texture->SetEstimatedSize(texture_memory_size);
-
-  return std::make_unique<SharedImageBackingD3D>(
-      mailbox, format, size, color_space, surface_origin, alpha_type, usage,
-      std::move(swap_chain), std::move(texture), std::move(image), buffer_index,
-      std::move(d3d11_texture), std::move(shared_handle),
-      std::move(dxgi_keyed_mutex));
 }
 
 SharedImageBackingFactoryD3D::SwapChainBackings
@@ -263,18 +262,30 @@ SharedImageBackingFactoryD3D::CreateSwapChain(
   if (!ClearBackBuffer(swap_chain, d3d11_device_))
     return {nullptr, nullptr};
 
-  auto back_buffer_backing = MakeBacking(
+  Microsoft::WRL::ComPtr<ID3D11Texture2D> back_buffer_texture;
+  hr = swap_chain->GetBuffer(0, IID_PPV_ARGS(&back_buffer_texture));
+  if (FAILED(hr)) {
+    DLOG(ERROR) << "GetBuffer failed with error " << std::hex;
+    return {nullptr, nullptr};
+  }
+  auto back_buffer_backing = SharedImageBackingD3D::CreateFromSwapChainBuffer(
       back_buffer_mailbox, format, size, color_space, surface_origin,
-      alpha_type, usage, swap_chain, 0 /* buffer_index */,
-      nullptr /* d3d11_texture */, base::win::ScopedHandle());
+      alpha_type, usage, std::move(back_buffer_texture), swap_chain,
+      /*is_back_buffer=*/true);
   if (!back_buffer_backing)
     return {nullptr, nullptr};
   back_buffer_backing->SetCleared();
 
-  auto front_buffer_backing = MakeBacking(
+  Microsoft::WRL::ComPtr<ID3D11Texture2D> front_buffer_texture;
+  hr = swap_chain->GetBuffer(1, IID_PPV_ARGS(&front_buffer_texture));
+  if (FAILED(hr)) {
+    DLOG(ERROR) << "GetBuffer failed with error " << std::hex;
+    return {nullptr, nullptr};
+  }
+  auto front_buffer_backing = SharedImageBackingD3D::CreateFromSwapChainBuffer(
       front_buffer_mailbox, format, size, color_space, surface_origin,
-      alpha_type, usage, swap_chain, 1 /* buffer_index */,
-      nullptr /* d3d11_texture */, base::win::ScopedHandle());
+      alpha_type, usage, std::move(front_buffer_texture), swap_chain,
+      /*is_back_buffer=*/false);
   if (!front_buffer_backing)
     return {nullptr, nullptr};
   front_buffer_backing->SetCleared();
@@ -302,7 +313,8 @@ SharedImageBackingFactoryD3D::CreateSharedImage(
     return nullptr;
   }
 
-  const base::Optional<DXGI_FORMAT> dxgi_format = VizFormatToDXGIFormat(format);
+  const absl::optional<DXGI_FORMAT> dxgi_format =
+      GetSupportedRGBAFormat(format);
   if (!dxgi_format.has_value()) {
     DLOG(ERROR) << "Unsupported viz format found: " << format;
     return nullptr;
@@ -318,6 +330,11 @@ SharedImageBackingFactoryD3D::CreateSharedImage(
   desc.SampleDesc.Quality = 0;
   desc.Usage = D3D11_USAGE_DEFAULT;
   desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+  // WebGPU can use RGBA_8888 and RGBA_16 for STORAGE_BINDING.
+  if ((usage & gpu::SHARED_IMAGE_USAGE_WEBGPU) &&
+      (format == viz::RGBA_8888 || format == viz::RGBA_F16)) {
+    desc.BindFlags |= D3D11_BIND_UNORDERED_ACCESS;
+  }
   desc.CPUAccessFlags = 0;
   desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED_NTHANDLE |
                    D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;
@@ -327,6 +344,11 @@ SharedImageBackingFactoryD3D::CreateSharedImage(
     DLOG(ERROR) << "CreateTexture2D failed with error " << std::hex << hr;
     return nullptr;
   }
+
+  const std::string debug_label =
+      "SharedImage_Texture2D" + CreateLabelForSharedImageUsage(usage);
+  d3d11_device_->SetPrivateData(WKPDID_D3DDebugObjectName, debug_label.length(),
+                                debug_label.c_str());
 
   Microsoft::WRL::ComPtr<IDXGIResource1> dxgi_resource;
   hr = d3d11_texture.As(&dxgi_resource);
@@ -346,13 +368,13 @@ SharedImageBackingFactoryD3D::CreateSharedImage(
     return nullptr;
   }
 
-  // Put the shared handle into an RAII object as quickly as possible to
-  // ensure we do not leak it.
-  base::win::ScopedHandle scoped_shared_handle(shared_handle);
+  scoped_refptr<DXGISharedHandleState> dxgi_shared_handle_state =
+      dxgi_shared_handle_manager_->CreateAnonymousSharedHandleState(
+          base::win::ScopedHandle(shared_handle), d3d11_texture);
 
-  return MakeBacking(mailbox, format, size, color_space, surface_origin,
-                     alpha_type, usage, nullptr, 0, std::move(d3d11_texture),
-                     std::move(scoped_shared_handle));
+  return SharedImageBackingD3D::CreateFromDXGISharedHandle(
+      mailbox, format, size, color_space, surface_origin, alpha_type, usage,
+      std::move(d3d11_texture), std::move(dxgi_shared_handle_state));
 }
 
 std::unique_ptr<SharedImageBacking>
@@ -375,68 +397,183 @@ SharedImageBackingFactoryD3D::CreateSharedImage(
     int client_id,
     gfx::GpuMemoryBufferHandle handle,
     gfx::BufferFormat format,
+    gfx::BufferPlane plane,
     SurfaceHandle surface_handle,
     const gfx::Size& size,
     const gfx::ColorSpace& color_space,
     GrSurfaceOrigin surface_origin,
     SkAlphaType alpha_type,
     uint32_t usage) {
-  // TODO: Add support for shared memory GMBs.
-  DCHECK_EQ(handle.type, gfx::DXGI_SHARED_HANDLE);
-  if (!handle.dxgi_handle.IsValid()) {
-    DLOG(ERROR) << "Invalid handle type passed to CreateSharedImage";
-    return nullptr;
+  if (handle.type == gfx::DXGI_SHARED_HANDLE) {
+    if (!GetSupportedRGBAFormat(viz::GetResourceFormat(format))) {
+      DLOG(ERROR) << "Unsupported format " << gfx::BufferFormatToString(format);
+      return nullptr;
+    }
+
+    if (plane != gfx::BufferPlane::DEFAULT) {
+      DLOG(ERROR) << "Invalid plane " << gfx::BufferPlaneToString(plane);
+      return nullptr;
+    }
+
+    scoped_refptr<DXGISharedHandleState> dxgi_shared_handle_state =
+        ValidateAndOpenSharedHandle(dxgi_shared_handle_manager_.get(),
+                                    std::move(handle), format, size);
+    if (!dxgi_shared_handle_state)
+      return nullptr;
+
+    auto d3d11_texture = dxgi_shared_handle_state->d3d11_texture();
+
+    auto backing = SharedImageBackingD3D::CreateFromDXGISharedHandle(
+        mailbox, viz::GetResourceFormat(format), size, color_space,
+        surface_origin, alpha_type, usage, std::move(d3d11_texture),
+        std::move(dxgi_shared_handle_state));
+    if (backing)
+      backing->SetCleared();
+    return backing;
   }
 
-  if (!gpu::IsImageSizeValidForGpuMemoryBufferFormat(size, format)) {
-    DLOG(ERROR) << "Invalid image size " << size.ToString() << " for "
-                << gfx::BufferFormatToString(format);
-    return nullptr;
+  DCHECK_EQ(handle.type, gfx::SHARED_MEMORY_BUFFER);
+  switch (plane) {
+    case gfx::BufferPlane::DEFAULT:
+    case gfx::BufferPlane::Y:
+    case gfx::BufferPlane::UV:
+      break;
+    default:
+      DLOG(ERROR) << "Invalid plane " << gfx::BufferPlaneToString(plane);
+      return nullptr;
   }
 
-  Microsoft::WRL::ComPtr<ID3D11Device1> d3d11_device1;
-  HRESULT hr = d3d11_device_.As(&d3d11_device1);
-  if (FAILED(hr)) {
-    DLOG(ERROR) << "Failed to query for ID3D11Device1. Error: "
-                << logging::SystemErrorCodeToString(hr);
-    return nullptr;
-  }
+  const gfx::Size plane_size = GetPlaneSize(plane, size);
+  const viz::ResourceFormat plane_format =
+      viz::GetResourceFormat(GetPlaneBufferFormat(plane, format));
 
-  Microsoft::WRL::ComPtr<ID3D11Texture2D> d3d11_texture;
-  hr = d3d11_device1->OpenSharedResource1(handle.dxgi_handle.Get(),
-                                          IID_PPV_ARGS(&d3d11_texture));
-  if (FAILED(hr)) {
-    DLOG(ERROR) << "Unable to open shared resource from DXGI handle. Error: "
-                << logging::SystemErrorCodeToString(hr);
+  absl::optional<DXGI_FORMAT> dxgi_format =
+      GetSupportedRGBAFormat(plane_format);
+  if (!dxgi_format.has_value()) {
+    DLOG(ERROR) << "Invalid format " << gfx::BufferFormatToString(format);
     return nullptr;
   }
 
   D3D11_TEXTURE2D_DESC desc;
-  d3d11_texture->GetDesc(&desc);
+  desc.Width = plane_size.width();
+  desc.Height = plane_size.height();
+  desc.MipLevels = 1;
+  desc.ArraySize = 1;
+  desc.Format = dxgi_format.value();
+  desc.SampleDesc.Count = 1;
+  desc.SampleDesc.Quality = 0;
+  desc.Usage = D3D11_USAGE_DEFAULT;
+  desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+  desc.CPUAccessFlags = UseMapOnDefaultTextures()
+                            ? (D3D11_CPU_ACCESS_READ | D3D11_CPU_ACCESS_WRITE)
+                            : 0;
+  desc.MiscFlags = 0;
 
-  // TODO: Add checks for device specific limits.
-  if (desc.Width != static_cast<UINT>(size.width()) ||
-      desc.Height != static_cast<UINT>(size.height())) {
-    DLOG(ERROR)
-        << "Size passed to CreateSharedImage must match texture being opened";
+  Microsoft::WRL::ComPtr<ID3D11Texture2D> d3d11_texture;
+  HRESULT hr = d3d11_device_->CreateTexture2D(&desc, nullptr, &d3d11_texture);
+  if (FAILED(hr)) {
+    DLOG(ERROR) << "CreateTexture2D failed. hr = " << std::hex << hr;
     return nullptr;
   }
 
-  auto backing =
-      MakeBacking(mailbox, viz::GetResourceFormat(format), size, color_space,
-                  surface_origin, alpha_type, usage, /*swap_chain=*/nullptr,
-                  /*buffer_index=*/0, std::move(d3d11_texture),
-                  std::move(handle.dxgi_handle));
-  if (backing)
+  // Adjust offset to include plane offset.
+  const size_t plane_index = plane == gfx::BufferPlane::UV ? 1 : 0;
+  handle.offset += gfx::BufferOffsetForBufferFormat(size, format, plane_index);
+
+  auto backing = SharedImageBackingD3D::CreateFromSharedMemoryHandle(
+      mailbox, plane_format, plane_size, color_space, surface_origin,
+      alpha_type, usage, std::move(d3d11_texture), std::move(handle));
+  if (backing) {
+    // This marks the needs_upload_to_gpu_ flag to defer uploading the GMB which
+    // is unnecessary for GPU-write CPU-read scenarios e.g. two copy canvas
+    // capture, but is needed for CPU-write GPU-read cases e.g. software video
+    // decoder. In the GPU-write CPU-read scenario, previous GMB/CPU data is
+    // discarded after calling CopyToGpuMemoryBuffer().
+    backing->Update(/*in_fence=*/nullptr);
     backing->SetCleared();
+  }
   return backing;
+}
+
+std::vector<std::unique_ptr<SharedImageBacking>>
+SharedImageBackingFactoryD3D::CreateSharedImageVideoPlanes(
+    base::span<const Mailbox> mailboxes,
+    gfx::GpuMemoryBufferHandle handle,
+    gfx::BufferFormat format,
+    const gfx::Size& size,
+    uint32_t usage) {
+  // Only supports NV12 for now.
+  if (format != gfx::BufferFormat::YUV_420_BIPLANAR) {
+    DLOG(ERROR) << "Unsupported format: " << gfx::BufferFormatToString(format);
+    return {};
+  }
+
+  scoped_refptr<DXGISharedHandleState> dxgi_shared_handle_state =
+      ValidateAndOpenSharedHandle(dxgi_shared_handle_manager_.get(),
+                                  std::move(handle), format, size);
+  if (!dxgi_shared_handle_state)
+    return {};
+
+  auto d3d11_texture = dxgi_shared_handle_state->d3d11_texture();
+
+  return SharedImageBackingD3D::CreateFromVideoTexture(
+      mailboxes, GetDXGIFormat(format), size, usage, std::move(d3d11_texture),
+      /*array_slice=*/0, std::move(dxgi_shared_handle_state));
+}
+
+bool SharedImageBackingFactoryD3D::UseMapOnDefaultTextures() {
+  if (!map_on_default_textures_.has_value()) {
+    D3D11_FEATURE_DATA_D3D11_OPTIONS2 features;
+    HRESULT hr = d3d11_device_->CheckFeatureSupport(
+        D3D11_FEATURE_D3D11_OPTIONS2, &features,
+        sizeof(D3D11_FEATURE_DATA_D3D11_OPTIONS2));
+    if (SUCCEEDED(hr)) {
+      map_on_default_textures_.emplace(features.MapOnDefaultTextures &&
+                                       features.UnifiedMemoryArchitecture);
+    } else {
+      DVLOG(1) << "Failed to retrieve D3D11_FEATURE_D3D11_OPTIONS2. hr = "
+               << std::hex << hr;
+      map_on_default_textures_.emplace(false);
+    }
+  }
+  return map_on_default_textures_.value();
 }
 
 // Returns true if the specified GpuMemoryBufferType can be imported using
 // this factory.
 bool SharedImageBackingFactoryD3D::CanImportGpuMemoryBuffer(
-    gfx::GpuMemoryBufferType memory_buffer_type) {
-  return (memory_buffer_type == gfx::DXGI_SHARED_HANDLE);
+    gfx::GpuMemoryBufferType gmb_type,
+    viz::ResourceFormat format) {
+  return gmb_type == gfx::DXGI_SHARED_HANDLE ||
+         // Only allow single NV12 shared memory GMBs for now. This excludes
+         // dual shared memory GMBs used by software video decoder.
+         (gmb_type == gfx::SHARED_MEMORY_BUFFER &&
+          format == viz::YUV_420_BIPLANAR);
+}
+
+bool SharedImageBackingFactoryD3D::IsSupported(
+    uint32_t usage,
+    viz::ResourceFormat format,
+    bool thread_safe,
+    gfx::GpuMemoryBufferType gmb_type,
+    GrContextType gr_context_type,
+    bool* allow_legacy_mailbox,
+    bool is_pixel_used) {
+  if (is_pixel_used) {
+    return false;
+  }
+  if (gmb_type != gfx::EMPTY_BUFFER &&
+      !CanImportGpuMemoryBuffer(gmb_type, format)) {
+    return false;
+  }
+  // TODO(crbug.com/969114): Not all shared image factory implementations
+  // support concurrent read/write usage.
+  if (usage & SHARED_IMAGE_USAGE_CONCURRENT_READ_WRITE) {
+    return false;
+  }
+
+  *allow_legacy_mailbox = false;
+  return true;
 }
 
 }  // namespace gpu

@@ -15,8 +15,10 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/process/memory.h"
 #include "base/trace_event/trace_event.h"
+#include "cc/paint/paint_flags.h"
 #include "cc/tiles/mipmap_util.h"
-#include "ui/gfx/skia_util.h"
+#include "third_party/skia/include/core/SkColorSpace.h"
+#include "ui/gfx/geometry/skia_conversions.h"
 
 namespace cc {
 namespace {
@@ -84,9 +86,10 @@ SoftwareImageDecodeCacheUtils::DoDecodeImage(
   TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("cc.debug"),
                "SoftwareImageDecodeCacheUtils::DoDecodeImage - "
                "decode");
-  bool result = paint_image.Decode(target_pixels->data(), &target_info,
-                                   key.target_color_space().ToSkColorSpace(),
-                                   key.frame_key().frame_index(), client_id);
+  bool result =
+      paint_image.Decode(target_pixels->data(), &target_info,
+                         key.target_color_params().color_space.ToSkColorSpace(),
+                         key.frame_key().frame_index(), client_id);
   if (!result) {
     target_pixels->Unlock();
     return nullptr;
@@ -148,7 +151,7 @@ SoftwareImageDecodeCacheUtils::GenerateCacheEntryFromCandidate(
   DCHECK(!key.is_nearest_neighbor());
   SkPixmap target_pixmap(target_info, target_pixels->data(),
                          target_info.minRowBytes());
-  SkFilterQuality filter_quality = kMedium_SkFilterQuality;
+  PaintFlags::FilterQuality filter_quality = PaintFlags::FilterQuality::kMedium;
   if (decoded_pixmap.colorType() == kRGBA_F16_SkColorType &&
       !ImageDecodeCacheUtils::CanResizeF16Image(filter_quality)) {
     result = ImageDecodeCacheUtils::ScaleToHalfFloatPixmapUsingN32Intermediate(
@@ -156,8 +159,7 @@ SoftwareImageDecodeCacheUtils::GenerateCacheEntryFromCandidate(
   } else {
     result = decoded_pixmap.scalePixels(
         target_pixmap,
-        SkSamplingOptions(filter_quality,
-                          SkSamplingOptions::kMedium_asMipmapNearest));
+        PaintFlags::FilterQualityToSkSamplingOptions(filter_quality));
   }
   DCHECK(result) << key.ToString();
 
@@ -195,11 +197,12 @@ SoftwareImageDecodeCacheUtils::CacheKey::FromDrawImage(const DrawImage& image,
   // the filter quality doesn't matter. Early out instead.
   if (target_size.IsEmpty()) {
     return CacheKey(frame_key, stable_id, kSubrectAndScale, false, src_rect,
-                    target_size, image.target_color_space());
+                    target_size, image.target_color_params());
   }
 
   ProcessingType type = kOriginal;
-  bool is_nearest_neighbor = image.filter_quality() == kNone_SkFilterQuality;
+  bool is_nearest_neighbor =
+      image.filter_quality() == PaintFlags::FilterQuality::kNone;
   int mip_level = MipMapUtil::GetLevelForSize(src_rect.size(), target_size);
   // If any of the following conditions hold, then use at most low filter
   // quality and adjust the target size to match the original image:
@@ -248,7 +251,7 @@ SoftwareImageDecodeCacheUtils::CacheKey::FromDrawImage(const DrawImage& image,
   }
 
   return CacheKey(frame_key, stable_id, type, is_nearest_neighbor, src_rect,
-                  target_size, image.target_color_space());
+                  target_size, image.target_color_params());
 }
 
 SoftwareImageDecodeCacheUtils::CacheKey::CacheKey(
@@ -258,14 +261,14 @@ SoftwareImageDecodeCacheUtils::CacheKey::CacheKey(
     bool is_nearest_neighbor,
     const gfx::Rect& src_rect,
     const gfx::Size& target_size,
-    const gfx::ColorSpace& target_color_space)
+    const TargetColorParams& target_color_params)
     : frame_key_(frame_key),
       stable_id_(stable_id),
       type_(type),
       is_nearest_neighbor_(is_nearest_neighbor),
       src_rect_(src_rect),
       target_size_(target_size),
-      target_color_space_(target_color_space) {
+      target_color_params_(target_color_params) {
   if (type == kOriginal) {
     hash_ = frame_key_.hash();
   } else {
@@ -283,10 +286,14 @@ SoftwareImageDecodeCacheUtils::CacheKey::CacheKey(
                            frame_key_.hash());
   }
   // Include the target color space in the hash regardless of scaling.
-  hash_ = base::HashInts(hash_, target_color_space.GetHash());
+  hash_ = base::HashInts(hash_, target_color_params.GetHash());
 }
 
 SoftwareImageDecodeCacheUtils::CacheKey::CacheKey(const CacheKey& other) =
+    default;
+
+SoftwareImageDecodeCacheUtils::CacheKey&
+SoftwareImageDecodeCacheUtils::CacheKey::operator=(const CacheKey& other) =
     default;
 
 std::string SoftwareImageDecodeCacheUtils::CacheKey::ToString() const {
@@ -305,7 +312,7 @@ std::string SoftwareImageDecodeCacheUtils::CacheKey::ToString() const {
   }
   str << "]\nis_nearest_neightbor[" << is_nearest_neighbor_ << "]\nsrc_rect["
       << src_rect_.ToString() << "]\ntarget_size[" << target_size_.ToString()
-      << "]\ntarget_color_space[" << target_color_space_.ToString()
+      << "]\ntarget_color_params[" << target_color_params_.ToString()
       << "]\nhash[" << hash_ << "]";
   return str.str();
 }

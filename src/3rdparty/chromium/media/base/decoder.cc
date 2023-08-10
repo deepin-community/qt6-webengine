@@ -4,6 +4,8 @@
 
 #include "media/base/decoder.h"
 
+#include "base/notreached.h"
+
 namespace media {
 
 Decoder::Decoder() = default;
@@ -43,13 +45,15 @@ std::string GetDecoderName(VideoDecoderType type) {
     case VideoDecoderType::kD3D11:
       return "D3D11VideoDecoder";
     case VideoDecoderType::kVaapi:
-      return "VaapiVideoDecodeAccelerator";
+      return "VaapiVideoDecoder";
     case VideoDecoderType::kBroker:
       return "VideoDecoderBroker";
-    case VideoDecoderType::kChromeOs:
-      return "VideoDecoderPipeline (ChromeOs)";
     case VideoDecoderType::kVda:
-      return "VideoDecodeAccelerator";
+      return "VDAVideoDecoder";
+    case VideoDecoderType::kV4L2:
+      return "V4L2VideoDecoder";
+    case VideoDecoderType::kTesting:
+      return "Testing or Mock Video decoder";
   }
 }
 
@@ -67,7 +71,19 @@ std::string GetDecoderName(AudioDecoderType type) {
       return "MediaCodecAudioDecoder";
     case AudioDecoderType::kBroker:
       return "AudioDecoderBroker";
+    case AudioDecoderType::kTesting:
+      return "Testing or Mock Audio decoder";
+    case AudioDecoderType::kAudioToolbox:
+      return "AudioToolbox";
   }
+}
+
+std::ostream& operator<<(std::ostream& out, AudioDecoderType type) {
+  return out << GetDecoderName(type);
+}
+
+std::ostream& operator<<(std::ostream& out, VideoDecoderType type) {
+  return out << GetDecoderName(type);
 }
 
 }  // namespace media

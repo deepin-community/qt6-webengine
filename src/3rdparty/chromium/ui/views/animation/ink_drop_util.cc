@@ -8,8 +8,8 @@
 
 #include "base/check_op.h"
 #include "ui/gfx/geometry/point3_f.h"
+#include "ui/gfx/geometry/transform.h"
 #include "ui/gfx/geometry/vector2d_f.h"
-#include "ui/gfx/transform.h"
 #include "ui/native_theme/native_theme.h"
 #include "ui/views/view.h"
 #include "ui/views/views_features.h"
@@ -54,9 +54,8 @@ gfx::Transform GetTransformSubpixelCorrection(const gfx::Transform& transform,
 }
 
 bool UsingPlatformHighContrastInkDrop(const View* view) {
-  const ui::NativeTheme* theme = view->GetNativeTheme();
-  return theme &&
-         theme->GetDefaultSystemColorScheme() ==
+  return view->GetWidget() &&
+         view->GetNativeTheme()->GetDefaultSystemColorScheme() ==
              ui::NativeTheme::ColorScheme::kPlatformHighContrast &&
          base::FeatureList::IsEnabled(
              features::kEnablePlatformHighContrastInkDrop);

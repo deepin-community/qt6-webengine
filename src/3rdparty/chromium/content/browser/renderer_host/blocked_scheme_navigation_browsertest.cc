@@ -6,11 +6,12 @@
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
 #include "base/strings/pattern.h"
 #include "base/strings/string_util.h"
+#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
@@ -125,12 +126,12 @@ class ScopedPluginRegister {
  public:
   ScopedPluginRegister(content::PluginService* plugin_service)
       : plugin_service_(plugin_service) {
-    const char kPluginName[] = "PDF";
+    const char16_t kPluginName[] = u"PDF";
     const char kPdfMimeType[] = "application/pdf";
     const char kPdfFileType[] = "pdf";
     WebPluginInfo plugin_info;
     plugin_info.type = WebPluginInfo::PLUGIN_TYPE_PEPPER_OUT_OF_PROCESS;
-    plugin_info.name = base::ASCIIToUTF16(kPluginName);
+    plugin_info.name = kPluginName;
     plugin_info.mime_types.push_back(
         WebPluginMimeType(kPdfMimeType, kPdfFileType, std::string()));
     plugin_service_->RegisterInternalPlugin(plugin_info, false);
@@ -150,7 +151,7 @@ class ScopedPluginRegister {
   }
 
  private:
-  content::PluginService* plugin_service_;
+  raw_ptr<content::PluginService> plugin_service_;
 };
 #endif  // BUILDFLAG(ENABLE_PLUGINS)
 
@@ -166,6 +167,11 @@ class BlockedSchemeNavigationBrowserTest
 #else
   BlockedSchemeNavigationBrowserTest() {}
 #endif  // BUILDFLAG(ENABLE_PLUGINS)
+
+  BlockedSchemeNavigationBrowserTest(
+      const BlockedSchemeNavigationBrowserTest&) = delete;
+  BlockedSchemeNavigationBrowserTest& operator=(
+      const BlockedSchemeNavigationBrowserTest&) = delete;
 
  protected:
   void SetUpOnMainThread() override {
@@ -217,12 +223,12 @@ class BlockedSchemeNavigationBrowserTest
         "    });"
         "  });"
         "});";
-    std::string filesystem_url_string;
-    EXPECT_TRUE(ExecuteScriptAndExtractString(
-        shell()->web_contents()->GetMainFrame(),
-        base::StringPrintf(kCreateFilesystemUrlScript, content.c_str(),
-                           filename.c_str(), mime_type.c_str()),
-        &filesystem_url_string));
+    std::string filesystem_url_string =
+        EvalJs(shell()->web_contents()->GetMainFrame(),
+               base::StringPrintf(kCreateFilesystemUrlScript, content.c_str(),
+                                  filename.c_str(), mime_type.c_str()),
+               EXECUTE_SCRIPT_USE_MANUAL_REPLY)
+            .ExtractString();
     GURL filesystem_url(filesystem_url_string);
     EXPECT_TRUE(filesystem_url.is_valid());
     EXPECT_TRUE(filesystem_url.SchemeIsFileSystem());
@@ -264,7 +270,7 @@ class BlockedSchemeNavigationBrowserTest
         "document.body.appendChild(f);",
         url.spec().c_str());
     TestNavigationObserver observer(shell()->web_contents());
-    EXPECT_TRUE(ExecuteScript(rfh, javascript));
+    EXPECT_TRUE(ExecJs(rfh, javascript));
     observer.Wait();
     std::string message;
     while (message_queue.WaitForMessage(&message)) {
@@ -362,14 +368,14 @@ class BlockedSchemeNavigationBrowserTest
             ? std::string()
             : base::StringPrintf(kNavigationBlockedMessage, scheme.c_str());
 
-    base::Optional<WebContentsConsoleObserver> console_observer;
+    absl::optional<WebContentsConsoleObserver> console_observer;
     if (!expected_message.empty()) {
       console_observer.emplace(shell()->web_contents());
       console_observer->SetPattern(expected_message);
     }
 
     TestNavigationObserver navigation_observer(shell()->web_contents());
-    EXPECT_TRUE(ExecuteScript(rfh, javascript));
+    EXPECT_TRUE(ExecJs(rfh, javascript));
 
     if (console_observer)
       console_observer->Wait();
@@ -405,7 +411,7 @@ class BlockedSchemeNavigationBrowserTest
       const std::string& javascript,
       ExpectedNavigationStatus expected_navigation_status) {
     ShellAddedObserver new_shell_observer;
-    EXPECT_TRUE(ExecuteScript(rfh, javascript));
+    EXPECT_TRUE(ExecJs(rfh, javascript));
 
     Shell* new_shell = new_shell_observer.GetShell();
     WaitForLoadStop(new_shell->web_contents());
@@ -432,13 +438,13 @@ class BlockedSchemeNavigationBrowserTest
                                                const std::string& javascript) {
     const GURL original_url(shell()->web_contents()->GetLastCommittedURL());
     ShellAddedObserver new_shell_observer;
-    DownloadManager* download_manager = BrowserContext::GetDownloadManager(
-        shell()->web_contents()->GetBrowserContext());
+    DownloadManager* download_manager =
+        shell()->web_contents()->GetBrowserContext()->GetDownloadManager();
 
     DownloadTestObserverTerminal download_observer(
         download_manager, 1, DownloadTestObserver::ON_DANGEROUS_DOWNLOAD_FAIL);
 
-    EXPECT_TRUE(ExecuteScript(rfh, javascript));
+    EXPECT_TRUE(ExecJs(rfh, javascript));
     Shell* new_shell = new_shell_observer.GetShell();
 
     WaitForLoadStop(new_shell->web_contents());
@@ -448,8 +454,9 @@ class BlockedSchemeNavigationBrowserTest
     EXPECT_TRUE(
         new_shell->web_contents()->GetLastCommittedURL().spec().empty());
     // No navigation should commit.
-    EXPECT_FALSE(
-        new_shell->web_contents()->GetController().GetLastCommittedEntry());
+    NavigationEntry* current_entry =
+        new_shell->web_contents()->GetController().GetLastCommittedEntry();
+    EXPECT_TRUE(!current_entry || current_entry->IsInitialEntry());
     // Original page shouldn't navigate away.
     EXPECT_EQ(original_url, shell()->web_contents()->GetLastCommittedURL());
   }
@@ -458,12 +465,12 @@ class BlockedSchemeNavigationBrowserTest
   void ExecuteScriptAndCheckDownload(RenderFrameHost* rfh,
                                      const std::string& javascript) {
     const GURL original_url(shell()->web_contents()->GetLastCommittedURL());
-    DownloadManager* download_manager = BrowserContext::GetDownloadManager(
-        shell()->web_contents()->GetBrowserContext());
+    DownloadManager* download_manager =
+        shell()->web_contents()->GetBrowserContext()->GetDownloadManager();
     DownloadTestObserverTerminal download_observer(
         download_manager, 1, DownloadTestObserver::ON_DANGEROUS_DOWNLOAD_FAIL);
 
-    EXPECT_TRUE(ExecuteScript(rfh, javascript));
+    EXPECT_TRUE(ExecJs(rfh, javascript));
     // If no download happens, this will timeout.
     download_observer.WaitForFinished();
 
@@ -475,8 +482,8 @@ class BlockedSchemeNavigationBrowserTest
   // to be started.
   void NavigateAndCheckDownload(const GURL& url) {
     const GURL original_url(shell()->web_contents()->GetLastCommittedURL());
-    DownloadManager* download_manager = BrowserContext::GetDownloadManager(
-        shell()->web_contents()->GetBrowserContext());
+    DownloadManager* download_manager =
+        shell()->web_contents()->GetBrowserContext()->GetDownloadManager();
     DownloadTestObserverTerminal download_observer(
         download_manager, 1, DownloadTestObserver::ON_DANGEROUS_DOWNLOAD_FAIL);
     // Since this navigation will result in a download, there should be no
@@ -513,7 +520,7 @@ class BlockedSchemeNavigationBrowserTest
         shell->web_contents(), kNavigationSuccessfulMessage, blocked_message);
 
     TestNavigationObserver navigation_observer(shell->web_contents());
-    EXPECT_TRUE(ExecuteScript(rfh, javascript));
+    EXPECT_TRUE(ExecJs(rfh, javascript));
     console_observer.Wait();
     EXPECT_EQ(BlockedURLWarningConsoleObserver::SAW_SUCCESS_MESSAGE,
               console_observer.status());
@@ -542,7 +549,7 @@ class BlockedSchemeNavigationBrowserTest
         shell->web_contents(), kNavigationSuccessfulMessage, blocked_message);
 
     TestNavigationObserver navigation_observer(shell->web_contents());
-    EXPECT_TRUE(ExecuteScript(rfh, javascript));
+    EXPECT_TRUE(ExecJs(rfh, javascript));
     console_observer.Wait();
     EXPECT_EQ(BlockedURLWarningConsoleObserver::SAW_FAILURE_MESSAGE,
               console_observer.status());
@@ -559,8 +566,6 @@ class BlockedSchemeNavigationBrowserTest
 #endif  // BUILDFLAG(ENABLE_PLUGINS)
 
   GURL data_url_;
-
-  DISALLOW_COPY_AND_ASSIGN(BlockedSchemeNavigationBrowserTest);
 };
 
 INSTANTIATE_TEST_SUITE_P(All,
@@ -596,8 +601,7 @@ IN_PROC_BROWSER_TEST_P(BlockedSchemeNavigationBrowserTest,
     // original page may clear all filesystem: URLs associated with that origin,
     // so we keep the origin around in the original shell.
     ShellAddedObserver new_shell_observer;
-    EXPECT_TRUE(
-        ExecuteScript(shell()->web_contents(), "window.open('about:blank');"));
+    EXPECT_TRUE(ExecJs(shell()->web_contents(), "window.open('about:blank');"));
     Shell* new_shell = new_shell_observer.GetShell();
     EXPECT_TRUE(WaitForLoadStop(new_shell->web_contents()));
 
@@ -629,12 +633,16 @@ class DataUrlNavigationBrowserTestWithFeatureFlag
     scoped_feature_list_.InitAndEnableFeature(
         features::kAllowContentInitiatedDataUrlNavigations);
   }
+
+  DataUrlNavigationBrowserTestWithFeatureFlag(
+      const DataUrlNavigationBrowserTestWithFeatureFlag&) = delete;
+  DataUrlNavigationBrowserTestWithFeatureFlag& operator=(
+      const DataUrlNavigationBrowserTestWithFeatureFlag&) = delete;
+
   ~DataUrlNavigationBrowserTestWithFeatureFlag() override {}
 
  private:
   base::test::ScopedFeatureList scoped_feature_list_;
-
-  DISALLOW_COPY_AND_ASSIGN(DataUrlNavigationBrowserTestWithFeatureFlag);
 };
 
 // Tests that a content initiated navigation to a data URL is allowed if
@@ -735,8 +743,7 @@ IN_PROC_BROWSER_TEST_P(BlockedSchemeNavigationBrowserTest,
     // original page may clear all filesystem: URLs associated with that origin,
     // so we keep the origin around in the original shell.
     ShellAddedObserver new_shell_observer;
-    EXPECT_TRUE(
-        ExecuteScript(shell()->web_contents(), "window.open('about:blank');"));
+    EXPECT_TRUE(ExecJs(shell()->web_contents(), "window.open('about:blank');"));
     Shell* new_shell = new_shell_observer.GetShell();
     EXPECT_TRUE(WaitForLoadStop(new_shell->web_contents()));
 
@@ -782,8 +789,7 @@ IN_PROC_BROWSER_TEST_P(BlockedSchemeNavigationBrowserTest,
     ShellAddedObserver new_shell_observer;
     // TODO(crbug/811558): about:blank might commit without needing to wait.
     //                     Remove the wait.
-    EXPECT_TRUE(
-        ExecuteScript(shell()->web_contents(), "window.open('about:blank');"));
+    EXPECT_TRUE(ExecJs(shell()->web_contents(), "window.open('about:blank');"));
     Shell* new_shell = new_shell_observer.GetShell();
     EXPECT_TRUE(WaitForLoadStop(new_shell->web_contents()));
 
@@ -843,7 +849,7 @@ IN_PROC_BROWSER_TEST_P(BlockedSchemeNavigationBrowserTest,
   }
 }
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 // Flaky on android: https://crbug.com/734563
 #define MAYBE_DataUrl_OctetStream_WindowOpen \
   DISABLED_DataUrl_OctetStream_WindowOpen
@@ -853,7 +859,7 @@ IN_PROC_BROWSER_TEST_P(BlockedSchemeNavigationBrowserTest,
 
 // Test window.open to a data URL with binary mimetype.
 IN_PROC_BROWSER_TEST_F(BlockedSchemeNavigationBrowserTest,
-                       DataUrl_OctetStream_WindowOpen) {
+                       MAYBE_DataUrl_OctetStream_WindowOpen) {
   Navigate(embedded_test_server()->GetURL(
       base::StringPrintf("/data_url_navigations.html")));
   // Navigations to data URLs with unknown mime types should end up as
@@ -972,7 +978,7 @@ IN_PROC_BROWSER_TEST_P(BlockedSchemeNavigationBrowserTest,
   }
 }
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 // Flaky on android: https://crbug.com/734563
 #define MAYBE_UnknownMimeType_WindowOpen DISABLED_UnknownMimeType_WindowOpen
 #else
@@ -1091,7 +1097,7 @@ IN_PROC_BROWSER_TEST_P(BlockedSchemeNavigationBrowserTest,
   const GURL kPDFUrl(CreateURLWithBlockedScheme(
       "test.pdf", IsDataURLTest() ? pdf_base64 : kPDF, "application/pdf"));
 
-#if !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
   TestNavigationObserver observer(shell()->web_contents());
   EXPECT_TRUE(NavigateToURL(shell(), kPDFUrl));
   EXPECT_EQ(kPDFUrl, observer.last_navigation_url());
@@ -1109,7 +1115,7 @@ IN_PROC_BROWSER_TEST_P(BlockedSchemeNavigationBrowserTest,
                        PDF_WindowOpen_Block) {
   Navigate(GetTestURL());
 
-#if !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
   ExecuteScriptAndCheckWindowOpen(
       shell()->web_contents()->GetMainFrame(), GetParam(),
       "document.getElementById('window-open-pdf').click()", NAVIGATION_BLOCKED);
@@ -1135,7 +1141,7 @@ IN_PROC_BROWSER_TEST_P(BlockedSchemeNavigationBrowserTest,
                        PDF_Navigation_Block) {
   Navigate(GetTestURL());
 
-#if !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
   ExecuteScriptAndCheckPDFNavigation(
       shell()->web_contents()->GetMainFrame(), GetParam(),
       "document.getElementById('navigate-top-frame-to-pdf').click()",
@@ -1161,7 +1167,7 @@ IN_PROC_BROWSER_TEST_P(BlockedSchemeNavigationBrowserTest,
 IN_PROC_BROWSER_TEST_P(BlockedSchemeNavigationBrowserTest, PDF_FormPost_Block) {
   Navigate(GetTestURL());
 
-#if !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
   ExecuteScriptAndCheckPDFNavigation(
       shell()->web_contents()->GetMainFrame(), GetParam(),
       "document.getElementById('form-post-to-pdf').click()",
@@ -1193,7 +1199,7 @@ IN_PROC_BROWSER_TEST_P(BlockedSchemeNavigationBrowserTest,
       embedded_test_server()->GetURL(
           "b.com", base::StringPrintf("/%s_url_navigations.html", GetParam())));
 
-#if !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
   TestPDFNavigationFromFrame(
       GetParam(),
       "document.getElementById('navigate-top-frame-to-pdf').click()",
@@ -1229,7 +1235,7 @@ IN_PROC_BROWSER_TEST_P(BlockedSchemeNavigationBrowserTest,
             embedded_test_server()->GetURL(
                 base::StringPrintf("/%s_url_navigations.html", GetParam())));
 
-#if !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
   TestWindowOpenFromFrame(GetParam(),
                           "document.getElementById('window-open-pdf').click()",
                           NAVIGATION_BLOCKED);
@@ -1261,7 +1267,7 @@ IN_PROC_BROWSER_TEST_P(BlockedSchemeNavigationBrowserTest,
   EXPECT_TRUE(NavigateToURL(shell(), CreateEmptyURLWithBlockedScheme()));
   AddIFrame(shell()->web_contents()->GetMainFrame(), GetTestURL());
 
-#if !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
   TestPDFNavigationFromFrame(
       GetParam(),
       "document.getElementById('navigate-top-frame-to-pdf').click()",
@@ -1294,7 +1300,7 @@ IN_PROC_BROWSER_TEST_P(BlockedSchemeNavigationBrowserTest,
   EXPECT_TRUE(NavigateToURL(shell(), CreateEmptyURLWithBlockedScheme()));
   AddIFrame(shell()->web_contents()->GetMainFrame(), GetTestURL());
 
-#if !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
   TestWindowOpenFromFrame(GetParam(),
                           "document.getElementById('window-open-pdf').click()",
                           NAVIGATION_BLOCKED);
@@ -1328,8 +1334,8 @@ IN_PROC_BROWSER_TEST_P(BlockedSchemeNavigationBrowserTest,
   // This test will need to navigate the newly opened window.
   ShellAddedObserver new_shell_observer;
   EXPECT_TRUE(
-      ExecuteScript(shell()->web_contents(),
-                    "document.getElementById('window-open-redirect').click()"));
+      ExecJs(shell()->web_contents(),
+             "document.getElementById('window-open-redirect').click()"));
   Shell* new_shell = new_shell_observer.GetShell();
   NavigationController* controller =
       &new_shell->web_contents()->GetController();
@@ -1379,7 +1385,7 @@ IN_PROC_BROWSER_TEST_P(BlockedSchemeNavigationBrowserTest,
   EXPECT_EQ(1, controller->GetLastCommittedEntryIndex());
   {
     TestNavigationObserver observer(new_shell->web_contents());
-    EXPECT_TRUE(ExecuteScript(new_shell, "history.go(-1)"));
+    EXPECT_TRUE(ExecJs(new_shell, "history.go(-1)"));
     observer.Wait();
 
     NavigationEntry* entry = controller->GetLastCommittedEntry();

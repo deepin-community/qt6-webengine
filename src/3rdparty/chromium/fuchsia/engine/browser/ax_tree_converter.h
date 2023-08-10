@@ -5,14 +5,15 @@
 #ifndef FUCHSIA_ENGINE_BROWSER_AX_TREE_CONVERTER_H_
 #define FUCHSIA_ENGINE_BROWSER_AX_TREE_CONVERTER_H_
 
-#include <base/containers/flat_map.h>
-#include <base/optional.h>
 #include <fuchsia/accessibility/semantics/cpp/fidl.h>
 
 #include <unordered_map>
 
+#include "base/containers/flat_map.h"
 #include "content/public/browser/ax_event_notification_details.h"
 #include "fuchsia/engine/web_engine_export.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "ui/accessibility/ax_node.h"
 
 // Maps AXNode IDs to Fuchsia Node IDs.
 // This class saves the remapped values.
@@ -32,7 +33,7 @@ class WEB_ENGINE_EXPORT NodeIDMapper {
   // From a Fuchsia Node ID, returns the pair of the AXTreeID and the AXNode ID
   // that maps to it. If the Fuchsia Node ID is not in the map, returns no
   // value.
-  virtual base::Optional<std::pair<ui::AXTreeID, int32_t>> ToAXNodeID(
+  virtual absl::optional<std::pair<ui::AXTreeID, int32_t>> ToAXNodeID(
       uint32_t fuchsia_node_id);
 
   // Updates the  AXNode IDs to point to the new |ax_tree_id|. This method
@@ -58,15 +59,17 @@ class WEB_ENGINE_EXPORT NodeIDMapper {
   base::flat_map<ui::AXTreeID, std::unordered_map<int32_t, uint32_t>> id_map_;
 };
 
-// Converts an AXNodeData to a Fuchsia Semantic Node.
+// Converts an AXNode to a Fuchsia Semantic Node.
 // Both data types represent a single node, and no additional state is needed.
-// AXNodeData is used to convey partial updates, so not all fields may be
+// AXNode is used to convey partial updates, so not all fields may be
 // present. Those that are will be converted. The Fuchsia SemanticsManager
 // accepts partial updates, so |node| does not require all fields to be set.
 WEB_ENGINE_EXPORT fuchsia::accessibility::semantics::Node
-AXNodeDataToSemanticNode(const ui::AXNodeData& node,
+AXNodeDataToSemanticNode(const ui::AXNode& ax_node,
+                         const ui::AXNode& container_node,
                          const ui::AXTreeID& tree_id,
                          bool is_root,
+                         float scale_factor,
                          NodeIDMapper* id_mapper);
 
 // Converts Fuchsia action of type |fuchsia_action| to an ax::mojom::Action of

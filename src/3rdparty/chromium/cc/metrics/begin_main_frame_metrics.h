@@ -21,7 +21,6 @@ struct CC_EXPORT BeginMainFrameMetrics {
   base::TimeDelta style_update;
   base::TimeDelta layout_update;
   base::TimeDelta prepaint;
-  base::TimeDelta compositing_assignments;
   base::TimeDelta compositing_inputs;
   base::TimeDelta paint;
   base::TimeDelta composite_commit;
@@ -33,6 +32,7 @@ struct CC_EXPORT BeginMainFrameMetrics {
   BeginMainFrameMetrics();
 
   BeginMainFrameMetrics(const BeginMainFrameMetrics& other);
+  BeginMainFrameMetrics& operator=(const BeginMainFrameMetrics& other);
 };
 
 }  // namespace cc

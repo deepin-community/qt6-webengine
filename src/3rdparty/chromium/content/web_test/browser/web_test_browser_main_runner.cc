@@ -15,9 +15,9 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/location.h"
 #include "base/run_loop.h"
-#include "base/single_thread_task_runner.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
@@ -92,25 +92,17 @@ void RunTests(content::BrowserMainRunner* main_runner) {
 
   content::TestInfoExtractor test_extractor(
       *base::CommandLine::ForCurrentProcess());
-  bool ran_at_least_once = false;
   std::unique_ptr<content::TestInfo> test_info;
   while ((test_info = test_extractor.GetNextTest())) {
-    ran_at_least_once = true;
     if (!RunOneTest(*test_info, &test_controller, main_runner))
       break;
-  }
-  if (!ran_at_least_once) {
-    // CloseAllWindows will cause the |main_runner| loop to quit.
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::BindOnce(&content::Shell::CloseAllWindows));
-    main_runner->Run();
   }
 }
 
 }  // namespace
 
 void WebTestBrowserMainRunner::Initialize() {
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   bool layout_system_deps_ok = content::WebTestBrowserCheckLayoutSystemDeps();
   CHECK(layout_system_deps_ok);
 #endif
@@ -147,9 +139,7 @@ void WebTestBrowserMainRunner::Initialize() {
   // only default to a software GL if the flag isn't already specified.
   if (!command_line.HasSwitch(switches::kUseGpuInTests) &&
       !command_line.HasSwitch(switches::kUseGL)) {
-    command_line.AppendSwitchASCII(
-        switches::kUseGL,
-        gl::GetGLImplementationName(gl::GetSoftwareGLImplementation()));
+    gl::SetSoftwareGLCommandLineSwitches(&command_line);
   }
   command_line.AppendSwitchASCII(switches::kTouchEventFeatureDetection,
                                  switches::kTouchEventFeatureDetectionEnabled);
@@ -191,6 +181,13 @@ void WebTestBrowserMainRunner::Initialize() {
                                  "MAP *.test. 127.0.0.1,"
                                  "MAP *.test 127.0.0.1");
 
+  // These must be kept in sync with //third_party/wpt_tools/wpt.config.json.
+  command_line.AppendSwitchASCII(network::switches::kIpAddressSpaceOverrides,
+                                 "127.0.0.1:8082=private,"
+                                 "127.0.0.1:8093=public,"
+                                 "127.0.0.1:8446=private,"
+                                 "127.0.0.1:8447=public");
+
   // We want to know determanistically from command line flags if the Gpu
   // process will provide gpu raster in its capabilities or not.
   //
@@ -214,6 +211,9 @@ void WebTestBrowserMainRunner::Initialize() {
   command_line.AppendSwitch(switches::kUseFakeUIForMediaStream);
   command_line.AppendSwitch(switches::kUseFakeDeviceForMediaStream);
 
+  // Always run with fake FedCM UI.
+  command_line.AppendSwitch(switches::kUseFakeUIForFedCM);
+
   // Enable the deprecated WebAuthn Mojo Testing API.
   command_line.AppendSwitch(switches::kEnableWebAuthDeprecatedMojoTestingApi);
 
@@ -221,8 +221,8 @@ void WebTestBrowserMainRunner::Initialize() {
   // interference. This GPU process is launched 120 seconds after chrome starts.
   command_line.AppendSwitch(switches::kDisableGpuProcessForDX12InfoCollection);
 
-#if defined(OS_WIN) || defined(OS_MAC) || defined(OS_LINUX) || \
-    defined(OS_CHROMEOS)
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || \
+    BUILDFLAG(IS_CHROMEOS)
   content::WebTestBrowserPlatformInitialize();
 #endif
 
@@ -230,17 +230,19 @@ void WebTestBrowserMainRunner::Initialize() {
 }
 
 void WebTestBrowserMainRunner::RunBrowserMain(
-    const content::MainFunctionParams& parameters) {
+    content::MainFunctionParams parameters) {
   std::unique_ptr<content::BrowserMainRunner> main_runner =
       content::BrowserMainRunner::Create();
-  int initialize_exit_code = main_runner->Initialize(parameters);
+  int initialize_exit_code = main_runner->Initialize(std::move(parameters));
   DCHECK_LT(initialize_exit_code, 0)
       << "BrowserMainRunner::Initialize failed in WebTestBrowserMainRunner";
 
   RunTests(main_runner.get());
-  base::RunLoop().RunUntilIdle();
 
-  content::Shell::CloseAllWindows();
+  // Shell::Shutdown() will cause the |main_runner| loop to quit.
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::BindOnce(&Shell::Shutdown));
+  main_runner->Run();
 
   main_runner->Shutdown();
 }

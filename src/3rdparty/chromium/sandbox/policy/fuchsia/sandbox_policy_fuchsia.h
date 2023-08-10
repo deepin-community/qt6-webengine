@@ -11,7 +11,7 @@
 
 #include "base/memory/ref_counted.h"
 #include "sandbox/policy/export.h"
-#include "sandbox/policy/sandbox_type.h"
+#include "sandbox/policy/mojom/sandbox.mojom.h"
 
 namespace base {
 class FilteredServiceDirectory;
@@ -25,14 +25,11 @@ namespace policy {
 class SANDBOX_POLICY_EXPORT SandboxPolicyFuchsia {
  public:
   // Must be called on the IO thread.
-  explicit SandboxPolicyFuchsia(SandboxType type);
+  explicit SandboxPolicyFuchsia(sandbox::mojom::Sandbox type);
   ~SandboxPolicyFuchsia();
 
-  // Sets the service directory to pass to the child process when launching it.
-  // This is only supported for SandboxType::kWebContext processes.  If this is
-  // not called for a WEB_CONTEXT process then it will receive no services.
-  void SetServiceDirectory(
-      fidl::InterfaceHandle<::fuchsia::io::Directory> service_directory_client);
+  SandboxPolicyFuchsia(const SandboxPolicyFuchsia&) = delete;
+  SandboxPolicyFuchsia& operator=(const SandboxPolicyFuchsia&) = delete;
 
   // Modifies the process launch |options| to achieve  the level of
   // isolation appropriate for current the sandbox type. The caller may then add
@@ -41,7 +38,7 @@ class SANDBOX_POLICY_EXPORT SandboxPolicyFuchsia {
   void UpdateLaunchOptionsForSandbox(base::LaunchOptions* options);
 
  private:
-  SandboxType type_;
+  sandbox::mojom::Sandbox type_;
 
   // Services directory used for the /svc namespace of the child process.
   std::unique_ptr<base::FilteredServiceDirectory> service_directory_;
@@ -50,8 +47,6 @@ class SANDBOX_POLICY_EXPORT SandboxPolicyFuchsia {
 
   // Job in which the child process is launched.
   zx::job job_;
-
-  DISALLOW_COPY_AND_ASSIGN(SandboxPolicyFuchsia);
 };
 
 }  // namespace policy

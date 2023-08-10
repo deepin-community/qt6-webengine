@@ -22,8 +22,9 @@
 
 #include "fxbarcode/oned/BC_OnedEAN8Writer.h"
 
+#include <math.h>
+
 #include <algorithm>
-#include <cwctype>
 #include <memory>
 #include <vector>
 
@@ -56,12 +57,9 @@ void CBC_OnedEAN8Writer::SetDataLength(int32_t length) {
   m_iDataLenth = 8;
 }
 
-bool CBC_OnedEAN8Writer::SetTextLocation(BC_TEXT_LOC location) {
-  if (location == BC_TEXT_LOC_BELOWEMBED) {
+void CBC_OnedEAN8Writer::SetTextLocation(BC_TEXT_LOC location) {
+  if (location == BC_TEXT_LOC::kBelowEmbed)
     m_locTextLoc = location;
-    return true;
-  }
-  return false;
 }
 
 bool CBC_OnedEAN8Writer::CheckContentValidity(WideStringView contents) {
@@ -91,12 +89,13 @@ int32_t CBC_OnedEAN8Writer::CalcChecksum(const ByteString& contents) {
 }
 
 uint8_t* CBC_OnedEAN8Writer::EncodeWithHint(const ByteString& contents,
-                                            BCFORMAT format,
+                                            BC_TYPE format,
                                             int32_t& outWidth,
                                             int32_t& outHeight,
                                             int32_t hints) {
-  if (format != BCFORMAT_EAN_8)
+  if (format != BC_TYPE::kEAN8)
     return nullptr;
+
   return CBC_OneDimWriter::EncodeWithHint(contents, format, outWidth, outHeight,
                                           hints);
 }
@@ -129,7 +128,7 @@ uint8_t* CBC_OnedEAN8Writer::EncodeImpl(const ByteString& contents,
 
 bool CBC_OnedEAN8Writer::ShowChars(WideStringView contents,
                                    CFX_RenderDevice* device,
-                                   const CFX_Matrix* matrix,
+                                   const CFX_Matrix& matrix,
                                    int32_t barWidth,
                                    int32_t multiple) {
   if (!device)
@@ -150,14 +149,14 @@ bool CBC_OnedEAN8Writer::ShowChars(WideStringView contents,
   CFX_Matrix matr(m_outputHScale, 0.0, 0.0, 1.0, 0.0, 0.0);
   CFX_FloatRect rect((float)leftPosition, (float)(m_Height - iTextHeight),
                      (float)(leftPosition + strWidth - 0.5), (float)m_Height);
-  matr.Concat(*matrix);
+  matr.Concat(matrix);
   FX_RECT re = matr.TransformRect(rect).GetOuterRect();
   device->FillRect(re, kBackgroundColor);
   CFX_Matrix matr1(m_outputHScale, 0.0, 0.0, 1.0, 0.0, 0.0);
   CFX_FloatRect rect1(
       (float)(leftPosition + 33 * multiple), (float)(m_Height - iTextHeight),
       (float)(leftPosition + 33 * multiple + strWidth - 0.5), (float)m_Height);
-  matr1.Concat(*matrix);
+  matr1.Concat(matrix);
   re = matr1.TransformRect(rect1).GetOuterRect();
   device->FillRect(re, kBackgroundColor);
   strWidth = static_cast<int32_t>(strWidth * m_outputHScale);
@@ -168,10 +167,10 @@ bool CBC_OnedEAN8Writer::ShowChars(WideStringView contents,
     CFX_Matrix affine_matrix1(1.0, 0.0, 0.0, -1.0,
                               (float)leftPosition * m_outputHScale,
                               (float)(m_Height - iTextHeight + iFontSize));
-    affine_matrix1.Concat(*matrix);
-    device->DrawNormalText(iLen, charpos.data(), m_pFont.Get(),
-                           static_cast<float>(iFontSize), affine_matrix1,
-                           m_fontColor, GetTextRenderOptions());
+    affine_matrix1.Concat(matrix);
+    device->DrawNormalText(pdfium::make_span(charpos).first(iLen),
+                           m_pFont.Get(), static_cast<float>(iFontSize),
+                           affine_matrix1, m_fontColor, GetTextRenderOptions());
   }
   tempStr = str.Substr(4, 4);
   iLen = tempStr.GetLength();
@@ -182,11 +181,10 @@ bool CBC_OnedEAN8Writer::ShowChars(WideStringView contents,
         1.0, 0.0, 0.0, -1.0,
         (float)(leftPosition + 33 * multiple) * m_outputHScale,
         (float)(m_Height - iTextHeight + iFontSize));
-    if (matrix)
-      affine_matrix1.Concat(*matrix);
-    device->DrawNormalText(iLen, &charpos[4], m_pFont.Get(),
-                           static_cast<float>(iFontSize), affine_matrix1,
-                           m_fontColor, GetTextRenderOptions());
+    affine_matrix1.Concat(matrix);
+    device->DrawNormalText(pdfium::make_span(charpos).subspan(4, iLen),
+                           m_pFont.Get(), static_cast<float>(iFontSize),
+                           affine_matrix1, m_fontColor, GetTextRenderOptions());
   }
   return true;
 }

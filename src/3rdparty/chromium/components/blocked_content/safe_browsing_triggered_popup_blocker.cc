@@ -8,15 +8,17 @@
 
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
+#include "components/back_forward_cache/back_forward_cache_disable.h"
 #include "components/blocked_content/pref_names.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_service.h"
-#include "components/safe_browsing/core/db/util.h"
-#include "components/safe_browsing/core/db/v4_protocol_manager_util.h"
+#include "components/safe_browsing/core/browser/db/util.h"
+#include "components/safe_browsing/core/browser/db/v4_protocol_manager_util.h"
 #include "components/subresource_filter/content/browser/subresource_filter_safe_browsing_activation_throttle.h"
 #include "components/user_prefs/user_prefs.h"
 #include "content/public/browser/back_forward_cache.h"
 #include "content/public/browser/browser_context.h"
+#include "content/public/browser/frame_type.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
@@ -39,7 +41,8 @@ using safe_browsing::SubresourceFilterLevel;
 const base::Feature kAbusiveExperienceEnforce{"AbusiveExperienceEnforce",
                                               base::FEATURE_ENABLED_BY_DEFAULT};
 
-SafeBrowsingTriggeredPopupBlocker::PageData::PageData() = default;
+SafeBrowsingTriggeredPopupBlocker::PageData::PageData(content::Page& page)
+    : PageUserData(page) {}
 
 SafeBrowsingTriggeredPopupBlocker::PageData::~PageData() {
   if (is_triggered_) {
@@ -47,6 +50,11 @@ SafeBrowsingTriggeredPopupBlocker::PageData::~PageData() {
                              num_popups_blocked_);
   }
 }
+
+SafeBrowsingTriggeredPopupBlocker::NavigationHandleData::NavigationHandleData(
+    content::NavigationHandle&) {}
+SafeBrowsingTriggeredPopupBlocker::NavigationHandleData::
+    ~NavigationHandleData() = default;
 
 // static
 void SafeBrowsingTriggeredPopupBlocker::RegisterProfilePrefs(
@@ -78,17 +86,20 @@ void SafeBrowsingTriggeredPopupBlocker::MaybeCreate(
 SafeBrowsingTriggeredPopupBlocker::~SafeBrowsingTriggeredPopupBlocker() =
     default;
 
-bool SafeBrowsingTriggeredPopupBlocker::ShouldApplyAbusivePopupBlocker() {
+bool SafeBrowsingTriggeredPopupBlocker::ShouldApplyAbusivePopupBlocker(
+    content::Page& page) {
   LogAction(Action::kConsidered);
-  if (!current_page_data_->is_triggered())
+  PageData& page_data = GetPageData(page);
+
+  if (!page_data.is_triggered())
     return false;
 
   if (!IsEnabled(web_contents()))
     return false;
 
   LogAction(Action::kBlocked);
-  current_page_data_->inc_num_popups_blocked();
-  web_contents()->GetMainFrame()->AddMessageToConsole(
+  page_data.inc_num_popups_blocked();
+  page.GetMainDocument().AddMessageToConsole(
       blink::mojom::ConsoleMessageLevel::kError, kAbusiveEnforceMessage);
   return true;
 }
@@ -97,18 +108,24 @@ SafeBrowsingTriggeredPopupBlocker::SafeBrowsingTriggeredPopupBlocker(
     content::WebContents* web_contents,
     subresource_filter::SubresourceFilterObserverManager* observer_manager)
     : content::WebContentsObserver(web_contents),
-      current_page_data_(std::make_unique<PageData>()) {
+      content::WebContentsUserData<SafeBrowsingTriggeredPopupBlocker>(
+          *web_contents) {
   DCHECK(observer_manager);
   scoped_observation_.Observe(observer_manager);
 }
 
 void SafeBrowsingTriggeredPopupBlocker::DidFinishNavigation(
     content::NavigationHandle* navigation_handle) {
-  if (!navigation_handle->IsInMainFrame())
+  if (!navigation_handle->IsInMainFrame() ||
+      navigation_handle->GetNavigatingFrameType() ==
+          content::FrameType::kFencedFrameRoot) {
     return;
+  }
 
-  base::Optional<SubresourceFilterLevel> level;
-  level_for_next_committed_navigation_.swap(level);
+  absl::optional<SubresourceFilterLevel> level;
+  NavigationHandleData* data =
+      NavigationHandleData::GetOrCreateForNavigationHandle(*navigation_handle);
+  data->level_for_next_committed_navigation().swap(level);
 
   // Only care about main frame navigations that commit.
   if (!navigation_handle->HasCommitted() ||
@@ -116,14 +133,13 @@ void SafeBrowsingTriggeredPopupBlocker::DidFinishNavigation(
     return;
   }
 
-  DCHECK(current_page_data_);
-  current_page_data_ = std::make_unique<PageData>();
   if (navigation_handle->IsErrorPage())
     return;
 
   // Log a warning only if we've matched a warn-only safe browsing list.
   if (level == SubresourceFilterLevel::ENFORCE) {
-    current_page_data_->set_is_triggered(true);
+    GetPageData(navigation_handle->GetRenderFrameHost()->GetPage())
+        .set_is_triggered(true);
     LogAction(Action::kEnforcedSite);
     // When a page is restored from back-forward cache, we don't get
     // OnSafeBrowsingChecksComplete callback, so |level| will always
@@ -138,9 +154,11 @@ void SafeBrowsingTriggeredPopupBlocker::DidFinishNavigation(
     // cache.
     content::BackForwardCache::DisableForRenderFrameHost(
         navigation_handle->GetRenderFrameHost(),
-        "SafeBrowsingTriggeredPopupBlocker");
+        back_forward_cache::DisabledReason(
+            back_forward_cache::DisabledReasonId::
+                kSafeBrowsingTriggeredPopupBlocker));
   } else if (level == SubresourceFilterLevel::WARN) {
-    web_contents()->GetMainFrame()->AddMessageToConsole(
+    navigation_handle->GetRenderFrameHost()->AddMessageToConsole(
         blink::mojom::ConsoleMessageLevel::kWarning, kAbusiveWarnMessage);
     LogAction(Action::kWarningSite);
   }
@@ -157,7 +175,12 @@ void SafeBrowsingTriggeredPopupBlocker::OnSafeBrowsingChecksComplete(
     const subresource_filter::SubresourceFilterSafeBrowsingClient::CheckResult&
         result) {
   DCHECK(navigation_handle->IsInMainFrame());
-  base::Optional<safe_browsing::SubresourceFilterLevel> match_level;
+  // TODO(crbug.com/1263541): Replace it with DCHECK.
+  if (navigation_handle->GetNavigatingFrameType() ==
+      content::FrameType::kFencedFrameRoot) {
+    return;
+  }
+  absl::optional<safe_browsing::SubresourceFilterLevel> match_level;
   if (result.threat_type ==
       safe_browsing::SBThreatType::SB_THREAT_TYPE_SUBRESOURCE_FILTER) {
     auto abusive = result.threat_metadata.subresource_filter_match.find(
@@ -167,7 +190,10 @@ void SafeBrowsingTriggeredPopupBlocker::OnSafeBrowsingChecksComplete(
   }
 
   if (match_level.has_value()) {
-    level_for_next_committed_navigation_ = match_level;
+    NavigationHandleData* data =
+        NavigationHandleData::GetOrCreateForNavigationHandle(
+            *navigation_handle);
+    data->level_for_next_committed_navigation() = match_level;
   }
 }
 
@@ -189,6 +215,14 @@ bool SafeBrowsingTriggeredPopupBlocker::IsEnabled(
       ->GetBoolean(prefs::kAbusiveExperienceInterventionEnforce);
 }
 
-WEB_CONTENTS_USER_DATA_KEY_IMPL(SafeBrowsingTriggeredPopupBlocker)
+SafeBrowsingTriggeredPopupBlocker::PageData&
+SafeBrowsingTriggeredPopupBlocker::GetPageData(content::Page& page) {
+  return *PageData::GetOrCreateForPage(page);
+}
+
+PAGE_USER_DATA_KEY_IMPL(SafeBrowsingTriggeredPopupBlocker::PageData);
+NAVIGATION_HANDLE_USER_DATA_KEY_IMPL(
+    SafeBrowsingTriggeredPopupBlocker::NavigationHandleData);
+WEB_CONTENTS_USER_DATA_KEY_IMPL(SafeBrowsingTriggeredPopupBlocker);
 
 }  // namespace blocked_content

@@ -32,7 +32,8 @@
 #define THIRD_PARTY_BLINK_RENDERER_BINDINGS_CORE_V8_SCHEDULED_ACTION_H_
 
 #include "third_party/blink/renderer/platform/bindings/name_client.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/collection_support/heap_vector.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 #include "v8/include/v8.h"
@@ -47,7 +48,6 @@ class V8Function;
 
 class ScheduledAction final : public GarbageCollected<ScheduledAction>,
                               public NameClient {
-  DISALLOW_COPY_AND_ASSIGN(ScheduledAction);
 
  public:
   ScheduledAction(ScriptState*,
@@ -58,7 +58,10 @@ class ScheduledAction final : public GarbageCollected<ScheduledAction>,
                   ExecutionContext* target,
                   const String& handler);
 
-  ~ScheduledAction();
+  ScheduledAction(const ScheduledAction&) = delete;
+  ScheduledAction& operator=(const ScheduledAction&) = delete;
+
+  ~ScheduledAction() override;
 
   void Dispose();
 
@@ -77,4 +80,4 @@ class ScheduledAction final : public GarbageCollected<ScheduledAction>,
 
 }  // namespace blink
 
-#endif  // ScheduledAction
+#endif  // THIRD_PARTY_BLINK_RENDERER_BINDINGS_CORE_V8_SCHEDULED_ACTION_H_

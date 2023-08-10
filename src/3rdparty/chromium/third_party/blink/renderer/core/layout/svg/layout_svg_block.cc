@@ -22,7 +22,6 @@
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_block.h"
 
 #include "third_party/blink/renderer/core/layout/geometry/transform_state.h"
-#include "third_party/blink/renderer/core/layout/layout_geometry_map.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_resource_container.h"
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_root.h"
@@ -35,10 +34,12 @@
 
 namespace blink {
 
-LayoutSVGBlock::LayoutSVGBlock(SVGElement* element)
-    : LayoutBlockFlow(element),
+LayoutSVGBlock::LayoutSVGBlock(ContainerNode* node)
+    : LayoutBlockFlow(node),
       needs_transform_update_(true),
-      transform_uses_reference_box_(false) {}
+      transform_uses_reference_box_(false) {
+  DCHECK(IsA<SVGElement>(node));
+}
 
 SVGElement* LayoutSVGBlock::GetElement() const {
   NOT_DESTROYED();
@@ -58,10 +59,6 @@ void LayoutSVGBlock::InsertedIntoTree() {
                                                                          false);
   if (StyleRef().HasSVGEffect())
     SetNeedsPaintPropertyUpdate();
-  if (CompositingReasonFinder::DirectReasonsForSVGChildPaintProperties(*this) !=
-      CompositingReason::kNone) {
-    SVGLayoutSupport::NotifySVGRootOfChangedCompositingReasons(this);
-  }
 }
 
 void LayoutSVGBlock::WillBeRemovedFromTree() {
@@ -71,10 +68,6 @@ void LayoutSVGBlock::WillBeRemovedFromTree() {
   if (StyleRef().HasSVGEffect())
     SetNeedsPaintPropertyUpdate();
   LayoutBlockFlow::WillBeRemovedFromTree();
-  if (CompositingReasonFinder::DirectReasonsForSVGChildPaintProperties(*this) !=
-      CompositingReason::kNone) {
-    SVGLayoutSupport::NotifySVGRootOfChangedCompositingReasons(this);
-  }
 }
 
 void LayoutSVGBlock::UpdateFromStyle() {
@@ -122,7 +115,7 @@ void LayoutSVGBlock::StyleDidChange(StyleDifference diff,
   // |HasTransformRelatedProperty| is used for compositing so ensure it was
   // correctly set by the call to |StyleDidChange|.
   DCHECK_EQ(HasTransformRelatedProperty(),
-            StyleRef().HasTransformRelatedProperty());
+            StyleRef().HasTransformRelatedPropertyForSVG());
 
   transform_uses_reference_box_ =
       TransformHelper::DependsOnReferenceBox(StyleRef());
@@ -143,8 +136,6 @@ void LayoutSVGBlock::StyleDidChange(StyleDifference diff,
         StyleRef().HasBlendMode() ? kDescendantIsolationRequired
                                   : kDescendantIsolationNeedsUpdate);
   }
-  if (diff.CompositingReasonsChanged())
-    SVGLayoutSupport::NotifySVGRootOfChangedCompositingReasons(this);
   if (diff.HasDifference())
     LayoutSVGResourceContainer::StyleChanged(*this, diff);
 }
@@ -172,17 +163,6 @@ void LayoutSVGBlock::MapAncestorToLocal(const LayoutBoxModelObject* ancestor,
   transform_state.Move(PhysicalLocation());
 }
 
-const LayoutObject* LayoutSVGBlock::PushMappingToContainer(
-    const LayoutBoxModelObject* ancestor_to_stop_at,
-    LayoutGeometryMap& geometry_map) const {
-  NOT_DESTROYED();
-  // Convert from local HTML coordinates to local SVG coordinates.
-  geometry_map.Push(this, PhysicalLocation());
-  // Apply other mappings on local SVG coordinates.
-  return SVGLayoutSupport::PushMappingToContainer(this, ancestor_to_stop_at,
-                                                  geometry_map);
-}
-
 PhysicalRect LayoutSVGBlock::VisualRectInDocument(VisualRectFlags flags) const {
   NOT_DESTROYED();
   return SVGLayoutSupport::VisualRectInAncestorSpace(*this, *View(), flags);
@@ -199,8 +179,8 @@ bool LayoutSVGBlock::MapToVisualRectInAncestorSpaceInternal(
   rect.Move(PhysicalLocation());
   // Apply other mappings on local SVG coordinates.
   bool retval = SVGLayoutSupport::MapToVisualRectInAncestorSpace(
-      *this, ancestor, FloatRect(rect), rect);
-  transform_state.SetQuad(FloatQuad(FloatRect(rect)));
+      *this, ancestor, gfx::RectF(rect), rect);
+  transform_state.SetQuad(gfx::QuadF(gfx::RectF(rect)));
   return retval;
 }
 

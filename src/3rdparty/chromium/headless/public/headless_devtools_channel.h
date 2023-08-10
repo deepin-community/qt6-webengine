@@ -5,10 +5,7 @@
 #ifndef HEADLESS_PUBLIC_HEADLESS_DEVTOOLS_CHANNEL_H_
 #define HEADLESS_PUBLIC_HEADLESS_DEVTOOLS_CHANNEL_H_
 
-#include <string>
-
 #include "base/containers/span.h"
-#include "base/macros.h"
 #include "headless/public/headless_export.h"
 
 namespace headless {

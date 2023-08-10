@@ -35,7 +35,9 @@
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "components/viz/common/surfaces/surface_id.h"
+#include "media/base/video_frame.h"
 #include "media/base/video_frame_metadata.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/common/media/display_type.h"
 #include "third_party/blink/public/platform/web_content_decryption_module.h"
 #include "third_party/blink/public/platform/web_media_source.h"
@@ -44,6 +46,7 @@
 #include "third_party/blink/public/platform/webaudiosourceprovider_impl.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
+#include "url/gurl.h"
 
 namespace cc {
 class PaintCanvas;
@@ -51,7 +54,6 @@ class PaintFlags;
 }  // namespace cc
 
 namespace media {
-class VideoFrame;
 class PaintCanvasVideoRenderer;
 }
 
@@ -127,6 +129,7 @@ class WebMediaPlayer {
     int height;
     base::TimeDelta media_time;
     media::VideoFrameMetadata metadata;
+    scoped_refptr<media::VideoFrame> frame;
     base::TimeDelta rendering_interval;
     base::TimeDelta average_frame_duration;
   };
@@ -164,8 +167,10 @@ class WebMediaPlayer {
   // adjustments when using a playback rate other than 1.0.
   virtual void SetPreservesPitch(bool preserves_pitch) = 0;
 
-  // Sets a flag indicating whether the audio stream was initiated by autoplay.
-  virtual void SetAutoplayInitiated(bool autoplay_initiated) = 0;
+  // Sets a flag indicating whether the audio stream was played with user
+  // activation.
+  virtual void SetWasPlayedWithUserActivation(
+      bool was_played_with_user_activation) = 0;
 
   // The associated media element is going to enter Picture-in-Picture. This
   // method should make sure the player is set up for this and has a SurfaceId
@@ -177,9 +182,6 @@ class WebMediaPlayer {
   // calls are still made periodically.
   virtual void OnTimeUpdate() {}
 
-  virtual void RequestRemotePlayback() {}
-  virtual void RequestRemotePlaybackControl() {}
-  virtual void RequestRemotePlaybackStop() {}
   virtual void RequestRemotePlaybackDisabled(bool disabled) {}
   virtual void FlingingStarted() {}
   virtual void FlingingStopped() {}
@@ -206,6 +208,9 @@ class WebMediaPlayer {
   // Getters of playback state.
   virtual bool Paused() const = 0;
   virtual bool Seeking() const = 0;
+  // MSE allows authors to assign double values for duration.
+  // Here, we return double rather than TimeDelta to ensure
+  // that authors are returned exactly the value that they assign.
   virtual double Duration() const = 0;
   virtual double CurrentTime() const = 0;
   virtual bool IsEnded() const = 0;
@@ -238,6 +243,22 @@ class WebMediaPlayer {
   virtual unsigned CorruptedFrameCount() const { return 0; }
   virtual uint64_t AudioDecodedByteCount() const = 0;
   virtual uint64_t VideoDecodedByteCount() const = 0;
+
+  // Set the volume multiplier to control audio ducking.
+  // Output volume should be set to |player_volume| * |multiplier|. The range
+  // of |multiplier| is [0, 1], where 1 indicates normal (non-ducked) playback.
+  virtual void SetVolumeMultiplier(double multiplier) = 0;
+
+  // Set the player as the persistent video. Persistent video should hide its
+  // controls and go fullscreen.
+  virtual void SetPersistentState(bool persistent) {}
+
+  // Notify the player that it is now eligible to start recording power
+  // measurements if |state| is true, else it is no longer eligible.
+  virtual void SetPowerExperimentState(bool enabled) {}
+
+  // Suspends the player for the host frame closed.
+  virtual void SuspendForFrameClosed() = 0;
 
   // Returns true if the player has a frame available for presentation. Usually
   // this just means the first frame has been delivered.
@@ -329,10 +350,10 @@ class WebMediaPlayer {
   virtual int GetDelegateId() { return -1; }
 
   // Returns the SurfaceId the video element is currently using.
-  // Returns base::nullopt if the element isn't a video or doesn't have a
+  // Returns absl::nullopt if the element isn't a video or doesn't have a
   // SurfaceId associated to it.
-  virtual base::Optional<viz::SurfaceId> GetSurfaceId() {
-    return base::nullopt;
+  virtual absl::optional<viz::SurfaceId> GetSurfaceId() {
+    return absl::nullopt;
   }
 
   // Provide the media URL, after any redirects are applied.  May return an
@@ -356,6 +377,10 @@ class WebMediaPlayer {
   virtual void UpdateFrameIfStale() {}
 
   virtual base::WeakPtr<WebMediaPlayer> AsWeakPtr() = 0;
+
+  // Adjusts the frame sink hierarchy for the media frame sink.
+  virtual void RegisterFrameSinkHierarchy() {}
+  virtual void UnregisterFrameSinkHierarchy() {}
 };
 
 }  // namespace blink

@@ -4,8 +4,16 @@
 
 #include "media/cast/sender/external_video_encoder.h"
 
+#include <array>
 #include <cmath>
+#include <sstream>
 #include <utility>
+
+#if BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#include "base/cpu.h"                     // nogncheck
+#include "base/no_destructor.h"           // nogncheck
+#include "third_party/re2/src/re2/re2.h"  // nogncheck
+#endif
 
 #include "base/bind.h"
 #include "base/command_line.h"
@@ -13,12 +21,16 @@
 #include "base/memory/shared_memory_mapping.h"
 #include "base/memory/unsafe_shared_memory_region.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/stl_util.h"
+#include "base/numerics/safe_conversions.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
+#include "base/time/time.h"
 #include "build/build_config.h"
 #include "media/base/bind_to_current_loop.h"
+#include "media/base/bitrate.h"
+#include "media/base/bitstream_buffer.h"
 #include "media/base/media_switches.h"
+#include "media/base/media_util.h"
 #include "media/base/video_frame.h"
 #include "media/base/video_types.h"
 #include "media/base/video_util.h"
@@ -26,12 +38,18 @@
 #include "media/cast/common/rtp_time.h"
 #include "media/cast/logging/logging_defines.h"
 #include "media/cast/net/cast_transport_config.h"
-#include "media/cast/sender/vp8_quantizer_parser.h"
+#include "media/cast/sender/vpx_quantizer_parser.h"
 #include "media/video/h264_parser.h"
 
 namespace {
 
-enum { MAX_H264_QUANTIZER = 51 };
+// The percentage of each frame to sample.  This value is based on an
+// analysis that showed sampling 10% of the rows of a frame generated
+// reasonably accurate results.
+constexpr int kFrameSamplingPercentage = 10;
+
+// QP for H.264 encoders ranges from [0, 51] (inclusive).
+constexpr int kMaxH264Quantizer = 51;
 
 // Number of buffers for encoded bit stream.
 constexpr size_t kOutputBufferCount = 3;
@@ -44,10 +62,69 @@ constexpr size_t kExtraInputBufferCount = 2;
 // assumed to be in full usage when the number of frames in progress reaches it.
 constexpr int kBacklogRedlineThreshold = 4;
 
+// The number of histogram buckets for quantization estimation. These
+// histograms must encompass the range [-255, 255] (inclusive).
+constexpr int kQuantizationHistogramSize = 511;
+
+// Scan profiles for hardware VP8 encoder support.
+bool IsHardwareVP8EncodingSupported(
+    base::StringPiece receiver_model_name,
+    const std::vector<media::VideoEncodeAccelerator::SupportedProfile>&
+        profiles) {
+#if BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
+  // NOTE: the hardware encoder on some Chrome OS devices does not play well
+  // with Vizio TVs. See https://crbug.com/1238774 for more information.
+  // Vizio uses the TV model string for the receiver model name.
+  const char* kVizioRegex =
+      R"(^(?i)(([DEMPV]|OLED)\d\d\w*-[A-Z]\w*)|(.*Vizio.*)$)";
+
+  if (RE2::FullMatch(re2::StringPiece(receiver_model_name.data(),
+                                      receiver_model_name.size()),
+                     RE2(kVizioRegex))) {
+    return false;
+  }
+#endif
+
+  for (const auto& vea_profile : profiles) {
+    if (vea_profile.profile >= media::VP8PROFILE_MIN &&
+        vea_profile.profile <= media::VP8PROFILE_MAX) {
+      return true;
+    }
+  }
+
+  return false;
 }  // namespace
 
-namespace media {
-namespace cast {
+// Scan profiles for hardware H.264 encoder support.
+bool IsHardwareH264EncodingSupported(
+    const std::vector<media::VideoEncodeAccelerator::SupportedProfile>&
+        profiles) {
+// TODO(b/169533953): Look into chromecast fails to decode bitstreams produced
+// by the AMD HW encoder.
+#if BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
+  static const base::NoDestructor<base::CPU> cpuid;
+  static const bool is_amd = cpuid->vendor_name() == "AuthenticAMD";
+  if (is_amd)
+    return false;
+#endif  // BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
+
+// TODO(crbug.com/1015482): Look into why H.264 hardware encoder on MacOS is
+// broken.
+// TODO(crbug.com/1015482): Look into HW encoder initialization issues on Win.
+#if !BUILDFLAG(IS_APPLE) && !BUILDFLAG(IS_WIN)
+  for (const auto& vea_profile : profiles) {
+    if (vea_profile.profile >= media::H264PROFILE_MIN &&
+        vea_profile.profile <= media::H264PROFILE_MAX) {
+      return true;
+    }
+  }
+#endif  // !BUILDFLAG(IS_APPLE) && !BUILDFLAG(IS_WIN)
+  return false;
+}
+
+}  // namespace
+
+namespace media::cast {
 
 // Container for the associated data of a video frame being processed.
 struct InProgressExternalVideoFrameEncode {
@@ -93,13 +170,11 @@ class ExternalVideoEncoder::VEAClientImpl final
       const scoped_refptr<base::SingleThreadTaskRunner>& encoder_task_runner,
       std::unique_ptr<media::VideoEncodeAccelerator> vea,
       double max_frame_rate,
-      StatusChangeCallback status_change_cb,
-      const CreateVideoEncodeMemoryCallback& create_video_encode_memory_cb)
+      StatusChangeCallback status_change_cb)
       : cast_environment_(cast_environment),
         task_runner_(encoder_task_runner),
         max_frame_rate_(max_frame_rate),
         status_change_cb_(std::move(status_change_cb)),
-        create_video_encode_memory_cb_(create_video_encode_memory_cb),
         video_encode_accelerator_(std::move(vea)),
         encoder_active_(false),
         next_frame_id_(FrameId::first()),
@@ -107,8 +182,10 @@ class ExternalVideoEncoder::VEAClientImpl final
         codec_profile_(media::VIDEO_CODEC_PROFILE_UNKNOWN),
         key_frame_quantizer_parsable_(false),
         requested_bit_rate_(-1),
-        max_allowed_input_buffers_(0),
         allocate_input_buffer_in_progress_(false) {}
+
+  VEAClientImpl(const VEAClientImpl&) = delete;
+  VEAClientImpl& operator=(const VEAClientImpl&) = delete;
 
   base::SingleThreadTaskRunner* task_runner() const {
     return task_runner_.get();
@@ -121,9 +198,14 @@ class ExternalVideoEncoder::VEAClientImpl final
     DCHECK(task_runner_->RunsTasksInCurrentSequence());
 
     requested_bit_rate_ = start_bit_rate;
+    // TODO(crbug.com/1289909): remove this cast if media/cast migrates to
+    // uint32_t bitrates
+    const media::Bitrate bitrate = media::Bitrate::ConstantBitrate(
+        base::saturated_cast<uint32_t>(start_bit_rate));
     const media::VideoEncodeAccelerator::Config config(
-        media::PIXEL_FORMAT_I420, frame_size, codec_profile, start_bit_rate);
-    encoder_active_ = video_encode_accelerator_->Initialize(config, this);
+        media::PIXEL_FORMAT_I420, frame_size, codec_profile, bitrate);
+    encoder_active_ = video_encode_accelerator_->Initialize(
+        config, this, std::make_unique<media::NullMediaLog>());
     next_frame_id_ = first_frame_id;
     codec_profile_ = codec_profile;
 
@@ -142,8 +224,11 @@ class ExternalVideoEncoder::VEAClientImpl final
 
     requested_bit_rate_ = bit_rate;
     if (encoder_active_) {
+      // TODO(crbug.com/1289909): remove this cast if media/cast migrates to
+      // uint32_t bitrates
       video_encode_accelerator_->RequestEncodingParametersChange(
-          bit_rate, static_cast<uint32_t>(max_frame_rate_ + 0.5));
+          Bitrate::ConstantBitrate(base::saturated_cast<uint32_t>(bit_rate)),
+          static_cast<uint32_t>(max_frame_rate_ + 0.5));
     }
   }
 
@@ -179,10 +264,11 @@ class ExternalVideoEncoder::VEAClientImpl final
       if (!allocate_input_buffer_in_progress_ &&
           input_buffers_.size() < max_allowed_input_buffers_) {
         allocate_input_buffer_in_progress_ = true;
-        create_video_encode_memory_cb_.Run(
-            media::VideoFrame::AllocationSize(media::PIXEL_FORMAT_I420,
-                                              frame_coded_size_),
-            base::BindOnce(&VEAClientImpl::OnCreateInputSharedMemory, this));
+        const size_t buffer_size = media::VideoFrame::AllocationSize(
+            media::PIXEL_FORMAT_I420, frame_coded_size_);
+        task_runner_->PostTask(
+            FROM_HERE, base::BindOnce(&VEAClientImpl::AllocateInputBuffer, this,
+                                      buffer_size));
       }
       AbortLatestEncodeAttemptDueToErrors();
       return;
@@ -241,25 +327,55 @@ class ExternalVideoEncoder::VEAClientImpl final
         CastEnvironment::MAIN, FROM_HERE,
         base::BindOnce(status_change_cb_, STATUS_CODEC_RUNTIME_ERROR));
 
-    // TODO(miu): Force-flush all |in_progress_frame_encodes_| immediately so
-    // pending frames do not become stuck, freezing VideoSender.
+    // Flush all in progress frames to avoid any getting stuck.
+    while (!in_progress_frame_encodes_.empty())
+      AbortLatestEncodeAttemptDueToErrors();
   }
 
-  // Called to allocate the input and output buffers.
+  void AllocateInputBuffer(size_t size) {
+    DCHECK(task_runner_->RunsTasksInCurrentSequence());
+
+    auto memory = base::UnsafeSharedMemoryRegion::Create(size);
+    if (memory.IsValid()) {
+      base::WritableSharedMemoryMapping mapping = memory.Map();
+      DCHECK(mapping.IsValid());
+      input_buffers_.push_back(
+          std::make_unique<std::pair<base::UnsafeSharedMemoryRegion,
+                                     base::WritableSharedMemoryMapping>>(
+              std::move(memory), std::move(mapping)));
+      free_input_buffer_index_.push_back(input_buffers_.size() - 1);
+    }
+    allocate_input_buffer_in_progress_ = false;
+  }
+
+  void AllocateOutputBuffers(size_t size) {
+    DCHECK(task_runner_->RunsTasksInCurrentSequence());
+
+    for (size_t i = 0; i < kOutputBufferCount; ++i) {
+      auto memory = base::UnsafeSharedMemoryRegion::Create(size);
+      base::WritableSharedMemoryMapping mapping = memory.Map();
+      DCHECK(mapping.IsValid());
+      output_buffers_.push_back(
+          std::make_pair(std::move(memory), std::move(mapping)));
+
+      video_encode_accelerator_->UseOutputBitstreamBuffer(
+          media::BitstreamBuffer(static_cast<int32_t>(i),
+                                 output_buffers_[i].first.Duplicate(),
+                                 output_buffers_[i].first.GetSize()));
+    }
+  }
+
+  // Called by the VEA to indicate its buffer requirements.
   void RequireBitstreamBuffers(unsigned int input_count,
                                const gfx::Size& input_coded_size,
                                size_t output_buffer_size) final {
     DCHECK(task_runner_->RunsTasksInCurrentSequence());
 
     frame_coded_size_ = input_coded_size;
-
     max_allowed_input_buffers_ = input_count + kExtraInputBufferCount;
-
-    for (size_t j = 0; j < kOutputBufferCount; ++j) {
-      create_video_encode_memory_cb_.Run(
-          output_buffer_size,
-          base::BindOnce(&VEAClientImpl::OnCreateSharedMemory, this));
-    }
+    task_runner_->PostTask(
+        FROM_HERE, base::BindOnce(&VEAClientImpl::AllocateOutputBuffers, this,
+                                  output_buffer_size));
   }
 
   // Encoder has encoded a frame and it's available in one of the output
@@ -294,10 +410,7 @@ class ExternalVideoEncoder::VEAClientImpl final
       // Do not send video until we have encountered the first key frame.
       // Save the bitstream buffer in |stream_header_| to be sent later along
       // with the first key frame.
-      //
-      // TODO(miu): Should |stream_header_| be an std::ostringstream for
-      // performance reasons?
-      stream_header_.append(output_buffer_memory, metadata.payload_size_bytes);
+      stream_header_.write(output_buffer_memory, metadata.payload_size_bytes);
     } else if (!in_progress_frame_encodes_.empty()) {
       InProgressExternalVideoFrameEncode& request =
           in_progress_frame_encodes_.front();
@@ -315,9 +428,11 @@ class ExternalVideoEncoder::VEAClientImpl final
       encoded_frame->rtp_timestamp = RtpTimeTicks::FromTimeDelta(
           request.video_frame->timestamp(), kVideoFrequency);
       encoded_frame->reference_time = request.reference_time;
-      if (!stream_header_.empty()) {
-        encoded_frame->data = stream_header_;
-        stream_header_.clear();
+
+      std::string header = stream_header_.str();
+      if (!header.empty()) {
+        encoded_frame->data = std::move(header);
+        std::ostringstream().swap(stream_header_);
       }
       encoded_frame->data.append(output_buffer_memory,
                                  metadata.payload_size_bytes);
@@ -328,7 +443,7 @@ class ExternalVideoEncoder::VEAClientImpl final
       base::TimeDelta frame_duration =
           request.video_frame->metadata().frame_duration.value_or(
               base::TimeDelta());
-      if (frame_duration > base::TimeDelta()) {
+      if (frame_duration.is_positive()) {
         // Compute encoder utilization in terms of the number of frames in
         // backlog, including the current frame encode that is finishing
         // here. This "backlog" model works as follows: First, assume that all
@@ -357,7 +472,7 @@ class ExternalVideoEncoder::VEAClientImpl final
         // and all the following delta frames.
         if (metadata.key_frame || key_frame_quantizer_parsable_) {
           if (codec_profile_ == media::VP8PROFILE_ANY) {
-            quantizer = ParseVp8HeaderQuantizer(
+            quantizer = ParseVpxHeaderQuantizer(
                 reinterpret_cast<const uint8_t*>(encoded_frame->data.data()),
                 encoded_frame->data.size());
           } else if (codec_profile_ == media::H264PROFILE_MAIN) {
@@ -389,7 +504,7 @@ class ExternalVideoEncoder::VEAClientImpl final
           const double max_quantizer =
               codec_profile_ == media::VP8PROFILE_ANY
                   ? static_cast<int>(QuantizerEstimator::MAX_VP8_QUANTIZER)
-                  : static_cast<int>(MAX_H264_QUANTIZER);
+                  : static_cast<int>(kMaxH264Quantizer);
           encoded_frame->lossy_utilization =
               bitrate_utilization * (quantizer / max_quantizer);
         }
@@ -434,55 +549,6 @@ class ExternalVideoEncoder::VEAClientImpl final
     if (video_encode_accelerator_) {
       video_encode_accelerator_.release()->Destroy();
     }
-  }
-
-  // Note: This method can be called on any thread.
-  void OnCreateSharedMemory(base::UnsafeSharedMemoryRegion memory) {
-    task_runner_->PostTask(
-        FROM_HERE, base::BindOnce(&VEAClientImpl::OnReceivedSharedMemory, this,
-                                  std::move(memory)));
-  }
-
-  void OnCreateInputSharedMemory(base::UnsafeSharedMemoryRegion memory) {
-    task_runner_->PostTask(
-        FROM_HERE, base::BindOnce(&VEAClientImpl::OnReceivedInputSharedMemory,
-                                  this, std::move(memory)));
-  }
-
-  void OnReceivedSharedMemory(base::UnsafeSharedMemoryRegion memory) {
-    DCHECK(task_runner_->RunsTasksInCurrentSequence());
-
-    base::WritableSharedMemoryMapping mapping = memory.Map();
-    DCHECK(mapping.IsValid());
-    output_buffers_.push_back(
-        std::make_pair(std::move(memory), std::move(mapping)));
-
-    // Wait until all requested buffers are received.
-    if (output_buffers_.size() < kOutputBufferCount)
-      return;
-
-    // Immediately provide all output buffers to the VEA.
-    for (size_t i = 0; i < output_buffers_.size(); ++i) {
-      video_encode_accelerator_->UseOutputBitstreamBuffer(
-          media::BitstreamBuffer(static_cast<int32_t>(i),
-                                 output_buffers_[i].first.Duplicate(),
-                                 output_buffers_[i].first.GetSize()));
-    }
-  }
-
-  void OnReceivedInputSharedMemory(base::UnsafeSharedMemoryRegion region) {
-    DCHECK(task_runner_->RunsTasksInCurrentSequence());
-
-    if (region.IsValid()) {
-      base::WritableSharedMemoryMapping mapping = region.Map();
-      DCHECK(mapping.IsValid());
-      input_buffers_.push_back(
-          std::make_unique<std::pair<base::UnsafeSharedMemoryRegion,
-                                     base::WritableSharedMemoryMapping>>(
-              std::move(region), std::move(mapping)));
-      free_input_buffer_index_.push_back(input_buffers_.size() - 1);
-    }
-    allocate_input_buffer_in_progress_ = false;
   }
 
   // This is called when an error occurs while preparing a VideoFrame for
@@ -540,7 +606,7 @@ class ExternalVideoEncoder::VEAClientImpl final
                    ? pps->pic_init_qs_minus26 + slice_header.slice_qs_delta
                    : pps->pic_init_qp_minus26 + slice_header.slice_qp_delta);
           DCHECK_GE(slice_quantizer, 0);
-          DCHECK_LE(slice_quantizer, MAX_H264_QUANTIZER);
+          DCHECK_LE(slice_quantizer, kMaxH264Quantizer);
           total_quantizer += slice_quantizer;
           break;
         }
@@ -570,12 +636,11 @@ class ExternalVideoEncoder::VEAClientImpl final
   const scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
   const double max_frame_rate_;
   const StatusChangeCallback status_change_cb_;  // Must be run on MAIN thread.
-  const CreateVideoEncodeMemoryCallback create_video_encode_memory_cb_;
   std::unique_ptr<media::VideoEncodeAccelerator> video_encode_accelerator_;
   bool encoder_active_;
   FrameId next_frame_id_;
   bool key_frame_encountered_;
-  std::string stream_header_;
+  std::ostringstream stream_header_;
   VideoCodecProfile codec_profile_;
   bool key_frame_quantizer_parsable_;
   H264Parser h264_parser_;
@@ -618,8 +683,6 @@ class ExternalVideoEncoder::VEAClientImpl final
   // Set to true when the allocation of an input buffer is in progress, and
   // reset to false after the allocated buffer is received.
   bool allocate_input_buffer_in_progress_;
-
-  DISALLOW_COPY_AND_ASSIGN(VEAClientImpl);
 };
 
 // static
@@ -628,11 +691,23 @@ bool ExternalVideoEncoder::IsSupported(const FrameSenderConfig& video_config) {
       video_config.codec != CODEC_VIDEO_H264)
     return false;
 
-  // TODO(miu): "Layering hooks" are needed to be able to query outside of
-  // libmedia, to determine whether the system provides a hardware encoder.  For
-  // now, assume that this was already checked by this point.
-  // http://crbug.com/454029
+  // We assume that the system provides a hardware encoder at this point.
   return video_config.use_external_encoder;
+}
+
+// static
+bool ExternalVideoEncoder::IsRecommended(
+    Codec codec,
+    base::StringPiece receiver_model_name,
+    const std::vector<media::VideoEncodeAccelerator::SupportedProfile>&
+        profiles) {
+  if (codec == CODEC_VIDEO_VP8)
+    return IsHardwareVP8EncodingSupported(receiver_model_name, profiles);
+
+  if (codec == CODEC_VIDEO_H264)
+    return IsHardwareH264EncodingSupported(profiles);
+
+  return false;
 }
 
 ExternalVideoEncoder::ExternalVideoEncoder(
@@ -641,19 +716,15 @@ ExternalVideoEncoder::ExternalVideoEncoder(
     const gfx::Size& frame_size,
     FrameId first_frame_id,
     StatusChangeCallback status_change_cb,
-    const CreateVideoEncodeAcceleratorCallback& create_vea_cb,
-    const CreateVideoEncodeMemoryCallback& create_video_encode_memory_cb)
+    const CreateVideoEncodeAcceleratorCallback& create_vea_cb)
     : cast_environment_(cast_environment),
-      create_video_encode_memory_cb_(create_video_encode_memory_cb),
       frame_size_(frame_size),
-      bit_rate_(video_config.start_bitrate),
-      key_frame_requested_(false) {
+      bit_rate_(video_config.start_bitrate) {
   DCHECK(cast_environment_->CurrentlyOn(CastEnvironment::MAIN));
   DCHECK_GT(video_config.max_frame_rate, 0);
   DCHECK(!frame_size_.IsEmpty());
   DCHECK(status_change_cb);
   DCHECK(create_vea_cb);
-  DCHECK(create_video_encode_memory_cb_);
   DCHECK_GT(bit_rate_, 0);
 
   create_vea_cb.Run(
@@ -744,7 +815,7 @@ void ExternalVideoEncoder::OnCreateVideoEncodeAccelerator(
       break;
     case CODEC_VIDEO_FAKE:
       NOTREACHED() << "Fake software video encoder cannot be external";
-      FALLTHROUGH;
+      [[fallthrough]];
     default:
       cast_environment_->PostTask(
           CastEnvironment::MAIN, FROM_HERE,
@@ -783,8 +854,7 @@ void ExternalVideoEncoder::OnCreateVideoEncodeAccelerator(
   DCHECK(!client_);
   client_ = new VEAClientImpl(cast_environment_, encoder_task_runner,
                               std::move(vea), video_config.max_frame_rate,
-                              std::move(wrapped_status_change_cb),
-                              create_video_encode_memory_cb_);
+                              std::move(wrapped_status_change_cb));
   client_->task_runner()->PostTask(
       FROM_HERE,
       base::BindOnce(&VEAClientImpl::Initialize, client_, frame_size_,
@@ -795,13 +865,11 @@ SizeAdaptableExternalVideoEncoder::SizeAdaptableExternalVideoEncoder(
     const scoped_refptr<CastEnvironment>& cast_environment,
     const FrameSenderConfig& video_config,
     StatusChangeCallback status_change_cb,
-    const CreateVideoEncodeAcceleratorCallback& create_vea_cb,
-    const CreateVideoEncodeMemoryCallback& create_video_encode_memory_cb)
+    const CreateVideoEncodeAcceleratorCallback& create_vea_cb)
     : SizeAdaptableVideoEncoderBase(cast_environment,
                                     video_config,
                                     std::move(status_change_cb)),
-      create_vea_cb_(create_vea_cb),
-      create_video_encode_memory_cb_(create_video_encode_memory_cb) {}
+      create_vea_cb_(create_vea_cb) {}
 
 SizeAdaptableExternalVideoEncoder::~SizeAdaptableExternalVideoEncoder() =
     default;
@@ -810,8 +878,7 @@ std::unique_ptr<VideoEncoder>
 SizeAdaptableExternalVideoEncoder::CreateEncoder() {
   return std::make_unique<ExternalVideoEncoder>(
       cast_environment(), video_config(), frame_size(), next_frame_id(),
-      CreateEncoderStatusChangeCallback(), create_vea_cb_,
-      create_video_encode_memory_cb_);
+      CreateEncoderStatusChangeCallback(), create_vea_cb_);
 }
 
 QuantizerEstimator::QuantizerEstimator() = default;
@@ -832,17 +899,15 @@ double QuantizerEstimator::EstimateForKeyFrame(const VideoFrame& frame) {
   // frame, since the entropy analysis only examines a subset of each frame.
   const gfx::Size size = frame.visible_rect().size();
   const int rows_in_subset =
-      std::max(1, size.height() * FRAME_SAMPLING_PERCENT / 100);
+      std::max(1, size.height() * kFrameSamplingPercentage / 100);
   if (last_frame_size_ != size || !last_frame_pixel_buffer_) {
     last_frame_pixel_buffer_.reset(new uint8_t[size.width() * rows_in_subset]);
     last_frame_size_ = size;
   }
 
   // Compute a histogram where each bucket represents the number of times two
-  // neighboring pixels were different by a specific amount.  511 buckets are
-  // needed, one for each integer in the range [-255,255].
-  int histogram[511];
-  memset(histogram, 0, sizeof(histogram));
+  // neighboring pixels were different by a specific amount.
+  std::array<int, kQuantizationHistogramSize> histogram{};
   const int row_skip = size.height() / rows_in_subset;
   int y = 0;
   for (int i = 0; i < rows_in_subset; ++i, y += row_skip) {
@@ -869,7 +934,7 @@ double QuantizerEstimator::EstimateForKeyFrame(const VideoFrame& frame) {
   // histogram and return it.
   const int num_samples = (size.width() - 1) * rows_in_subset;
   return ToQuantizerEstimate(ComputeEntropyFromHistogram(
-      histogram, base::size(histogram), num_samples));
+      histogram.data(), histogram.size(), num_samples));
 }
 
 double QuantizerEstimator::EstimateForDeltaFrame(const VideoFrame& frame) {
@@ -879,19 +944,17 @@ double QuantizerEstimator::EstimateForDeltaFrame(const VideoFrame& frame) {
 
   // If the size of the |frame| has changed, no difference can be examined.
   // In this case, process this frame as if it were a key frame.
-  const gfx::Size size = frame.visible_rect().size();
+  const gfx::Size& size = frame.visible_rect().size();
   if (last_frame_size_ != size || !last_frame_pixel_buffer_) {
     return EstimateForKeyFrame(frame);
   }
   const int rows_in_subset =
-      std::max(1, size.height() * FRAME_SAMPLING_PERCENT / 100);
+      std::max(1, size.height() * (kFrameSamplingPercentage / 100));
 
   // Compute a histogram where each bucket represents the number of times the
   // same pixel in this frame versus the last frame was different by a specific
-  // amount.  511 buckets are needed, one for each integer in the range
-  // [-255,255].
-  int histogram[511];
-  memset(histogram, 0, sizeof(histogram));
+  // amount.
+  std::array<int, kQuantizationHistogramSize> histogram{};
   const int row_skip = size.height() / rows_in_subset;
   int y = 0;
   for (int i = 0; i < rows_in_subset; ++i, y += row_skip) {
@@ -916,7 +979,7 @@ double QuantizerEstimator::EstimateForDeltaFrame(const VideoFrame& frame) {
   // histogram and return it.
   const int num_samples = size.width() * rows_in_subset;
   return ToQuantizerEstimate(ComputeEntropyFromHistogram(
-      histogram, base::size(histogram), num_samples));
+      histogram.data(), histogram.size(), num_samples));
 }
 
 // static
@@ -929,22 +992,14 @@ bool QuantizerEstimator::CanExamineFrame(const VideoFrame& frame) {
 
 // static
 double QuantizerEstimator::ComputeEntropyFromHistogram(const int* histogram,
-                                                       size_t num_buckets,
+                                                       size_t histogram_size,
                                                        int num_samples) {
-#if defined(OS_ANDROID)
-  // Android does not currently provide a log2() function in their C++ standard
-  // library.  This is a substitute.
-  const auto log2 = [](double num) -> double {
-    return log(num) / 0.69314718055994528622676398299518041312694549560546875;
-  };
-#endif
-
   DCHECK_LT(0, num_samples);
   double entropy = 0.0;
-  for (size_t i = 0; i < num_buckets; ++i) {
+  for (size_t i = 0; i < histogram_size; ++i) {
     const double probability = static_cast<double>(histogram[i]) / num_samples;
     if (probability > 0.0) {
-      entropy = entropy - probability * log2(probability);
+      entropy = entropy - probability * std::log2(probability);
     }
   }
   return entropy;
@@ -961,16 +1016,12 @@ double QuantizerEstimator::ToQuantizerEstimate(double shannon_entropy) {
   // running alongside.  Based on an analysis of the data, the following linear
   // mapping seems to produce reasonable VP8 quantizer values from the
   // |shannon_entropy| values.
-  //
-  // TODO(miu): Confirm whether this model and value work well on other
-  // platforms.
-  const double kEntropyAtMaxQuantizer = 7.5;
-  const double slope =
+  constexpr double kEntropyAtMaxQuantizer = 7.5;
+  constexpr double kSlope =
       (MAX_VP8_QUANTIZER - MIN_VP8_QUANTIZER) / kEntropyAtMaxQuantizer;
   const double quantizer = std::min<double>(
-      MAX_VP8_QUANTIZER, MIN_VP8_QUANTIZER + slope * shannon_entropy);
+      MAX_VP8_QUANTIZER, MIN_VP8_QUANTIZER + kSlope * shannon_entropy);
   return quantizer;
 }
 
-}  //  namespace cast
-}  //  namespace media
+}  //  namespace media::cast

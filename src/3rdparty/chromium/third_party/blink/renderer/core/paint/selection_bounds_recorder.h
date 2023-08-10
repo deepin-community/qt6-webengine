@@ -14,15 +14,15 @@
 namespace blink {
 
 class FrameSelection;
+class LayoutObject;
 class PaintController;
 
-// This class is used for recording painted selection bounds when
-// CompositeAfterPaint is enabled. Based on the SelectionState and provided
-// |selection_rect|, records the appropriate bounds via the paint controller.
-// These bounds are consumed at composition time by PaintArtifactCompositor and
-// pushed to the LayerTreeHost. All of the work happens in the destructor to
-// ensure this information recorded after any painting is completed, even if
-// a cached drawing is re-used.
+// This class is used for recording painted selection bounds. Based on the
+// SelectionState and provided |selection_rect|, records the appropriate bounds
+// via the paint controller. These bounds are consumed at composition time by
+// PaintArtifactCompositor and pushed to the LayerTreeHost. All of the work
+// happens in the destructor to ensure this information recorded after any
+// painting is completed, even if a cached drawing is re-used.
 class SelectionBoundsRecorder {
   STACK_ALLOCATED();
 
@@ -31,11 +31,16 @@ class SelectionBoundsRecorder {
                           PhysicalRect,
                           PaintController&,
                           TextDirection,
-                          WritingMode);
+                          WritingMode,
+                          const LayoutObject&);
 
   ~SelectionBoundsRecorder();
 
   static bool ShouldRecordSelection(const FrameSelection&, SelectionState);
+
+  static bool IsVisible(const LayoutObject& rect_layout_object,
+                        const PhysicalOffset& edge_start_in_layer,
+                        const PhysicalOffset& edge_end_in_layer);
 
  private:
   const SelectionState state_;
@@ -43,6 +48,7 @@ class SelectionBoundsRecorder {
   PaintController& paint_controller_;
   TextDirection text_direction_;
   WritingMode writing_mode_;
+  const LayoutObject& selection_layout_object_;
 };
 
 }  // namespace blink

@@ -11,7 +11,6 @@
 
 #include "base/callback_forward.h"
 #include "base/memory/weak_ptr.h"
-#include "base/values.h"
 #include "content/public/browser/devtools_manager_delegate.h"
 
 namespace headless {
@@ -34,7 +33,6 @@ class HeadlessDevToolsManagerDelegate
                      NotHandledCallback callback) override;
   scoped_refptr<content::DevToolsAgentHost> CreateNewTarget(
       const GURL& url) override;
-  std::string GetDiscoveryPageHTML() override;
   bool HasBundledFrontendResources() override;
   void ClientAttached(
       content::DevToolsAgentHostClientChannel* channel) override;

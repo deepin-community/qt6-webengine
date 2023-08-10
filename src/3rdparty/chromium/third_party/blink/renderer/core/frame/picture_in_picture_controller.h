@@ -12,9 +12,7 @@
 namespace blink {
 
 class Element;
-class HTMLElement;
 class HTMLVideoElement;
-class PictureInPictureOptions;
 class ScriptPromiseResolver;
 
 // PictureInPictureController allows to know if Picture-in-Picture is allowed
@@ -26,6 +24,9 @@ class CORE_EXPORT PictureInPictureController
  public:
   static const char kSupplementName[];
 
+  PictureInPictureController(const PictureInPictureController&) = delete;
+  PictureInPictureController& operator=(const PictureInPictureController&) =
+      delete;
   virtual ~PictureInPictureController() = default;
 
   // Should be called before any other call to make sure a document is attached.
@@ -44,24 +45,21 @@ class CORE_EXPORT PictureInPictureController
     kMetadataNotLoaded,
     kVideoTrackNotAvailable,
     kDisabledBySystem,
-    kDisabledByFeaturePolicy,
+    kDisabledByPermissionsPolicy,
     kDisabledByAttribute,
-    kInvalidWidthOrHeightOption,
   };
 
-  // Enter Picture-in-Picture for an element with options if any and resolve
-  // promise if any.
-  virtual void EnterPictureInPicture(HTMLElement*,
-                                     PictureInPictureOptions*,
+  // Enter Picture-in-Picture for a video element and resolve promise if any.
+  virtual void EnterPictureInPicture(HTMLVideoElement*,
                                      ScriptPromiseResolver*) = 0;
 
   // Exit Picture-in-Picture for a video element and resolve promise if any.
   virtual void ExitPictureInPicture(HTMLVideoElement*,
                                     ScriptPromiseResolver*) = 0;
 
-  // Returns whether a given element in a document associated with the
+  // Returns whether a given video element in a document associated with the
   // controller is allowed to request Picture-in-Picture.
-  virtual Status IsElementAllowed(const HTMLElement&) const = 0;
+  virtual Status IsElementAllowed(const HTMLVideoElement&) const = 0;
 
   // Should be called when an element has exited Picture-in-Picture.
   virtual void OnExitedPictureInPicture(ScriptPromiseResolver*) = 0;
@@ -87,8 +85,6 @@ class CORE_EXPORT PictureInPictureController
   // It is protected so that clients use the static method
   // IsElementInPictureInPicture() that avoids creating the controller.
   virtual bool IsPictureInPictureElement(const Element*) const = 0;
-
-  DISALLOW_COPY_AND_ASSIGN(PictureInPictureController);
 };
 
 }  // namespace blink

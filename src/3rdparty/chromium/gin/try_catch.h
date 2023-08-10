@@ -7,9 +7,9 @@
 
 #include <string>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "gin/gin_export.h"
-#include "v8/include/v8.h"
+#include "v8/include/v8-exception.h"
 
 namespace gin {
 
@@ -17,16 +17,16 @@ namespace gin {
 class GIN_EXPORT TryCatch {
  public:
   explicit TryCatch(v8::Isolate* isolate);
+  TryCatch(const TryCatch&) = delete;
+  TryCatch& operator=(const TryCatch&) = delete;
   ~TryCatch();
 
   bool HasCaught();
   std::string GetStackTrace();
 
  private:
-  v8::Isolate* isolate_;
+  raw_ptr<v8::Isolate> isolate_;
   v8::TryCatch try_catch_;
-
-  DISALLOW_COPY_AND_ASSIGN(TryCatch);
 };
 
 }  // namespace gin

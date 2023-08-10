@@ -37,6 +37,7 @@
 #include "third_party/blink/renderer/core/editing/editing_utilities.h"
 #include "third_party/blink/renderer/core/html/custom/custom_element.h"
 #include "third_party/blink/renderer/core/html/forms/text_control_element.h"
+#include "third_party/blink/renderer/core/html/html_object_element.h"
 #include "third_party/blink/renderer/core/html_names.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/graphics/image.h"
@@ -148,6 +149,13 @@ WebNode WebElement::ShadowRoot() const {
   return WebNode(root);
 }
 
+WebElement WebElement::OwnerShadowHost() const {
+  if (auto* host = ConstUnwrap<Element>()->OwnerShadowHost()) {
+    return WebElement(host);
+  }
+  return WebElement();
+}
+
 WebNode WebElement::OpenOrClosedShadowRoot() {
   if (IsNull())
     return WebNode();
@@ -169,7 +177,7 @@ SkBitmap WebElement::ImageContents() {
 
 std::vector<uint8_t> WebElement::CopyOfImageData() {
   Image* image = GetImage();
-  if (!image || !image->Data())
+  if (!image || !image->HasData())
     return std::vector<uint8_t>();
   return image->Data()->CopyAs<std::vector<uint8_t>>();
 }
@@ -202,6 +210,12 @@ WebString WebElement::GetComputedValue(const WebString& property_name) {
   auto* computed_style =
       MakeGarbageCollected<CSSComputedStyleDeclaration>(element);
   return computed_style->GetPropertyCSSValue(property_id)->CssText();
+}
+
+void WebElement::UseCountParamUrlUsageIfNeeded(bool is_pdf) const {
+  if (auto* object =
+          ::blink::DynamicTo<HTMLObjectElement>(ConstUnwrap<Element>()))
+    object->UseCountParamUrlUsageIfNeeded(is_pdf);
 }
 
 WebElement::WebElement(Element* elem) : WebNode(elem) {}

@@ -57,6 +57,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <atomic>
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -67,24 +69,20 @@
 #include "base/command_line.h"
 #include "base/feature_list.h"
 #include "base/gtest_prod_util.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/read_only_shared_memory_region.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/shared_memory_mapping.h"
 #include "base/metrics/persistent_memory_allocator.h"
-#include "base/observer_list_threadsafe.h"
 #include "base/pickle.h"
-#include "base/process/launch.h"
 #include "base/strings/string_piece.h"
 #include "base/synchronization/lock.h"
 #include "build/build_config.h"
 
-#if defined(OS_MAC)
-#include "base/mac/mach_port_rendezvous.h"
-#endif
-
 namespace base {
 
 class FieldTrialList;
+struct LaunchOptions;
 
 class BASE_EXPORT FieldTrial : public RefCounted<FieldTrial> {
  public:
@@ -127,8 +125,8 @@ class BASE_EXPORT FieldTrial : public RefCounted<FieldTrial> {
   // FieldTrial object. Does not use StringPiece to avoid conversions back to
   // std::string.
   struct BASE_EXPORT State {
-    const std::string* trial_name = nullptr;
-    const std::string* group_name = nullptr;
+    raw_ptr<const std::string> trial_name = nullptr;
+    raw_ptr<const std::string> group_name = nullptr;
     bool activated = false;
 
     State();
@@ -187,19 +185,18 @@ class BASE_EXPORT FieldTrial : public RefCounted<FieldTrial> {
   FieldTrial(const FieldTrial&) = delete;
   FieldTrial& operator=(const FieldTrial&) = delete;
 
-  // Disables this trial, meaning it always determines the default group
-  // has been selected. May be called immediately after construction, or
-  // at any time after initialization (should not be interleaved with
-  // AppendGroup calls). Once disabled, there is no way to re-enable a
-  // trial.
-  // TODO(mad): http://code.google.com/p/chromium/issues/detail?id=121446
-  // This doesn't properly reset to Default when a group was forced.
+  // Disables this trial, meaning the default group is always selected. May be
+  // called immediately after construction or at any time after initialization;
+  // however, it cannot be called after group(). Once disabled, there is no way
+  // to re-enable a trial.
   void Disable();
 
-  // Establish the name and probability of the next group in this trial.
+  // Establishes the name and probability of the next group in this trial.
   // Sometimes, based on construction randomization, this call may cause the
   // provided group to be *THE* group selected for use in this instance.
-  // The return value is the group number of the new group.
+  // The return value is the group number of the new group. AppendGroup can be
+  // called after calls to group() but it should be avoided if possible. Doing
+  // so may be confusing since it won't change the group selection.
   int AppendGroup(const std::string& name, Probability group_probability);
 
   // Return the name of the FieldTrial (excluding the group name).
@@ -231,7 +228,7 @@ class BASE_EXPORT FieldTrial : public RefCounted<FieldTrial> {
   // be done from the UI thread.
   void SetForced();
 
-  // Enable benchmarking sets field trials to a common setting.
+  // Supports benchmarking by causing field trials' default groups to be chosen.
   static void EnableBenchmarking();
 
   // Creates a FieldTrial object with the specified parameters, to be used for
@@ -268,6 +265,7 @@ class BASE_EXPORT FieldTrial : public RefCounted<FieldTrial> {
   FRIEND_TEST_ALL_PREFIXES(FieldTrialTest, SetForcedTurnFeatureOn);
   FRIEND_TEST_ALL_PREFIXES(FieldTrialTest, SetForcedChangeDefault_Default);
   FRIEND_TEST_ALL_PREFIXES(FieldTrialTest, SetForcedChangeDefault_NonDefault);
+  FRIEND_TEST_ALL_PREFIXES(FieldTrialTest, ObserveReentrancy);
   FRIEND_TEST_ALL_PREFIXES(FieldTrialTest, FloatBoundariesGiveEqualGroupSizes);
   FRIEND_TEST_ALL_PREFIXES(FieldTrialTest, DoesNotSurpassTotalProbability);
   FRIEND_TEST_ALL_PREFIXES(FieldTrialListTest,
@@ -379,8 +377,8 @@ class BASE_EXPORT FieldTrial : public RefCounted<FieldTrial> {
   // Reference to related field trial struct and data in shared memory.
   FieldTrialRef ref_;
 
-  // When benchmarking is enabled, field trials all revert to the 'default'
-  // group.
+  // Denotes whether benchmarking is enabled. In this case, field trials all
+  // revert to the default group.
   static bool enable_benchmarking_;
 };
 
@@ -422,15 +420,16 @@ class BASE_EXPORT FieldTrialList {
   // Destructor Release()'s references to all registered FieldTrial instances.
   ~FieldTrialList();
 
-  // Get a FieldTrial instance from the factory.
+  // Gets a FieldTrial instance from the factory.
   //
-  // |name| is used to register the instance with the FieldTrialList class,
-  // and can be used to find the trial (only one trial can be present for each
-  // name). |default_group_name| is the name of the default group which will
-  // be chosen if none of the subsequent appended groups get to be chosen.
+  // |trial_name| (a) is used to register the instance with the FieldTrialList
+  // class and (b) can be used to find the trial (only one trial can be present
+  // for each name). |default_group_name| is the name of the group that is
+  // chosen if none of the subsequent appended groups are chosen. Note that the
+  // default group is also chosen whenever |enable_benchmarking_| is true.
   // |default_group_number| can receive the group number of the default group as
   // AppendGroup returns the number of the subsequence groups. |trial_name| and
-  // |default_group_name| may not be empty but |default_group_number| can be
+  // |default_group_name| must not be empty, but |default_group_number| can be
   // null if the value is not needed.
   //
   // Group probabilities that are later supplied must sum to less than or equal
@@ -549,53 +548,39 @@ class BASE_EXPORT FieldTrialList {
 
   // Achieves the same thing as CreateTrialsFromString, except wraps the logic
   // by taking in the trials from the command line, either via shared memory
-  // handle or command line argument. A bit of a misnomer since on POSIX we
-  // simply get the trials from opening |fd_key| if using shared memory. On
-  // Windows, we expect the |cmd_line| switch for |field_trial_handle_switch| to
-  // contain the shared memory handle that contains the field trial allocator.
-  // We need the |field_trial_handle_switch| and |fd_key| arguments to be passed
-  // in since base/ can't depend on content/.
+  // handle or command line argument.
+  // On non-Mac POSIX platforms, we simply get the trials from opening |fd_key|
+  // if using shared memory. The argument is needed here since //base can't
+  // depend on //content. |fd_key| is unused on other platforms.
+  // On other platforms, we expect the |cmd_line| switch for kFieldTrialHandle
+  // to contain the shared memory handle that contains the field trial
+  // allocator.
   static void CreateTrialsFromCommandLine(const CommandLine& cmd_line,
-                                          const char* field_trial_handle_switch,
                                           int fd_key);
 
   // Creates base::Feature overrides from the command line by first trying to
   // use shared memory and then falling back to the command line if it fails.
   static void CreateFeaturesFromCommandLine(const CommandLine& command_line,
-                                            const char* enable_features_switch,
-                                            const char* disable_features_switch,
                                             FeatureList* feature_list);
 
-#if defined(OS_WIN)
-  // On Windows, we need to explicitly pass down any handles to be inherited.
-  // This function adds the shared memory handle to field trial state to the
-  // list of handles to be inherited.
-  static void AppendFieldTrialHandleIfNeeded(HandlesToInheritVector* handles);
-#elif defined(OS_FUCHSIA)
-  // TODO(fuchsia): Implement shared-memory configuration (crbug.com/752368).
-#elif defined(OS_MAC)
-  // On Mac, the field trial shared memory is accessed via a Mach server, which
-  // the child looks up directly.
-  static void InsertFieldTrialHandleIfNeeded(
-      MachPortsForRendezvous* rendezvous_ports);
-#elif defined(OS_POSIX) && !defined(OS_NACL)
+#if !BUILDFLAG(IS_IOS)
+  // Populates |command_line| and |launch_options| with the handles and command
+  // line arguments necessary for a child process to inherit the shared-memory
+  // object containing the FieldTrial configuration.
+  static void PopulateLaunchOptionsWithFieldTrialState(
+      CommandLine* command_line,
+      LaunchOptions* launch_options);
+#endif  // !BUILDFLAG(IS_IOS)
+
+#if BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_NACL)
   // On POSIX, we also need to explicitly pass down this file descriptor that
   // should be shared with the child process. Returns -1 if it was not
   // initialized properly. The current process remains the onwer of the passed
   // descriptor.
   static int GetFieldTrialDescriptor();
-#endif
-  static ReadOnlySharedMemoryRegion DuplicateFieldTrialSharedMemoryForTesting();
+#endif  // BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_NACL)
 
-  // Adds a switch to the command line containing the field trial state as a
-  // string (if not using shared memory to share field trial state), or the
-  // shared memory handle + length.
-  // Needs the |field_trial_handle_switch| argument to be passed in since base/
-  // can't depend on content/.
-  static void CopyFieldTrialStateToFlags(const char* field_trial_handle_switch,
-                                         const char* enable_features_switch,
-                                         const char* disable_features_switch,
-                                         CommandLine* cmd_line);
+  static ReadOnlySharedMemoryRegion DuplicateFieldTrialSharedMemoryForTesting();
 
   // Create a FieldTrial with the given |name| and using 100% probability for
   // the FieldTrial, force FieldTrial to have the same group string as
@@ -608,25 +593,14 @@ class BASE_EXPORT FieldTrialList {
   // Add an observer to be notified when a field trial is irrevocably committed
   // to being part of some specific field_group (and hence the group_name is
   // also finalized for that field_trial). Returns false and does nothing if
-  // there is no FieldTrialList singleton.
+  // there is no FieldTrialList singleton. The observer can be notified on any
+  // sequence; it must be thread-safe.
   static bool AddObserver(Observer* observer);
 
-  // Remove an observer.
+  // Remove an observer. This cannot be invoked concurrently with
+  // FieldTrial::group() (typically, this means that no other thread should be
+  // running when this is invoked).
   static void RemoveObserver(Observer* observer);
-
-  // Similar to AddObserver(), but the passed observer will be notified
-  // synchronously when a field trial is activated and its group selected. It
-  // will be notified synchronously on the same thread where the activation and
-  // group selection happened. It is the responsibility of the observer to make
-  // sure that this is a safe operation and the operation must be fast, as this
-  // work is done synchronously as part of group() or related APIs. Only a
-  // single such observer is supported, exposed specifically for crash
-  // reporting. Must be called on the main thread before any other threads
-  // have been started.
-  static void SetSynchronousObserver(Observer* observer);
-
-  // Removes the single synchronous observer.
-  static void RemoveSynchronousObserver(Observer* observer);
 
   // Grabs the lock if necessary and adds the field trial to the allocator. This
   // should only be called from FinalizeGroupChoice().
@@ -686,38 +660,42 @@ class BASE_EXPORT FieldTrialList {
   FRIEND_TEST_ALL_PREFIXES(FieldTrialListTest, ClearParamsFromSharedMemory);
   FRIEND_TEST_ALL_PREFIXES(FieldTrialListTest,
                            SerializeSharedMemoryRegionMetadata);
-  friend int SerializeSharedMemoryRegionMetadata(void);
+  friend int SerializeSharedMemoryRegionMetadata();
   FRIEND_TEST_ALL_PREFIXES(FieldTrialListTest, CheckReadOnlySharedMemoryRegion);
 
-  // Serialization is used to pass information about the handle to child
-  // processes. It passes a reference to the relevant OS resource, and it passes
-  // a GUID. Serialization and deserialization doesn't actually transport the
-  // underlying OS resource - that must be done by the Process launcher.
+#if !BUILDFLAG(IS_NACL) && !BUILDFLAG(IS_IOS)
+  // Serialization is used to pass information about the shared memory handle
+  // to child processes. This is achieved by passing a stringified reference to
+  // the relevant OS resources to the child process.
+  //
+  // Serialization populates |launch_options| with the relevant OS handles to
+  // transfer or copy to the child process and returns serialized information
+  // to be passed to the kFieldTrialHandle command-line switch.
+  // Note: On non-Mac POSIX platforms, it is necessary to pass down the file
+  // descriptor for the shared memory separately. It can be accessed via the
+  // GetFieldTrialDescriptor() API.
   static std::string SerializeSharedMemoryRegionMetadata(
-      const ReadOnlySharedMemoryRegion& shm);
-#if defined(OS_WIN) || defined(OS_FUCHSIA) || defined(OS_MAC)
-  static ReadOnlySharedMemoryRegion DeserializeSharedMemoryRegionMetadata(
-      const std::string& switch_value);
-#elif defined(OS_POSIX) && !defined(OS_NACL)
-  static ReadOnlySharedMemoryRegion DeserializeSharedMemoryRegionMetadata(
-      int fd,
-      const std::string& switch_value);
-#endif
+      const ReadOnlySharedMemoryRegion& shm,
+      LaunchOptions* launch_options);
 
-#if defined(OS_WIN) || defined(OS_FUCHSIA) || defined(OS_MAC)
+  // Deserialization instantiates the shared memory region for FieldTrials from
+  // the serialized information contained in |switch_value|. Returns an invalid
+  // ReadOnlySharedMemoryRegion on failure.
+  // |fd| is used on non-Mac POSIX platforms to instantiate the shared memory
+  // region via a file descriptor.
+  static ReadOnlySharedMemoryRegion DeserializeSharedMemoryRegionMetadata(
+      const std::string& switch_value,
+      int fd);
+
   // Takes in |handle_switch| from the command line which represents the shared
   // memory handle for field trials, parses it, and creates the field trials.
   // Returns true on success, false on failure.
   // |switch_value| also contains the serialized GUID.
-  static bool CreateTrialsFromSwitchValue(const std::string& switch_value);
-#elif defined(OS_POSIX) && !defined(OS_NACL)
-  // On POSIX systems that use the zygote, we look up the correct fd that backs
-  // the shared memory segment containing the field trials by looking it up via
-  // an fd key in GlobalDescriptors. Returns true on success, false on failure.
-  // |switch_value| also contains the serialized GUID.
-  static bool CreateTrialsFromDescriptor(int fd_key,
-                                         const std::string& switch_value);
-#endif
+  // |fd_key| is used on non-Mac POSIX platforms as the file descriptor passed
+  // down to the child process for the shared memory region.
+  static bool CreateTrialsFromSwitchValue(const std::string& switch_value,
+                                          int fd_key);
+#endif  // !BUILDFLAG(IS_NACL) && !BUILDFLAG(IS_IOS)
 
   // Takes an unmapped ReadOnlySharedMemoryRegion, maps it with the correct size
   // and creates field trials via CreateTrialsFromSharedMemoryMapping(). Returns
@@ -750,7 +728,7 @@ class BASE_EXPORT FieldTrialList {
   typedef std::map<std::string, FieldTrial*, std::less<>> RegistrationMap;
 
   // Helper function should be called only while holding lock_.
-  FieldTrial* PreLockedFind(StringPiece name);
+  FieldTrial* PreLockedFind(StringPiece name) EXCLUSIVE_LOCKS_REQUIRED(lock_);
 
   // Register() stores a pointer to the given trial in a global map.
   // This method also AddRef's the indicated trial.
@@ -768,29 +746,30 @@ class BASE_EXPORT FieldTrialList {
   // FieldTrialList is created after that.
   static bool used_without_global_;
 
-  // Lock for access to registered_ and field_trial_allocator_.
+  // Lock for access to |registered_|, |observers_|.
   Lock lock_;
-  RegistrationMap registered_;
+  RegistrationMap registered_ GUARDED_BY(lock_);
 
   // Entropy provider to be used for one-time randomized field trials. If NULL,
   // one-time randomization is not supported.
   std::unique_ptr<const FieldTrial::EntropyProvider> entropy_provider_;
 
   // List of observers to be notified when a group is selected for a FieldTrial.
-  scoped_refptr<ObserverListThreadSafe<Observer> > observer_list_;
+  std::vector<Observer*> observers_ GUARDED_BY(lock_);
 
-  // Single synchronous observer to be notified when a trial group is chosen.
-  Observer* synchronous_observer_ = nullptr;
+  // Counts the ongoing calls to
+  // FieldTrialList::NotifyFieldTrialGroupSelection(). Used to ensure that
+  // RemoveObserver() isn't called while notifying observers.
+  std::atomic_int num_ongoing_notify_field_trial_group_selection_calls_{0};
 
   // Allocator in shared memory containing field trial data. Used in both
   // browser and child processes, but readonly in the child.
   // In the future, we may want to move this to a more generic place if we want
   // to start passing more data other than field trials.
-  std::unique_ptr<FieldTrialAllocator> field_trial_allocator_ = nullptr;
+  std::unique_ptr<FieldTrialAllocator> field_trial_allocator_;
 
   // Readonly copy of the region to the allocator. Needs to be a member variable
-  // because it's needed from both CopyFieldTrialStateToFlags() and
-  // AppendFieldTrialHandleIfNeeded().
+  // because it's needed from multiple methods.
   ReadOnlySharedMemoryRegion readonly_allocator_region_;
 
   // Tracks whether CreateTrialsFromCommandLine() has been called.

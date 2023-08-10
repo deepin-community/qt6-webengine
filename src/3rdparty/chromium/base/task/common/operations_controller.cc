@@ -4,6 +4,9 @@
 
 #include "base/task/common/operations_controller.h"
 #include "base/check_op.h"
+#include "base/synchronization/waitable_event.h"
+
+#include <ostream>
 
 namespace base {
 namespace internal {
@@ -78,6 +81,7 @@ void OperationsController::ShutdownAndWaitForZeroOperations() {
   }
 }
 
+// static
 OperationsController::State OperationsController::ExtractState(uint32_t value) {
   if (value & kShuttingDownBitMask) {
     return State::kShuttingDown;

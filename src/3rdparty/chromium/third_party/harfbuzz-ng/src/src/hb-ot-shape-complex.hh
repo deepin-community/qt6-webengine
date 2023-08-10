@@ -265,8 +265,9 @@ hb_ot_shape_complex_categorize (const hb_ot_shape_planner_t *planner)
 	return &_hb_ot_complex_shaper_myanmar;
 
 
-    /* https://github.com/harfbuzz/harfbuzz/issues/1162 */
+#define HB_SCRIPT_MYANMAR_ZAWGYI	((hb_script_t) HB_TAG ('Q','a','a','g'))
     case HB_SCRIPT_MYANMAR_ZAWGYI:
+    /* https://github.com/harfbuzz/harfbuzz/issues/1162 */
 
       return &_hb_ot_complex_shaper_myanmar_zawgyi;
 
@@ -372,6 +373,15 @@ hb_ot_shape_complex_categorize (const hb_ot_shape_planner_t *planner)
     /* Unicode-13.0 additions */
     case HB_SCRIPT_CHORASMIAN:
     case HB_SCRIPT_DIVES_AKURU:
+    case HB_SCRIPT_KHITAN_SMALL_SCRIPT:
+    case HB_SCRIPT_YEZIDI:
+
+    /* Unicode-14.0 additions */
+    case HB_SCRIPT_CYPRO_MINOAN:
+    case HB_SCRIPT_OLD_UYGHUR:
+    case HB_SCRIPT_TANGSA:
+    case HB_SCRIPT_TOTO:
+    case HB_SCRIPT_VITHKUQI:
 
       /* If the designer designed the font for the 'DFLT' script,
        * (or we ended up arbitrarily pick 'latn'), use the default shaper.

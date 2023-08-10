@@ -30,7 +30,6 @@
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/wtf/hash_set.h"
 #include "third_party/blink/renderer/platform/wtf/thread_safe_ref_counted.h"
 #include "third_party/blink/renderer/platform/wtf/threading.h"
@@ -150,16 +149,18 @@ class MODULES_EXPORT DeferredTaskHandler final
     return CurrentThread() == audio_thread_.load(std::memory_order_relaxed);
   }
 
-  void lock();
-  bool TryLock();
-  void unlock();
+  void lock() EXCLUSIVE_LOCK_FUNCTION(context_graph_mutex_);
+  bool TryLock() EXCLUSIVE_TRYLOCK_FUNCTION(true, context_graph_mutex_);
+  void unlock() UNLOCK_FUNCTION(context_graph_mutex_);
 
   // This locks the audio render thread for OfflineAudioContext rendering.
   // MUST NOT be used in the real-time audio context.
-  void OfflineLock();
+  void OfflineLock() EXCLUSIVE_LOCK_FUNCTION(context_graph_mutex_);
 
   // In DCHECK builds, fails if this thread does not own the context's lock.
-  void AssertGraphOwner() const { context_graph_mutex_.AssertAcquired(); }
+  void AssertGraphOwner() const ASSERT_EXCLUSIVE_LOCK(context_graph_mutex_) {
+    context_graph_mutex_.AssertAcquired();
+  }
 
   class MODULES_EXPORT GraphAutoLocker {
     STACK_ALLOCATED();
@@ -200,6 +201,11 @@ class MODULES_EXPORT DeferredTaskHandler final
     return &finished_source_handlers_;
   }
 
+  // The number of frames to render each time.  After construction, this value
+  // is only read (never modified), and may be read by both the audio thread and
+  // the main thread.
+  unsigned int RenderQuantumFrames() const { return render_quantum_frames_; }
+
  private:
   explicit DeferredTaskHandler(scoped_refptr<base::SingleThreadTaskRunner>);
   void UpdateAutomaticPullNodes();
@@ -223,6 +229,10 @@ class MODULES_EXPORT DeferredTaskHandler final
 
   // Keeps track if the |automatic_pull_handlers| storage is touched.
   bool automatic_pull_handlers_need_updating_;
+
+  // Number of frames to use when rendering the graph.  This is the frames to
+  // process for each node.
+  unsigned int render_quantum_frames_ = 128;
 
   // Collection of nodes where the channel count mode has changed. We want the
   // channel count mode to change in the pre- or post-rendering phase so as

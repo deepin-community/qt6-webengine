@@ -11,8 +11,7 @@
 #include <vector>
 
 #include "base/location.h"
-#include "base/run_loop.h"
-#include "base/single_thread_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -26,7 +25,7 @@
 #include "third_party/blink/public/mojom/input/input_event_result.mojom-shared.h"
 #include "ui/events/blink/blink_features.h"
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 #include "ui/display/win/test/scoped_screen_win.h"
 #endif
 
@@ -43,6 +42,7 @@ class GestureEventQueueTest : public testing::Test,
  public:
   GestureEventQueueTest()
       : task_environment_(
+            base::test::SingleThreadTaskEnvironment::TimeSource::MOCK_TIME,
             base::test::SingleThreadTaskEnvironment::MainThreadType::UI),
         acked_gesture_event_count_(0),
         sent_gesture_event_count_(0) {}
@@ -51,7 +51,8 @@ class GestureEventQueueTest : public testing::Test,
 
   // testing::Test
   void SetUp() override {
-    queue_.reset(new GestureEventQueue(this, this, this, DefaultConfig()));
+    queue_ =
+        std::make_unique<GestureEventQueue>(this, this, this, DefaultConfig());
   }
 
   void TearDown() override {
@@ -66,8 +67,9 @@ class GestureEventQueueTest : public testing::Test,
         true;
     gesture_config.fling_config.touchscreen_tap_suppression_config
         .max_cancel_to_down_time =
-        base::TimeDelta::FromMilliseconds(max_cancel_to_down_time_ms);
-    queue_.reset(new GestureEventQueue(this, this, this, gesture_config));
+        base::Milliseconds(max_cancel_to_down_time_ms);
+    queue_ =
+        std::make_unique<GestureEventQueue>(this, this, this, gesture_config);
   }
 
   // GestureEventQueueClient
@@ -169,7 +171,10 @@ class GestureEventQueueTest : public testing::Test,
         ui::LatencyInfo());
   }
 
-  void RunUntilIdle() { base::RunLoop().RunUntilIdle(); }
+  void RunUntilIdle() { task_environment_.RunUntilIdle(); }
+  void FastForwardBy(base::TimeDelta delay) {
+    task_environment_.FastForwardBy(delay);
+  }
 
   size_t GetAndResetSentGestureEventCount() {
     size_t count = sent_gesture_event_count_;
@@ -188,13 +193,14 @@ class GestureEventQueueTest : public testing::Test,
   }
 
   void set_synchronous_ack(blink::mojom::InputEventResultState ack_result) {
-    sync_ack_result_.reset(new blink::mojom::InputEventResultState(ack_result));
+    sync_ack_result_ =
+        std::make_unique<blink::mojom::InputEventResultState>(ack_result);
   }
 
   void set_sync_followup_event(WebInputEvent::Type type,
                                WebGestureDevice sourceDevice) {
-    sync_followup_event_.reset(new WebGestureEvent(
-        blink::SyntheticWebGestureEventBuilder::Build(type, sourceDevice)));
+    sync_followup_event_ = std::make_unique<WebGestureEvent>(
+        blink::SyntheticWebGestureEventBuilder::Build(type, sourceDevice));
   }
 
   unsigned GestureEventQueueSize() {
@@ -238,7 +244,7 @@ class GestureEventQueueTest : public testing::Test,
   std::unique_ptr<blink::mojom::InputEventResultState> sync_ack_result_;
   std::unique_ptr<WebGestureEvent> sync_followup_event_;
   base::test::ScopedFeatureList feature_list_;
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   display::win::test::ScopedScreenWin scoped_screen_win_;
 #endif
 };
@@ -308,10 +314,7 @@ TEST_F(GestureEventQueueTest, DebounceDefersFollowingGestureEvents) {
   EXPECT_EQ(2U, GestureEventQueueSize());
   EXPECT_EQ(2U, GestureEventDebouncingQueueSize());
 
-  base::RunLoop run_loop;
-  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-      FROM_HERE, run_loop.QuitClosure(), base::TimeDelta::FromMilliseconds(5));
-  run_loop.Run();
+  FastForwardBy(base::Milliseconds(5));
 
   // The deferred events are correctly queued in coalescing queue.
   EXPECT_EQ(2U, GetAndResetSentGestureEventCount());

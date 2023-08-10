@@ -6,10 +6,9 @@
 #define THIRD_PARTY_BLINK_PUBLIC_PLATFORM_SCHEDULER_WEB_THREAD_SCHEDULER_H_
 
 #include <memory>
-#include "base/macros.h"
+
 #include "base/message_loop/message_pump.h"
-#include "base/optional.h"
-#include "base/single_thread_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "third_party/blink/public/common/input/web_input_event.h"
@@ -42,6 +41,8 @@ class WebWidgetScheduler;
 
 class BLINK_PLATFORM_EXPORT WebThreadScheduler {
  public:
+  WebThreadScheduler(const WebThreadScheduler&) = delete;
+  WebThreadScheduler& operator=(const WebThreadScheduler&) = delete;
   virtual ~WebThreadScheduler();
 
   // ==== Functions for any scheduler =========================================
@@ -61,12 +62,8 @@ class BLINK_PLATFORM_EXPORT WebThreadScheduler {
 
   // If |message_pump| is null caller must have registered one using
   // base::MessageLoop.
-  // If |initial_virtual_time| is specified then the
-  // scheduler will be created with virtual time enabled and paused, and
-  // base::Time will be overridden to start at |initial_virtual_time|.
   static std::unique_ptr<WebThreadScheduler> CreateMainThreadScheduler(
-      std::unique_ptr<base::MessagePump> message_pump = nullptr,
-      base::Optional<base::Time> initial_virtual_time = base::nullopt);
+      std::unique_ptr<base::MessagePump> message_pump = nullptr);
 
   // Returns compositor thread scheduler for the compositor thread
   // of the current process.
@@ -77,6 +74,10 @@ class BLINK_PLATFORM_EXPORT WebThreadScheduler {
 
   // Returns the default task runner.
   virtual scoped_refptr<base::SingleThreadTaskRunner> DefaultTaskRunner();
+
+  // Returns a task runner for input-blocking tasks on the compositor thread.
+  // (For input tasks on the main thread, use WebWidgetScheduler instead.)
+  virtual scoped_refptr<base::SingleThreadTaskRunner> InputTaskRunner();
 
   // Returns the compositor task runner.
   virtual scoped_refptr<base::SingleThreadTaskRunner> CompositorTaskRunner();
@@ -193,16 +194,11 @@ class BLINK_PLATFORM_EXPORT WebThreadScheduler {
   // constructed. Must be called on the main thread.
   virtual void SetRendererBackgrounded(bool backgrounded);
 
-  // Tells the scheduler about "keep-alive" state which can be due to:
-  // service workers, shared workers, or fetch keep-alive.
-  // If set to true, then the scheduler should not freeze the renderer.
-  virtual void SetSchedulerKeepActive(bool keep_active);
-
   // Tells the scheduler when a begin main frame is requested due to input
   // handling.
   virtual void OnMainFrameRequestedForInput();
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   // Android WebView has very strange WebView.pauseTimers/resumeTimers API.
   // It's very old and very inconsistent. The API promises that this
   // "pauses all layout, parsing, and JavaScript timers for all WebViews".
@@ -213,17 +209,16 @@ class BLINK_PLATFORM_EXPORT WebThreadScheduler {
   // DO NOT USE FOR ANYTHING EXCEPT ANDROID WEBVIEW API IMPLEMENTATION.
   virtual void PauseTimersForAndroidWebView();
   virtual void ResumeTimersForAndroidWebView();
-#endif  // defined(OS_ANDROID)
+#endif  // BUILDFLAG(IS_ANDROID)
 
   // RAII handle for pausing the renderer. Renderer is paused while
   // at least one pause handle exists.
   class BLINK_PLATFORM_EXPORT RendererPauseHandle {
    public:
     RendererPauseHandle() = default;
+    RendererPauseHandle(const RendererPauseHandle&) = delete;
+    RendererPauseHandle& operator=(const RendererPauseHandle&) = delete;
     virtual ~RendererPauseHandle() = default;
-
-   private:
-    DISALLOW_COPY_AND_ASSIGN(RendererPauseHandle);
   };
 
   // Tells the scheduler that the renderer process should be paused.
@@ -232,8 +227,7 @@ class BLINK_PLATFORM_EXPORT WebThreadScheduler {
   //
   // Renderer will be resumed when the handle is destroyed.
   // Handle should be destroyed before the renderer.
-  virtual std::unique_ptr<RendererPauseHandle> PauseRenderer()
-      WARN_UNUSED_RESULT;
+  [[nodiscard]] virtual std::unique_ptr<RendererPauseHandle> PauseRenderer();
 
   // Returns true if the scheduler has reason to believe that high priority work
   // may soon arrive on the main thread, e.g., if gesture events were observed
@@ -252,7 +246,6 @@ class BLINK_PLATFORM_EXPORT WebThreadScheduler {
 
  protected:
   WebThreadScheduler() = default;
-  DISALLOW_COPY_AND_ASSIGN(WebThreadScheduler);
 };
 
 }  // namespace scheduler

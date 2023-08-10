@@ -56,7 +56,7 @@ const char kSansSerifCssClass[] = "sans-serif";
 const char kMonospaceCssClass[] = "monospace";
 
 std::string GetPlatformSpecificCss() {
-#if defined(OS_ANDROID) || defined(OS_IOS)
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
   return "";
 #else  // Desktop
   return ui::ResourceBundle::GetSharedInstance().LoadDataResourceString(
@@ -160,7 +160,7 @@ std::string ReplaceHtmlTemplateValues(const mojom::Theme theme,
   std::ostringstream csp;
   std::ostringstream css;
   std::ostringstream svg;
-#if defined(OS_IOS)
+#if BUILDFLAG(IS_IOS)
   // On iOS the content is inlined as there is no API to detect those requests
   // and return the local data once a page is loaded.
   css << "<style>" << viewer::GetCss() << "</style>";
@@ -185,7 +185,7 @@ std::string ReplaceHtmlTemplateValues(const mojom::Theme theme,
 #else
   css << "<link rel=\"stylesheet\" href=\"/" << kViewerCssPath << "\">";
   svg << "<img src=\"/" << kViewerLoadingImagePath << "\">";
-#endif  // defined(OS_IOS)
+#endif  // BUILDFLAG(IS_IOS)
 
   substitutions.push_back(csp.str());  // $1
   substitutions.push_back(css.str());  // $2
@@ -230,7 +230,7 @@ const std::string GetErrorPageJs() {
 }
 
 const std::string GetSetTitleJs(std::string title) {
-#if defined(OS_ANDROID) || defined(OS_IOS)
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
   base::Value suffixValue("");
 #else  // Desktop
   std::string suffix(
@@ -317,7 +317,7 @@ std::unique_ptr<ViewerHandle> CreateViewRequest(
   if (has_valid_entry_id && has_valid_url) {
     // It is invalid to specify a query param for both |kEntryIdKey| and
     // |kUrlKey|.
-    return std::unique_ptr<ViewerHandle>();
+    return nullptr;
   }
 
   if (has_valid_entry_id) {
@@ -331,7 +331,7 @@ std::unique_ptr<ViewerHandle> CreateViewRequest(
   }
 
   // It is invalid to not specify a query param for |kEntryIdKey| or |kUrlKey|.
-  return std::unique_ptr<ViewerHandle>();
+  return nullptr;
 }
 
 const std::string GetDistilledPageThemeJs(mojom::Theme theme) {

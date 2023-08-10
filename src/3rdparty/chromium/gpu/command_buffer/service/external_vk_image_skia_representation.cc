@@ -11,6 +11,7 @@
 #include "gpu/vulkan/vulkan_implementation.h"
 #include "gpu/vulkan/vulkan_util.h"
 #include "third_party/skia/include/core/SkCanvas.h"
+#include "third_party/skia/include/core/SkColorSpace.h"
 #include "third_party/skia/include/core/SkPromiseImageTexture.h"
 #include "third_party/skia/include/gpu/GrBackendSemaphore.h"
 
@@ -62,7 +63,7 @@ sk_sp<SkSurface> ExternalVkImageSkiaRepresentation::BeginWriteAccess(
     SkColorType sk_color_type = viz::ResourceFormatToClosestSkColorType(
         true /* gpu_compositing */, format());
     surface = SkSurface::MakeFromBackendTexture(
-        gr_context, promise_texture->backendTexture(), kTopLeft_GrSurfaceOrigin,
+        gr_context, promise_texture->backendTexture(), surface_origin(),
         final_msaa_count, sk_color_type,
         backing_impl()->color_space().ToSkColorSpace(), &surface_props);
     if (!surface) {
@@ -74,9 +75,8 @@ sk_sp<SkSurface> ExternalVkImageSkiaRepresentation::BeginWriteAccess(
     backing_impl()->context_state()->CacheSkSurface(this, surface);
   }
 
-  int count = surface->getCanvas()->save();
+  [[maybe_unused]] int count = surface->getCanvas()->save();
   DCHECK_EQ(count, 1);
-  ALLOW_UNUSED_LOCAL(count);
 
   access_mode_ = kWrite;
 
@@ -201,7 +201,8 @@ sk_sp<SkPromiseImageTexture> ExternalVkImageSkiaRepresentation::BeginAccess(
     // Create an |end_access_semaphore_| which will be signalled by the caller.
     end_access_semaphore_ =
         backing_impl()->external_semaphore_pool()->GetOrCreateSemaphore();
-    DCHECK(end_access_semaphore_);
+    if (!end_access_semaphore_)
+      return nullptr;
     end_semaphores->emplace_back();
     end_semaphores->back().initVulkan(end_access_semaphore_.GetVkSemaphore());
   }
@@ -212,6 +213,17 @@ sk_sp<SkPromiseImageTexture> ExternalVkImageSkiaRepresentation::BeginAccess(
 void ExternalVkImageSkiaRepresentation::EndAccess(bool readonly) {
   DCHECK_NE(access_mode_, kNone);
   DCHECK(backing_impl()->need_synchronization() || !end_access_semaphore_);
+
+  // TODO(crbug.com/1307914): This check is specific to the interop case i.e.
+  // when need_synchronization() is true, but we can generalize this by making
+  // the client TakeEndState() and asserting that the |end_state_| is null here.
+#if DCHECK_IS_ON()
+  GrVkImageInfo info;
+  auto result = backing_impl()->backend_texture().getVkImageInfo(&info);
+  DCHECK(result);
+  DCHECK(!backing_impl()->need_synchronization() ||
+         info.fCurrentQueueFamily == VK_QUEUE_FAMILY_EXTERNAL);
+#endif
 
   backing_impl()->EndAccess(readonly, std::move(end_access_semaphore_),
                             false /* is_gl */);

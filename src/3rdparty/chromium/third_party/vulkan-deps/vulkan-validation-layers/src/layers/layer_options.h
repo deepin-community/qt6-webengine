@@ -1,6 +1,7 @@
-/* Copyright (c) 2020 The Khronos Group Inc.
- * Copyright (c) 2020 Valve Corporation
- * Copyright (c) 2020 LunarG, Inc.
+/* Copyright (c) 2022 The Khronos Group Inc.
+ * Copyright (c) 2022 Valve Corporation
+ * Copyright (c) 2022 LunarG, Inc.
+ * Modifications Copyright (C) 2020 Advanced Micro Devices, Inc. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +17,7 @@
  *
  * Author: Mark Lobodzinski <mark@lunarg.com>
  * Author: John Zulauf <jzulauf@lunarg.com>
+ * Author: Nadav Geva <nadav.geva@amd.com>
  */
 
 #include "chassis.h"
@@ -31,19 +33,21 @@ typedef struct {
     CHECK_DISABLED &disables;
     std::vector<uint32_t> &message_filter_list;
     int32_t *duplicate_message_limit;
+    bool *fine_grained_locking;
 } ConfigAndEnvSettings;
 
-static const std::unordered_map<std::string, VkValidationFeatureDisableEXT> VkValFeatureDisableLookup = {
+static const layer_data::unordered_map<std::string, VkValidationFeatureDisableEXT> VkValFeatureDisableLookup = {
     {"VK_VALIDATION_FEATURE_DISABLE_SHADERS_EXT", VK_VALIDATION_FEATURE_DISABLE_SHADERS_EXT},
     {"VK_VALIDATION_FEATURE_DISABLE_THREAD_SAFETY_EXT", VK_VALIDATION_FEATURE_DISABLE_THREAD_SAFETY_EXT},
     {"VK_VALIDATION_FEATURE_DISABLE_API_PARAMETERS_EXT", VK_VALIDATION_FEATURE_DISABLE_API_PARAMETERS_EXT},
     {"VK_VALIDATION_FEATURE_DISABLE_OBJECT_LIFETIMES_EXT", VK_VALIDATION_FEATURE_DISABLE_OBJECT_LIFETIMES_EXT},
     {"VK_VALIDATION_FEATURE_DISABLE_CORE_CHECKS_EXT", VK_VALIDATION_FEATURE_DISABLE_CORE_CHECKS_EXT},
     {"VK_VALIDATION_FEATURE_DISABLE_UNIQUE_HANDLES_EXT", VK_VALIDATION_FEATURE_DISABLE_UNIQUE_HANDLES_EXT},
+    {"VK_VALIDATION_FEATURE_DISABLE_SHADER_VALIDATION_CACHE_EXT", VK_VALIDATION_FEATURE_DISABLE_SHADER_VALIDATION_CACHE_EXT},
     {"VK_VALIDATION_FEATURE_DISABLE_ALL_EXT", VK_VALIDATION_FEATURE_DISABLE_ALL_EXT},
 };
 
-static const std::unordered_map<std::string, VkValidationFeatureEnableEXT> VkValFeatureEnableLookup = {
+static const layer_data::unordered_map<std::string, VkValidationFeatureEnableEXT> VkValFeatureEnableLookup = {
     {"VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT", VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT},
     {"VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_RESERVE_BINDING_SLOT_EXT",
      VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_RESERVE_BINDING_SLOT_EXT},
@@ -52,38 +56,37 @@ static const std::unordered_map<std::string, VkValidationFeatureEnableEXT> VkVal
     {"VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT", VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT},
 };
 
-static const std::unordered_map<std::string, VkValidationFeatureEnable> VkValFeatureEnableLookup2 = {
+static const layer_data::unordered_map<std::string, VkValidationFeatureEnable> VkValFeatureEnableLookup2 = {
     {"VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION", VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION},
 };
 
-static const std::unordered_map<std::string, ValidationCheckDisables> ValidationDisableLookup = {
+static const layer_data::unordered_map<std::string, ValidationCheckDisables> ValidationDisableLookup = {
     {"VALIDATION_CHECK_DISABLE_COMMAND_BUFFER_STATE", VALIDATION_CHECK_DISABLE_COMMAND_BUFFER_STATE},
     {"VALIDATION_CHECK_DISABLE_OBJECT_IN_USE", VALIDATION_CHECK_DISABLE_OBJECT_IN_USE},
-    {"VALIDATION_CHECK_DISABLE_IDLE_DESCRIPTOR_SET", VALIDATION_CHECK_DISABLE_IDLE_DESCRIPTOR_SET},
-    {"VALIDATION_CHECK_DISABLE_PUSH_CONSTANT_RANGE", VALIDATION_CHECK_DISABLE_PUSH_CONSTANT_RANGE},
     {"VALIDATION_CHECK_DISABLE_QUERY_VALIDATION", VALIDATION_CHECK_DISABLE_QUERY_VALIDATION},
     {"VALIDATION_CHECK_DISABLE_IMAGE_LAYOUT_VALIDATION", VALIDATION_CHECK_DISABLE_IMAGE_LAYOUT_VALIDATION},
 };
 
-static const std::unordered_map<std::string, ValidationCheckEnables> ValidationEnableLookup = {
+static const layer_data::unordered_map<std::string, ValidationCheckEnables> ValidationEnableLookup = {
     {"VALIDATION_CHECK_ENABLE_VENDOR_SPECIFIC_ARM", VALIDATION_CHECK_ENABLE_VENDOR_SPECIFIC_ARM},
+    {"VALIDATION_CHECK_ENABLE_VENDOR_SPECIFIC_AMD", VALIDATION_CHECK_ENABLE_VENDOR_SPECIFIC_AMD},
+    {"VALIDATION_CHECK_ENABLE_VENDOR_SPECIFIC_IMG", VALIDATION_CHECK_ENABLE_VENDOR_SPECIFIC_IMG},
     {"VALIDATION_CHECK_ENABLE_VENDOR_SPECIFIC_ALL", VALIDATION_CHECK_ENABLE_VENDOR_SPECIFIC_ALL},
 };
 
 // This should mirror the 'DisableFlags' enumerated type
 static const std::vector<std::string> DisableFlagNameHelper = {
-    "VALIDATION_CHECK_DISABLE_COMMAND_BUFFER_STATE",       // command_buffer_state,
-    "VALIDATION_CHECK_DISABLE_OBJECT_IN_USE",              // object_in_use,
-    "VALIDATION_CHECK_DISABLE_IDLE_DESCRIPTOR_SET",        // idle_descriptor_set,
-    "VALIDATION_CHECK_DISABLE_PUSH_CONSTANT_RANGE",        // push_constant_range,
-    "VALIDATION_CHECK_DISABLE_QUERY_VALIDATION",           // query_validation,
-    "VALIDATION_CHECK_DISABLE_IMAGE_LAYOUT_VALIDATION",    // image_layout_validation,
-    "VK_VALIDATION_FEATURE_DISABLE_OBJECT_LIFETIMES_EXT",  // object_tracking,
-    "VK_VALIDATION_FEATURE_DISABLE_CORE_CHECKS_EXT",       // core_checks,
-    "VK_VALIDATION_FEATURE_DISABLE_THREAD_SAFETY_EXT",     // thread_safety,
-    "VK_VALIDATION_FEATURE_DISABLE_API_PARAMETERS_EXT",    // stateless_checks,
-    "VK_VALIDATION_FEATURE_DISABLE_UNIQUE_HANDLES_EXT",    // handle_wrapping,
-    "VK_VALIDATION_FEATURE_DISABLE_SHADERS_EXT"            // shader_validation,
+    "VALIDATION_CHECK_DISABLE_COMMAND_BUFFER_STATE",               // command_buffer_state,
+    "VALIDATION_CHECK_DISABLE_OBJECT_IN_USE",                      // object_in_use,
+    "VALIDATION_CHECK_DISABLE_QUERY_VALIDATION",                   // query_validation,
+    "VALIDATION_CHECK_DISABLE_IMAGE_LAYOUT_VALIDATION",            // image_layout_validation,
+    "VK_VALIDATION_FEATURE_DISABLE_OBJECT_LIFETIMES_EXT",          // object_tracking,
+    "VK_VALIDATION_FEATURE_DISABLE_CORE_CHECKS_EXT",               // core_checks,
+    "VK_VALIDATION_FEATURE_DISABLE_THREAD_SAFETY_EXT",             // thread_safety,
+    "VK_VALIDATION_FEATURE_DISABLE_API_PARAMETERS_EXT",            // stateless_checks,
+    "VK_VALIDATION_FEATURE_DISABLE_UNIQUE_HANDLES_EXT",            // handle_wrapping,
+    "VK_VALIDATION_FEATURE_DISABLE_SHADERS_EXT",                   // shader_validation,
+    "VK_VALIDATION_FEATURE_DISABLE_SHADER_VALIDATION_CACHING_EXT"  // shader_validation_caching
 };
 
 // This should mirror the 'EnableFlags' enumerated type
@@ -92,6 +95,8 @@ static const std::vector<std::string> EnableFlagNameHelper = {
     "VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_RESERVE_BINDING_SLOT_EXT",  // gpu_validation_reserve_binding_slot,
     "VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT",                     // best_practices,
     "VALIDATION_CHECK_ENABLE_VENDOR_SPECIFIC_ARM",                         // vendor_specific_arm,
+    "VALIDATION_CHECK_ENABLE_VENDOR_SPECIFIC_AMD",                         // vendor_specific_amd,
+    "VALIDATION_CHECK_ENABLE_VENDOR_SPECIFIC_IMG",                         // vendor_specific_img,
     "VK_VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT",                       // debug_printf,
     "VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION"              // sync_validation,
 };

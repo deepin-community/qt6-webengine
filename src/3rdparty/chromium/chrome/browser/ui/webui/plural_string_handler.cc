@@ -39,61 +39,49 @@ void PluralStringHandler::AddLocalizedString(const std::string& name, int id) {
   name_to_id_[name] = id;
 }
 
-void PluralStringHandler::HandleGetPluralString(const base::ListValue* args) {
+void PluralStringHandler::HandleGetPluralString(const base::Value::List& args) {
   AllowJavascript();
-  CHECK_EQ(3U, args->GetSize());
-  const base::Value* callback_id;
-  CHECK(args->Get(0, &callback_id));
+  CHECK_EQ(3U, args.size());
 
-  std::string message_name;
-  CHECK(args->GetString(1, &message_name));
-
-  int count;
-  CHECK(args->GetInteger(2, &count));
+  const base::Value& callback_id = args[0];
+  std::string message_name = args[1].GetString();
+  int count = args[2].GetInt();
 
   auto string = GetPluralizedStringForMessageName(message_name, count);
 
-  ResolveJavascriptCallback(*callback_id, base::Value(string));
+  ResolveJavascriptCallback(callback_id, base::Value(string));
 }
 
 void PluralStringHandler::HandleGetPluralStringTupleWithComma(
-    const base::ListValue* args) {
+    const base::Value::List& args) {
   GetPluralStringTuple(args, IDS_CONCAT_TWO_STRINGS_WITH_COMMA);
 }
 
 void PluralStringHandler::HandleGetPluralStringTupleWithPeriods(
-    const base::ListValue* args) {
+    const base::Value::List& args) {
   GetPluralStringTuple(args, IDS_CONCAT_TWO_STRINGS_WITH_PERIODS);
 }
 
-void PluralStringHandler::GetPluralStringTuple(const base::ListValue* args,
+void PluralStringHandler::GetPluralStringTuple(const base::Value::List& args,
                                                int string_tuple_id) {
   AllowJavascript();
-  CHECK_EQ(5U, args->GetSize());
-  const base::Value* callback_id;
-  CHECK(args->Get(0, &callback_id));
+  CHECK_EQ(5U, args.size());
 
-  std::string message_name1;
-  CHECK(args->GetString(1, &message_name1));
-
-  int count1;
-  CHECK(args->GetInteger(2, &count1));
-
-  std::string message_name2;
-  CHECK(args->GetString(3, &message_name2));
-
-  int count2;
-  CHECK(args->GetInteger(4, &count2));
+  const base::Value& callback_id = args[0];
+  std::string message_name1 = args[1].GetString();
+  int count1 = args[2].GetInt();
+  std::string message_name2 = args[3].GetString();
+  int count2 = args[4].GetInt();
 
   auto string1 = GetPluralizedStringForMessageName(message_name1, count1);
   auto string2 = GetPluralizedStringForMessageName(message_name2, count2);
 
   ResolveJavascriptCallback(
-      *callback_id, base::Value(l10n_util::GetStringFUTF8(string_tuple_id,
-                                                          string1, string2)));
+      callback_id, base::Value(l10n_util::GetStringFUTF8(string_tuple_id,
+                                                         string1, string2)));
 }
 
-base::string16 PluralStringHandler::GetPluralizedStringForMessageName(
+std::u16string PluralStringHandler::GetPluralizedStringForMessageName(
     std::string message_name,
     int count) {
   auto message_id_it = name_to_id_.find(message_name);

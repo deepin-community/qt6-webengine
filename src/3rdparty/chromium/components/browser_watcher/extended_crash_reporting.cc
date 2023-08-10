@@ -11,6 +11,8 @@
 #include "base/debug/activity_tracker.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/persistent_memory_allocator.h"
+#include "base/strings/string_piece.h"
+#include "base/time/time.h"
 #include "base/win/pe_image.h"
 #include "build/build_config.h"
 #include "components/browser_watcher/activity_data_names.h"
@@ -20,7 +22,7 @@
 #include "components/browser_watcher/extended_crash_reporting_metrics.h"
 #include "components/browser_watcher/features.h"
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 // https://devblogs.microsoft.com/oldnewthing/20041025-00/?p=37483.
 extern "C" IMAGE_DOS_HEADER __ImageBase;
 #endif
@@ -84,7 +86,7 @@ void RecordChromeModuleInfo(
 
   module.file = "chrome.dll";
   module.debug_file =
-      base::StringPiece(pdb_filename, pdb_filename_length).as_string();
+      std::string(base::StringPiece(pdb_filename, pdb_filename_length));
 
   global_tracker->RecordModuleInfo(module);
 }
@@ -115,10 +117,10 @@ ExtendedCrashReporting* ExtendedCrashReporting::GetInstance() {
 }
 
 void ExtendedCrashReporting::SetProductStrings(
-    const base::string16& product_name,
-    const base::string16& product_version,
-    const base::string16& channel_name,
-    const base::string16& special_build) {
+    const std::u16string& product_name,
+    const std::u16string& product_version,
+    const std::u16string& channel_name,
+    const std::u16string& special_build) {
   base::debug::ActivityUserData& proc_data = tracker_->process_data();
   proc_data.SetString(kActivityProduct, product_name);
   proc_data.SetString(kActivityVersion, product_version);

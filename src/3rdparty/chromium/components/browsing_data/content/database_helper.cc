@@ -14,9 +14,7 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/location.h"
-#include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task/post_task.h"
 #include "components/browsing_data/content/browsing_data_helper.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_task_traits.h"
@@ -35,8 +33,9 @@ using storage::DatabaseIdentifier;
 namespace browsing_data {
 
 DatabaseHelper::DatabaseHelper(content::BrowserContext* browser_context)
-    : tracker_(BrowserContext::GetDefaultStoragePartition(browser_context)
-                   ->GetDatabaseTracker()) {}
+    : tracker_(
+          browser_context->GetDefaultStoragePartition()->GetDatabaseTracker()) {
+}
 
 DatabaseHelper::~DatabaseHelper() {}
 
@@ -69,9 +68,8 @@ void DatabaseHelper::StartFetching(FetchCallback callback) {
 void DatabaseHelper::DeleteDatabase(const url::Origin& origin) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   tracker_->task_runner()->PostTask(
-      FROM_HERE,
-      base::BindOnce(&storage::DatabaseTracker::DeleteDataForOrigin, tracker_,
-                     origin, base::DoNothing::Once<int>()));
+      FROM_HERE, base::BindOnce(&storage::DatabaseTracker::DeleteDataForOrigin,
+                                tracker_, origin, base::DoNothing()));
 }
 
 CannedDatabaseHelper::CannedDatabaseHelper(

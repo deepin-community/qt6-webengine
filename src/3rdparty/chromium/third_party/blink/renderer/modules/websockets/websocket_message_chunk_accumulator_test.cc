@@ -4,6 +4,7 @@
 
 #include "third_party/blink/renderer/modules/websockets/websocket_message_chunk_accumulator.h"
 
+#include "base/time/time.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/platform/scheduler/test/fake_task_runner.h"
 
@@ -18,7 +19,7 @@ class WebSocketMessageChunkAccumulatorTest : public testing::Test {
   static Vector<char> Flatten(const Vector<base::span<const char>>& chunks) {
     Vector<char> v;
     for (const auto& chunk : chunks) {
-      v.Append(chunk.data(), chunk.size());
+      v.Append(chunk.data(), base::checked_cast<wtf_size_t>(chunk.size()));
     }
     return v;
   }

@@ -6,6 +6,7 @@
 
 #include <vector>
 
+#include "base/containers/buffer_iterator.h"
 #include "base/logging.h"
 
 namespace blink {
@@ -52,37 +53,38 @@ void WriteBytes(const char* bytes,
   buffer->insert(buffer->end(), bytes, bytes + num_bytes);
 }
 
-bool ReadUint8(const uint8_t** ptr, const uint8_t* end, uint8_t* value) {
-  if (*ptr >= end)
-    return false;
-  *value = *(*ptr)++;
-  return true;
+bool ReadUint8(base::BufferIterator<const uint8_t>& iter, uint8_t* value) {
+  if (const uint8_t* ptr = iter.Object<uint8_t>()) {
+    *value = *ptr;
+    return true;
+  }
+  return false;
 }
 
-bool ReadUint32(const uint8_t** ptr, const uint8_t* end, uint32_t* value) {
+bool ReadUint32(base::BufferIterator<const uint8_t>& iter, uint32_t* value) {
   *value = 0;
   uint8_t current_byte;
   int shift = 0;
   do {
-    if (*ptr >= end)
+    if (!ReadUint8(iter, &current_byte))
       return false;
-    current_byte = *(*ptr)++;
+
     *value |= (static_cast<uint32_t>(current_byte & kVarIntMask) << shift);
     shift += kVarIntShift;
   } while (current_byte & (1 << kVarIntShift));
   return true;
 }
 
-bool ContainsOnlyLatin1(const base::string16& data) {
-  base::char16 x = 0;
-  for (base::char16 c : data)
+bool ContainsOnlyLatin1(const std::u16string& data) {
+  char16_t x = 0;
+  for (char16_t c : data)
     x |= c;
   return !(x & 0xFF00);
 }
 
 }  // namespace
 
-std::vector<uint8_t> EncodeStringMessage(const base::string16& data) {
+std::vector<uint8_t> EncodeStringMessage(const std::u16string& data) {
   std::vector<uint8_t> buffer;
   WriteUint8(kVersionTag, &buffer);
   WriteUint32(kVersion, &buffer);
@@ -93,7 +95,7 @@ std::vector<uint8_t> EncodeStringMessage(const base::string16& data) {
     WriteUint32(data_latin1.size(), &buffer);
     WriteBytes(data_latin1.c_str(), data_latin1.size(), &buffer);
   } else {
-    size_t num_bytes = data.size() * sizeof(base::char16);
+    size_t num_bytes = data.size() * sizeof(char16_t);
     if ((buffer.size() + 1 + BytesNeededForUint32(num_bytes)) & 1)
       WriteUint8(kPaddingTag, &buffer);
     WriteUint8(kTwoByteStringTag, &buffer);
@@ -105,37 +107,37 @@ std::vector<uint8_t> EncodeStringMessage(const base::string16& data) {
 }
 
 bool DecodeStringMessage(base::span<const uint8_t> encoded_data,
-                         base::string16* result) {
-  const uint8_t* ptr = encoded_data.data();
-  const uint8_t* end = ptr + encoded_data.size();
+                         std::u16string* result) {
+  base::BufferIterator<const uint8_t> iter(encoded_data);
   uint8_t tag;
 
   // Discard any leading version and padding tags.
   // There may be more than one version, due to Blink and V8 having separate
   // version tags.
   do {
-    if (!ReadUint8(&ptr, end, &tag))
+    if (!ReadUint8(iter, &tag))
       return false;
     uint32_t version;
-    if (tag == kVersionTag && !ReadUint32(&ptr, end, &version))
+    if (tag == kVersionTag && !ReadUint32(iter, &version))
       return false;
   } while (tag == kVersionTag || tag == kPaddingTag);
 
   switch (tag) {
     case kOneByteStringTag: {
       uint32_t num_bytes;
-      if (!ReadUint32(&ptr, end, &num_bytes))
+      if (!ReadUint32(iter, &num_bytes))
         return false;
-      result->assign(reinterpret_cast<const char*>(ptr),
-                     reinterpret_cast<const char*>(ptr) + num_bytes);
-      return true;
+      auto span = iter.Span<char>(num_bytes / sizeof(char));
+      result->assign(span.begin(), span.end());
+      return span.size_bytes() == num_bytes;
     }
     case kTwoByteStringTag: {
       uint32_t num_bytes;
-      if (!ReadUint32(&ptr, end, &num_bytes))
+      if (!ReadUint32(iter, &num_bytes))
         return false;
-      result->assign(reinterpret_cast<const base::char16*>(ptr), num_bytes / 2);
-      return true;
+      auto span = iter.Span<char16_t>(num_bytes / sizeof(char16_t));
+      result->assign(span.begin(), span.end());
+      return span.size_bytes() == num_bytes;
     }
   }
 

@@ -52,13 +52,15 @@ class ImageSibling : public gl::FramebufferAttachmentObject
                       GLenum binding,
                       const gl::ImageIndex &imageIndex) const override;
     bool isYUV() const override;
+    bool hasProtectedContent() const override;
 
   protected:
     // Set the image target of this sibling
     void setTargetImage(const gl::Context *context, egl::Image *imageTarget);
 
     // Orphan all EGL image sources and targets
-    angle::Result orphanImages(const gl::Context *context);
+    angle::Result orphanImages(const gl::Context *context,
+                               RefCountObjectReleaser<Image> *outReleaseImage);
 
     void notifySiblings(angle::SubjectMessage message);
 
@@ -94,11 +96,14 @@ class ExternalImageSibling : public ImageSibling
     gl::Extents getAttachmentSize(const gl::ImageIndex &imageIndex) const override;
     gl::Format getAttachmentFormat(GLenum binding, const gl::ImageIndex &imageIndex) const override;
     GLsizei getAttachmentSamples(const gl::ImageIndex &imageIndex) const override;
+    GLuint getLevelCount() const;
     bool isRenderable(const gl::Context *context,
                       GLenum binding,
                       const gl::ImageIndex &imageIndex) const override;
     bool isTextureable(const gl::Context *context) const;
     bool isYUV() const override;
+    bool isCubeMap() const;
+    bool hasProtectedContent() const override;
 
     void onAttach(const gl::Context *context, rx::Serial framebufferSerial) override;
     void onDetach(const gl::Context *context, rx::Serial framebufferSerial) override;
@@ -133,10 +138,13 @@ struct ImageState : private angle::NonCopyable
 
     gl::Format format;
     bool yuv;
+    bool cubeMap;
     gl::Extents size;
     size_t samples;
+    GLuint levelCount;
     EGLenum sourceType;
     EGLenum colorspace;
+    bool hasProtectedContent;
 };
 
 class Image final : public RefCountObject, public LabeledObject
@@ -158,10 +166,15 @@ class Image final : public RefCountObject, public LabeledObject
     bool isRenderable(const gl::Context *context) const;
     bool isTexturable(const gl::Context *context) const;
     bool isYUV() const;
+    // Returns true only if the eglImage contains a complete cubemap
+    bool isCubeMap() const;
     size_t getWidth() const;
     size_t getHeight() const;
+    const gl::Extents &getExtents() const;
     bool isLayered() const;
     size_t getSamples() const;
+    GLuint getLevelCount() const;
+    bool hasProtectedContent() const;
 
     Error initialize(const Display *display);
 
@@ -170,6 +183,8 @@ class Image final : public RefCountObject, public LabeledObject
     bool orphaned() const;
     gl::InitState sourceInitState() const;
     void setInitState(gl::InitState initState);
+
+    Error exportVkImage(void *vkImage, void *vkImageCreateInfo);
 
   private:
     friend class ImageSibling;

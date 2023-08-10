@@ -7,14 +7,13 @@
 
 #include <string>
 
-#include "base/compiler_specific.h"
-#include "base/macros.h"
-#include "chrome/browser/ash/login/screens/update_required_screen.h"
 #include "chrome/browser/ui/webui/chromeos/login/base_screen_handler.h"
 
-namespace chromeos {
-
+namespace ash {
 class UpdateRequiredScreen;
+}
+
+namespace chromeos {
 
 // Interface for dependency injection between UpdateRequiredScreen and its
 // WebUI representation.
@@ -43,7 +42,7 @@ class UpdateRequiredView {
   virtual void Hide() = 0;
 
   // Binds `screen` to the view.
-  virtual void Bind(UpdateRequiredScreen* screen) = 0;
+  virtual void Bind(ash::UpdateRequiredScreen* screen) = 0;
 
   // Unbinds the screen from the view.
   virtual void Unbind() = 0;
@@ -55,7 +54,7 @@ class UpdateRequiredView {
   // Set progress percentage.
   virtual void SetUpdateProgressValue(int progress) = 0;
   // Set progress message (like "Verifying").
-  virtual void SetUpdateProgressMessage(const base::string16& message) = 0;
+  virtual void SetUpdateProgressMessage(const std::u16string& message) = 0;
   // Set the visibility of the estimated time left.
   virtual void SetEstimatedTimeLeftVisible(bool visible) = 0;
   // Set the estimated time left, in seconds.
@@ -64,7 +63,7 @@ class UpdateRequiredView {
   virtual void SetUIState(UpdateRequiredView::UIState ui_state) = 0;
   // Set enterprise and device name to be used in strings in the UI.
   virtual void SetEnterpriseAndDeviceName(const std::string& enterpriseDomain,
-                                          const base::string16& deviceName) = 0;
+                                          const std::u16string& deviceName) = 0;
   virtual void SetEolMessage(const std::string& eolMessage) = 0;
   virtual void SetIsUserDataPresent(bool deleted) = 0;
 };
@@ -74,43 +73,53 @@ class UpdateRequiredScreenHandler : public UpdateRequiredView,
  public:
   using TView = UpdateRequiredView;
 
-  explicit UpdateRequiredScreenHandler(JSCallsContainer* js_calls_container);
+  UpdateRequiredScreenHandler();
+
+  UpdateRequiredScreenHandler(const UpdateRequiredScreenHandler&) = delete;
+  UpdateRequiredScreenHandler& operator=(const UpdateRequiredScreenHandler&) =
+      delete;
+
   ~UpdateRequiredScreenHandler() override;
 
  private:
   void Show() override;
   void Hide() override;
-  void Bind(UpdateRequiredScreen* screen) override;
+  void Bind(ash::UpdateRequiredScreen* screen) override;
   void Unbind() override;
 
   void SetIsConnected(bool connected) override;
   void SetUpdateProgressUnavailable(bool unavailable) override;
   void SetUpdateProgressValue(int progress) override;
-  void SetUpdateProgressMessage(const base::string16& message) override;
+  void SetUpdateProgressMessage(const std::u16string& message) override;
   void SetEstimatedTimeLeftVisible(bool visible) override;
   void SetEstimatedTimeLeft(int seconds_left) override;
   void SetUIState(UpdateRequiredView::UIState ui_state) override;
   void SetEnterpriseAndDeviceName(const std::string& enterpriseDomain,
-                                  const base::string16& deviceName) override;
+                                  const std::u16string& deviceName) override;
   void SetEolMessage(const std::string& eolMessage) override;
   void SetIsUserDataPresent(bool data_present) override;
 
   // BaseScreenHandler:
   void DeclareLocalizedValues(
       ::login::LocalizedValuesBuilder* builder) override;
-  void Initialize() override;
+  void InitializeDeprecated() override;
 
-  UpdateRequiredScreen* screen_ = nullptr;
+  ash::UpdateRequiredScreen* screen_ = nullptr;
 
-  // If true, Initialize() will call Show().
+  // If true, InitializeDeprecated() will call Show().
   bool show_on_init_ = false;
 
   // The domain name for which update required screen is being shown.
   std::string domain_;
-
-  DISALLOW_COPY_AND_ASSIGN(UpdateRequiredScreenHandler);
 };
 
 }  // namespace chromeos
+
+// TODO(https://crbug.com/1164001): remove after the //chrome/browser/chromeos
+// source migration is finished.
+namespace ash {
+using ::chromeos::UpdateRequiredScreenHandler;
+using ::chromeos::UpdateRequiredView;
+}
 
 #endif  // CHROME_BROWSER_UI_WEBUI_CHROMEOS_LOGIN_UPDATE_REQUIRED_SCREEN_HANDLER_H_

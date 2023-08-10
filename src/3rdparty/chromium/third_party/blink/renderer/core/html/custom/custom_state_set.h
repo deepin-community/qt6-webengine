@@ -7,14 +7,17 @@
 
 #include "third_party/blink/renderer/bindings/core/v8/iterable.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
+#include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_set.h"
+#include "third_party/blink/renderer/platform/wtf/vector.h"
 
 namespace blink {
 
+class CustomStateIterationSource;
 class Element;
 
 // This class is an implementation of 'CustomStateSet' IDL interface.
 class CustomStateSet final : public ScriptWrappable,
-                             public SetlikeIterable<String> {
+                             public SetlikeIterable<String, IDLString> {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -22,12 +25,17 @@ class CustomStateSet final : public ScriptWrappable,
   void Trace(Visitor* visitor) const override;
 
   // IDL bindings:
+  //
+  // This operation is O(size()).
   void add(const String& value, ExceptionState& exception_state);
   uint32_t size() const;
   void clearForBinding(ScriptState*, ExceptionState&);
+  // This operation is O(size()).
   bool deleteForBinding(ScriptState*, const String& value, ExceptionState&);
+  // This operation is O(size()).
   bool hasForBinding(ScriptState*, const String& value, ExceptionState&) const;
 
+  // This operation is O(size()).
   bool Has(const String& value) const;
 
  private:
@@ -37,7 +45,14 @@ class CustomStateSet final : public ScriptWrappable,
   void InvalidateStyle() const;
 
   Member<Element> element_;
-  LinkedHashSet<String> set_;
+  // We don't use LinkedHashSet because it's difficult to
+  // implement "live" iterators with them.
+  // See crbug.com/1184020.
+  //
+  // If the O(size()) operations are problematic, we should change the type of
+  // the following data member.
+  Vector<String> list_;
+  HeapHashSet<WeakMember<CustomStateIterationSource>> iterators_;
 
   friend class CustomStateIterationSource;
 };

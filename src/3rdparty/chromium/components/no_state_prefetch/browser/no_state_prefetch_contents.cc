@@ -12,13 +12,14 @@
 #include "base/bind.h"
 #include "base/callback_helpers.h"
 #include "base/containers/contains.h"
+#include "base/memory/raw_ptr.h"
+#include "base/observer_list.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task/post_task.h"
 #include "build/build_config.h"
 #include "components/no_state_prefetch/browser/no_state_prefetch_contents_delegate.h"
 #include "components/no_state_prefetch/browser/no_state_prefetch_manager.h"
-#include "components/no_state_prefetch/common/prerender_final_status.h"
-#include "components/no_state_prefetch/common/prerender_util.h"
+#include "components/no_state_prefetch/common/no_state_prefetch_final_status.h"
+#include "components/no_state_prefetch/common/no_state_prefetch_utils.h"
 #include "components/no_state_prefetch/common/render_frame_prerender_messages.mojom.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_task_traits.h"
@@ -55,7 +56,7 @@ class NoStatePrefetchContentsFactoryImpl
       content::BrowserContext* browser_context,
       const GURL& url,
       const content::Referrer& referrer,
-      const base::Optional<url::Origin>& initiator_origin,
+      const absl::optional<url::Origin>& initiator_origin,
       Origin origin) override {
     return new NoStatePrefetchContents(
         std::move(delegate), no_state_prefetch_manager, browser_context, url,
@@ -84,7 +85,8 @@ class NoStatePrefetchContents::WebContentsDelegateImpl
     return NULL;
   }
 
-  bool ShouldTransferNavigation(bool is_main_frame_navigation) override {
+  bool ShouldAllowRendererInitiatedCrossProcessNavigation(
+      bool is_outermost_main_frame_navigation) override {
     // Cancel the prerender if the navigation attempts to transfer to a
     // different process.  Examples include server redirects to privileged pages
     // or cross-site subframe navigations in --site-per-process.
@@ -116,7 +118,7 @@ class NoStatePrefetchContents::WebContentsDelegateImpl
   }
 
  private:
-  NoStatePrefetchContents* no_state_prefetch_contents_;
+  raw_ptr<NoStatePrefetchContents> no_state_prefetch_contents_;
 };
 
 NoStatePrefetchContents::Observer::~Observer() {}
@@ -127,7 +129,7 @@ NoStatePrefetchContents::NoStatePrefetchContents(
     content::BrowserContext* browser_context,
     const GURL& url,
     const content::Referrer& referrer,
-    const base::Optional<url::Origin>& initiator_origin,
+    const absl::optional<url::Origin>& initiator_origin,
     Origin origin)
     : prerendering_has_started_(false),
       no_state_prefetch_manager_(no_state_prefetch_manager),
@@ -155,6 +157,7 @@ NoStatePrefetchContents::NoStatePrefetchContents(
     case ORIGIN_LINK_REL_PRERENDER_SAMEDOMAIN:
     case ORIGIN_LINK_REL_PRERENDER_CROSSDOMAIN:
     case ORIGIN_LINK_REL_NEXT:
+    case ORIGIN_SAME_ORIGIN_SPECULATION:
       DCHECK(initiator_origin_.has_value());
       break;
     case ORIGIN_NONE:
@@ -245,12 +248,12 @@ NoStatePrefetchContents::~NoStatePrefetchContents() {
   no_state_prefetch_manager_->RecordNetworkBytesConsumed(origin(),
                                                          network_bytes_);
 
-  if (!no_state_prefetch_contents_)
-    return;
-
-  // If we still have a WebContents, clean up anything we need to and then
-  // destroy it.
-  std::unique_ptr<WebContents> contents = ReleaseNoStatePrefetchContents();
+  if (no_state_prefetch_contents_) {
+    no_state_prefetch_contents_->SetDelegate(nullptr);
+    content::WebContentsObserver::Observe(nullptr);
+    delegate_->ReleaseNoStatePrefetchContents(
+        no_state_prefetch_contents_.get());
+  }
 }
 
 void NoStatePrefetchContents::AddObserver(Observer* observer) {
@@ -266,11 +269,10 @@ std::unique_ptr<WebContents> NoStatePrefetchContents::CreateWebContents(
     SessionStorageNamespace* session_storage_namespace) {
   // TODO(ajwong): Remove the temporary map once prerendering is aware of
   // multiple session storage namespaces per tab.
-  content::SessionStorageNamespaceMap session_storage_namespace_map;
-  session_storage_namespace_map[std::string()] = session_storage_namespace;
   return WebContents::CreateWithSessionStorage(
       WebContents::CreateParams(browser_context_),
-      session_storage_namespace_map);
+      CreateMapWithDefaultSessionStorageNamespace(browser_context_,
+                                                  session_storage_namespace));
 }
 
 void NoStatePrefetchContents::NotifyPrefetchStart() {
@@ -323,7 +325,7 @@ bool NoStatePrefetchContents::Matches(
   return base::Contains(alias_urls_, url);
 }
 
-void NoStatePrefetchContents::RenderProcessGone(
+void NoStatePrefetchContents::PrimaryMainFrameRenderProcessGone(
     base::TerminationStatus status) {
   if (status == base::TERMINATION_STATUS_STILL_RUNNING) {
     // The renderer process is being killed because of the browser/test
@@ -353,7 +355,7 @@ void NoStatePrefetchContents::DidStopLoading() {
 
 void NoStatePrefetchContents::DidStartNavigation(
     content::NavigationHandle* navigation_handle) {
-  if (!navigation_handle->IsInMainFrame() ||
+  if (!navigation_handle->IsInPrimaryMainFrame() ||
       navigation_handle->IsSameDocument()) {
     return;
   }
@@ -371,7 +373,7 @@ void NoStatePrefetchContents::DidStartNavigation(
 
 void NoStatePrefetchContents::DidRedirectNavigation(
     content::NavigationHandle* navigation_handle) {
-  if (!navigation_handle->IsInMainFrame())
+  if (!navigation_handle->IsInPrimaryMainFrame())
     return;
 
   // If it's a redirect on the top-level resource, the name needs to be
@@ -389,7 +391,7 @@ void NoStatePrefetchContents::DidFinishLoad(
 
 void NoStatePrefetchContents::DidFinishNavigation(
     content::NavigationHandle* navigation_handle) {
-  if (!navigation_handle->IsInMainFrame() ||
+  if (!navigation_handle->IsInPrimaryMainFrame() ||
       !navigation_handle->HasCommitted()) {
     return;
   }
@@ -453,13 +455,11 @@ void NoStatePrefetchContents::DestroyWhenUsingTooManyResources() {
   if (process_pid_ == base::kNullProcessId)
     return;
 
-  // Using AdaptCallbackForRepeating allows for an easier transition to
-  // OnceCallbacks for https://crbug.com/714018.
   memory_instrumentation::MemoryInstrumentation::GetInstance()
       ->RequestPrivateMemoryFootprint(
-          process_pid_, base::AdaptCallbackForRepeating(base::BindOnce(
-                            &NoStatePrefetchContents::DidGetMemoryUsage,
-                            weak_factory_.GetWeakPtr())));
+          process_pid_,
+          base::BindOnce(&NoStatePrefetchContents::DidGetMemoryUsage,
+                         weak_factory_.GetWeakPtr()));
 }
 
 void NoStatePrefetchContents::DidGetMemoryUsage(
@@ -484,16 +484,6 @@ void NoStatePrefetchContents::DidGetMemoryUsage(
   }
 }
 
-std::unique_ptr<WebContents>
-NoStatePrefetchContents::ReleaseNoStatePrefetchContents() {
-  no_state_prefetch_contents_->SetDelegate(nullptr);
-  content::WebContentsObserver::Observe(nullptr);
-
-  delegate_->ReleaseNoStatePrefetchContents(no_state_prefetch_contents_.get());
-
-  return std::move(no_state_prefetch_contents_);
-}
-
 RenderFrameHost* NoStatePrefetchContents::GetMainFrame() {
   return no_state_prefetch_contents_
              ? no_state_prefetch_contents_->GetMainFrame()
@@ -505,11 +495,11 @@ std::unique_ptr<base::DictionaryValue> NoStatePrefetchContents::GetAsValue()
   if (!no_state_prefetch_contents_)
     return nullptr;
   auto dict_value = std::make_unique<base::DictionaryValue>();
-  dict_value->SetString("url", prerender_url_.spec());
+  dict_value->SetStringKey("url", prerender_url_.spec());
   base::TimeTicks current_time = base::TimeTicks::Now();
   base::TimeDelta duration = current_time - load_start_time_;
-  dict_value->SetInteger("duration", duration.InSeconds());
-  dict_value->SetBoolean(
+  dict_value->SetIntKey("duration", duration.InSeconds());
+  dict_value->SetBoolKey(
       "is_loaded",
       no_state_prefetch_contents_ && !no_state_prefetch_contents_->IsLoading());
   return dict_value;

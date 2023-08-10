@@ -7,9 +7,9 @@
 
 #include <string>
 
+#include "base/callback_forward.h"
 #include "base/containers/flat_set.h"
-#include "base/macros.h"
-#include "base/util/type_safety/token_type.h"
+#include "base/types/token_type.h"
 #include "components/performance_manager/public/execution_context_priority/execution_context_priority.h"
 #include "components/performance_manager/public/graph/node.h"
 #include "third_party/blink/public/common/tokens/tokens.h"
@@ -61,6 +61,10 @@ class WorkerNode : public Node {
   class ObserverDefaultImpl;
 
   WorkerNode();
+
+  WorkerNode(const WorkerNode&) = delete;
+  WorkerNode& operator=(const WorkerNode&) = delete;
+
   ~WorkerNode() override;
 
   // Returns the worker type. Note that this is different from the NodeTypeEnum.
@@ -112,9 +116,6 @@ class WorkerNode : public Node {
   // Returns the current priority of the worker, and the reason for the worker
   // having that particular priority.
   virtual const PriorityAndReason& GetPriorityAndReason() const = 0;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(WorkerNode);
 };
 
 // Pure virtual observer interface. Derive from this if you want to be forced to
@@ -122,14 +123,22 @@ class WorkerNode : public Node {
 class WorkerNodeObserver {
  public:
   WorkerNodeObserver();
+
+  WorkerNodeObserver(const WorkerNodeObserver&) = delete;
+  WorkerNodeObserver& operator=(const WorkerNodeObserver&) = delete;
+
   virtual ~WorkerNodeObserver();
 
   // Node lifetime notifications.
 
-  // Called when a |worker_node| is added to the graph.
+  // Called when a |worker_node| is added to the graph. Observers must not make
+  // any property changes or cause re-entrant notifications during the scope of
+  // this call. Instead, make property changes via a separate posted task.
   virtual void OnWorkerNodeAdded(const WorkerNode* worker_node) = 0;
 
-  // Called before a |worker_node| is removed from the graph.
+  // Called before a |worker_node| is removed from the graph. Observers must not
+  // make any property changes or cause re-entrant notifications during the
+  // scope of this call.
   virtual void OnBeforeWorkerNodeRemoved(const WorkerNode* worker_node) = 0;
 
   // Notifications of property changes.
@@ -160,9 +169,6 @@ class WorkerNodeObserver {
   virtual void OnPriorityAndReasonChanged(
       const WorkerNode* worker_node,
       const PriorityAndReason& previous_value) = 0;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(WorkerNodeObserver);
 };
 
 // Default implementation of observer that provides dummy versions of each
@@ -171,6 +177,10 @@ class WorkerNodeObserver {
 class WorkerNode::ObserverDefaultImpl : public WorkerNodeObserver {
  public:
   ObserverDefaultImpl();
+
+  ObserverDefaultImpl(const ObserverDefaultImpl&) = delete;
+  ObserverDefaultImpl& operator=(const ObserverDefaultImpl&) = delete;
+
   ~ObserverDefaultImpl() override;
 
   // WorkerNodeObserver implementation:
@@ -192,9 +202,6 @@ class WorkerNode::ObserverDefaultImpl : public WorkerNodeObserver {
   void OnPriorityAndReasonChanged(
       const WorkerNode* worker_node,
       const PriorityAndReason& previous_value) override {}
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(ObserverDefaultImpl);
 };
 
 }  // namespace performance_manager

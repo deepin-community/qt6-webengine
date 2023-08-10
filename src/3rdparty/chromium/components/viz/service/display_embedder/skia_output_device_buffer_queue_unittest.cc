@@ -12,10 +12,13 @@
 
 #include "base/callback_helpers.h"
 #include "base/memory/ptr_util.h"
+#include "base/memory/raw_ptr.h"
 #include "base/test/bind.h"
+#include "base/test/mock_callback.h"
 #include "build/build_config.h"
 #include "components/viz/common/resources/resource_sizes.h"
 #include "components/viz/service/display_embedder/output_presenter_gl.h"
+#include "components/viz/service/display_embedder/skia_output_device.h"
 #include "components/viz/service/display_embedder/skia_output_surface_dependency_impl.h"
 #include "components/viz/service/gl/gpu_service_impl.h"
 #include "components/viz/test/test_gpu_service_holder.h"
@@ -26,6 +29,10 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/display/types/display_snapshot.h"
 #include "ui/gl/gl_surface_stub.h"
+
+#if defined(USE_OZONE)
+#include "ui/ozone/public/ozone_platform.h"
+#endif
 
 using ::testing::_;
 using ::testing::Expectation;
@@ -76,6 +83,9 @@ namespace {
   GTEST_TEST_GPU_(test_fixture, test_name, test_fixture, \
                   ::testing::internal::GetTypeId<test_fixture>())
 
+const gfx::Size kScreenSize = gfx::Size(30, 30);
+const SkColorType kDefaultColorType = kRGBA_8888_SkColorType;
+
 class TestOnGpu : public ::testing::Test {
  protected:
   TestOnGpu()
@@ -123,7 +133,7 @@ class TestOnGpu : public ::testing::Test {
   virtual void TearDownOnGpu() {}
   virtual void TestBodyOnGpu() {}
 
-  TestGpuServiceHolder* gpu_service_holder_;
+  raw_ptr<TestGpuServiceHolder> gpu_service_holder_;
   base::WaitableEvent wait_;
 };
 
@@ -169,6 +179,7 @@ class TestSharedImageBackingFactory : public gpu::SharedImageBackingFactory {
       int client_id,
       gfx::GpuMemoryBufferHandle handle,
       gfx::BufferFormat format,
+      gfx::BufferPlane plane,
       gpu::SurfaceHandle surface_handle,
       const gfx::Size& size,
       const gfx::ColorSpace& color_space,
@@ -178,9 +189,14 @@ class TestSharedImageBackingFactory : public gpu::SharedImageBackingFactory {
     NOTREACHED();
     return nullptr;
   }
-  bool CanImportGpuMemoryBuffer(
-      gfx::GpuMemoryBufferType memory_buffer_type) override {
-    return false;
+  bool IsSupported(uint32_t usage,
+                   ResourceFormat format,
+                   bool thread_safe,
+                   gfx::GpuMemoryBufferType gmb_type,
+                   gpu::GrContextType gr_context_type_,
+                   bool* allow_legacy_mailbox,
+                   bool is_pixel_used) override {
+    return true;
   }
 };
 
@@ -190,22 +206,21 @@ class MockGLSurfaceAsync : public gl::GLSurfaceStub {
 
   void SwapBuffersAsync(SwapCompletionCallback completion_callback,
                         PresentationCallback presentation_callback) override {
-    callbacks_.push_back(std::move(completion_callback));
+    swap_completion_callbacks_.push_back(std::move(completion_callback));
+    presentation_callbacks_.push_back(std::move(presentation_callback));
   }
 
   void CommitOverlayPlanesAsync(
       SwapCompletionCallback completion_callback,
       PresentationCallback presentation_callback) override {
-    callbacks_.push_back(std::move(completion_callback));
+    swap_completion_callbacks_.push_back(std::move(completion_callback));
+    presentation_callbacks_.push_back(std::move(presentation_callback));
   }
 
-  bool ScheduleOverlayPlane(int z_order,
-                            gfx::OverlayTransform transform,
-                            gl::GLImage* image,
-                            const gfx::Rect& bounds_rect,
-                            const gfx::RectF& crop_rect,
-                            bool enable_blend,
-                            std::unique_ptr<gfx::GpuFence> gpu_fence) override {
+  bool ScheduleOverlayPlane(
+      gl::GLImage* image,
+      std::unique_ptr<gfx::GpuFence> gpu_fence,
+      const gfx::OverlayPlaneData& overlay_plane_data) override {
     return true;
   }
 
@@ -214,15 +229,20 @@ class MockGLSurfaceAsync : public gl::GLSurfaceStub {
   }
 
   void SwapComplete() {
-    DCHECK(!callbacks_.empty());
-    std::move(callbacks_.front())
+    DCHECK(!swap_completion_callbacks_.empty());
+    std::move(swap_completion_callbacks_.front())
         .Run(gfx::SwapCompletionResult(gfx::SwapResult::SWAP_ACK));
-    callbacks_.pop_front();
+    swap_completion_callbacks_.pop_front();
+
+    DCHECK(!presentation_callbacks_.empty());
+    std::move(presentation_callbacks_.front()).Run({});
+    presentation_callbacks_.pop_front();
   }
 
  protected:
   ~MockGLSurfaceAsync() override = default;
-  base::circular_deque<SwapCompletionCallback> callbacks_;
+  base::circular_deque<SwapCompletionCallback> swap_completion_callbacks_;
+  base::circular_deque<PresentationCallback> presentation_callbacks_;
 };
 
 class MemoryTrackerStub : public gpu::MemoryTracker {
@@ -255,6 +275,13 @@ class MemoryTrackerStub : public gpu::MemoryTracker {
 
 }  // namespace
 
+using DidSwapBufferCompleteCallback =
+    base::RepeatingCallback<void(gpu::SwapBuffersCompleteParams,
+                                 const gfx::Size& pixel_size,
+                                 gfx::GpuFenceHandle release_fence)>;
+using BufferPresentedCallback =
+    base::OnceCallback<void(const gfx::PresentationFeedback& feedback)>;
+
 class SkiaOutputDeviceBufferQueueTest : public TestOnGpu {
  public:
   SkiaOutputDeviceBufferQueueTest() = default;
@@ -263,6 +290,10 @@ class SkiaOutputDeviceBufferQueueTest : public TestOnGpu {
     gpu::SurfaceHandle surface_handle_ = gpu::kNullSurfaceHandle;
     dependency_ = std::make_unique<SkiaOutputSurfaceDependencyImpl>(
         gpu_service_holder_->gpu_service(), surface_handle_);
+  }
+
+  virtual DidSwapBufferCompleteCallback GetDidSwapBuffersCompleteCallback() {
+    return base::DoNothing();
   }
 
   void SetUpOnGpu() override {
@@ -274,23 +305,30 @@ class SkiaOutputDeviceBufferQueueTest : public TestOnGpu {
         dependency_->GetGpuFeatureInfo(),
         dependency_->GetSharedContextState().get(),
         dependency_->GetMailboxManager(), dependency_->GetSharedImageManager(),
-        dependency_->GetGpuImageFactory(), memory_tracker_.get(), true),
+        dependency_->GetGpuImageFactory(), memory_tracker_.get(),
+        /*enable_wrapped_sk_image=*/true, /*is_for_display_compositor=*/true),
     shared_image_factory_->RegisterSharedImageBackingFactoryForTesting(
         &test_backing_factory_);
     shared_image_representation_factory_ =
         std::make_unique<gpu::SharedImageRepresentationFactory>(
             dependency_->GetSharedImageManager(), memory_tracker_.get());
 
-    auto present_callback =
-        base::DoNothing::Repeatedly<gpu::SwapBuffersCompleteParams,
-                                    const gfx::Size&>();
+    auto present_callback = GetDidSwapBuffersCompleteCallback();
 
+    bool supports_non_backed_solid_color_buffers = false;
+#if defined(USE_OZONE)
+    supports_non_backed_solid_color_buffers =
+        ui::OzonePlatform::GetInstance()
+            ->GetPlatformRuntimeProperties()
+            .supports_non_backed_solid_color_buffers;
+#endif
     output_device_ = std::make_unique<SkiaOutputDeviceBufferQueue>(
         std::make_unique<OutputPresenterGL>(
             gl_surface_, dependency_.get(), shared_image_factory_.get(),
             shared_image_representation_factory_.get()),
         dependency_.get(), shared_image_representation_factory_.get(),
-        memory_tracker_.get(), present_callback, false);
+        memory_tracker_.get(), present_callback, false,
+        supports_non_backed_solid_color_buffers);
   }
 
   void TearDownOnGpu() override {
@@ -369,28 +407,51 @@ class SkiaOutputDeviceBufferQueueTest : public TestOnGpu {
   }
 
   void ScheduleNoPrimaryPlane() {
-    base::Optional<OverlayProcessorInterface::OutputSurfaceOverlayPlane>
+    absl::optional<OverlayProcessorInterface::OutputSurfaceOverlayPlane>
         no_plane;
     output_device_->SchedulePrimaryPlane(no_plane);
   }
 
-  void SwapBuffers() {
-    auto present_callback =
-        base::DoNothing::Once<const gfx::PresentationFeedback&>();
-
-    output_device_->SwapBuffers(std::move(present_callback),
-                                OutputSurfaceFrame());
+  virtual void SwapBuffers() {
+    output_device_->SwapBuffers(base::DoNothing(), OutputSurfaceFrame());
   }
 
   void CommitOverlayPlanes() {
-    auto present_callback =
-        base::DoNothing::Once<const gfx::PresentationFeedback&>();
-
-    output_device_->CommitOverlayPlanes(std::move(present_callback),
+    output_device_->CommitOverlayPlanes(base::DoNothing(),
                                         OutputSurfaceFrame());
   }
 
   void PageFlipComplete() { gl_surface_->SwapComplete(); }
+
+  SkSurfaceCharacterization CreateSkSurfaceCharacterization(
+      const gfx::Size size = kScreenSize) {
+    auto* gr_context = dependency_->GetSharedContextState()->gr_context();
+    auto gr_context_thread_safe_proxy = gr_context->threadSafeProxy();
+
+    auto image_info =
+        SkImageInfo::Make(size.width(), size.height(), kDefaultColorType,
+                          kPremul_SkAlphaType, nullptr);
+    const auto backend_format =
+        gr_context_thread_safe_proxy->defaultBackendFormat(kDefaultColorType,
+                                                           GrRenderable::kYes);
+    SkSurfaceProps surface_props{0, kUnknown_SkPixelGeometry};
+    auto cache_max_resource_bytes = gr_context->getResourceCacheLimit();
+    return gr_context_thread_safe_proxy->createCharacterization(
+        cache_max_resource_bytes, image_info, backend_format,
+        /*sampleCount=*/1, kTopLeft_GrSurfaceOrigin, surface_props,
+        /*isMipMapped=*/false,
+        /*willUseGLFBO0=*/false, /*isTextureable=*/true);
+  }
+
+  void FirstReshape() {
+    if (output_device_->capabilities()
+            .supports_dynamic_frame_buffer_allocation) {
+      output_device_->EnsureMinNumberOfBuffers(
+          output_device_->capabilities().number_of_buffers);
+    }
+    output_device_->Reshape(CreateSkSurfaceCharacterization(), {}, 1.0f,
+                            gfx::OVERLAY_TRANSFORM_NONE);
+  }
 
  protected:
   std::unique_ptr<SkiaOutputSurfaceDependency> dependency_;
@@ -405,36 +466,32 @@ class SkiaOutputDeviceBufferQueueTest : public TestOnGpu {
 
 namespace {
 
-const gfx::Size screen_size = gfx::Size(30, 30);
-
-const gfx::BufferFormat kDefaultFormat = gfx::BufferFormat::RGBA_8888;
-
 TEST_F_GPU(SkiaOutputDeviceBufferQueueTest, MultipleGetCurrentBufferCalls) {
   // Check that multiple bind calls do not create or change surfaces.
 
-  output_device_->Reshape(screen_size, 1.0f, gfx::ColorSpace(), kDefaultFormat,
-                          gfx::OVERLAY_TRANSFORM_NONE);
+  FirstReshape();
+  const int kNumBuffers = CountBuffers();
   EXPECT_NE(0U, memory_tracker().GetSize());
   EXPECT_NE(PaintPrimaryPlane(), nullptr);
   EXPECT_NE(0U, memory_tracker().GetSize());
-  EXPECT_EQ(3, CountBuffers());
+  EXPECT_EQ(kNumBuffers, CountBuffers());
   auto* fb = current_image();
   EXPECT_NE(PaintAndSchedulePrimaryPlane(), nullptr);
   EXPECT_NE(0U, memory_tracker().GetSize());
-  EXPECT_EQ(3, CountBuffers());
+  EXPECT_EQ(kNumBuffers, CountBuffers());
   EXPECT_EQ(fb, current_image());
 }
 
 TEST_F_GPU(SkiaOutputDeviceBufferQueueTest, CheckDoubleBuffering) {
   // Check buffer flow through double buffering path.
-  output_device_->Reshape(screen_size, 1.0f, gfx::ColorSpace(), kDefaultFormat,
-                          gfx::OVERLAY_TRANSFORM_NONE);
+  FirstReshape();
+  const int kNumBuffers = CountBuffers();
   EXPECT_NE(0U, memory_tracker().GetSize());
-  EXPECT_EQ(3, CountBuffers());
+  EXPECT_EQ(kNumBuffers, CountBuffers());
 
   EXPECT_NE(PaintAndSchedulePrimaryPlane(), nullptr);
   EXPECT_NE(0U, memory_tracker().GetSize());
-  EXPECT_EQ(3, CountBuffers());
+  EXPECT_EQ(kNumBuffers, CountBuffers());
   EXPECT_NE(current_image(), nullptr);
   EXPECT_FALSE(displayed_image());
   SwapBuffers();
@@ -444,7 +501,7 @@ TEST_F_GPU(SkiaOutputDeviceBufferQueueTest, CheckDoubleBuffering) {
   EXPECT_TRUE(displayed_image());
   EXPECT_NE(PaintAndSchedulePrimaryPlane(), nullptr);
   EXPECT_NE(0U, memory_tracker().GetSize());
-  EXPECT_EQ(3, CountBuffers());
+  EXPECT_EQ(kNumBuffers, CountBuffers());
   CheckUnique();
   EXPECT_NE(current_image(), nullptr);
   EXPECT_EQ(0U, swap_completion_callbacks().size());
@@ -457,19 +514,19 @@ TEST_F_GPU(SkiaOutputDeviceBufferQueueTest, CheckDoubleBuffering) {
   PageFlipComplete();
   CheckUnique();
   EXPECT_EQ(0U, swap_completion_callbacks().size());
-  EXPECT_EQ(2U, available_images().size());
+  EXPECT_EQ(static_cast<size_t>(kNumBuffers - 1), available_images().size());
   EXPECT_TRUE(displayed_image());
   EXPECT_NE(PaintAndSchedulePrimaryPlane(), nullptr);
   EXPECT_NE(0U, memory_tracker().GetSize());
-  EXPECT_EQ(3, CountBuffers());
+  EXPECT_EQ(kNumBuffers, CountBuffers());
   CheckUnique();
-  EXPECT_EQ(1u, available_images().size());
+  EXPECT_EQ(static_cast<size_t>(kNumBuffers - 2), available_images().size());
 }
 
 TEST_F_GPU(SkiaOutputDeviceBufferQueueTest, CheckTripleBuffering) {
   // Check buffer flow through triple buffering path.
-  output_device_->Reshape(screen_size, 1.0f, gfx::ColorSpace(), kDefaultFormat,
-                          gfx::OVERLAY_TRANSFORM_NONE);
+  FirstReshape();
+  const int kNumBuffers = CountBuffers();
   EXPECT_NE(0U, memory_tracker().GetSize());
 
   // This bit is the same sequence tested in the doublebuffering case.
@@ -481,38 +538,37 @@ TEST_F_GPU(SkiaOutputDeviceBufferQueueTest, CheckTripleBuffering) {
   SwapBuffers();
 
   EXPECT_NE(0U, memory_tracker().GetSize());
-  EXPECT_EQ(3, CountBuffers());
+  EXPECT_EQ(kNumBuffers, CountBuffers());
   CheckUnique();
   EXPECT_EQ(1U, swap_completion_callbacks().size());
   EXPECT_TRUE(displayed_image());
   EXPECT_NE(PaintAndSchedulePrimaryPlane(), nullptr);
   EXPECT_NE(0U, memory_tracker().GetSize());
-  EXPECT_EQ(3, CountBuffers());
+  EXPECT_EQ(kNumBuffers, CountBuffers());
   CheckUnique();
   EXPECT_NE(current_image(), nullptr);
   EXPECT_EQ(1U, swap_completion_callbacks().size());
   EXPECT_TRUE(displayed_image());
   PageFlipComplete();
-  EXPECT_EQ(3, CountBuffers());
+  EXPECT_EQ(kNumBuffers, CountBuffers());
   CheckUnique();
   EXPECT_NE(current_image(), nullptr);
   EXPECT_EQ(0U, swap_completion_callbacks().size());
   EXPECT_TRUE(displayed_image());
-  EXPECT_EQ(1U, available_images().size());
+  EXPECT_EQ(static_cast<size_t>(kNumBuffers - 2), available_images().size());
 }
 
 TEST_F_GPU(SkiaOutputDeviceBufferQueueTest, CheckEmptySwap) {
   // Check empty swap flow, in which the damage is empty and BindFramebuffer
   // might not be called.
-  output_device_->Reshape(screen_size, 1.0f, gfx::ColorSpace(), kDefaultFormat,
-                          gfx::OVERLAY_TRANSFORM_NONE);
+  FirstReshape();
+  const int kNumBuffers = CountBuffers();
 
-  EXPECT_EQ(3, CountBuffers());
   EXPECT_NE(0U, memory_tracker().GetSize());
   auto* image = PaintAndSchedulePrimaryPlane();
   EXPECT_NE(image, nullptr);
   EXPECT_NE(0U, memory_tracker().GetSize());
-  EXPECT_EQ(3, CountBuffers());
+  EXPECT_EQ(kNumBuffers, CountBuffers());
   EXPECT_NE(current_image(), nullptr);
   EXPECT_FALSE(displayed_image());
 
@@ -546,8 +602,7 @@ TEST_F_GPU(SkiaOutputDeviceBufferQueueTest, CheckEmptySwap) {
 TEST_F_GPU(SkiaOutputDeviceBufferQueueTest, NoPrimaryPlane) {
   // Check empty swap flow, in which the damage is empty and BindFramebuffer
   // might not be called.
-  output_device_->Reshape(screen_size, 1.0f, gfx::ColorSpace(), kDefaultFormat,
-                          gfx::OVERLAY_TRANSFORM_NONE);
+  FirstReshape();
 
   // Do a swap and commit overlay planes with no primary plane.
   for (size_t i = 0; i < 2; ++i) {
@@ -593,21 +648,21 @@ TEST_F_GPU(SkiaOutputDeviceBufferQueueTest, NoPrimaryPlane) {
 }
 
 TEST_F_GPU(SkiaOutputDeviceBufferQueueTest, CheckCorrectBufferOrdering) {
-  output_device_->Reshape(screen_size, 1.0f, gfx::ColorSpace(), kDefaultFormat,
-                          gfx::OVERLAY_TRANSFORM_NONE);
-  const size_t kSwapCount = 5;
+  FirstReshape();
+  const int kNumBuffers = CountBuffers();
+  const int kSwapCount = kNumBuffers * 2;
 
   EXPECT_NE(PaintAndSchedulePrimaryPlane(), nullptr);
-  for (size_t i = 0; i < kSwapCount; ++i) {
+  for (int i = 0; i < kSwapCount; ++i) {
     SwapBuffers();
     EXPECT_NE(PaintAndSchedulePrimaryPlane(), nullptr);
     PageFlipComplete();
   }
 
-  // Note: this must be three, not kSwapCount
-  EXPECT_EQ(3, CountBuffers());
+  // Note: this must not be kSwapCount
+  EXPECT_EQ(kNumBuffers, CountBuffers());
 
-  for (size_t i = 0; i < kSwapCount; ++i) {
+  for (int i = 0; i < kSwapCount; ++i) {
     auto* next_image = current_image();
     SwapBuffers();
     EXPECT_EQ(current_image(), nullptr);
@@ -619,8 +674,8 @@ TEST_F_GPU(SkiaOutputDeviceBufferQueueTest, CheckCorrectBufferOrdering) {
 }
 
 TEST_F_GPU(SkiaOutputDeviceBufferQueueTest, ReshapeWithInFlightSurfaces) {
-  output_device_->Reshape(screen_size, 1.0f, gfx::ColorSpace(), kDefaultFormat,
-                          gfx::OVERLAY_TRANSFORM_NONE);
+  FirstReshape();
+  const size_t kNumBuffers = available_images().size();
 
   const size_t kSwapCount = 5;
 
@@ -633,8 +688,10 @@ TEST_F_GPU(SkiaOutputDeviceBufferQueueTest, ReshapeWithInFlightSurfaces) {
 
   SwapBuffers();
 
-  output_device_->Reshape(screen_size, 1.0f, gfx::ColorSpace(), kDefaultFormat,
-                          gfx::OVERLAY_TRANSFORM_NONE);
+  output_device_->Reshape(
+      CreateSkSurfaceCharacterization(
+          gfx::Size(kScreenSize.width() - 1, kScreenSize.height() - 1)),
+      {}, 1.0f, gfx::OVERLAY_TRANSFORM_NONE);
 
   // swap completion callbacks should not be cleared.
   EXPECT_EQ(1u, swap_completion_callbacks().size());
@@ -643,7 +700,7 @@ TEST_F_GPU(SkiaOutputDeviceBufferQueueTest, ReshapeWithInFlightSurfaces) {
   EXPECT_FALSE(displayed_image());
 
   // The dummy surfacess left should be discarded.
-  EXPECT_EQ(3u, available_images().size());
+  EXPECT_EQ(kNumBuffers, available_images().size());
 
   // Test swap after reshape
   EXPECT_NE(PaintAndSchedulePrimaryPlane(), nullptr);
@@ -653,9 +710,8 @@ TEST_F_GPU(SkiaOutputDeviceBufferQueueTest, ReshapeWithInFlightSurfaces) {
 }
 
 TEST_F_GPU(SkiaOutputDeviceBufferQueueTest, BufferIsInOrder) {
-  output_device_->Reshape(screen_size, 1.0f, gfx::ColorSpace(), kDefaultFormat,
-                          gfx::OVERLAY_TRANSFORM_NONE);
-  EXPECT_EQ(3u, available_images().size());
+  FirstReshape();
+  int kNumBuffers = available_images().size();
 
   int current_index = -1;
   int submitted_index = -1;
@@ -663,66 +719,148 @@ TEST_F_GPU(SkiaOutputDeviceBufferQueueTest, BufferIsInOrder) {
 
   EXPECT_NE(PaintAndSchedulePrimaryPlane(), nullptr);
   ++current_index;
-  EXPECT_EQ(current_image(), images()[current_index % 3].get());
-  EXPECT_EQ(submitted_image(), submitted_index < 0
-                                   ? nullptr
-                                   : images()[submitted_index % 3].get());
-  EXPECT_EQ(displayed_image(), displayed_index < 0
-                                   ? nullptr
-                                   : images()[displayed_index % 3].get());
+  EXPECT_EQ(current_image(), images()[current_index % kNumBuffers].get());
+  EXPECT_EQ(submitted_image(),
+            submitted_index < 0
+                ? nullptr
+                : images()[submitted_index % kNumBuffers].get());
+  EXPECT_EQ(displayed_image(),
+            displayed_index < 0
+                ? nullptr
+                : images()[displayed_index % kNumBuffers].get());
 
   SwapBuffers();
   ++submitted_index;
   EXPECT_EQ(current_image(), nullptr);
-  EXPECT_EQ(submitted_image(), submitted_index < 0
-                                   ? nullptr
-                                   : images()[submitted_index % 3].get());
-  EXPECT_EQ(displayed_image(), displayed_index < 0
-                                   ? nullptr
-                                   : images()[displayed_index % 3].get());
+  EXPECT_EQ(submitted_image(),
+            submitted_index < 0
+                ? nullptr
+                : images()[submitted_index % kNumBuffers].get());
+  EXPECT_EQ(displayed_image(),
+            displayed_index < 0
+                ? nullptr
+                : images()[displayed_index % kNumBuffers].get());
 
   const size_t kSwapCount = 10;
   for (size_t i = 0; i < kSwapCount; ++i) {
     EXPECT_NE(PaintAndSchedulePrimaryPlane(), nullptr);
     ++current_index;
-    EXPECT_EQ(current_image(), images()[current_index % 3].get());
-    EXPECT_EQ(submitted_image(), submitted_index < 0
-                                     ? nullptr
-                                     : images()[submitted_index % 3].get());
-    EXPECT_EQ(displayed_image(), displayed_index < 0
-                                     ? nullptr
-                                     : images()[displayed_index % 3].get());
+    EXPECT_EQ(current_image(), images()[current_index % kNumBuffers].get());
+    EXPECT_EQ(submitted_image(),
+              submitted_index < 0
+                  ? nullptr
+                  : images()[submitted_index % kNumBuffers].get());
+    EXPECT_EQ(displayed_image(),
+              displayed_index < 0
+                  ? nullptr
+                  : images()[displayed_index % kNumBuffers].get());
 
     SwapBuffers();
     ++submitted_index;
     EXPECT_EQ(current_image(), nullptr);
-    EXPECT_EQ(submitted_image(), submitted_index < 0
-                                     ? nullptr
-                                     : images()[submitted_index % 3].get());
-    EXPECT_EQ(displayed_image(), displayed_index < 0
-                                     ? nullptr
-                                     : images()[displayed_index % 3].get());
+    EXPECT_EQ(submitted_image(),
+              submitted_index < 0
+                  ? nullptr
+                  : images()[submitted_index % kNumBuffers].get());
+    EXPECT_EQ(displayed_image(),
+              displayed_index < 0
+                  ? nullptr
+                  : images()[displayed_index % kNumBuffers].get());
 
     PageFlipComplete();
     ++displayed_index;
     EXPECT_EQ(current_image(), nullptr);
-    EXPECT_EQ(submitted_image(), submitted_index < 0
-                                     ? nullptr
-                                     : images()[submitted_index % 3].get());
-    EXPECT_EQ(displayed_image(), displayed_index < 0
-                                     ? nullptr
-                                     : images()[displayed_index % 3].get());
+    EXPECT_EQ(submitted_image(),
+              submitted_index < 0
+                  ? nullptr
+                  : images()[submitted_index % kNumBuffers].get());
+    EXPECT_EQ(displayed_image(),
+              displayed_index < 0
+                  ? nullptr
+                  : images()[displayed_index % kNumBuffers].get());
   }
 
   PageFlipComplete();
   ++displayed_index;
   EXPECT_EQ(current_image(), nullptr);
-  EXPECT_EQ(submitted_image(), submitted_index < 0
-                                   ? nullptr
-                                   : images()[submitted_index % 3].get());
-  EXPECT_EQ(displayed_image(), displayed_index < 0
-                                   ? nullptr
-                                   : images()[displayed_index % 3].get());
+  EXPECT_EQ(submitted_image(),
+            submitted_index < 0
+                ? nullptr
+                : images()[submitted_index % kNumBuffers].get());
+  EXPECT_EQ(displayed_image(),
+            displayed_index < 0
+                ? nullptr
+                : images()[displayed_index % kNumBuffers].get());
+}
+
+}  // namespace
+
+class SkiaOutputDeviceSwapSkippedTest : public SkiaOutputDeviceBufferQueueTest {
+ public:
+  SkiaOutputDeviceSwapSkippedTest() = default;
+
+  DidSwapBufferCompleteCallback GetDidSwapBuffersCompleteCallback() override {
+    return swap_buffers_complete_cb.Get();
+  }
+
+  void SwapBuffers() override {
+    output_device_->SwapBuffers(buffer_presented_cb.Get(),
+                                OutputSurfaceFrame());
+  }
+
+  void SwapBuffersSkipped() {
+    output_device_->SwapBuffersSkipped(buffer_presented_cb.Get(),
+                                       OutputSurfaceFrame());
+  }
+
+  base::MockCallback<DidSwapBufferCompleteCallback> swap_buffers_complete_cb;
+  base::MockCallback<BufferPresentedCallback> buffer_presented_cb;
+};
+
+namespace {
+
+MATCHER_P2(CheckSwapResponse, expected_swap_id, expected_result, "") {
+  return arg.swap_response.swap_id == expected_swap_id &&
+         arg.swap_response.result == expected_result;
+}
+
+MATCHER_P(CheckPresentationFeedback, expected_fail, "") {
+  return expected_fail == arg.failed();
+}
+
+TEST_F_GPU(SkiaOutputDeviceSwapSkippedTest, SkipWithoutPending) {
+  // Check that skipping a SwapBuffers without any pending swaps immediately
+  // invokes the complete/presented callbacks.
+  FirstReshape();
+  EXPECT_CALL(swap_buffers_complete_cb,
+              Run(CheckSwapResponse(1U, gfx::SwapResult::SWAP_SKIPPED), _, _));
+  EXPECT_CALL(buffer_presented_cb,
+              Run(CheckPresentationFeedback(true /* failed */)));
+
+  SwapBuffersSkipped();
+}
+
+TEST_F_GPU(SkiaOutputDeviceSwapSkippedTest, SkipWithPending) {
+  // Check that skipping a SwapBuffers with existing pending swaps waits for
+  // the pending swaps to complete before invoking the complete/presented
+  // callbacks.
+  FirstReshape();
+  EXPECT_NE(PaintAndSchedulePrimaryPlane(), nullptr);
+  EXPECT_NE(current_image(), nullptr);
+
+  SwapBuffers();
+  SwapBuffersSkipped();
+
+  EXPECT_CALL(swap_buffers_complete_cb,
+              Run(CheckSwapResponse(1U, gfx::SwapResult::SWAP_ACK), _, _));
+  EXPECT_CALL(buffer_presented_cb,
+              Run(CheckPresentationFeedback(false /* failed */)));
+  EXPECT_CALL(swap_buffers_complete_cb,
+              Run(CheckSwapResponse(2U, gfx::SwapResult::SWAP_SKIPPED), _, _));
+  EXPECT_CALL(buffer_presented_cb,
+              Run(CheckPresentationFeedback(true /* failed */)));
+
+  PageFlipComplete();
 }
 
 }  // namespace

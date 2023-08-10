@@ -1,11 +1,11 @@
 Source: qt6-webengine
 Section: libs
 Priority: optional
-Maintainer: Deepin Developer <deepin-dev@deepin.org>
-Uploaders: Deepin Packages Builder <packages@deepin.org>
-Build-Depends: binutils (>= 2.31),
+Maintainer: Debian Qt/KDE Maintainers <debian-qt-kde@lists.debian.org>
+Uploaders: Patrick Franz <deltaone@debian.org>, Lu YaNing <dluyaning@gmail.com>,
+Build-Depends: binutils (>= 2.32-8~),
                bison,
-               cmake (>= 3.19~),
+               cmake (>= 3.24~),
                debhelper-compat (= 13),
                flex,
                gperf,
@@ -16,7 +16,7 @@ Build-Depends: binutils (>= 2.31),
                libdbus-1-dev,
                libegl1-mesa-dev,
                libevent-dev,
-               libfontconfig1-dev,
+               libfontconfig-dev,
                libgl-dev,
                libgles-dev,
                libglib2.0-dev,
@@ -26,7 +26,6 @@ Build-Depends: binutils (>= 2.31),
                libharfbuzz-dev,
                libicu-dev,
                libjpeg-dev,
-               libjs-d3,
                libjs-jquery,
                libjs-jquery-tablesorter,
                libjsoncpp-dev,
@@ -34,19 +33,18 @@ Build-Depends: binutils (>= 2.31),
                liblcms2-dev,
                libminizip-dev,
                libnss3-dev,
+               libopenjp2-7-dev,
                libopus-dev (>= 1.3.1),
                libpci-dev,
                libpng-dev,
                libprotobuf-dev,
                libpulse-dev,
-               libqt6opengl6-dev (>= 6.2.4),
-               libqt6webchannel6-dev (>= 6.2.4),
                libre2-dev,
                libsnappy-dev,
                libsqlite3-dev,
                libssl-dev,
                libusb-1.0-0-dev,
-               libvpx-dev (>= 1.7),
+               libvpx-dev (>= 1.8),
                libvulkan-dev [linux-any],
                libwayland-dev (>= 1.8.0),
                libwebp-dev,
@@ -67,36 +65,40 @@ Build-Depends: binutils (>= 2.31),
                libxtst-dev,
                mesa-common-dev,
                ninja-build,
-               node-pako,
-               node-yargs,
                nodejs,
                pkg-config,
                pkg-kde-tools,
                protobuf-compiler,
-               python2,
-               qt6-base-dev (>= 6.2.4),
-               qt6-base-private-dev (>= 6.2.4),
-               qt6-declarative-dev (>= 6.2.4),
-               qt6-declarative-private-dev (>= 6.2.4),
-               qt6-positioning-dev (>= 6.2.4),
-               qt6-tools-dev (>= 6.2.4),
+               python3,
+               python3-html5lib,
+               qt6-base-dev (>= 6.4.2+dfsg~),
+               qt6-base-private-dev (>= 6.4.2+dfsg~),
+               qt6-declarative-dev (>= 6.4.2+dfsg~),
+               qt6-declarative-private-dev (>= 6.4.2+dfsg~),
+               qt6-documentation-tools (>= 6.4~) <!nodoc>,
+               qt6-positioning-dev (>= 6.4.2~),
+               qt6-tools-dev (>= 6.4.2~),
+               qt6-webchannel-dev (>= 6.4.2~),
+               qt6-websockets-dev (>= 6.4.2~),
                re2c,
-               rollup,
                ruby,
                xauth <!nocheck>,
                xvfb <!nocheck>,
-Standards-Version: 4.6.0
+Standards-Version: 4.6.2
 Homepage: https://www.qt.io/developers/
+Vcs-Browser: https://salsa.debian.org/qt-kde-team/qt6/qt6-webengine
+Vcs-Git: https://salsa.debian.org/qt-kde-team/qt6/qt6-webengine.git
 Rules-Requires-Root: no
 
 Package: libqt6webenginecore6
+Provides: qt6-webengine-abi (= 6.4.2),
 Architecture: amd64 arm64 armhf i386
 Multi-Arch: same
-Depends: libqt6webengine6-data (= ${binary:Version}),
+Depends: libqt6webengine6-data (= ${source:Version}),
+         sse3-support [amd64 i386],
          ${misc:Depends},
          ${shlibs:Depends},
-Pre-Depends: ${misc:Pre-Depends}
-Provides: qt6-webengine-abi (= 6.2.4)
+Pre-Depends: ${misc:Pre-Depends},
 Description: Qt 6 WebEngine Core library
  Qt is a cross-platform C++ application framework. Qt's primary feature
  is its rich set of widgets that provide standard GUI functionality.
@@ -109,7 +111,7 @@ Description: Qt 6 WebEngine Core library
 Package: libqt6pdf6
 Architecture: amd64 arm64 armhf i386
 Multi-Arch: same
-Depends: ${misc:Depends}, ${shlibs:Depends}
+Depends: ${misc:Depends}, ${shlibs:Depends},
 Description: Qt 6 PDF library
  Qt is a cross-platform C++ application framework. Qt's primary feature
  is its rich set of widgets that provide standard GUI functionality.
@@ -121,8 +123,8 @@ Description: Qt 6 PDF library
 Package: libqt6pdfquick6
 Architecture: amd64 arm64 armhf i386
 Multi-Arch: same
-Depends: ${misc:Depends}, ${shlibs:Depends}
-Pre-Depends: ${misc:Pre-Depends}
+Depends: ${misc:Depends}, ${shlibs:Depends},
+Pre-Depends: ${misc:Pre-Depends},
 Description: Qt 6 PDF Quick library
  Qt is a cross-platform C++ application framework. Qt's primary feature
  is its rich set of widgets that provide standard GUI functionality.
@@ -134,7 +136,7 @@ Description: Qt 6 PDF Quick library
 Package: libqt6pdfwidgets6
 Architecture: amd64 arm64 armhf i386
 Multi-Arch: same
-Depends: ${misc:Depends}, ${shlibs:Depends}
+Depends: ${misc:Depends}, ${shlibs:Depends},
 Description: Qt 6 PDF Widgets library
  Qt is a cross-platform C++ application framework. Qt's primary feature
  is its rich set of widgets that provide standard GUI functionality.
@@ -146,8 +148,8 @@ Description: Qt 6 PDF Widgets library
 Package: libqt6webenginecore6-bin
 Architecture: amd64 arm64 armhf i386
 Multi-Arch: foreign
-Depends: ${misc:Depends}, ${shlibs:Depends}
-Pre-Depends: ${misc:Pre-Depends}
+Depends: ${misc:Depends}, ${shlibs:Depends},
+Pre-Depends: ${misc:Pre-Depends},
 Description: Qt 6 WebEngine Core binaries
  Qt is a cross-platform C++ application framework. Qt's primary feature
  is its rich set of widgets that provide standard GUI functionality.
@@ -160,8 +162,8 @@ Description: Qt 6 WebEngine Core binaries
 Package: libqt6webenginequick6
 Architecture: amd64 arm64 armhf i386
 Multi-Arch: same
-Depends: ${misc:Depends}, ${shlibs:Depends}
-Pre-Depends: ${misc:Pre-Depends}
+Depends: ${misc:Depends}, ${shlibs:Depends},
+Pre-Depends: ${misc:Pre-Depends},
 Description: Qt 6 WebEngine Quick library
  Qt is a cross-platform C++ application framework. Qt's primary feature
  is its rich set of widgets that provide standard GUI functionality.
@@ -174,8 +176,8 @@ Description: Qt 6 WebEngine Quick library
 Package: libqt6webenginequickdelegatesqml6
 Architecture: amd64 arm64 armhf i386
 Multi-Arch: same
-Depends: ${misc:Depends}, ${shlibs:Depends}
-Pre-Depends: ${misc:Pre-Depends}
+Depends: ${misc:Depends}, ${shlibs:Depends},
+Pre-Depends: ${misc:Pre-Depends},
 Description: Qt 6 WebEngine Quick Delegates QML library
  Qt is a cross-platform C++ application framework. Qt's primary feature
  is its rich set of widgets that provide standard GUI functionality.
@@ -188,10 +190,10 @@ Description: Qt 6 WebEngine Quick Delegates QML library
 Package: libqt6webenginewidgets6
 Architecture: amd64 arm64 armhf i386
 Multi-Arch: same
-Depends: libqt6webengine6-data (= ${binary:Version}),
+Depends: libqt6webengine6-data (= ${source:Version}),
          ${misc:Depends},
          ${shlibs:Depends},
-Pre-Depends: ${misc:Pre-Depends}
+Pre-Depends: ${misc:Pre-Depends},
 Description: Qt 6 WebEngine Widgets library
  Qt is a cross-platform C++ application framework. Qt's primary feature
  is its rich set of widgets that provide standard GUI functionality.
@@ -204,8 +206,8 @@ Description: Qt 6 WebEngine Widgets library
 Package: libqt6webengine6-data
 Architecture: all
 Multi-Arch: foreign
-Depends: ${misc:Depends}
-Pre-Depends: ${misc:Pre-Depends}
+Depends: ${misc:Depends},
+Pre-Depends: ${misc:Pre-Depends},
 Description: Qt 6 Web content engine library - data
  Qt is a cross-platform C++ application framework. Qt's primary feature
  is its rich set of widgets that provide standard GUI functionality.
@@ -218,7 +220,7 @@ Description: Qt 6 Web content engine library - data
 Package: qt6-image-formats-plugin-pdf
 Architecture: amd64 arm64 armhf i386
 Multi-Arch: same
-Depends: ${misc:Depends}, ${shlibs:Depends}
+Depends: ${misc:Depends}, ${shlibs:Depends},
 Description: Qt 6 PDF image format plugin
  Qt is a cross-platform C++ application framework. Qt's primary feature
  is its rich set of widgets that provide standard GUI functionality.
@@ -231,11 +233,11 @@ Description: Qt 6 PDF image format plugin
 Package: qml6-module-qtquick-pdf
 Architecture: amd64 arm64 armhf i386
 Multi-Arch: same
-Depends: qml6-module-qtquick (>= 6.2.4),
-         qml6-module-qtquick-controls (>= 6.2.4),
-         qml6-module-qtquick-shapes (>= 6.2.4),
-         qml6-module-qtquick-templates (>= 6.2.4),
-         qml6-module-qtquick-window (>= 6.2.4),
+Depends: qml6-module-qtquick (>= 6.4.2+dfsg~),
+         qml6-module-qtquick-controls (>= 6.4.2+dfsg~),
+         qml6-module-qtquick-shapes (>= 6.4.2+dfsg~),
+         qml6-module-qtquick-templates (>= 6.4.2+dfsg~),
+         qml6-module-qtquick-window (>= 6.4.2+dfsg~),
          qt6-image-formats-plugin-pdf,
          ${misc:Depends},
          ${shlibs:Depends},
@@ -250,8 +252,8 @@ Description: Qt 6 Quick PDF QML module
 Package: qml6-module-qtwebengine
 Architecture: amd64 arm64 armhf i386
 Multi-Arch: same
-Depends: qml6-module-qtquick, ${misc:Depends}, ${shlibs:Depends}
-Pre-Depends: ${misc:Pre-Depends}
+Depends: qml6-module-qtquick, ${misc:Depends}, ${shlibs:Depends},
+Pre-Depends: ${misc:Pre-Depends},
 Description: Qt 6 WebEngine QML module
  Qt is a cross-platform C++ application framework. Qt's primary feature
  is its rich set of widgets that provide standard GUI functionality.
@@ -264,8 +266,8 @@ Description: Qt 6 WebEngine QML module
 Package: qml6-module-qtwebengine-controlsdelegates
 Architecture: amd64 arm64 armhf i386
 Multi-Arch: same
-Depends: qml6-module-qtquick, ${misc:Depends}, ${shlibs:Depends}
-Pre-Depends: ${misc:Pre-Depends}
+Depends: qml6-module-qtquick, ${misc:Depends}, ${shlibs:Depends},
+Pre-Depends: ${misc:Pre-Depends},
 Description: Qt 6 WebEngine Controls Delegates QML module
  Qt is a cross-platform C++ application framework. Qt's primary feature
  is its rich set of widgets that provide standard GUI functionality.
@@ -280,18 +282,18 @@ Package: qt6-webengine-dev
 Architecture: amd64 arm64 armhf i386
 Multi-Arch: same
 Section: libdevel
-Depends: libqt6webchannel6-dev,
-         libqt6webenginecore6 (= ${binary:Version}),
+Depends: libqt6webenginecore6 (= ${binary:Version}),
          libqt6webenginequick6 (= ${binary:Version}),
          libqt6webenginequickdelegatesqml6 (= ${binary:Version}),
          libqt6webenginewidgets6 (= ${binary:Version}),
          qt6-base-dev,
          qt6-declarative-dev,
          qt6-positioning-dev,
+         qt6-webchannel-dev,
          qt6-webengine-dev-tools (= ${binary:Version}),
          ${misc:Depends},
          ${shlibs:Depends},
-Recommends: qt6-pdf-dev (= ${binary:Version})
+Recommends: qt6-pdf-dev (= ${binary:Version}),
 Description: Qt 6 WebEngine library - development files
  Qt is a cross-platform C++ application framework. Qt's primary feature
  is its rich set of widgets that provide standard GUI functionality.
@@ -306,7 +308,7 @@ Package: qt6-webengine-private-dev
 Architecture: amd64 arm64 armhf i386
 Multi-Arch: same
 Section: libdevel
-Depends: qt6-webengine-dev (= ${binary:Version}), ${misc:Depends}
+Depends: qt6-webengine-dev (= ${binary:Version}), ${misc:Depends},
 Description: Qt 6 WebEngine library - private development files
  Qt is a cross-platform C++ application framework. Qt's primary feature
  is its rich set of widgets that provide standard GUI functionality.
@@ -316,22 +318,29 @@ Description: Qt 6 WebEngine library - private development files
  .
  This package contains the private development files needed to build Qt 6
  applications using Qt WebEngine libraries.
+ .
+ Use at your own risk.
 
 Package: qt6-webengine-dev-tools
+Provides: convert-bdic,
 Architecture: amd64 arm64 armhf i386
 Multi-Arch: foreign
 Section: devel
-Depends: qtchooser, ${misc:Depends}, ${shlibs:Depends}
+Depends: ${misc:Depends}, ${shlibs:Depends},
 Description: Qt 6 WebEngine development programs
  Qt is a cross-platform C++ application framework. Qt's primary feature
  is its rich set of widgets that provide standard GUI functionality.
  .
- Qt is a cross-platform C++ application framework. Qt's primary feature
- is its rich set of widgets that provide standard GUI functionality.
+ Qt WebEngine provides a Web browser engine that makes it easy to embed content
+ from the World Wide Web into your Qt application.
  .
- This package contains qwebengine_convert_dict tool which converts hunspell
+ This package contains the qwebengine_convert_dict tool which converts hunspell
  'dic' dictionaries to binary 'bdic' format, which is required by spellchecker
- in Qt 6 WebEngine.
+ in Qt 6 WebEngine. The package provides the convert-dict virtual package
+ so that Hunspell dictionaries can depend on it at build time without having
+ to adjust for future Qt releases.
+ .
+ Non-Qt packages using convert-bdic are not supported!
 
 Package: qt6-pdf-dev
 Architecture: amd64 arm64 armhf i386
@@ -351,3 +360,48 @@ Description: Qt 6 PDF library - development files
  .
  This package contains the development files needed to build Qt 6 applications
  using Qt PDF library.
+
+Package: qt6-webengine-doc
+Architecture: all
+Section: doc
+Depends: qt6-base-doc, ${misc:Depends},
+Multi-Arch: foreign
+Description: Qt 6 web engine documentation
+ Qt is a cross-platform C++ application framework. Qt's primary feature
+ is its rich set of widgets that provide standard GUI functionality.
+ .
+ This package contains the documentation for the Qt 6 web engine.
+
+Package: qt6-webengine-doc-html
+Architecture: all
+Section: doc
+Depends: qt6-base-doc-html, ${misc:Depends},
+Multi-Arch: foreign
+Description: Qt 6 web engine HTML documentation
+ Qt is a cross-platform C++ application framework. Qt's primary feature
+ is its rich set of widgets that provide standard GUI functionality.
+ .
+ This package contains the HTML documentation for the Qt 6 web engine.
+
+Package: qt6-webengine-doc-dev
+Architecture: all
+Section: libdevel
+Depends: qt6-base-doc-dev, ${misc:Depends},
+Multi-Arch: foreign
+Description: Qt 6 webengine tags files
+ Qt is a cross-platform C++ application framework. Qt's primary feature
+ is its rich set of widgets that provide standard GUI functionality.
+ .
+ This package contains the doxygen tags files for the qt web engine
+ documentation.
+
+Package: qt6-webengine-examples
+Architecture: amd64 arm64 armhf i386
+Multi-Arch: same
+Section: misc
+Depends: ${misc:Depends}, ${shlibs:Depends},
+Description: Qt 6 web engine examples
+ Qt is a cross-platform C++ application framework. Qt's primary feature
+ is its rich set of widgets that provide standard GUI functionality.
+ .
+ This package contains the examples for the Qt web engine submodule.

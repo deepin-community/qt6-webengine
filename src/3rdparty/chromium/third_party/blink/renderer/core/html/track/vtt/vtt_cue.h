@@ -30,16 +30,18 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_HTML_TRACK_VTT_VTT_CUE_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_HTML_TRACK_VTT_VTT_CUE_H_
 
+#include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/html/track/text_track_cue.h"
-#include "third_party/blink/renderer/platform/geometry/float_point.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_map.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
+#include "ui/gfx/geometry/point_f.h"
 
 namespace blink {
 
 class Document;
-class DoubleOrAutoKeyword;
 class ExecutionContext;
+class V8UnionAutoKeywordOrDouble;
 class VTTCue;
 class VTTRegion;
 class VTTScanner;
@@ -52,7 +54,7 @@ struct VTTDisplayParameters {
  public:
   VTTDisplayParameters();
 
-  FloatPoint position;
+  gfx::PointF position;
   double size;
   CSSValueID direction;
   CSSValueID text_align;
@@ -118,11 +120,12 @@ class CORE_EXPORT VTTCue final : public TextTrackCue {
   bool snapToLines() const { return snap_to_lines_; }
   void setSnapToLines(bool);
 
-  void line(DoubleOrAutoKeyword&) const;
-  void setLine(const DoubleOrAutoKeyword&);
+  V8UnionAutoKeywordOrDouble* line() const;
+  void setLine(const V8UnionAutoKeywordOrDouble* position);
 
-  void position(DoubleOrAutoKeyword&) const;
-  void setPosition(const DoubleOrAutoKeyword&, ExceptionState&);
+  V8UnionAutoKeywordOrDouble* position() const;
+  void setPosition(const V8UnionAutoKeywordOrDouble* position,
+                   ExceptionState& exception_state);
 
   double size() const { return cue_size_; }
   void setSize(double, ExceptionState&);
@@ -144,7 +147,7 @@ class CORE_EXPORT VTTCue final : public TextTrackCue {
 
   void UpdatePastAndFutureNodes(double movie_time) override;
 
-  base::Optional<double> GetNextIntraCueTime(double movie_time) const override;
+  absl::optional<double> GetNextIntraCueTime(double movie_time) const override;
 
   void RemoveDisplayTree(RemovalNotification) override;
 

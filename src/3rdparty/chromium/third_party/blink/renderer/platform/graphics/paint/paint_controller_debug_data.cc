@@ -4,6 +4,8 @@
 
 #include "third_party/blink/renderer/platform/graphics/paint/paint_controller.h"
 
+#include <cinttypes>
+#include "base/logging.h"
 #include "third_party/blink/renderer/platform/graphics/paint/drawing_display_item.h"
 
 #if DCHECK_IS_ON()
@@ -14,9 +16,13 @@ class PaintController::PaintArtifactAsJSON {
   STACK_ALLOCATED();
 
  public:
-  PaintArtifactAsJSON(const PaintArtifact&,
-                      const CachedSubsequenceMap&,
-                      DisplayItemList::JsonFlags);
+  PaintArtifactAsJSON(const PaintArtifact& artifact,
+                      const Vector<SubsequenceMarkers>& subsequences,
+                      DisplayItemList::JsonFlags flags)
+      : artifact_(artifact),
+        subsequences_(subsequences),
+        next_subsequence_(subsequences_.begin()),
+        flags_(flags) {}
 
   String ToString() {
     return ChunksAsJSONArrayRecursive(0, artifact_.PaintChunks().size())
@@ -27,38 +33,12 @@ class PaintController::PaintArtifactAsJSON {
   std::unique_ptr<JSONObject> SubsequenceAsJSONObjectRecursive();
   std::unique_ptr<JSONArray> ChunksAsJSONArrayRecursive(wtf_size_t, wtf_size_t);
   void AppendChunksAsJSON(wtf_size_t, wtf_size_t, JSONArray&);
-  String ClientName(const DisplayItemClient&) const;
-
-  struct SubsequenceInfo {
-    const DisplayItemClient* client;
-    wtf_size_t start_chunk_index;
-    wtf_size_t end_chunk_index;
-  };
 
   const PaintArtifact& artifact_;
-  Vector<SubsequenceInfo> subsequences_;
-  Vector<SubsequenceInfo>::const_iterator next_subsequence_;
+  const Vector<SubsequenceMarkers>& subsequences_;
+  Vector<SubsequenceMarkers>::const_iterator next_subsequence_;
   DisplayItemList::JsonFlags flags_;
 };
-
-PaintController::PaintArtifactAsJSON::PaintArtifactAsJSON(
-    const PaintArtifact& artifact,
-    const CachedSubsequenceMap& subsequence_map,
-    DisplayItemList::JsonFlags flags)
-    : artifact_(artifact), flags_(flags) {
-  for (const auto& item : subsequence_map) {
-    subsequences_.push_back(SubsequenceInfo{
-        item.key, item.value.start_chunk_index, item.value.end_chunk_index});
-  }
-  std::sort(subsequences_.begin(), subsequences_.end(),
-            [](const SubsequenceInfo& a, const SubsequenceInfo& b) {
-              return a.start_chunk_index == b.start_chunk_index
-                         ? a.end_chunk_index > b.end_chunk_index
-                         : a.start_chunk_index < b.start_chunk_index;
-            });
-
-  next_subsequence_ = subsequences_.begin();
-}
 
 std::unique_ptr<JSONObject>
 PaintController::PaintArtifactAsJSON::SubsequenceAsJSONObjectRecursive() {
@@ -67,9 +47,10 @@ PaintController::PaintArtifactAsJSON::SubsequenceAsJSONObjectRecursive() {
 
   auto json_object = std::make_unique<JSONObject>();
 
-  json_object->SetString("subsequence",
-                         String::Format("client: %p ", subsequence.client) +
-                             ClientName(*subsequence.client));
+  json_object->SetString(
+      "subsequence",
+      String::Format("client: 0x%" PRIuPTR " ", subsequence.client_id) +
+          artifact_.ClientDebugName(subsequence.client_id));
   json_object->SetArray(
       "chunks", ChunksAsJSONArrayRecursive(subsequence.start_chunk_index,
                                            subsequence.end_chunk_index));
@@ -87,6 +68,11 @@ PaintController::PaintArtifactAsJSON::ChunksAsJSONArrayRecursive(
   while (next_subsequence_ != subsequences_.end() &&
          next_subsequence_->start_chunk_index < end_chunk_index) {
     const auto& subsequence = *next_subsequence_;
+    if (!subsequence.client_id) {
+      // Skip unfinished subsequences during painting.
+      next_subsequence_++;
+      continue;
+    }
     DCHECK_GE(subsequence.start_chunk_index, chunk_index);
     DCHECK_LE(subsequence.end_chunk_index, end_chunk_index);
 
@@ -111,25 +97,21 @@ void PaintController::PaintArtifactAsJSON::AppendChunksAsJSON(
     const auto& chunk = artifact_.PaintChunks()[i];
     auto json_object = std::make_unique<JSONObject>();
 
-    json_object->SetString(
-        "chunk", ClientName(chunk.id.client) + " " + chunk.id.ToString());
+    json_object->SetString("chunk",
+                           artifact_.ClientDebugName(chunk.id.client_id) + " " +
+                               chunk.id.ToString(artifact_));
     json_object->SetString("state", chunk.properties.ToString());
-    json_object->SetString("bounds", chunk.bounds.ToString());
+    json_object->SetString("bounds", String(chunk.bounds.ToString()));
     if (flags_ & DisplayItemList::kShowPaintRecords)
-      json_object->SetString("chunkData", chunk.ToString());
+      json_object->SetString("chunkData", chunk.ToString(artifact_));
 
-    json_object->SetArray(
-        "displayItems",
-        DisplayItemList::DisplayItemsAsJSON(
-            chunk.begin_index, artifact_.DisplayItemsInChunk(i), flags_));
+    json_object->SetArray("displayItems",
+                          DisplayItemList::DisplayItemsAsJSON(
+                              artifact_, chunk.begin_index,
+                              artifact_.DisplayItemsInChunk(i), flags_));
 
     json_array.PushObject(std::move(json_object));
   }
-}
-
-String PaintController::PaintArtifactAsJSON::ClientName(
-    const DisplayItemClient& client) const {
-  return client.SafeDebugName(flags_ & DisplayItemList::kClientKnownToBeAlive);
 }
 
 void PaintController::ShowDebugDataInternal(
@@ -141,7 +123,7 @@ void PaintController::ShowDebugDataInternal(
   LOG(INFO) << "current paint artifact: "
             << (current_paint_artifact_
                     ? PaintArtifactAsJSON(*current_paint_artifact_,
-                                          current_cached_subsequences_,
+                                          current_subsequences_.tree,
                                           current_list_flags)
                           .ToString()
                           .Utf8()
@@ -151,7 +133,7 @@ void PaintController::ShowDebugDataInternal(
       << "new paint artifact: "
       << (new_paint_artifact_
               ? PaintArtifactAsJSON(
-                    *new_paint_artifact_, new_cached_subsequences_,
+                    *new_paint_artifact_, new_subsequences_.tree,
                     // The clients in new_display_item_list_ are all alive.
                     flags | DisplayItemList::kClientKnownToBeAlive)
                     .ToString()

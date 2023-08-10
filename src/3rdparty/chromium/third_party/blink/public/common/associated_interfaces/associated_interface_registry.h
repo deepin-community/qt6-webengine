@@ -10,9 +10,7 @@
 
 #include "base/bind.h"
 #include "base/callback.h"
-#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "mojo/public/cpp/bindings/associated_interface_request.h"
 #include "mojo/public/cpp/bindings/pending_associated_receiver.h"
 #include "mojo/public/cpp/bindings/scoped_interface_endpoint_handle.h"
 #include "third_party/blink/public/common/common_export.h"
@@ -37,6 +35,9 @@ class BLINK_COMMON_EXPORT AssociatedInterfaceRegistry {
       base::RepeatingCallback<void(mojo::ScopedInterfaceEndpointHandle)>;
 
   AssociatedInterfaceRegistry();
+  AssociatedInterfaceRegistry(const AssociatedInterfaceRegistry&) = delete;
+  AssociatedInterfaceRegistry& operator=(const AssociatedInterfaceRegistry&) =
+      delete;
   ~AssociatedInterfaceRegistry();
 
   // Adds an interface binder to the registry.
@@ -75,8 +76,6 @@ class BLINK_COMMON_EXPORT AssociatedInterfaceRegistry {
 
   std::map<std::string, Binder> interfaces_;
   base::WeakPtrFactory<AssociatedInterfaceRegistry> weak_ptr_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(AssociatedInterfaceRegistry);
 };
 
 }  // namespace blink

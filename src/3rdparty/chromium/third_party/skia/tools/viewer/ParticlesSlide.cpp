@@ -8,12 +8,13 @@
 #include "tools/viewer/ParticlesSlide.h"
 
 #include "include/core/SkCanvas.h"
+#include "include/private/SkStringView.h"
 #include "modules/particles/include/SkParticleEffect.h"
 #include "modules/particles/include/SkParticleSerialization.h"
 #include "modules/particles/include/SkReflected.h"
 #include "modules/skresources/include/SkResources.h"
 #include "src/core/SkOSFile.h"
-#include "src/sksl/SkSLVMGenerator.h"
+#include "src/sksl/codegen/SkSLVMCodeGenerator.h"
 #include "src/utils/SkOSPath.h"
 #include "tools/Resources.h"
 #include "tools/ToolUtils.h"
@@ -333,7 +334,7 @@ void ParticlesSlide::draw(SkCanvas* canvas) {
                     float* vals = data + uni.fSlot;
 
                     // Skip over builtin uniforms, to reduce clutter
-                    if (uni.fName == "dt" || uni.fName.startsWith("effect.")) {
+                    if (uni.fName == "dt" || skstd::starts_with(uni.fName, "effect.")) {
                         continue;
                     }
 

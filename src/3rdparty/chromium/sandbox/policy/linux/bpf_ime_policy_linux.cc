@@ -32,6 +32,10 @@ ResultExpr ImeProcessPolicy::EvaluateSyscall(int sysno) const {
 #if defined(__NR_clock_gettime)
     case __NR_clock_gettime:
 #endif
+#if defined(__i386__) || defined(__arm__) || \
+    (defined(ARCH_CPU_MIPS_FAMILY) && defined(ARCH_CPU_32_BITS))
+    case __NR_clock_gettime64:
+#endif
       return Allow();
 // https://crbug.com/991435
 #if defined(__NR_getrusage)
@@ -41,7 +45,7 @@ ResultExpr ImeProcessPolicy::EvaluateSyscall(int sysno) const {
     default:
       auto* sandbox_linux = SandboxLinux::GetInstance();
       if (sandbox_linux->ShouldBrokerHandleSyscall(sysno))
-        return sandbox_linux->HandleViaBroker();
+        return sandbox_linux->HandleViaBroker(sysno);
 
       return BPFBasePolicy::EvaluateSyscall(sysno);
   }

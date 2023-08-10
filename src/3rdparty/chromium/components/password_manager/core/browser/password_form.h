@@ -11,11 +11,12 @@
 #include <utility>
 #include <vector>
 
+#include "base/containers/flat_map.h"
 #include "base/time/time.h"
 #include "components/autofill/core/common/form_data.h"
 #include "components/autofill/core/common/gaia_id_hash.h"
 #include "components/autofill/core/common/mojom/autofill_types.mojom-shared.h"
-#include "components/autofill/core/common/renderer_id.h"
+#include "components/autofill/core/common/unique_ids.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
@@ -25,10 +26,59 @@ namespace password_manager {
 using FormPrimaryKey = base::StrongAlias<class FormPrimaryKeyTag, int>;
 
 // Pair of a value and the name of the element that contained this value.
-using ValueElementPair = std::pair<base::string16, base::string16>;
+using ValueElementPair = std::pair<std::u16string, std::u16string>;
 
 // Vector of possible username values and corresponding field names.
 using ValueElementVector = std::vector<ValueElementPair>;
+
+using IsMuted = base::StrongAlias<class IsMutedTag, bool>;
+
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
+enum class InsecureType {
+  // If the credentials was leaked by a data breach.
+  kLeaked = 0,
+  // If the credentials was entered on a phishing site.
+  kPhished = 1,
+  // If the password is weak.
+  kWeak = 2,
+  // If the password is reused for other accounts.
+  kReused = 3,
+  kMaxValue = kReused
+};
+
+// Metadata for insecure credentials
+struct InsecurityMetadata {
+  InsecurityMetadata();
+  InsecurityMetadata(base::Time create_time, IsMuted is_muted);
+  InsecurityMetadata(const InsecurityMetadata& rhs);
+  ~InsecurityMetadata();
+
+  // The date when the record was created.
+  base::Time create_time;
+  // Whether the problem was explicitly muted by the user.
+  IsMuted is_muted{false};
+};
+
+bool operator==(const InsecurityMetadata& lhs, const InsecurityMetadata& rhs);
+
+// Represents a note attached to a particular credential.
+struct PasswordNote {
+  PasswordNote();
+  PasswordNote(std::u16string value, base::Time date_created);
+  PasswordNote(const PasswordNote& rhs);
+  PasswordNote(PasswordNote&& rhs);
+  PasswordNote& operator=(const PasswordNote& rhs);
+  PasswordNote& operator=(PasswordNote&& rhs);
+  ~PasswordNote();
+
+  // The value of the note.
+  std::u16string value;
+  // The date when the note was created.
+  base::Time date_created;
+};
+
+bool operator==(const PasswordNote& lhs, const PasswordNote& rhs);
 
 // The PasswordForm struct encapsulates information about a login form,
 // which can be an HTML form or a dialog with username/password text fields.
@@ -66,17 +116,19 @@ struct PasswordForm {
   };
 
   // Enum to differentiate between manually filled forms, forms with auto-
-  // generated passwords, and forms generated from the DOM API.
+  // generated passwords, forms generated from the Credential Management
+  // API and credentials manually added from setting.
   //
   // Always append new types at the end. This enum is converted to int and
   // stored in password store backends, so it is important to keep each
   // value assigned to the same integer.
   enum class Type {
-    kManual,
-    kGenerated,
-    kApi,
-    kMinValue = kManual,
-    kMaxValue = kApi,
+    kFormSubmission = 0,
+    kGenerated = 1,
+    kApi = 2,
+    kManuallyAdded = 3,
+    kMinValue = kFormSubmission,
+    kMaxValue = kManuallyAdded,
   };
 
   // Enum to keep track of what information has been sent to the server about
@@ -107,9 +159,9 @@ struct PasswordForm {
   // This should not be empty except for Android based credentials.
   GURL url;
 
-  // The action target of the form; like |origin| URL consists of the scheme,
-  // host, port and path; the rest is stripped. This is the primary data used by
-  // the PasswordManager for form autofill; that is, the action of the saved
+  // The action target of the form; like |url|, consists of the scheme, host,
+  // port and path; the rest is stripped. This is the primary data used by the
+  // PasswordManager for form autofill; that is, the action of the saved
   // credentials must match the action of the form on the page to be autofilled.
   // If this is empty / not available, it will result in a "restricted" IE-like
   // autofill policy, where we wait for the user to type in their username
@@ -144,10 +196,10 @@ struct PasswordForm {
   // The name of the submit button used. Optional; only used in scoring
   // of PasswordForm results from the database to make matches as tight as
   // possible.
-  base::string16 submit_element;
+  std::u16string submit_element;
 
   // The name of the username input element.
-  base::string16 username_element;
+  std::u16string username_element;
 
   // The renderer id of the username input element. It is set during the new
   // form parsing and not persisted.
@@ -163,7 +215,7 @@ struct PasswordForm {
 
   // When parsing an HTML form, this is typically empty unless the site
   // has implemented some form of autofill.
-  base::string16 username_value;
+  std::u16string username_value;
 
   // This member is populated in cases where we there are multiple input
   // elements that could possibly be the username. Used when our heuristics for
@@ -184,7 +236,7 @@ struct PasswordForm {
   // When parsing an HTML form, this will always be set, unless it is a sign-up
   // form or a change password form that does not ask for the current password.
   // In these two cases the |new_password_element| will always be set.
-  base::string16 password_element;
+  std::u16string password_element;
 
   // The renderer id of the password input element. It is set during the new
   // form parsing and not persisted.
@@ -194,7 +246,7 @@ struct PasswordForm {
   // meant to be persisted to the password store.
   //
   // When parsing an HTML form, this is typically empty.
-  base::string16 password_value;
+  std::u16string password_value;
 
   // The current encrypted password. Must be non-empty for PasswordForm
   // instances retrieved from the password store or coming in a
@@ -203,7 +255,7 @@ struct PasswordForm {
 
   // If the form was a sign-up or a change password form, the name of the input
   // element corresponding to the new password. Optional, and not persisted.
-  base::string16 new_password_element;
+  std::u16string new_password_element;
 
   // The renderer id of the new password input element. It is set during the new
   // form parsing and not persisted.
@@ -211,14 +263,14 @@ struct PasswordForm {
 
   // The confirmation password element. Optional, only set on form parsing, and
   // not persisted.
-  base::string16 confirmation_password_element;
+  std::u16string confirmation_password_element;
 
   // The renderer id of the confirmation password input element. It is set
   // during the new form parsing and not persisted.
   autofill::FieldRendererId confirmation_password_element_renderer_id;
 
   // The new password. Optional, and not persisted.
-  base::string16 new_password_value;
+  std::u16string new_password_value;
 
   // When the login was last used by the user to login to the site. Defaults to
   // |date_created|, except for passwords that were migrated from the now
@@ -228,16 +280,17 @@ struct PasswordForm {
   // When parsing an HTML form, this is not used.
   base::Time date_last_used;
 
+  // When the password value was last changed. The date can be unset on the old
+  // credentials because the passwords wasn't modified yet. The code must keep
+  // it in mind and fallback to 'date_last_used' or 'date_created'.
+  //
+  // When parsing an HTML form, this is not used.
+  base::Time date_password_modified;
+
   // When the login was saved (by chrome).
   //
   // When parsing an HTML form, this is not used.
   base::Time date_created;
-
-  // When the login was downloaded from the sync server. For local passwords is
-  // not used.
-  //
-  // When parsing an HTML form, this is not used.
-  base::Time date_synced;
 
   // Tracks if the user opted to never remember passwords for this form. Default
   // to false.
@@ -246,7 +299,7 @@ struct PasswordForm {
   bool blocked_by_user = false;
 
   // The form type.
-  Type type = Type::kManual;
+  Type type = Type::kFormSubmission;
 
   // The number of times that this username/password has been used to
   // authenticate the user.
@@ -270,7 +323,7 @@ struct PasswordForm {
   // API.
   //
   // User friendly name to show in the UI.
-  base::string16 display_name;
+  std::u16string display_name;
 
   // The URL of this credential's icon, such as the user's avatar, to display
   // in the UI.
@@ -290,8 +343,7 @@ struct PasswordForm {
   // If true, this match was found using public suffix matching.
   bool is_public_suffix_match = false;
 
-  // If true, this is a credential saved through an Android application, and
-  // found using affiliation-based match.
+  // If true, this is a credential found using affiliation-based match.
   bool is_affiliation_based_match = false;
 
   // The type of the event that was taken as an indication that this form is
@@ -306,10 +358,14 @@ struct PasswordForm {
   bool only_for_fallback = false;
 
   // True iff the new password field was found with server hints or autocomplete
-  // attributes or the kTreatNewPasswordHeuristicsAsReliable feature is enabled.
+  // attributes.
   // Only set on form parsing for filling, and not persisted. Used as signal for
   // password generation eligibility.
   bool is_new_password_reliable = false;
+
+  // True iff the form may be filled with webauthn credentials from an active
+  // webauthn request.
+  bool accepts_webauthn_credentials = false;
 
   // Serialized to prefs, so don't change numeric values!
   // These values are persisted to logs. Entries should not be renumbered and
@@ -318,11 +374,16 @@ struct PasswordForm {
     // Default value.
     kNotSet = 0,
     // Credential came from the profile (i.e. local) storage.
-    kProfileStore = 1,
+    kProfileStore = 1 << 0,
     // Credential came from the Gaia-account-scoped storage.
-    kAccountStore = 2,
+    kAccountStore = 1 << 1,
     kMaxValue = kAccountStore
   };
+
+  // Please use IsUsingAccountStore and IsUsingProfileStore to check in which
+  // store the form is present.
+  // TODO(crbug.com/1201643): Rename to in_stores to reflect possibility of
+  // password presence in both stores.
   Store in_store = Store::kNotSet;
 
   // Vector of hashes of the gaia id for users who prefer not to move this
@@ -330,14 +391,25 @@ struct PasswordForm {
   // prompt for those users.
   std::vector<autofill::GaiaIdHash> moving_blocked_for_list;
 
-  // Return true if we consider this form to be a change password form.
-  // We use only client heuristics, so it could include signup forms.
-  bool IsPossibleChangePasswordForm() const;
+  // A mapping from the credential insecurity type (e.g. leaked, phished),
+  // to its metadata (e.g. time it was discovered, whether alerts are muted).
+  base::flat_map<InsecureType, InsecurityMetadata> password_issues;
 
-  // Return true if we consider this form to be a change password form
-  // without username field. We use only client heuristics, so it could
-  // include signup forms.
-  bool IsPossibleChangePasswordFormWithoutUsername() const;
+  // Attached note to the credential.
+  PasswordNote note;
+
+  // Email address of the last sync account this password was associated with.
+  // This field is non empty only if the password is NOT currently associated
+  // with a syncing account AND it was associated with one in the past.
+  std::string previously_associated_sync_account_email;
+
+  // Return true if we consider this form to be a signup form. It's based on
+  // local heuristics and may be inaccurate.
+  bool IsLikelySignupForm() const;
+
+  // Return true if we consider this form to be a change password form and not
+  // a signup form. It's based on local heuristics and may be inaccurate.
+  bool IsLikelyChangePasswordForm() const;
 
   // Returns true if current password element is set.
   bool HasUsernameElement() const;
@@ -355,12 +427,18 @@ struct PasswordForm {
   // not set.
   bool IsSingleUsername() const;
 
-  // Returns whether this form is stored in the account-scoped store, i.e.
-  // whether |in_store == Store::kAccountStore|.
+  // Returns whether this form is stored in the account-scoped store.
   bool IsUsingAccountStore() const;
+
+  // Returns whether this form is stored in the profile-scoped store.
+  bool IsUsingProfileStore() const;
 
   // Returns true when |password_value| or |new_password_value| are non-empty.
   bool HasNonEmptyPasswordValue() const;
+
+  // Utility method to check whether the form represents an insecure credential
+  // of insecure type `type`.
+  bool IsInsecureCredential(InsecureType insecure_type) const;
 
   PasswordForm();
   PasswordForm(const PasswordForm& other);
@@ -372,7 +450,11 @@ struct PasswordForm {
 };
 
 // True if the unique keys for the forms are the same. The unique key is
-// (origin, username_element, username_value, password_element, signon_realm).
+// (url, username_element, username_value, password_element, signon_realm).
+inline auto PasswordFormUniqueKey(const PasswordForm& f) {
+  return std::tie(f.signon_realm, f.url, f.username_element, f.username_value,
+                  f.password_element);
+}
 bool ArePasswordFormUniqueKeysEqual(const PasswordForm& left,
                                     const PasswordForm& right);
 
@@ -387,6 +469,18 @@ std::ostream& operator<<(std::ostream& os, PasswordForm::Scheme scheme);
 std::ostream& operator<<(std::ostream& os, const PasswordForm& form);
 std::ostream& operator<<(std::ostream& os, PasswordForm* form);
 #endif
+
+constexpr PasswordForm::Store operator&(PasswordForm::Store lhs,
+                                        PasswordForm::Store rhs) {
+  return static_cast<PasswordForm::Store>(static_cast<int>(lhs) &
+                                          static_cast<int>(rhs));
+}
+
+constexpr PasswordForm::Store operator|(PasswordForm::Store lhs,
+                                        PasswordForm::Store rhs) {
+  return static_cast<PasswordForm::Store>(static_cast<int>(lhs) |
+                                          static_cast<int>(rhs));
+}
 
 }  // namespace password_manager
 

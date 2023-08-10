@@ -5,8 +5,8 @@
 #ifndef EXTENSIONS_COMMON_MANIFEST_HANDLERS_INCOGNITO_INFO_H_
 #define EXTENSIONS_COMMON_MANIFEST_HANDLERS_INCOGNITO_INFO_H_
 
-#include "base/macros.h"
-#include "base/strings/string16.h"
+#include <string>
+
 #include "extensions/common/api/incognito.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/manifest_handler.h"
@@ -31,15 +31,17 @@ struct IncognitoInfo : public Extension::ManifestData {
 class IncognitoHandler : public ManifestHandler {
  public:
   IncognitoHandler();
+
+  IncognitoHandler(const IncognitoHandler&) = delete;
+  IncognitoHandler& operator=(const IncognitoHandler&) = delete;
+
   ~IncognitoHandler() override;
 
-  bool Parse(Extension* extension, base::string16* error) override;
+  bool Parse(Extension* extension, std::u16string* error) override;
   bool AlwaysParseForType(Manifest::Type type) const override;
 
  private:
   base::span<const char* const> Keys() const override;
-
-  DISALLOW_COPY_AND_ASSIGN(IncognitoHandler);
 };
 
 }  // namespace extensions

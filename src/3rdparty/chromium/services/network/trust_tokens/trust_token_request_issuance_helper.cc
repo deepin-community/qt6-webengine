@@ -10,7 +10,7 @@
 #include "base/command_line.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/metrics/histogram_functions.h"
-#include "base/stl_util.h"
+#include "base/ranges/algorithm.h"
 #include "base/task/thread_pool.h"
 #include "net/base/load_flags.h"
 #include "net/http/http_response_headers.h"
@@ -35,7 +35,7 @@ using Cryptographer = TrustTokenRequestIssuanceHelper::Cryptographer;
 
 struct TrustTokenRequestIssuanceHelper::CryptographerAndBlindedTokens {
   std::unique_ptr<Cryptographer> cryptographer;
-  base::Optional<std::string> blinded_tokens;
+  absl::optional<std::string> blinded_tokens;
 };
 
 struct TrustTokenRequestIssuanceHelper::CryptographerAndUnblindedTokens {
@@ -48,7 +48,7 @@ namespace {
 TrustTokenRequestIssuanceHelper::CryptographerAndBlindedTokens
 BeginIssuanceOnPostedSequence(std::unique_ptr<Cryptographer> cryptographer,
                               int batch_size) {
-  base::Optional<std::string> blinded_tokens =
+  absl::optional<std::string> blinded_tokens =
       cryptographer->BeginIssuance(batch_size);
   return {std::move(cryptographer), std::move(blinded_tokens)};
 }
@@ -225,7 +225,7 @@ void TrustTokenRequestIssuanceHelper::OnDelegateBeginIssuanceCallComplete(
     base::OnceCallback<void(mojom::TrustTokenOperationStatus)> done,
     CryptographerAndBlindedTokens cryptographer_and_blinded_tokens) {
   cryptographer_ = std::move(cryptographer_and_blinded_tokens.cryptographer);
-  base::Optional<std::string>& maybe_blinded_tokens =
+  absl::optional<std::string>& maybe_blinded_tokens =
       cryptographer_and_blinded_tokens.blinded_tokens;  // Convenience alias
 
   if (!maybe_blinded_tokens) {
@@ -291,11 +291,19 @@ void TrustTokenRequestIssuanceHelper::Finalize(
   if (!response->headers->EnumerateHeader(
           /*iter=*/nullptr, kTrustTokensSecTrustTokenHeader, &header_value)) {
     LogOutcome(net_log_, kFinalize, "Response missing Trust Tokens header");
+    response->headers->RemoveHeader(
+        kTrustTokensResponseHeaderSecTrustTokenClearData);
     std::move(done).Run(mojom::TrustTokenOperationStatus::kBadResponse);
     return;
   }
 
   response->headers->RemoveHeader(kTrustTokensSecTrustTokenHeader);
+  if (response->headers->HasHeaderValue(
+          kTrustTokensResponseHeaderSecTrustTokenClearData, "all")) {
+    static_cast<void>(token_store_->DeleteStoredTrustTokens(*issuer_));
+  }
+  response->headers->RemoveHeader(
+      kTrustTokensResponseHeaderSecTrustTokenClearData);
 
   ProcessIssuanceResponse(std::move(header_value), std::move(done));
 }

@@ -11,7 +11,8 @@
 #include "base/files/file_util.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
-#include "base/sequenced_task_runner.h"
+#include "base/metrics/histogram_macros_local.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
 #include "sql/database.h"
 #include "sql/error_delegate_util.h"
@@ -74,8 +75,6 @@ bool SQLitePersistentStoreBackendBase::InitializeDatabase() {
     return db_ != nullptr;
   }
 
-  base::Time start = base::Time::Now();
-
   const base::FilePath dir = path_.DirName();
   if (!base::PathExists(dir) && !base::CreateDirectory(dir)) {
     RecordPathDoesNotExistProblem();
@@ -108,11 +107,6 @@ bool SQLitePersistentStoreBackendBase::InitializeDatabase() {
     Reset();
     return false;
   }
-
-  base::UmaHistogramCustomTimes(histogram_tag_ + ".TimeInitializeDB",
-                                base::Time::Now() - start,
-                                base::TimeDelta::FromMilliseconds(1),
-                                base::TimeDelta::FromMinutes(1), 50);
 
   initialized_ = DoInitializeDatabase();
 
@@ -187,20 +181,19 @@ bool SQLitePersistentStoreBackendBase::MigrateDatabaseSchema() {
 
   // |cur_version| is the version that the database ends up at, after all the
   // database upgrade statements.
-  base::Optional<int> cur_version = DoMigrateDatabaseSchema();
+  absl::optional<int> cur_version = DoMigrateDatabaseSchema();
   if (!cur_version.has_value())
     return false;
 
+  // Metatable is corrupted. Try to recover.
   if (cur_version.value() < current_version_number_) {
-    base::UmaHistogramCounts100(histogram_tag_ + ".CorruptMetaTable", 1);
-
     meta_table_.Reset();
     db_ = std::make_unique<sql::Database>();
-    if (!sql::Database::Delete(path_) || !db()->Open(path_) ||
-        !meta_table_.Init(db(), current_version_number_,
-                          compatible_version_number_)) {
-      base::UmaHistogramCounts100(
-          histogram_tag_ + ".CorruptMetaTableRecoveryFailed", 1);
+    bool recovered = sql::Database::Delete(path_) && db()->Open(path_) &&
+                     meta_table_.Init(db(), current_version_number_,
+                                      compatible_version_number_);
+    LOCAL_HISTOGRAM_BOOLEAN("Net.SQLite.CorruptMetaTableRecovered", recovered);
+    if (!recovered) {
       NOTREACHED() << "Unable to reset the " << histogram_tag_ << " DB.";
       meta_table_.Reset();
       db_.reset();

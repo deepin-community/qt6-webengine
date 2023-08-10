@@ -15,7 +15,7 @@
 #include "base/cancelable_callback.h"
 #include "base/containers/circular_deque.h"
 #include "base/containers/queue.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "build/build_config.h"
 #include "components/viz/common/gpu/context_cache_controller.h"
 #include "components/viz/common/quads/aggregated_render_pass_draw_quad.h"
@@ -34,13 +34,14 @@
 #include "components/viz/service/display/texture_deleter.h"
 #include "components/viz/service/viz_service_export.h"
 #include "ui/gfx/geometry/quad_f.h"
+#include "ui/gfx/gpu_fence_handle.h"
 #include "ui/latency/latency_info.h"
 
-#if defined(OS_APPLE)
+#if BUILDFLAG(IS_APPLE)
 #include "components/viz/service/display/ca_layer_overlay.h"
 #endif
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 #include "components/viz/service/display/dc_layer_overlay.h"
 #endif
 
@@ -79,13 +80,18 @@ class VIZ_SERVICE_EXPORT GLRenderer : public DirectRenderer {
              DisplayResourceProviderGL* resource_provider,
              OverlayProcessorInterface* overlay_processor,
              scoped_refptr<base::SingleThreadTaskRunner> current_task_runner);
+
+  GLRenderer(const GLRenderer&) = delete;
+  GLRenderer& operator=(const GLRenderer&) = delete;
+
   ~GLRenderer() override;
 
   bool use_swap_with_bounds() const { return use_swap_with_bounds_; }
 
   void SwapBuffers(SwapFrameData swap_frame_data) override;
   void SwapBuffersSkipped() override;
-  void SwapBuffersComplete() override;
+  void SwapBuffersComplete(gfx::GpuFenceHandle release_fence) override;
+  void BuffersPresented() override;
 
   void DidReceiveTextureInUseResponses(
       const gpu::TextureInUseResponses& responses) override;
@@ -224,7 +230,7 @@ class VIZ_SERVICE_EXPORT GLRenderer : public DirectRenderer {
   gfx::Rect GetBackdropBoundingBoxForRenderPassQuad(
       DrawRenderPassDrawQuadParams* params,
       gfx::Transform* backdrop_filter_bounds_transform,
-      base::Optional<gfx::RRectF>* backdrop_filter_bounds,
+      absl::optional<gfx::RRectF>* backdrop_filter_bounds,
       gfx::Rect* unclipped_rect) const;
 
   // Allocates and returns a texture id that contains a copy of the contents
@@ -247,7 +253,7 @@ class VIZ_SERVICE_EXPORT GLRenderer : public DirectRenderer {
   sk_sp<SkImage> ApplyBackdropFilters(
       DrawRenderPassDrawQuadParams* params,
       const gfx::Rect& unclipped_rect,
-      const base::Optional<gfx::RRectF>& backdrop_filter_bounds,
+      const absl::optional<gfx::RRectF>& backdrop_filter_bounds,
       const gfx::Transform& backdrop_filter_bounds_transform);
 
   // gl_renderer can bypass TileDrawQuads that fill the RenderPass
@@ -306,11 +312,14 @@ class VIZ_SERVICE_EXPORT GLRenderer : public DirectRenderer {
   // that video color conversion can be enabled separately from general color
   // conversion. If |adjust_src_white_level| is true, then the |src_color_space|
   // white levels are adjusted to the display SDR white level so that no white
-  // level scaling happens.
-  void SetUseProgram(const ProgramKey& program_key,
-                     const gfx::ColorSpace& src_color_space,
-                     const gfx::ColorSpace& dst_color_space,
-                     bool adjust_src_white_level = false);
+  // level scaling happens. |src_hdr_metadata|, if available, is the mastering
+  // metadata associated to the source quad.
+  void SetUseProgram(
+      const ProgramKey& program_key,
+      const gfx::ColorSpace& src_color_space,
+      const gfx::ColorSpace& dst_color_space,
+      bool adjust_src_white_level = false,
+      absl::optional<gfx::HDRMetadata> src_hdr_metadata = absl::nullopt);
 
   bool MakeContextCurrent();
 
@@ -328,9 +337,9 @@ class VIZ_SERVICE_EXPORT GLRenderer : public DirectRenderer {
   // nothing.
   void ScheduleOutputSurfaceAsOverlay();
   // Schedule overlays sends overlay candidate to the GPU.
-#if defined(OS_ANDROID) || defined(USE_OZONE)
+#if BUILDFLAG(IS_ANDROID) || defined(USE_OZONE)
   void ScheduleOverlays();
-#elif defined(OS_APPLE)
+#elif BUILDFLAG(IS_APPLE)
   void ScheduleCALayers();
 
   // Schedules the |ca_layer_overlay|, which is guaranteed to have a non-null
@@ -354,7 +363,7 @@ class VIZ_SERVICE_EXPORT GLRenderer : public DirectRenderer {
       const gfx::ColorSpace& color_space);
   void ReduceAvailableOverlayTextures();
 
-#elif defined(OS_WIN)
+#elif BUILDFLAG(IS_WIN)
   void ScheduleDCLayers();
 #endif
 
@@ -408,6 +417,11 @@ class VIZ_SERVICE_EXPORT GLRenderer : public DirectRenderer {
   OverlayResourceLockList pending_overlay_resources_;
   // Resources that should be shortly swapped by the GPU process.
   base::circular_deque<OverlayResourceLockList> swapping_overlay_resources_;
+
+  // Locks for overlays that have release fences and read lock fences.
+  base::circular_deque<OverlayResourceLockList>
+      read_lock_release_fence_overlay_locks_;
+
   // Resources that the GPU process has finished swapping. The key is the
   // texture id of the resource.
   std::map<unsigned, OverlayResourceLock> swapped_and_acked_overlay_resources_;
@@ -431,12 +445,19 @@ class VIZ_SERVICE_EXPORT GLRenderer : public DirectRenderer {
 
   const gfx::ColorTransform* GetColorTransform(const gfx::ColorSpace& src,
                                                const gfx::ColorSpace& dst);
-  std::map<gfx::ColorSpace,
-           std::map<gfx::ColorSpace, std::unique_ptr<gfx::ColorTransform>>>
+  struct ColorTransformKey {
+    gfx::ColorSpace src;
+    gfx::ColorSpace dst;
+    float sdr_max_luminance_nits = 0.f;
+    bool operator==(const ColorTransformKey& other) const;
+    bool operator!=(const ColorTransformKey& other) const;
+    bool operator<(const ColorTransformKey& other) const;
+  };
+  std::map<ColorTransformKey, std::unique_ptr<gfx::ColorTransform>>
       color_transform_cache_;
 
-  gpu::gles2::GLES2Interface* gl_;
-  gpu::ContextSupport* context_support_;
+  raw_ptr<gpu::gles2::GLES2Interface> gl_;
+  raw_ptr<gpu::ContextSupport> context_support_;
   std::unique_ptr<ContextCacheController::ScopedVisibility> context_visibility_;
   std::unique_ptr<ContextCacheController::ScopedBusy> context_busy_;
 
@@ -449,11 +470,11 @@ class VIZ_SERVICE_EXPORT GLRenderer : public DirectRenderer {
   bool is_scissor_enabled_ = false;
   bool stencil_shadow_ = false;
   bool blend_shadow_ = false;
-  const Program* current_program_ = nullptr;
+  raw_ptr<const Program> current_program_ = nullptr;
   TexturedQuadDrawCache draw_cache_;
   int highp_threshold_cache_ = 0;
 
-  ScopedRenderPassTexture* current_framebuffer_texture_;
+  raw_ptr<ScopedRenderPassTexture> current_framebuffer_texture_;
 
   SyncQueryCollection sync_queries_;
   bool use_discard_framebuffer_ = false;
@@ -464,11 +485,12 @@ class VIZ_SERVICE_EXPORT GLRenderer : public DirectRenderer {
   bool use_occlusion_query_ = false;
   bool use_swap_with_bounds_ = false;
   bool use_fast_path_solid_color_quad_ = false;
+  bool supports_multi_sampling_ = false;
 
   // If true, tints all the composited content to red.
   bool tint_gl_composited_content_ = true;
 
-#if defined(OS_APPLE)
+#if BUILDFLAG(IS_APPLE)
   // The method FlippedFramebuffer determines whether the framebuffer associated
   // with a DrawingFrame is flipped. It makes the assumption that the
   // DrawingFrame is being used as part of a render pass. If a DrawingFrame is
@@ -496,8 +518,6 @@ class VIZ_SERVICE_EXPORT GLRenderer : public DirectRenderer {
   // MessageLoop.
   scoped_refptr<base::SingleThreadTaskRunner> current_task_runner_;
   base::WeakPtrFactory<GLRenderer> weak_ptr_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(GLRenderer);
 };
 
 }  // namespace viz

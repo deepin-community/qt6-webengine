@@ -5,42 +5,67 @@
 // This header contains field trial and variations definitions for policies,
 // mechanisms and features in the performance_manager component.
 
-#include "base/feature_list.h"
-#include "base/time/time.h"
-
 #ifndef COMPONENTS_PERFORMANCE_MANAGER_PUBLIC_FEATURES_H_
 #define COMPONENTS_PERFORMANCE_MANAGER_PUBLIC_FEATURES_H_
 
-namespace performance_manager {
-namespace features {
+#include "base/feature_list.h"
+#include "base/metrics/field_trial_params.h"
+#include "base/time/time.h"
+#include "build/build_config.h"
 
-// The feature that gates the TabLoadingFrameNavigationPolicy, and its
-// mechanism counterpart the TabLoadingFrameNavigationScheduler.
-extern const base::Feature kTabLoadingFrameNavigationThrottles;
+namespace performance_manager::features {
 
-// Parameters controlling the TabLoadingFrameNavigationThrottles feature.
-struct TabLoadingFrameNavigationThrottlesParams {
-  TabLoadingFrameNavigationThrottlesParams();
-  ~TabLoadingFrameNavigationThrottlesParams();
+// The feature that gates whether or not the PM runs on the main (UI) thread.
+extern const base::Feature kRunOnMainThread;
 
-  static TabLoadingFrameNavigationThrottlesParams GetParams();
+#if !BUILDFLAG(IS_ANDROID)
+// Enables urgent discarding of pages directly from PerformanceManager rather
+// than via TabManager.
+extern const base::Feature kUrgentDiscardingFromPerformanceManager;
 
-  // The minimum and maximum amount of time throttles will be applied to
-  // non-primary content frames.
-  base::TimeDelta minimum_throttle_timeout;
-  base::TimeDelta maximum_throttle_timeout;
-
-  // The multiple of elapsed time from navigation start until
-  // FirstContentfulPaint (FCP) that is used in calculating the timeout to apply
-  // to the throttles.
-  double fcp_multiple;
+// The discard strategy to use.
+// Integer values are specified to allow conversion from the integer value in
+// the DiscardStrategy feature param.
+enum class DiscardStrategy : int {
+  // Discards the least recently used tab among the eligible ones. This is the
+  // default strategy.
+  LRU = 0,
+  // Discard the tab with the biggest resident set among the eligible ones.
+  BIGGEST_RSS = 1,
 };
 
-// A feature that gates the inclusion of service worker relationships in the
-// graph. This is a temporary feature, see https://crbug.com/1143281.
-extern const base::Feature kServiceWorkerRelationshipsInGraph;
+class UrgentDiscardingParams {
+ public:
+  ~UrgentDiscardingParams();
 
-}  // namespace features
-}  // namespace performance_manager
+  static UrgentDiscardingParams GetParams();
+
+  DiscardStrategy discard_strategy() const { return discard_strategy_; }
+
+  static constexpr base::FeatureParam<int> kDiscardStrategy{
+      &features::kUrgentDiscardingFromPerformanceManager, "DiscardStrategy",
+      static_cast<int>(DiscardStrategy::LRU)};
+
+ private:
+  UrgentDiscardingParams();
+  UrgentDiscardingParams(const UrgentDiscardingParams& rhs);
+
+  DiscardStrategy discard_strategy_;
+};
+
+// Feature that controls whether or not tabs should be automatically discarded
+// when the total PMF is too high.
+extern const base::Feature kHighPMFDiscardPolicy;
+
+// Enable background tab loading of pages (restored via session restore)
+// directly from Performance Manager rather than via TabLoader.
+extern const base::Feature kBackgroundTabLoadingFromPerformanceManager;
+#endif
+
+// Policy that evicts the BFCache of pages that become non visible or the
+// BFCache of all pages when the system is under memory pressure.
+extern const base::Feature kBFCachePerformanceManagerPolicy;
+
+}  // namespace performance_manager::features
 
 #endif  // COMPONENTS_PERFORMANCE_MANAGER_PUBLIC_FEATURES_H_

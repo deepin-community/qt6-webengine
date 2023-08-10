@@ -5,6 +5,8 @@
 source_set("internal") {
   sources = [ "identifiability_internal_templates.h" ]
 
+  deps = [ "//base" ]
+
   visibility = [
     ":*",
     "//third_party/blink/common/privacy_budget:*",
@@ -38,6 +40,7 @@ source_set("test_support") {
   testonly = true
 
   sources = [
+    "identifiability_sample_test_utils.h",
     "scoped_identifiability_test_sample_collector.h",
     "scoped_switch_sample_collector.h",
   ]

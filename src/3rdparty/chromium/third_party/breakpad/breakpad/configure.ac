@@ -72,9 +72,10 @@ AC_ARG_ENABLE(m32,
 AC_HEADER_STDC
 AC_SYS_LARGEFILE
 AX_PTHREAD
-AC_CHECK_HEADERS([a.out.h sys/random.h])
-AC_CHECK_FUNCS([arc4random getcontext getrandom])
+AC_CHECK_HEADERS([a.out.h sys/mman.h sys/random.h])
+AC_CHECK_FUNCS([arc4random getcontext getrandom memfd_create])
 AM_CONDITIONAL([HAVE_GETCONTEXT], [test "x$ac_cv_func_getcontext" = xyes])
+AM_CONDITIONAL([HAVE_MEMFD_CREATE], [test "x$ac_cv_func_memfd_create" = xyes])
 
 AX_CXX_COMPILE_STDCXX(11, noext, mandatory)
 
@@ -218,30 +219,30 @@ AC_ARG_ENABLE(selftest,
               [selftest=false])
 AM_CONDITIONAL(SELFTEST, test x$selftest = xtrue)
 
-AC_ARG_WITH(rust-demangle,
-            AS_HELP_STRING([--with-rust-demangle=/path/to/rust-demangle-capi],
-                             [Link against the rust-demangle library]
+AC_ARG_WITH(rustc-demangle,
+            AS_HELP_STRING([--with-rustc-demangle=/path/to/rustc-demangle],
+                             [Link against the rustc-demangle library]
                              [to demangle Rust language symbols during]
                              [symbol dumping (default is no)]
                              [Pass the path to the crate root.]),
             [case "${withval}" in
                yes)
-                 AC_MSG_ERROR(You must pass the path to the rust-demangle-capi crate for --with-rust-demangle)
+                 AC_MSG_ERROR(You must pass the path to the rustc-demangle crate for --with-rustc-demangle)
                  ;;
                no)
-                 rust_demangle=false
+                 rustc_demangle=false
                  ;;
                *)
                  if ! test -f "${withval}/Cargo.toml"; then
-                   AC_MSG_ERROR(You must pass the path to the rust-demangle-capi crate for --with-rust-demangle)
+                   AC_MSG_ERROR(You must pass the path to the rustc-demangle crate for --with-rustc-demangle)
                  fi
-                 RUST_DEMANGLE_CFLAGS="-DHAVE_RUST_DEMANGLE -I${withval}/target/include"
-                 RUST_DEMANGLE_LIBS="-L${withval}/target/release -lrust_demangle -lpthread -ldl"
+                 RUSTC_DEMANGLE_CFLAGS="-DHAVE_RUSTC_DEMANGLE -I${withval}/crates/capi/include"
+                 RUSTC_DEMANGLE_LIBS="-L${withval}/target/release -lrustc_demangle -lpthread -ldl"
                  ;;
              esac],
-            [rust_demangle=false])
-AC_ARG_VAR([RUST_DEMANGLE_CFLAGS], [Compiler flags for rust-demangle])
-AC_ARG_VAR([RUST_DEMANGLE_LIBS], [Linker flags for rust-demangle])
+            [rustc_demangle=false])
+AC_ARG_VAR([RUSTC_DEMANGLE_CFLAGS], [Compiler flags for rustc-demangle])
+AC_ARG_VAR([RUSTC_DEMANGLE_LIBS], [Linker flags for rustc-demangle])
 
 AC_ARG_WITH(tests-as-root,
             AS_HELP_STRING([--with-tests-as-root],

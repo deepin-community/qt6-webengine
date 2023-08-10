@@ -10,10 +10,11 @@
 #include "base/check.h"
 #include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/base/cursor/cursor.h"
+#include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/gfx/canvas.h"
 #include "ui/views/controls/native/native_view_host_wrapper.h"
-#include "ui/views/metadata/metadata_impl_macros.h"
 #include "ui/views/painter.h"
+#include "ui/views/view_utils.h"
 #include "ui/views/widget/widget.h"
 
 namespace views {
@@ -24,7 +25,9 @@ const char kWidgetNativeViewHostKey[] = "WidgetNativeViewHost";
 ////////////////////////////////////////////////////////////////////////////////
 // NativeViewHost, public:
 
-NativeViewHost::NativeViewHost() = default;
+NativeViewHost::NativeViewHost() {
+  set_suppress_default_focus_handling();
+}
 
 NativeViewHost::~NativeViewHost() {
   // As part of deleting NativeViewHostWrapper the native view is unparented.
@@ -55,10 +58,14 @@ void NativeViewHost::Detach() {
 }
 
 void NativeViewHost::SetParentAccessible(gfx::NativeViewAccessible accessible) {
+  if (!native_wrapper_)
+    return;
   native_wrapper_->SetParentAccessible(accessible);
 }
 
 gfx::NativeViewAccessible NativeViewHost::GetParentAccessible() {
+  if (!native_wrapper_)
+    return nullptr;
   return native_wrapper_->GetParentAccessible();
 }
 
@@ -94,6 +101,11 @@ void NativeViewHost::NativeViewDestroyed() {
   // Detach so we can clear our state and notify the native_wrapper_ to release
   // ref on the native view.
   Detach(true);
+}
+
+void NativeViewHost::SetBackgroundColorWhenClipped(
+    absl::optional<SkColor> color) {
+  background_color_when_clipped_ = color;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -154,10 +166,14 @@ void NativeViewHost::OnPaint(gfx::Canvas* canvas) {
   // view background color doesn't show up), we need to cover that blackness
   // with something so that fast resizes don't result in black flash.
   //
-  // It would be nice if this used some approximation of the page's
-  // current background color.
-  if (native_wrapper_->HasInstalledClip())
-    canvas->FillRect(GetLocalBounds(), SK_ColorWHITE);
+  // Affected views should set the desired color using
+  // SetBackgroundColorWhenClipped(), otherwise the background is left
+  // transparent to let the lower layers show through.
+  if (native_wrapper_->HasInstalledClip()) {
+    if (background_color_when_clipped_) {
+      canvas->FillRect(GetLocalBounds(), *background_color_when_clipped_);
+    }
+  }
 }
 
 void NativeViewHost::VisibilityChanged(View* starting_from, bool is_visible) {
@@ -226,6 +242,21 @@ void NativeViewHost::SetVisible(bool visible) {
   if (native_view_)
     native_wrapper_->SetVisible(visible);
   View::SetVisible(visible);
+}
+
+bool NativeViewHost::OnMousePressed(const ui::MouseEvent& event) {
+  NOTREACHED()
+      << "This view is not expected to receive events directly. Event "
+         "targeting should find the native view as target window instead of "
+         "the view hierarchy. This is likely due to an overlapping View that "
+         "receives but is not handling this event. See crbug.com/1263413 and "
+         "Widget::ShouldDescendIntoChildForEventHandling() for some more "
+         "leads. If the overlapping view was not intended to receive events, "
+         "call SetCanProcessEventsWithinSubtree(false) on the overlapping "
+         "View that paints to a layer. If it's intended to receive some, but "
+         "not this event, event targeting needs to be fixed for this case.\n"
+      << GetViewDebugInfo(this);
+  return View::OnMousePressed(event);
 }
 
 ////////////////////////////////////////////////////////////////////////////////

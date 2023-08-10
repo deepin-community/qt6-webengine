@@ -13,6 +13,7 @@
 #include "compiler/translator/Compiler.h"
 #include "compiler/translator/SymbolTable.h"
 
+class TIntermBlock;
 class TIntermTyped;
 class TIntermSymbol;
 class TVariable;
@@ -34,6 +35,7 @@ class SpecConst
     TIntermTyped *getMultiplierYForDFdx();
     TIntermTyped *getMultiplierXForDFdy();
     TIntermTyped *getMultiplierYForDFdy();
+    TIntermTyped *getPreRotationMatrix();
     TIntermTyped *getFragRotationMatrix();
     TIntermTyped *getFlipXY();
     TIntermTyped *getNegFlipXY();
@@ -41,9 +43,12 @@ class SpecConst
     TIntermTyped *getFragRotationMultiplyFlipXY();
 
     // Half render area
-    TIntermBinary *getHalfRenderArea();
+    TIntermTyped *getHalfRenderArea();
 
-    void outputLayoutString(TInfoSinkBase &sink) const;
+    // Dither emulation
+    TIntermTyped *getDither();
+
+    void declareSpecConsts(TIntermBlock *root);
     SpecConstUsageBits getSpecConstUsageBits() const { return mUsageBits; }
 
   private:
@@ -56,6 +61,12 @@ class SpecConst
     // If unsupported, this should be set to null.
     TSymbolTable *mSymbolTable;
     ShCompileOptions mCompileOptions;
+
+    TVariable *mLineRasterEmulationVar;
+    TVariable *mSurfaceRotationVar;
+    TVariable *mDrawableWidthVar;
+    TVariable *mDrawableHeightVar;
+    TVariable *mDitherVar;
 
     // Bit is set if YFlip or Rotation has been used
     SpecConstUsageBits mUsageBits;

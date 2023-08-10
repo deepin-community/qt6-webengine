@@ -1,30 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtWebEngine module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:GPL-EXCEPT$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 as published by the Free Software
-** Foundation with exceptions as appearing in the file LICENSE.GPL3-EXCEPT
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
 // Functions and macros that really need to be in QTestLib
 
@@ -33,6 +8,8 @@
 #endif
 
 #include <QEventLoop>
+#include <QPoint>
+#include <QRect>
 #include <QSignalSpy>
 #include <QTimer>
 #include <qwebenginefindtextresult.h>
@@ -66,7 +43,7 @@ public:
 
     bool ensureSignalEmitted()
     {
-        bool result = count() > 0;
+        bool result = size() > 0;
         if (!result)
             result = wait();
         clear();
@@ -175,35 +152,17 @@ static inline bool loadSync(QWebEnginePage *page, const QUrl &url, bool ok = tru
     return (!spy.empty() || spy.wait(20000)) && (spy.front().value(0).toBool() == ok);
 }
 
-static inline QPoint elementCenter(QWebEnginePage *page, const QString &id)
-{
-    const QString jsCode(
-            "(function(){"
-            "   var elem = document.getElementById('" + id + "');"
-            "   var rect = elem.getBoundingClientRect();"
-            "   return [(rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2];"
-            "})()");
-    QVariantList rectList = evaluateJavaScriptSync(page, jsCode).toList();
-
-    if (rectList.count() != 2) {
-        qWarning("elementCenter failed.");
-        return QPoint();
-    }
-
-    return QPoint(rectList.at(0).toInt(), rectList.at(1).toInt());
-}
-
 static inline QRect elementGeometry(QWebEnginePage *page, const QString &id)
 {
     const QString jsCode(
                 "(function() {"
                 "   var elem = document.getElementById('" + id + "');"
                 "   var rect = elem.getBoundingClientRect();"
-                "   return [rect.left, rect.top, rect.right, rect.bottom];"
+                "   return [rect.left, rect.top, rect.width, rect.height];"
                 "})()");
     QVariantList coords = evaluateJavaScriptSync(page, jsCode).toList();
 
-    if (coords.count() != 4) {
+    if (coords.size() != 4) {
         qWarning("elementGeometry faield.");
         return QRect();
     }
@@ -211,5 +170,9 @@ static inline QRect elementGeometry(QWebEnginePage *page, const QString &id)
     return QRect(coords[0].toInt(), coords[1].toInt(), coords[2].toInt(), coords[3].toInt());
 }
 
+static inline QPoint elementCenter(QWebEnginePage *page, const QString &id)
+{
+    return elementGeometry(page, id).center();
+}
 
 #define W_QSKIP(a, b) QSKIP(a)

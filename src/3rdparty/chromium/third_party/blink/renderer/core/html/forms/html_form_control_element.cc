@@ -47,7 +47,7 @@ HTMLFormControlElement::HTMLFormControlElement(const QualifiedName& tag_name,
       autofill_state_(WebAutofillState::kNotFilled),
       blocks_form_submission_(false) {
   SetHasCustomStyleCallbacks();
-  static unsigned next_free_unique_id = 0;
+  static uint64_t next_free_unique_id = 1;
   unique_renderer_form_control_id_ = next_free_unique_id++;
 }
 
@@ -179,6 +179,19 @@ void HTMLFormControlElement::SetAutofillState(WebAutofillState autofill_state) {
 
   autofill_state_ = autofill_state;
   PseudoStateChanged(CSSSelector::kPseudoAutofill);
+  PseudoStateChanged(CSSSelector::kPseudoWebKitAutofill);
+  PseudoStateChanged(CSSSelector::kPseudoAutofillSelected);
+  PseudoStateChanged(CSSSelector::kPseudoAutofillPreviewed);
+}
+
+void HTMLFormControlElement::SetPreventHighlightingOfAutofilledFields(
+    bool prevent_highlighting) {
+  if (prevent_highlighting == prevent_highlighting_of_autofilled_fields_)
+    return;
+
+  prevent_highlighting_of_autofilled_fields_ = prevent_highlighting;
+  PseudoStateChanged(CSSSelector::kPseudoAutofill);
+  PseudoStateChanged(CSSSelector::kPseudoWebKitAutofill);
   PseudoStateChanged(CSSSelector::kPseudoAutofillSelected);
   PseudoStateChanged(CSSSelector::kPseudoAutofillPreviewed);
 }
@@ -264,7 +277,7 @@ bool HTMLFormControlElement::IsKeyboardFocusable() const {
     return HTMLElement::IsKeyboardFocusable();
 
   // Skip tabIndex check in a parent class.
-  return IsFocusable();
+  return IsBaseElementFocusable();
 }
 
 bool HTMLFormControlElement::MayTriggerVirtualKeyboard() const {
@@ -326,9 +339,8 @@ int32_t HTMLFormControlElement::GetAxId() const {
     return 0;
   if (AXObjectCache* cache = document.ExistingAXObjectCache()) {
     if (document.NeedsLayoutTreeUpdate() || document.View()->NeedsLayout() ||
-        document.Lifecycle().GetState() <
-            DocumentLifecycle::kCompositingAssignmentsClean) {
-      document.View()->UpdateLifecycleToCompositingCleanPlusScrolling(
+        document.Lifecycle().GetState() < DocumentLifecycle::kPrePaintClean) {
+      document.View()->UpdateAllLifecyclePhasesExceptPaint(
           DocumentUpdateReason::kAccessibility);
     }
     return cache->GetAXID(const_cast<HTMLFormControlElement*>(this));

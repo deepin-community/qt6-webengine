@@ -1,30 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2018 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtWebEngine module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:GPL-EXCEPT$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 as published by the Free Software
-** Foundation with exceptions as appearing in the file LICENSE.GPL3-EXCEPT
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2018 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
 #include <QtTest/QtTest>
 
@@ -136,7 +111,7 @@ void tst_LoadSignals::init()
     if (!view.url().isEmpty()) {
         loadFinishedSpy.clear();
         view.load(QUrl("about:blank"));
-        QTRY_COMPARE(loadFinishedSpy.count(), 1);
+        QTRY_COMPARE(loadFinishedSpy.size(), 1);
     }
     resetSpies();
     page.reset();
@@ -233,26 +208,28 @@ void tst_LoadSignals::rejectNavigationRequest_data()
     QTest::addColumn<QUrl>("rejectedUrl");
     QTest::addColumn<int>("expectedNavigations");
     QTest::addColumn<QList<int>>("expectedSignals");
+    QTest::addColumn<int>("errorCode");
+    QTest::addColumn<QWebEngineLoadingInfo::ErrorDomain>("errorDomain");
     QTest::newRow("Simple")
             << QUrl("qrc:///resources/page1.html")
             << QUrl("qrc:///resources/page1.html")
-            << 1 << SignalsOrderOnceFailure;
+            << 1 << SignalsOrderOnceFailure << -3 << QWebEngineLoadingInfo::InternalErrorDomain;
     QTest::newRow("SamePageImmediate")
             << QUrl("qrc:///resources/page5.html")
             << QUrl("qrc:///resources/page5.html#anchor")
-            << 1 << SignalsOrderOnce;
+            << 1 << SignalsOrderOnce << 200 << QWebEngineLoadingInfo::HttpStatusCodeDomain;
     QTest::newRow("SamePageDeferred")
             << QUrl("qrc:///resources/page3.html")
             << QUrl("qrc:///resources/page3.html#anchor")
-            << 1 << SignalsOrderOnce;
+            << 1 << SignalsOrderOnce << 200 << QWebEngineLoadingInfo::HttpStatusCodeDomain;
     QTest::newRow("OtherPageImmediate")
             << QUrl("qrc:///resources/page6.html")
             << QUrl("qrc:///resources/page2.html#anchor")
-            << 2 << SignalsOrderOnceFailure;
+            << 2 << SignalsOrderOnceFailure << -3 << QWebEngineLoadingInfo::InternalErrorDomain;
     QTest::newRow("OtherPageDeferred")
             << QUrl("qrc:///resources/page7.html")
             << QUrl("qrc:///resources/page2.html#anchor")
-            << 2 << SignalsOrderTwiceWithFailure;
+            << 2 << SignalsOrderTwiceWithFailure << -3 << QWebEngineLoadingInfo::InternalErrorDomain;
 }
 
 /**
@@ -267,6 +244,8 @@ void tst_LoadSignals::rejectNavigationRequest()
     QFETCH(QUrl, rejectedUrl);
     QFETCH(int, expectedNavigations);
     QFETCH(QList<int>, expectedSignals);
+    QFETCH(int, errorCode);
+    QFETCH(QWebEngineLoadingInfo::ErrorDomain, errorDomain);
 
     page.blacklist.insert(rejectedUrl);
     page.load(initialUrl);
@@ -281,6 +260,8 @@ void tst_LoadSignals::rejectNavigationRequest()
     // No further loadStarted should have occurred within this time
     QCOMPARE(loadStartedSpy.size(), expectedLoadCount);
     QCOMPARE(loadFinishedSpy.size(), expectedLoadCount);
+    QCOMPARE(page.loadingInfos.last().errorCode(), errorCode);
+    QCOMPARE(page.loadingInfos.last().errorDomain(), errorDomain);
 }
 
 /**
@@ -296,7 +277,7 @@ void tst_LoadSignals::monotonicity()
     QVERIFY(server.start());
 
     view.load(server.url("/loadprogress/main.html"));
-    QTRY_COMPARE(loadFinishedSpy.size(), 1);
+    QTRY_COMPARE_WITH_TIMEOUT(loadFinishedSpy.size(), 1, 10000);
     QVERIFY(loadFinishedSpy[0][0].toBool());
 
     QVERIFY(page.loadProgress.size() >= 3);
@@ -368,6 +349,8 @@ void tst_LoadSignals::fileDownload()
     QTRY_LOOP_IMPL(loadStartedSpy.size() != 2 || loadFinishedSpy.size() != 2, 1000, 100);
 
     QCOMPARE(page.signalsOrder, SignalsOrderTwiceWithFailure);
+    QCOMPARE(page.loadingInfos[3].errorCode(), -3);
+    QCOMPARE(page.loadingInfos[3].errorDomain(), QWebEngineLoadingInfo::InternalErrorDomain);
 }
 
 void tst_LoadSignals::numberOfStartedAndFinishedSignalsIsSame_data()
@@ -406,21 +389,27 @@ void tst_LoadSignals::numberOfStartedAndFinishedSignalsIsSame()
     resetSpies();
     QTRY_LOOP_IMPL(loadStartedSpy.size() || loadFinishedSpy.size(), 1000, 100);
     QCOMPARE(page.signalsOrder, SignalsOrderOnce);
+    QCOMPARE(page.loadingInfos[1].errorCode(), 200);
+    QCOMPARE(page.loadingInfos[1].errorDomain(), QWebEngineLoadingInfo::HttpStatusCodeDomain);
 }
 
 void tst_LoadSignals::loadFinishedAfterNotFoundError_data()
 {
     QTest::addColumn<bool>("rfcInvalid");
     QTest::addColumn<bool>("withServer");
-    QTest::addRow("rfc_invalid")  << true  << false;
-    QTest::addRow("non_existent") << false << false;
-    QTest::addRow("server_404")   << false << true;
+    QTest::addColumn<int>("errorCode");
+    QTest::addColumn<int>("errorDomain");
+    QTest::addRow("rfc_invalid")  << true  << false << -105 << int(QWebEngineLoadingInfo::ConnectionErrorDomain);
+    QTest::addRow("non_existent") << false << false << -105 << int(QWebEngineLoadingInfo::ConnectionErrorDomain);
+    QTest::addRow("server_404")   << false << true  <<  404 << int(QWebEngineLoadingInfo::HttpStatusCodeDomain);
 }
 
 void tst_LoadSignals::loadFinishedAfterNotFoundError()
 {
-    QFETCH(bool, withServer);
     QFETCH(bool, rfcInvalid);
+    QFETCH(bool, withServer);
+    QFETCH(int, errorCode);
+    QFETCH(int, errorDomain);
 
     QScopedPointer<HttpServer> server;
     if (withServer) {
@@ -432,27 +421,53 @@ void tst_LoadSignals::loadFinishedAfterNotFoundError()
         ? server->url("/not-found-page.html")
         : QUrl(rfcInvalid ? "http://some.invalid" : "http://non.existent/url");
     view.load(url);
-    QTRY_COMPARE_WITH_TIMEOUT(loadFinishedSpy.count(), 1, 20000);
+    QTRY_COMPARE_WITH_TIMEOUT(loadFinishedSpy.size(), 1, 20000);
     QVERIFY(!loadFinishedSpy.at(0).at(0).toBool());
     QCOMPARE(toPlainTextSync(view.page()), QString());
-    QCOMPARE(loadFinishedSpy.count(), 1);
-    QCOMPARE(loadStartedSpy.count(), 1);
+    QCOMPARE(loadFinishedSpy.size(), 1);
+    QCOMPARE(loadStartedSpy.size(), 1);
     QVERIFY(std::is_sorted(page.loadProgress.begin(), page.loadProgress.end()));
     page.loadProgress.clear();
+
+    { auto &&loadStart = page.loadingInfos[0], &&loadFinish = page.loadingInfos[1];
+        QCOMPARE(loadStart.status(), QWebEngineLoadingInfo::LoadStartedStatus);
+        QCOMPARE(loadStart.isErrorPage(), false);
+        QCOMPARE(loadStart.errorCode(), 0);
+        QCOMPARE(loadStart.errorDomain(), QWebEngineLoadingInfo::NoErrorDomain);
+        QCOMPARE(loadStart.errorString(), QString());
+        QCOMPARE(loadFinish.status(), QWebEngineLoadingInfo::LoadFailedStatus);
+        QCOMPARE(loadFinish.isErrorPage(), false);
+        QCOMPARE(loadFinish.errorCode(), errorCode);
+        QCOMPARE(loadFinish.errorDomain(), errorDomain);
+        QVERIFY(!loadFinish.errorString().isEmpty());
+    }
 
     view.settings()->setAttribute(QWebEngineSettings::ErrorPageEnabled, true);
     url = server
         ? server->url("/another-missing-one.html")
         : QUrl(rfcInvalid ? "http://some.other.invalid" : "http://another.non.existent/url");
     view.load(url);
-    QTRY_COMPARE_WITH_TIMEOUT(loadFinishedSpy.count(), 2, 20000);
+    QTRY_COMPARE_WITH_TIMEOUT(loadFinishedSpy.size(), 2, 20000);
     QVERIFY(!loadFinishedSpy.at(1).at(0).toBool());
-    QCOMPARE(loadStartedSpy.count(), 2);
+    QCOMPARE(loadStartedSpy.size(), 2);
 
     QEXPECT_FAIL("", "No more loads (like separate load for error pages) are expected", Continue);
-    QTRY_COMPARE_WITH_TIMEOUT(loadFinishedSpy.count(), 3, 1000);
-    QCOMPARE(loadStartedSpy.count(), 2);
+    QTRY_COMPARE_WITH_TIMEOUT(loadFinishedSpy.size(), 3, 1000);
+    QCOMPARE(loadStartedSpy.size(), 2);
     QVERIFY(std::is_sorted(page.loadProgress.begin(), page.loadProgress.end()));
+
+    { auto &&loadStart = page.loadingInfos[2], &&loadFinish = page.loadingInfos[3];
+        QCOMPARE(loadStart.status(), QWebEngineLoadingInfo::LoadStartedStatus);
+        QCOMPARE(loadStart.isErrorPage(), false);
+        QCOMPARE(loadStart.errorCode(), 0);
+        QCOMPARE(loadStart.errorDomain(), QWebEngineLoadingInfo::NoErrorDomain);
+        QCOMPARE(loadStart.errorString(), QString());
+        QCOMPARE(loadFinish.status(), QWebEngineLoadingInfo::LoadFailedStatus);
+        QCOMPARE(loadFinish.isErrorPage(), true);
+        QCOMPARE(loadFinish.errorCode(), errorCode);
+        QCOMPARE(loadFinish.errorDomain(), errorDomain);
+        QVERIFY(!loadFinish.errorString().isEmpty());
+    }
 }
 
 void tst_LoadSignals::errorPageTriggered_data()
@@ -460,10 +475,12 @@ void tst_LoadSignals::errorPageTriggered_data()
     QTest::addColumn<QString>("urlPath");
     QTest::addColumn<bool>("loadSucceed");
     QTest::addColumn<bool>("triggersErrorPage");
-    QTest::newRow("/content/200") << QStringLiteral("/content/200") << true << false;
-    QTest::newRow("/empty/200") << QStringLiteral("/content/200") << true << false;
-    QTest::newRow("/content/404") << QStringLiteral("/content/404") << false << false;
-    QTest::newRow("/empty/404") << QStringLiteral("/empty/404") << false << true;
+    QTest::addColumn<int>("errorCode");
+    QTest::addColumn<QWebEngineLoadingInfo::ErrorDomain>("errorDomain");
+    QTest::newRow("/content/200") << QStringLiteral("/content/200") << true << false << 200 << QWebEngineLoadingInfo::HttpStatusCodeDomain;
+    QTest::newRow("/empty/200") << QStringLiteral("/content/200") << true << false << 200 << QWebEngineLoadingInfo::HttpStatusCodeDomain;
+    QTest::newRow("/content/404") << QStringLiteral("/content/404") << false << false << 404 << QWebEngineLoadingInfo::HttpStatusCodeDomain;
+    QTest::newRow("/empty/404") << QStringLiteral("/empty/404") << false << true << 404 << QWebEngineLoadingInfo::HttpStatusCodeDomain;
 }
 
 void tst_LoadSignals::errorPageTriggered()
@@ -471,7 +488,7 @@ void tst_LoadSignals::errorPageTriggered()
     HttpServer server;
     connect(&server, &HttpServer::newRequest, [] (HttpReqRep *rr) {
         QList<QByteArray> parts = rr->requestPath().split('/');
-        if (parts.length() != 3) {
+        if (parts.size() != 3) {
             // For example, /favicon.ico
             rr->sendResponse(404);
             return;
@@ -490,6 +507,8 @@ void tst_LoadSignals::errorPageTriggered()
     QFETCH(QString, urlPath);
     QFETCH(bool, loadSucceed);
     QFETCH(bool, triggersErrorPage);
+    QFETCH(int, errorCode);
+    QFETCH(QWebEngineLoadingInfo::ErrorDomain, errorDomain);
 
     view.settings()->setAttribute(QWebEngineSettings::ErrorPageEnabled, true);
     view.load(server.url(urlPath));
@@ -499,6 +518,8 @@ void tst_LoadSignals::errorPageTriggered()
         QVERIFY(toPlainTextSync(view.page()).contains("HTTP ERROR 404"));
     else
         QVERIFY(toPlainTextSync(view.page()).isEmpty());
+    QCOMPARE(page.loadingInfos[1].errorCode(), errorCode);
+    QCOMPARE(page.loadingInfos[1].errorDomain(), errorDomain);
     loadFinishedSpy.clear();
 
     view.settings()->setAttribute(QWebEngineSettings::ErrorPageEnabled, false);
@@ -506,6 +527,8 @@ void tst_LoadSignals::errorPageTriggered()
     QTRY_COMPARE(loadFinishedSpy.size(), 1);
     QCOMPARE(loadFinishedSpy[0][0].toBool(), loadSucceed);
     QVERIFY(toPlainTextSync(view.page()).isEmpty());
+    QCOMPARE(page.loadingInfos[3].errorCode(), errorCode);
+    QCOMPARE(page.loadingInfos[3].errorDomain(), errorDomain);
     loadFinishedSpy.clear();
 }
 

@@ -24,10 +24,12 @@
  * ClearVideo decoder
  */
 
+#include "libavutil/mem_internal.h"
 #include "libavutil/thread.h"
 
 #include "avcodec.h"
 #include "bytestream.h"
+#include "codec_internal.h"
 #include "get_bits.h"
 #include "idctdsp.h"
 #include "internal.h"
@@ -721,8 +723,8 @@ static av_cold int clv_decode_init(AVCodecContext *avctx)
     }
 
     c->tile_shift = av_log2(c->tile_size);
-    if (1U << c->tile_shift != c->tile_size) {
-        av_log(avctx, AV_LOG_ERROR, "Tile size: %d, is not power of 2.\n", c->tile_size);
+    if (1U << c->tile_shift != c->tile_size || c->tile_shift < 1 || c->tile_shift > 30) {
+        av_log(avctx, AV_LOG_ERROR, "Tile size: %d, is not power of 2 > 1 and < 2^31\n", c->tile_size);
         return AVERROR_INVALIDDATA;
     }
 
@@ -765,15 +767,15 @@ static av_cold int clv_decode_end(AVCodecContext *avctx)
     return 0;
 }
 
-AVCodec ff_clearvideo_decoder = {
-    .name           = "clearvideo",
-    .long_name      = NULL_IF_CONFIG_SMALL("Iterated Systems ClearVideo"),
-    .type           = AVMEDIA_TYPE_VIDEO,
-    .id             = AV_CODEC_ID_CLEARVIDEO,
+const FFCodec ff_clearvideo_decoder = {
+    .p.name         = "clearvideo",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("Iterated Systems ClearVideo"),
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_CLEARVIDEO,
     .priv_data_size = sizeof(CLVContext),
     .init           = clv_decode_init,
     .close          = clv_decode_end,
     .decode         = clv_decode_frame,
-    .capabilities   = AV_CODEC_CAP_DR1,
+    .p.capabilities = AV_CODEC_CAP_DR1,
     .caps_internal  = FF_CODEC_CAP_INIT_THREADSAFE | FF_CODEC_CAP_INIT_CLEANUP,
 };

@@ -72,8 +72,6 @@ class CORE_EXPORT HTMLTextAreaElement final : public TextControlElement {
   enum WrapMethod { kNoWrap, kSoftWrap, kHardWrap };
 
   void DidAddUserAgentShadowRoot(ShadowRoot&) override;
-  // FIXME: Author shadows should be allowed
-  // https://bugs.webkit.org/show_bug.cgi?id=92608
   bool AreAuthorShadowsAllowed() const override { return false; }
 
   void HandleBeforeTextInsertedEvent(BeforeTextInsertedEvent*) const;
@@ -119,15 +117,14 @@ class CORE_EXPORT HTMLTextAreaElement final : public TextControlElement {
       const QualifiedName&,
       const AtomicString&,
       MutableCSSPropertyValueSet*) override;
-  bool TypeShouldForceLegacyLayout() const override;
   LayoutObject* CreateLayoutObject(const ComputedStyle&, LegacyLayout) override;
   void AppendToFormData(FormData&) override;
   void ResetImpl() override;
   bool HasCustomFocusLogic() const override;
   bool MayTriggerVirtualKeyboard() const override;
   bool IsKeyboardFocusable() const override;
-  void UpdateFocusAppearanceWithOptions(SelectionBehaviorOnFocus,
-                                        const FocusOptions*) override;
+  void UpdateSelectionOnFocus(SelectionBehaviorOnFocus,
+                              const FocusOptions*) override;
 
   void AccessKeyAction(SimulatedClickCreationScope creation_scope) override;
 

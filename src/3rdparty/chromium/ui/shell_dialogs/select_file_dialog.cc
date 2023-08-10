@@ -10,7 +10,7 @@
 #include "base/bind.h"
 #include "base/check.h"
 #include "base/location.h"
-#include "base/single_thread_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "ui/shell_dialogs/select_file_dialog_factory.h"
@@ -96,7 +96,7 @@ base::FilePath SelectFileDialog::GetShortenedFilePath(
 
 void SelectFileDialog::SelectFile(
     Type type,
-    const base::string16& title,
+    const std::u16string& title,
     const base::FilePath& default_path,
     const FileTypeInfo* file_types,
     int file_type_index,

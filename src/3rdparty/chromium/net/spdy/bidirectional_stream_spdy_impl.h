@@ -10,7 +10,7 @@
 #include <memory>
 #include <vector>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "net/base/load_timing_info.h"
@@ -22,7 +22,7 @@
 #include "net/spdy/spdy_read_queue.h"
 #include "net/spdy/spdy_session.h"
 #include "net/spdy/spdy_stream.h"
-#include "net/third_party/quiche/src/spdy/core/spdy_header_block.h"
+#include "net/third_party/quiche/src/quiche/spdy/core/spdy_header_block.h"
 
 namespace base {
 class OneShotTimer;
@@ -39,6 +39,10 @@ class NET_EXPORT_PRIVATE BidirectionalStreamSpdyImpl
  public:
   BidirectionalStreamSpdyImpl(const base::WeakPtr<SpdySession>& spdy_session,
                               NetLogSource source_dependency);
+
+  BidirectionalStreamSpdyImpl(const BidirectionalStreamSpdyImpl&) = delete;
+  BidirectionalStreamSpdyImpl& operator=(const BidirectionalStreamSpdyImpl&) =
+      delete;
 
   ~BidirectionalStreamSpdyImpl() override;
 
@@ -62,6 +66,7 @@ class NET_EXPORT_PRIVATE BidirectionalStreamSpdyImpl
 
   // SpdyStream::Delegate implementation:
   void OnHeadersSent() override;
+  void OnEarlyHintsReceived(const spdy::Http2HeaderBlock& headers) override;
   void OnHeadersReceived(
       const spdy::Http2HeaderBlock& response_headers,
       const spdy::Http2HeaderBlock* pushed_request_headers) override;
@@ -86,8 +91,8 @@ class NET_EXPORT_PRIVATE BidirectionalStreamSpdyImpl
   bool MaybeHandleStreamClosedInSendData();
 
   const base::WeakPtr<SpdySession> spdy_session_;
-  const BidirectionalStreamRequestInfo* request_info_;
-  BidirectionalStreamImpl::Delegate* delegate_;
+  raw_ptr<const BidirectionalStreamRequestInfo> request_info_;
+  raw_ptr<BidirectionalStreamImpl::Delegate> delegate_;
   std::unique_ptr<base::OneShotTimer> timer_;
   SpdyStreamRequest stream_request_;
   base::WeakPtr<SpdyStream> stream_;
@@ -129,8 +134,6 @@ class NET_EXPORT_PRIVATE BidirectionalStreamSpdyImpl
   scoped_refptr<IOBuffer> pending_combined_buffer_;
 
   base::WeakPtrFactory<BidirectionalStreamSpdyImpl> weak_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(BidirectionalStreamSpdyImpl);
 };
 
 }  // namespace net

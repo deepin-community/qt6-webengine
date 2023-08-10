@@ -105,12 +105,17 @@ void AddToHomescreenMediator::StartForAppMenu(
 void AddToHomescreenMediator::AddToHomescreen(
     JNIEnv* env,
     const JavaParamRef<jstring>& j_user_title) {
-  if (!params_)
+  if (!params_ || GetWebContents() == nullptr)
     return;
 
   if (params_->app_type == AddToHomescreenParams::AppType::SHORTCUT) {
     params_->shortcut_info->user_title =
         base::android::ConvertJavaStringToUTF16(env, j_user_title);
+  } else if (params_->app_type == AddToHomescreenParams::AppType::WEBAPK) {
+    AppBannerManager* app_banner_manager =
+        AppBannerManager::FromWebContents(GetWebContents());
+    app_banner_manager->TrackInstallPath(/* bottom_sheet= */ false,
+                                         params_->install_source);
   }
 
   AddToHomescreenInstaller::Install(GetWebContents(), *params_,
@@ -146,7 +151,7 @@ void AddToHomescreenMediator::SetIcon(const SkBitmap& display_icon,
                                        need_to_add_padding);
 }
 
-void AddToHomescreenMediator::SetWebAppInfo(const base::string16& user_title,
+void AddToHomescreenMediator::SetWebAppInfo(const std::u16string& user_title,
                                             const GURL& url,
                                             bool is_webapk) {
   JNIEnv* env = base::android::AttachCurrentThread();
@@ -162,14 +167,16 @@ void AddToHomescreenMediator::SetWebAppInfo(const base::string16& user_title,
 }
 
 void AddToHomescreenMediator::OnUserTitleAvailable(
-    const base::string16& user_title,
+    const std::u16string& user_title,
     const GURL& url,
     bool is_webapk_compatible) {
   SetWebAppInfo(user_title, url, is_webapk_compatible);
 }
 
-void AddToHomescreenMediator::OnDataAvailable(const ShortcutInfo& info,
-                                              const SkBitmap& display_icon) {
+void AddToHomescreenMediator::OnDataAvailable(
+    const ShortcutInfo& info,
+    const SkBitmap& display_icon,
+    const InstallableStatusCode status_code) {
   params_ = std::make_unique<AddToHomescreenParams>();
   params_->app_type = info.source == ShortcutInfo::SOURCE_ADD_TO_HOMESCREEN_PWA
                           ? AddToHomescreenParams::AppType::WEBAPK
@@ -180,6 +187,7 @@ void AddToHomescreenMediator::OnDataAvailable(const ShortcutInfo& info,
       data_fetcher_->has_maskable_primary_icon();
   params_->install_source = InstallableMetrics::GetInstallSource(
       data_fetcher_->web_contents(), InstallTrigger::MENU);
+  params_->installable_status = status_code;
 
   // AddToHomescreenMediator::OnDataAvailable() is called in the code path
   // to show A2HS dialog from app menu. In this code path, display_icon is

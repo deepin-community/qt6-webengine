@@ -13,7 +13,6 @@
 
 #include "base/check.h"
 #include "base/component_export.h"
-#include "base/macros.h"
 #include "mojo/public/c/system/macros.h"
 #include "mojo/public/cpp/bindings/lib/bindings_internal.h"
 #include "mojo/public/cpp/bindings/lib/buffer.h"
@@ -339,8 +338,7 @@ class Array_Data {
   }
 
   const StorageType* storage() const {
-    return reinterpret_cast<const StorageType*>(
-        reinterpret_cast<const char*>(this) + sizeof(*this));
+    return reinterpret_cast<const StorageType*>(this + 1);
   }
 
  private:

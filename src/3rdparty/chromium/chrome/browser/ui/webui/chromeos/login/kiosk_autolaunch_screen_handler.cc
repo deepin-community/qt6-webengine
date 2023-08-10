@@ -9,9 +9,9 @@
 #include "base/command_line.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/ash/app_mode/kiosk_app_manager.h"
+#include "chrome/browser/ash/login/oobe_screen.h"
 #include "chrome/browser/ash/login/screens/kiosk_autolaunch_screen.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/chromeos/login/oobe_screen.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/grit/generated_resources.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
@@ -25,9 +25,8 @@ namespace chromeos {
 
 constexpr StaticOobeScreenId KioskAutolaunchScreenView::kScreenId;
 
-KioskAutolaunchScreenHandler::KioskAutolaunchScreenHandler(
-    JSCallsContainer* js_calls_container)
-    : BaseScreenHandler(kScreenId, js_calls_container) {
+KioskAutolaunchScreenHandler::KioskAutolaunchScreenHandler()
+    : BaseScreenHandler(kScreenId) {
   KioskAppManager::Get()->AddObserver(this);
 }
 
@@ -39,19 +38,19 @@ KioskAutolaunchScreenHandler::~KioskAutolaunchScreenHandler() {
 }
 
 void KioskAutolaunchScreenHandler::Show() {
-  if (!page_is_ready()) {
+  if (!IsJavascriptAllowed()) {
     show_on_init_ = true;
     return;
   }
   UpdateKioskApp();
-  ShowScreen(kScreenId);
+  ShowInWebUI();
 }
 
 void KioskAutolaunchScreenHandler::SetDelegate(
     KioskAutolaunchScreen* delegate) {
   delegate_ = delegate;
-  if (page_is_ready())
-    Initialize();
+  if (IsJavascriptAllowed())
+    InitializeDeprecated();
 }
 
 void KioskAutolaunchScreenHandler::UpdateKioskApp() {
@@ -68,14 +67,14 @@ void KioskAutolaunchScreenHandler::UpdateKioskApp() {
   }
 
   base::DictionaryValue app_info;
-  app_info.SetString("appName", app.name);
+  app_info.SetStringKey("appName", app.name);
 
   std::string icon_url("chrome://theme/IDR_APP_DEFAULT_ICON");
   if (!app.icon.isNull())
     icon_url = webui::GetBitmapDataUrl(*app.icon.bitmap());
 
-  app_info.SetString("appIconUrl", icon_url);
-  CallJS("login.AutolaunchScreen.updateApp", app_info);
+  app_info.SetStringKey("appIconUrl", icon_url);
+  CallJS("login.AutolaunchScreen.updateApp", std::move(app_info));
 }
 
 void KioskAutolaunchScreenHandler::DeclareLocalizedValues(
@@ -87,8 +86,8 @@ void KioskAutolaunchScreenHandler::DeclareLocalizedValues(
   builder->Add("autolaunchCancelButton", IDS_CANCEL);
 }
 
-void KioskAutolaunchScreenHandler::Initialize() {
-  if (!page_is_ready() || !delegate_)
+void KioskAutolaunchScreenHandler::InitializeDeprecated() {
+  if (!IsJavascriptAllowed() || !delegate_)
     return;
 
   if (show_on_init_) {

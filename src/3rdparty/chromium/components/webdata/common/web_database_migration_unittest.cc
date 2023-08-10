@@ -7,10 +7,7 @@
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/guid.h"
-#include "base/macros.h"
 #include "base/path_service.h"
-#include "base/stl_util.h"
-#include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -53,8 +50,12 @@ std::string RemoveQuotes(const std::string& has_quotes) {
 // |WebDatabase::MigrateOldVersionsAsNeeded()|.
 class WebDatabaseMigrationTest : public testing::Test {
  public:
-  WebDatabaseMigrationTest() {}
-  ~WebDatabaseMigrationTest() override {}
+  WebDatabaseMigrationTest() = default;
+
+  WebDatabaseMigrationTest(const WebDatabaseMigrationTest&) = delete;
+  WebDatabaseMigrationTest& operator=(const WebDatabaseMigrationTest&) = delete;
+
+  ~WebDatabaseMigrationTest() override = default;
 
   void SetUp() override { ASSERT_TRUE(temp_dir_.CreateUniqueTempDir()); }
 
@@ -122,11 +123,9 @@ class WebDatabaseMigrationTest : public testing::Test {
 
  private:
   base::ScopedTempDir temp_dir_;
-
-  DISALLOW_COPY_AND_ASSIGN(WebDatabaseMigrationTest);
 };
 
-const int WebDatabaseMigrationTest::kCurrentTestedVersionNumber = 92;
+const int WebDatabaseMigrationTest::kCurrentTestedVersionNumber = 104;
 
 void WebDatabaseMigrationTest::LoadDatabase(
     const base::FilePath::StringType& file) {
@@ -346,16 +345,17 @@ TEST_F(WebDatabaseMigrationTest, MigrateVersion53ToCurrent) {
     ASSERT_TRUE(s_profiles.Step());
     EXPECT_EQ("00000000-0000-0000-0000-000000000001",
               s_profiles.ColumnString(0));
-    EXPECT_EQ(ASCIIToUTF16("Google, Inc."), s_profiles.ColumnString16(1));
-    EXPECT_EQ(ASCIIToUTF16("1950 Charleston Rd.\n"
-                           "(2nd floor)"),
-              s_profiles.ColumnString16(2));
-    EXPECT_EQ(base::string16(), s_profiles.ColumnString16(3));
-    EXPECT_EQ(ASCIIToUTF16("Mountain View"), s_profiles.ColumnString16(4));
-    EXPECT_EQ(ASCIIToUTF16("CA"), s_profiles.ColumnString16(5));
-    EXPECT_EQ(ASCIIToUTF16("94043"), s_profiles.ColumnString16(6));
-    EXPECT_EQ(base::string16(), s_profiles.ColumnString16(7));
-    EXPECT_EQ(ASCIIToUTF16("US"), s_profiles.ColumnString16(8));
+    EXPECT_EQ(u"Google, Inc.", s_profiles.ColumnString16(1));
+    EXPECT_EQ(
+        u"1950 Charleston Rd.\n"
+        u"(2nd floor)",
+        s_profiles.ColumnString16(2));
+    EXPECT_EQ(std::u16string(), s_profiles.ColumnString16(3));
+    EXPECT_EQ(u"Mountain View", s_profiles.ColumnString16(4));
+    EXPECT_EQ(u"CA", s_profiles.ColumnString16(5));
+    EXPECT_EQ(u"94043", s_profiles.ColumnString16(6));
+    EXPECT_EQ(std::u16string(), s_profiles.ColumnString16(7));
+    EXPECT_EQ(u"US", s_profiles.ColumnString16(8));
     EXPECT_EQ(1386046731, s_profiles.ColumnInt(9));
     EXPECT_EQ(ASCIIToUTF16(autofill::kSettingsOrigin),
               s_profiles.ColumnString16(10));
@@ -364,15 +364,14 @@ TEST_F(WebDatabaseMigrationTest, MigrateVersion53ToCurrent) {
     ASSERT_TRUE(s_profiles.Step());
     EXPECT_EQ("00000000-0000-0000-0000-000000000002",
               s_profiles.ColumnString(0));
-    EXPECT_EQ(ASCIIToUTF16("Google!"), s_profiles.ColumnString16(1));
-    EXPECT_EQ(ASCIIToUTF16("1600 Amphitheatre Pkwy."),
-              s_profiles.ColumnString16(2));
-    EXPECT_EQ(base::string16(), s_profiles.ColumnString16(3));
-    EXPECT_EQ(ASCIIToUTF16("Mtn. View"), s_profiles.ColumnString16(4));
-    EXPECT_EQ(ASCIIToUTF16("California"), s_profiles.ColumnString16(5));
-    EXPECT_EQ(ASCIIToUTF16("94043-1234"), s_profiles.ColumnString16(6));
-    EXPECT_EQ(base::string16(), s_profiles.ColumnString16(7));
-    EXPECT_EQ(ASCIIToUTF16("US"), s_profiles.ColumnString16(8));
+    EXPECT_EQ(u"Google!", s_profiles.ColumnString16(1));
+    EXPECT_EQ(u"1600 Amphitheatre Pkwy.", s_profiles.ColumnString16(2));
+    EXPECT_EQ(std::u16string(), s_profiles.ColumnString16(3));
+    EXPECT_EQ(u"Mtn. View", s_profiles.ColumnString16(4));
+    EXPECT_EQ(u"California", s_profiles.ColumnString16(5));
+    EXPECT_EQ(u"94043-1234", s_profiles.ColumnString16(6));
+    EXPECT_EQ(std::u16string(), s_profiles.ColumnString16(7));
+    EXPECT_EQ(u"US", s_profiles.ColumnString16(8));
     EXPECT_EQ(1386046800, s_profiles.ColumnInt(9));
     EXPECT_EQ(ASCIIToUTF16(autofill::kSettingsOrigin),
               s_profiles.ColumnString16(10));
@@ -381,14 +380,14 @@ TEST_F(WebDatabaseMigrationTest, MigrateVersion53ToCurrent) {
     ASSERT_TRUE(s_profiles.Step());
     EXPECT_EQ("00000000-0000-0000-0000-000000000003",
               s_profiles.ColumnString(0));
-    EXPECT_EQ(base::string16(), s_profiles.ColumnString16(1));
-    EXPECT_EQ(ASCIIToUTF16("\nOnly line 2???"), s_profiles.ColumnString16(2));
-    EXPECT_EQ(base::string16(), s_profiles.ColumnString16(3));
-    EXPECT_EQ(base::string16(), s_profiles.ColumnString16(4));
-    EXPECT_EQ(base::string16(), s_profiles.ColumnString16(5));
-    EXPECT_EQ(base::string16(), s_profiles.ColumnString16(6));
-    EXPECT_EQ(base::string16(), s_profiles.ColumnString16(7));
-    EXPECT_EQ(base::string16(), s_profiles.ColumnString16(8));
+    EXPECT_EQ(std::u16string(), s_profiles.ColumnString16(1));
+    EXPECT_EQ(u"\nOnly line 2???", s_profiles.ColumnString16(2));
+    EXPECT_EQ(std::u16string(), s_profiles.ColumnString16(3));
+    EXPECT_EQ(std::u16string(), s_profiles.ColumnString16(4));
+    EXPECT_EQ(std::u16string(), s_profiles.ColumnString16(5));
+    EXPECT_EQ(std::u16string(), s_profiles.ColumnString16(6));
+    EXPECT_EQ(std::u16string(), s_profiles.ColumnString16(7));
+    EXPECT_EQ(std::u16string(), s_profiles.ColumnString16(8));
     EXPECT_EQ(1386046834, s_profiles.ColumnInt(9));
     EXPECT_EQ(ASCIIToUTF16(autofill::kSettingsOrigin),
               s_profiles.ColumnString16(10));
@@ -397,14 +396,14 @@ TEST_F(WebDatabaseMigrationTest, MigrateVersion53ToCurrent) {
     ASSERT_TRUE(s_profiles.Step());
     EXPECT_EQ("00000000-0000-0000-0000-000000000004",
               s_profiles.ColumnString(0));
-    EXPECT_EQ(base::string16(), s_profiles.ColumnString16(1));
-    EXPECT_EQ(base::string16(), s_profiles.ColumnString16(2));
-    EXPECT_EQ(base::string16(), s_profiles.ColumnString16(3));
-    EXPECT_EQ(base::string16(), s_profiles.ColumnString16(4));
-    EXPECT_EQ(ASCIIToUTF16("Texas"), s_profiles.ColumnString16(5));
-    EXPECT_EQ(base::string16(), s_profiles.ColumnString16(6));
-    EXPECT_EQ(base::string16(), s_profiles.ColumnString16(7));
-    EXPECT_EQ(base::string16(), s_profiles.ColumnString16(8));
+    EXPECT_EQ(std::u16string(), s_profiles.ColumnString16(1));
+    EXPECT_EQ(std::u16string(), s_profiles.ColumnString16(2));
+    EXPECT_EQ(std::u16string(), s_profiles.ColumnString16(3));
+    EXPECT_EQ(std::u16string(), s_profiles.ColumnString16(4));
+    EXPECT_EQ(u"Texas", s_profiles.ColumnString16(5));
+    EXPECT_EQ(std::u16string(), s_profiles.ColumnString16(6));
+    EXPECT_EQ(std::u16string(), s_profiles.ColumnString16(7));
+    EXPECT_EQ(std::u16string(), s_profiles.ColumnString16(8));
     EXPECT_EQ(1386046847, s_profiles.ColumnInt(9));
     EXPECT_EQ(ASCIIToUTF16(autofill::kSettingsOrigin),
               s_profiles.ColumnString16(10));
@@ -418,23 +417,23 @@ TEST_F(WebDatabaseMigrationTest, MigrateVersion53ToCurrent) {
 
     ASSERT_TRUE(s_phones.Step());
     EXPECT_EQ("00000000-0000-0000-0000-000000000001", s_phones.ColumnString(0));
-    EXPECT_EQ(ASCIIToUTF16("1.800.555.1234"), s_phones.ColumnString16(1));
+    EXPECT_EQ(u"1.800.555.1234", s_phones.ColumnString16(1));
 
     ASSERT_TRUE(s_phones.Step());
     EXPECT_EQ("00000000-0000-0000-0000-000000000001", s_phones.ColumnString(0));
-    EXPECT_EQ(ASCIIToUTF16("+1 (800) 555-4321"), s_phones.ColumnString16(1));
+    EXPECT_EQ(u"+1 (800) 555-4321", s_phones.ColumnString16(1));
 
     ASSERT_TRUE(s_phones.Step());
     EXPECT_EQ("00000000-0000-0000-0000-000000000002", s_phones.ColumnString(0));
-    EXPECT_EQ(base::string16(), s_phones.ColumnString16(1));
+    EXPECT_EQ(std::u16string(), s_phones.ColumnString16(1));
 
     ASSERT_TRUE(s_phones.Step());
     EXPECT_EQ("00000000-0000-0000-0000-000000000003", s_phones.ColumnString(0));
-    EXPECT_EQ(ASCIIToUTF16("6505557890"), s_phones.ColumnString16(1));
+    EXPECT_EQ(u"6505557890", s_phones.ColumnString16(1));
 
     ASSERT_TRUE(s_phones.Step());
     EXPECT_EQ("00000000-0000-0000-0000-000000000004", s_phones.ColumnString(0));
-    EXPECT_EQ(base::string16(), s_phones.ColumnString16(1));
+    EXPECT_EQ(std::u16string(), s_phones.ColumnString16(1));
 
     EXPECT_FALSE(s_phones.Step());
   }
@@ -463,9 +462,9 @@ TEST_F(WebDatabaseMigrationTest, MigrateVersion54ToCurrent) {
 
     // An entry with one timestamp.
     ASSERT_TRUE(s_autofill.Step());
-    EXPECT_EQ(ASCIIToUTF16("Name"), s_autofill.ColumnString16(0));
-    EXPECT_EQ(ASCIIToUTF16("John Doe"), s_autofill.ColumnString16(1));
-    EXPECT_EQ(ASCIIToUTF16("john doe"), s_autofill.ColumnString16(2));
+    EXPECT_EQ(u"Name", s_autofill.ColumnString16(0));
+    EXPECT_EQ(u"John Doe", s_autofill.ColumnString16(1));
+    EXPECT_EQ(u"john doe", s_autofill.ColumnString16(2));
     EXPECT_EQ(10, s_autofill.ColumnInt(3));
     EXPECT_EQ(1, s_autofill.ColumnInt(4));
     ASSERT_TRUE(s_dates.Step());
@@ -475,9 +474,9 @@ TEST_F(WebDatabaseMigrationTest, MigrateVersion54ToCurrent) {
     // Another entry with one timestamp, differing from the previous one in case
     // only.
     ASSERT_TRUE(s_autofill.Step());
-    EXPECT_EQ(ASCIIToUTF16("Name"), s_autofill.ColumnString16(0));
-    EXPECT_EQ(ASCIIToUTF16("john doe"), s_autofill.ColumnString16(1));
-    EXPECT_EQ(ASCIIToUTF16("john doe"), s_autofill.ColumnString16(2));
+    EXPECT_EQ(u"Name", s_autofill.ColumnString16(0));
+    EXPECT_EQ(u"john doe", s_autofill.ColumnString16(1));
+    EXPECT_EQ(u"john doe", s_autofill.ColumnString16(2));
     EXPECT_EQ(11, s_autofill.ColumnInt(3));
     EXPECT_EQ(1, s_autofill.ColumnInt(4));
     ASSERT_TRUE(s_dates.Step());
@@ -486,9 +485,9 @@ TEST_F(WebDatabaseMigrationTest, MigrateVersion54ToCurrent) {
 
     // An entry with two timestamps (with count > 2; this is realistic).
     ASSERT_TRUE(s_autofill.Step());
-    EXPECT_EQ(ASCIIToUTF16("Email"), s_autofill.ColumnString16(0));
-    EXPECT_EQ(ASCIIToUTF16("jane@example.com"), s_autofill.ColumnString16(1));
-    EXPECT_EQ(ASCIIToUTF16("jane@example.com"), s_autofill.ColumnString16(2));
+    EXPECT_EQ(u"Email", s_autofill.ColumnString16(0));
+    EXPECT_EQ(u"jane@example.com", s_autofill.ColumnString16(1));
+    EXPECT_EQ(u"jane@example.com", s_autofill.ColumnString16(2));
     EXPECT_EQ(20, s_autofill.ColumnInt(3));
     EXPECT_EQ(3, s_autofill.ColumnInt(4));
     ASSERT_TRUE(s_dates.Step());
@@ -500,11 +499,9 @@ TEST_F(WebDatabaseMigrationTest, MigrateVersion54ToCurrent) {
 
     // An entry with more than two timestamps, which are stored out of order.
     ASSERT_TRUE(s_autofill.Step());
-    EXPECT_EQ(ASCIIToUTF16("Email"), s_autofill.ColumnString16(0));
-    EXPECT_EQ(ASCIIToUTF16("jane.doe@example.org"),
-              s_autofill.ColumnString16(1));
-    EXPECT_EQ(ASCIIToUTF16("jane.doe@example.org"),
-              s_autofill.ColumnString16(2));
+    EXPECT_EQ(u"Email", s_autofill.ColumnString16(0));
+    EXPECT_EQ(u"jane.doe@example.org", s_autofill.ColumnString16(1));
+    EXPECT_EQ(u"jane.doe@example.org", s_autofill.ColumnString16(2));
     EXPECT_EQ(21, s_autofill.ColumnInt(3));
     EXPECT_EQ(4, s_autofill.ColumnInt(4));
     ASSERT_TRUE(s_dates.Step());
@@ -554,18 +551,18 @@ TEST_F(WebDatabaseMigrationTest, MigrateVersion54ToCurrent) {
     // "jane.doe@example.org": Timestamps should be parsed correctly, and only
     // the first and last should be kept.
     ASSERT_TRUE(s.Step());
-    EXPECT_EQ(ASCIIToUTF16("Email"), s.ColumnString16(0));
-    EXPECT_EQ(ASCIIToUTF16("jane.doe@example.org"), s.ColumnString16(1));
-    EXPECT_EQ(ASCIIToUTF16("jane.doe@example.org"), s.ColumnString16(2));
+    EXPECT_EQ(u"Email", s.ColumnString16(0));
+    EXPECT_EQ(u"jane.doe@example.org", s.ColumnString16(1));
+    EXPECT_EQ(u"jane.doe@example.org", s.ColumnString16(2));
     EXPECT_EQ(1384299400, s.ColumnInt64(3));
     EXPECT_EQ(1384299403, s.ColumnInt64(4));
     EXPECT_EQ(4, s.ColumnInt(5));
 
     // "jane@example.com": Timestamps should be parsed correctly.
     ASSERT_TRUE(s.Step());
-    EXPECT_EQ(ASCIIToUTF16("Email"), s.ColumnString16(0));
-    EXPECT_EQ(ASCIIToUTF16("jane@example.com"), s.ColumnString16(1));
-    EXPECT_EQ(ASCIIToUTF16("jane@example.com"), s.ColumnString16(2));
+    EXPECT_EQ(u"Email", s.ColumnString16(0));
+    EXPECT_EQ(u"jane@example.com", s.ColumnString16(1));
+    EXPECT_EQ(u"jane@example.com", s.ColumnString16(2));
     EXPECT_EQ(1384299300, s.ColumnInt64(3));
     EXPECT_EQ(1384299301, s.ColumnInt64(4));
     EXPECT_EQ(3, s.ColumnInt(5));
@@ -573,18 +570,18 @@ TEST_F(WebDatabaseMigrationTest, MigrateVersion54ToCurrent) {
     // "John Doe": The single timestamp should be assigned as both the creation
     // and the last use timestamp.
     ASSERT_TRUE(s.Step());
-    EXPECT_EQ(ASCIIToUTF16("Name"), s.ColumnString16(0));
-    EXPECT_EQ(ASCIIToUTF16("John Doe"), s.ColumnString16(1));
-    EXPECT_EQ(ASCIIToUTF16("john doe"), s.ColumnString16(2));
+    EXPECT_EQ(u"Name", s.ColumnString16(0));
+    EXPECT_EQ(u"John Doe", s.ColumnString16(1));
+    EXPECT_EQ(u"john doe", s.ColumnString16(2));
     EXPECT_EQ(1384299100, s.ColumnInt64(3));
     EXPECT_EQ(1384299100, s.ColumnInt64(4));
     EXPECT_EQ(1, s.ColumnInt(5));
 
     // "john doe": Should not be merged with "John Doe" (case-sensitivity).
     ASSERT_TRUE(s.Step());
-    EXPECT_EQ(ASCIIToUTF16("Name"), s.ColumnString16(0));
-    EXPECT_EQ(ASCIIToUTF16("john doe"), s.ColumnString16(1));
-    EXPECT_EQ(ASCIIToUTF16("john doe"), s.ColumnString16(2));
+    EXPECT_EQ(u"Name", s.ColumnString16(0));
+    EXPECT_EQ(u"john doe", s.ColumnString16(1));
+    EXPECT_EQ(u"john doe", s.ColumnString16(2));
     EXPECT_EQ(1384299200, s.ColumnInt64(3));
     EXPECT_EQ(1384299200, s.ColumnInt64(4));
     EXPECT_EQ(1, s.ColumnInt(5));
@@ -638,14 +635,14 @@ TEST_F(WebDatabaseMigrationTest, MigrateVersion55ToCurrent) {
     ASSERT_TRUE(s_profiles.Step());
     EXPECT_EQ("00000000-0000-0000-0000-000000000001",
               s_profiles.ColumnString(0));
-    EXPECT_EQ(ASCIIToUTF16("Google Inc"), s_profiles.ColumnString16(1));
-    EXPECT_EQ(ASCIIToUTF16("340 Main St"), s_profiles.ColumnString16(2));
-    EXPECT_EQ(base::string16(), s_profiles.ColumnString16(3));
-    EXPECT_EQ(ASCIIToUTF16("Los Angeles"), s_profiles.ColumnString16(4));
-    EXPECT_EQ(ASCIIToUTF16("CA"), s_profiles.ColumnString16(5));
-    EXPECT_EQ(ASCIIToUTF16("90291"), s_profiles.ColumnString16(6));
-    EXPECT_EQ(base::string16(), s_profiles.ColumnString16(7));
-    EXPECT_EQ(ASCIIToUTF16("US"), s_profiles.ColumnString16(8));
+    EXPECT_EQ(u"Google Inc", s_profiles.ColumnString16(1));
+    EXPECT_EQ(u"340 Main St", s_profiles.ColumnString16(2));
+    EXPECT_EQ(std::u16string(), s_profiles.ColumnString16(3));
+    EXPECT_EQ(u"Los Angeles", s_profiles.ColumnString16(4));
+    EXPECT_EQ(u"CA", s_profiles.ColumnString16(5));
+    EXPECT_EQ(u"90291", s_profiles.ColumnString16(6));
+    EXPECT_EQ(std::u16string(), s_profiles.ColumnString16(7));
+    EXPECT_EQ(u"US", s_profiles.ColumnString16(8));
     EXPECT_EQ(1395948829, s_profiles.ColumnInt(9));
     EXPECT_EQ(ASCIIToUTF16(autofill::kSettingsOrigin),
               s_profiles.ColumnString16(10));
@@ -677,9 +674,9 @@ TEST_F(WebDatabaseMigrationTest, MigrateVersion56ToCurrent) {
         "FROM autofill_profile_names"));
     ASSERT_TRUE(s_names.Step());
     EXPECT_EQ("B41FE6E0-B13E-2A2A-BF0B-29FCE2C3ADBD", s_names.ColumnString(0));
-    EXPECT_EQ(ASCIIToUTF16("Jon"), s_names.ColumnString16(1));
-    EXPECT_EQ(base::string16(), s_names.ColumnString16(2));
-    EXPECT_EQ(ASCIIToUTF16("Smith"), s_names.ColumnString16(3));
+    EXPECT_EQ(u"Jon", s_names.ColumnString16(1));
+    EXPECT_EQ(std::u16string(), s_names.ColumnString16(2));
+    EXPECT_EQ(u"Smith", s_names.ColumnString16(3));
   }
 
   DoMigration();
@@ -707,10 +704,10 @@ TEST_F(WebDatabaseMigrationTest, MigrateVersion56ToCurrent) {
 
     ASSERT_TRUE(s_names.Step());
     EXPECT_EQ("B41FE6E0-B13E-2A2A-BF0B-29FCE2C3ADBD", s_names.ColumnString(0));
-    EXPECT_EQ(ASCIIToUTF16("Jon"), s_names.ColumnString16(1));
-    EXPECT_EQ(base::string16(), s_names.ColumnString16(2));
-    EXPECT_EQ(ASCIIToUTF16("Smith"), s_names.ColumnString16(3));
-    EXPECT_EQ(base::string16(), s_names.ColumnString16(4));
+    EXPECT_EQ(u"Jon", s_names.ColumnString16(1));
+    EXPECT_EQ(std::u16string(), s_names.ColumnString16(2));
+    EXPECT_EQ(u"Smith", s_names.ColumnString16(3));
+    EXPECT_EQ(std::u16string(), s_names.ColumnString16(4));
 
     // No more entries expected.
     ASSERT_FALSE(s_names.Step());
@@ -1177,17 +1174,16 @@ TEST_F(WebDatabaseMigrationTest, MigrateVersion70ToCurrent) {
     // for the billing_address_id. The values are added to the table in
     // version_70.sql.
     sql::Statement s_masked_cards(
-        connection.GetUniqueStatement("SELECT id, status, name_on_card, "
+        connection.GetUniqueStatement("SELECT id, name_on_card, "
                                       "network, last_four, exp_month, exp_year "
                                       "FROM masked_credit_cards"));
     ASSERT_TRUE(s_masked_cards.Step());
     EXPECT_EQ("card_1", s_masked_cards.ColumnString(0));
-    EXPECT_EQ("status", s_masked_cards.ColumnString(1));
-    EXPECT_EQ("bob", s_masked_cards.ColumnString(2));
-    EXPECT_EQ("VISA", s_masked_cards.ColumnString(3));
-    EXPECT_EQ("1234", s_masked_cards.ColumnString(4));
-    EXPECT_EQ(12, s_masked_cards.ColumnInt(5));
-    EXPECT_EQ(2050, s_masked_cards.ColumnInt(6));
+    EXPECT_EQ("bob", s_masked_cards.ColumnString(1));
+    EXPECT_EQ("VISA", s_masked_cards.ColumnString(2));
+    EXPECT_EQ("1234", s_masked_cards.ColumnString(3));
+    EXPECT_EQ(12, s_masked_cards.ColumnInt(4));
+    EXPECT_EQ(2050, s_masked_cards.ColumnInt(5));
   }
 }
 
@@ -1357,7 +1353,9 @@ TEST_F(WebDatabaseMigrationTest, MigrateVersion73WithTypeColumnToCurrent) {
   }
 }
 
-// Tests adding "validity_bitfield" column for the "autofill_profiles" table.
+// Tests temporarily adding "validity_bitfield" column for the
+// "autofill_profiles" table. Note that the field is deprecated and removed in
+// version 100.
 TEST_F(WebDatabaseMigrationTest, MigrateVersion74ToCurrent) {
   ASSERT_NO_FATAL_FAILURE(LoadDatabase(FILE_PATH_LITERAL("version_74.sql")));
 
@@ -1385,7 +1383,8 @@ TEST_F(WebDatabaseMigrationTest, MigrateVersion74ToCurrent) {
     // Check version.
     EXPECT_EQ(kCurrentTestedVersionNumber, VersionFromConnection(&connection));
 
-    EXPECT_TRUE(
+    // Note, those fields have been deprecated in version 100.
+    EXPECT_FALSE(
         connection.DoesColumnExist("autofill_profiles", "validity_bitfield"));
 
     // Data should have been preserved. Validity bitfield should have been set
@@ -1393,26 +1392,24 @@ TEST_F(WebDatabaseMigrationTest, MigrateVersion74ToCurrent) {
     sql::Statement s_profiles(connection.GetUniqueStatement(
         "SELECT guid, company_name, street_address, dependent_locality,"
         " city, state, zipcode, sorting_code, country_code, date_modified,"
-        " origin, language_code, validity_bitfield "
+        " origin, language_code "
         "FROM autofill_profiles"));
 
     ASSERT_TRUE(s_profiles.Step());
     EXPECT_EQ("00000000-0000-0000-0000-000000000001",
               s_profiles.ColumnString(0));
-    EXPECT_EQ(ASCIIToUTF16("Google Inc"), s_profiles.ColumnString16(1));
-    EXPECT_EQ(ASCIIToUTF16("340 Main St"), s_profiles.ColumnString16(2));
-    EXPECT_EQ(base::string16(), s_profiles.ColumnString16(3));
-    EXPECT_EQ(ASCIIToUTF16("Los Angeles"), s_profiles.ColumnString16(4));
-    EXPECT_EQ(ASCIIToUTF16("CA"), s_profiles.ColumnString16(5));
-    EXPECT_EQ(ASCIIToUTF16("90291"), s_profiles.ColumnString16(6));
-    EXPECT_EQ(base::string16(), s_profiles.ColumnString16(7));
-    EXPECT_EQ(ASCIIToUTF16("US"), s_profiles.ColumnString16(8));
+    EXPECT_EQ(u"Google Inc", s_profiles.ColumnString16(1));
+    EXPECT_EQ(u"340 Main St", s_profiles.ColumnString16(2));
+    EXPECT_EQ(std::u16string(), s_profiles.ColumnString16(3));
+    EXPECT_EQ(u"Los Angeles", s_profiles.ColumnString16(4));
+    EXPECT_EQ(u"CA", s_profiles.ColumnString16(5));
+    EXPECT_EQ(u"90291", s_profiles.ColumnString16(6));
+    EXPECT_EQ(std::u16string(), s_profiles.ColumnString16(7));
+    EXPECT_EQ(u"US", s_profiles.ColumnString16(8));
     EXPECT_EQ(1395948829, s_profiles.ColumnInt(9));
     EXPECT_EQ(ASCIIToUTF16(autofill::kSettingsOrigin),
               s_profiles.ColumnString16(10));
     EXPECT_EQ("en", s_profiles.ColumnString(11));
-    // The new validity bitfield should have the default value of 0.
-    EXPECT_EQ(0, s_profiles.ColumnInt(12));
 
     // No more entries expected.
     ASSERT_FALSE(s_profiles.Step());
@@ -1583,6 +1580,7 @@ TEST_F(WebDatabaseMigrationTest, MigrateVersion78ToCurrent) {
 
 // Tests adding "is_client_validity_states_updated" column for the
 // "autofill_profiles" table.
+// Note that the field was deprecated and deleted in version 100.
 TEST_F(WebDatabaseMigrationTest, MigrateVersion79ToCurrent) {
   ASSERT_NO_FATAL_FAILURE(LoadDatabase(FILE_PATH_LITERAL("version_79.sql")));
 
@@ -1604,35 +1602,31 @@ TEST_F(WebDatabaseMigrationTest, MigrateVersion79ToCurrent) {
     ASSERT_TRUE(sql::MetaTable::DoesTableExist(&connection));
     // Check version.
     EXPECT_EQ(kCurrentTestedVersionNumber, VersionFromConnection(&connection));
-    EXPECT_TRUE(connection.DoesColumnExist(
+    // Note that the field was deprecated and removed in version 100.
+    EXPECT_FALSE(connection.DoesColumnExist(
         "autofill_profiles", "is_client_validity_states_updated"));
     // Data should have been preserved. Validity
     // is_client_validity_states_updated should have been set to false.
     sql::Statement s_profiles(connection.GetUniqueStatement(
         "SELECT guid, company_name, street_address, dependent_locality,"
         " city, state, zipcode, sorting_code, country_code, date_modified,"
-        " origin, language_code, validity_bitfield, "
-        " is_client_validity_states_updated "
+        " origin, language_code "
         " FROM autofill_profiles"));
     ASSERT_TRUE(s_profiles.Step());
     EXPECT_EQ("00000000-0000-0000-0000-000000000001",
               s_profiles.ColumnString(0));
-    EXPECT_EQ(ASCIIToUTF16("Google Inc"), s_profiles.ColumnString16(1));
-    EXPECT_EQ(ASCIIToUTF16("340 Main St"), s_profiles.ColumnString16(2));
-    EXPECT_EQ(base::string16(), s_profiles.ColumnString16(3));
-    EXPECT_EQ(ASCIIToUTF16("Los Angeles"), s_profiles.ColumnString16(4));
-    EXPECT_EQ(ASCIIToUTF16("CA"), s_profiles.ColumnString16(5));
-    EXPECT_EQ(ASCIIToUTF16("90291"), s_profiles.ColumnString16(6));
-    EXPECT_EQ(base::string16(), s_profiles.ColumnString16(7));
-    EXPECT_EQ(ASCIIToUTF16("US"), s_profiles.ColumnString16(8));
+    EXPECT_EQ(u"Google Inc", s_profiles.ColumnString16(1));
+    EXPECT_EQ(u"340 Main St", s_profiles.ColumnString16(2));
+    EXPECT_EQ(std::u16string(), s_profiles.ColumnString16(3));
+    EXPECT_EQ(u"Los Angeles", s_profiles.ColumnString16(4));
+    EXPECT_EQ(u"CA", s_profiles.ColumnString16(5));
+    EXPECT_EQ(u"90291", s_profiles.ColumnString16(6));
+    EXPECT_EQ(std::u16string(), s_profiles.ColumnString16(7));
+    EXPECT_EQ(u"US", s_profiles.ColumnString16(8));
     EXPECT_EQ(1395948829, s_profiles.ColumnInt(9));
     EXPECT_EQ(ASCIIToUTF16(autofill::kSettingsOrigin),
               s_profiles.ColumnString16(10));
     EXPECT_EQ("en", s_profiles.ColumnString(11));
-    EXPECT_EQ(1365, s_profiles.ColumnInt(12));
-    // The new is_client_validity_states_updated should have the default value
-    // of FALSE.
-    EXPECT_FALSE(s_profiles.ColumnBool(13));
 
     // No more entries expected.
     ASSERT_FALSE(s_profiles.Step());
@@ -2036,8 +2030,383 @@ TEST_F(WebDatabaseMigrationTest, MigrateVersion88ToCurrent) {
     // Check version.
     EXPECT_EQ(kCurrentTestedVersionNumber, VersionFromConnection(&connection));
 
-    // The card_issuer column should exist.
+    // The instrument_id column should exist.
     EXPECT_TRUE(
         connection.DoesColumnExist("masked_credit_cards", "instrument_id"));
+  }
+}
+
+// Tests addition of promo code and display strings columns in offer_data table.
+TEST_F(WebDatabaseMigrationTest, MigrateVersion93ToCurrent) {
+  ASSERT_NO_FATAL_FAILURE(LoadDatabase(FILE_PATH_LITERAL("version_93.sql")));
+
+  // Verify pre-conditions.
+  {
+    sql::Database connection;
+    ASSERT_TRUE(connection.Open(GetDatabasePath()));
+    ASSERT_TRUE(sql::MetaTable::DoesTableExist(&connection));
+
+    sql::MetaTable meta_table;
+    ASSERT_TRUE(meta_table.Init(&connection, 93, 83));
+
+    EXPECT_FALSE(connection.DoesColumnExist("offer_data", "promo_code"));
+    EXPECT_FALSE(connection.DoesColumnExist("offer_data", "value_prop_text"));
+    EXPECT_FALSE(connection.DoesColumnExist("offer_data", "see_details_text"));
+    EXPECT_FALSE(
+        connection.DoesColumnExist("offer_data", "usage_instructions_text"));
+  }
+
+  DoMigration();
+
+  // Verify post-conditions.
+  {
+    sql::Database connection;
+    ASSERT_TRUE(connection.Open(GetDatabasePath()));
+    ASSERT_TRUE(sql::MetaTable::DoesTableExist(&connection));
+
+    // Check version.
+    EXPECT_EQ(kCurrentTestedVersionNumber, VersionFromConnection(&connection));
+
+    // The new offer_data columns should exist.
+    EXPECT_TRUE(connection.DoesColumnExist("offer_data", "promo_code"));
+    EXPECT_TRUE(connection.DoesColumnExist("offer_data", "value_prop_text"));
+    EXPECT_TRUE(connection.DoesColumnExist("offer_data", "see_details_text"));
+    EXPECT_TRUE(
+        connection.DoesColumnExist("offer_data", "usage_instructions_text"));
+  }
+}
+
+// Tests addition of virtual_card_enrollment_state and card_art_url columns in
+// masked_credit_cards table.
+TEST_F(WebDatabaseMigrationTest, MigrateVersion94ToCurrent) {
+  ASSERT_NO_FATAL_FAILURE(LoadDatabase(FILE_PATH_LITERAL("version_94.sql")));
+
+  // Verify pre-conditions.
+  {
+    sql::Database connection;
+    ASSERT_TRUE(connection.Open(GetDatabasePath()));
+    ASSERT_TRUE(sql::MetaTable::DoesTableExist(&connection));
+
+    sql::MetaTable meta_table;
+    ASSERT_TRUE(meta_table.Init(&connection, 94, 83));
+
+    EXPECT_FALSE(connection.DoesColumnExist("masked_credit_cards",
+                                            "virtual_card_enrollment_state"));
+    EXPECT_FALSE(
+        connection.DoesColumnExist("masked_credit_cards", "card_art_url"));
+  }
+
+  DoMigration();
+
+  // Verify post-conditions.
+  {
+    sql::Database connection;
+    ASSERT_TRUE(connection.Open(GetDatabasePath()));
+    ASSERT_TRUE(sql::MetaTable::DoesTableExist(&connection));
+
+    // Check version.
+    EXPECT_EQ(kCurrentTestedVersionNumber, VersionFromConnection(&connection));
+
+    // The virtual_card_enrollment_state column and the card_art_url column
+    // should exist.
+    EXPECT_TRUE(connection.DoesColumnExist("masked_credit_cards",
+                                           "virtual_card_enrollment_state"));
+    EXPECT_TRUE(
+        connection.DoesColumnExist("masked_credit_cards", "card_art_url"));
+  }
+}
+
+// Tests addition of lock state to the autofill_profile table.
+TEST_F(WebDatabaseMigrationTest, MigrateVersion95ToCurrent) {
+  ASSERT_NO_FATAL_FAILURE(LoadDatabase(FILE_PATH_LITERAL("version_95.sql")));
+
+  // Verify pre-conditions.
+  {
+    sql::Database connection;
+    ASSERT_TRUE(connection.Open(GetDatabasePath()));
+    ASSERT_TRUE(sql::MetaTable::DoesTableExist(&connection));
+
+    sql::MetaTable meta_table;
+    ASSERT_TRUE(meta_table.Init(&connection, 95, 83));
+
+    EXPECT_FALSE(connection.DoesColumnExist(
+        "autofill_profile", "disallow_settings_visible_updates"));
+  }
+
+  DoMigration();
+
+  // Verify post-conditions.
+  {
+    sql::Database connection;
+    ASSERT_TRUE(connection.Open(GetDatabasePath()));
+    ASSERT_TRUE(sql::MetaTable::DoesTableExist(&connection));
+
+    // Check version.
+    EXPECT_EQ(kCurrentTestedVersionNumber, VersionFromConnection(&connection));
+
+    EXPECT_FALSE(connection.DoesColumnExist(
+        "autofill_profile", "disallow_settings_visible_updates"));
+  }
+}
+
+// Tests addition of is_active column in keywords table.
+TEST_F(WebDatabaseMigrationTest, MigrateVersion96ToCurrent) {
+  ASSERT_NO_FATAL_FAILURE(LoadDatabase(FILE_PATH_LITERAL("version_96.sql")));
+
+  // Verify pre-conditions.
+  {
+    sql::Database connection;
+    ASSERT_TRUE(connection.Open(GetDatabasePath()));
+    ASSERT_TRUE(sql::MetaTable::DoesTableExist(&connection));
+
+    sql::MetaTable meta_table;
+    ASSERT_TRUE(meta_table.Init(&connection, 96, 83));
+
+    EXPECT_FALSE(connection.DoesColumnExist("keywords", "is_active"));
+  }
+
+  DoMigration();
+
+  // Verify post-conditions.
+  {
+    sql::Database connection;
+    ASSERT_TRUE(connection.Open(GetDatabasePath()));
+    ASSERT_TRUE(sql::MetaTable::DoesTableExist(&connection));
+
+    // Check version.
+    EXPECT_EQ(kCurrentTestedVersionNumber, VersionFromConnection(&connection));
+
+    EXPECT_TRUE(connection.DoesColumnExist("keywords", "is_active"));
+  }
+}
+
+TEST_F(WebDatabaseMigrationTest, MigrateVersion97ToCurrent) {
+  ASSERT_NO_FATAL_FAILURE(LoadDatabase(FILE_PATH_LITERAL("version_97.sql")));
+
+  // Verify pre-conditions.
+  {
+    sql::Database connection;
+    ASSERT_TRUE(connection.Open(GetDatabasePath()));
+    ASSERT_TRUE(sql::MetaTable::DoesTableExist(&connection));
+
+    sql::MetaTable meta_table;
+    ASSERT_TRUE(meta_table.Init(&connection, 97, 83));
+
+    // The status column should exist.
+    EXPECT_TRUE(connection.DoesColumnExist("masked_credit_cards", "status"));
+  }
+
+  DoMigration();
+
+  // Verify post-conditions.
+  {
+    sql::Database connection;
+    ASSERT_TRUE(connection.Open(GetDatabasePath()));
+    ASSERT_TRUE(sql::MetaTable::DoesTableExist(&connection));
+
+    // Check version.
+    EXPECT_EQ(kCurrentTestedVersionNumber, VersionFromConnection(&connection));
+
+    // The status column should not exist.
+    EXPECT_FALSE(connection.DoesColumnExist("masked_credit_cards", "status"));
+  }
+}
+
+TEST_F(WebDatabaseMigrationTest, MigrateVersion98ToCurrent) {
+  ASSERT_NO_FATAL_FAILURE(LoadDatabase(FILE_PATH_LITERAL("version_98.sql")));
+
+  // Verify pre-conditions.
+  {
+    sql::Database connection;
+    ASSERT_TRUE(connection.Open(GetDatabasePath()));
+    ASSERT_TRUE(sql::MetaTable::DoesTableExist(&connection));
+
+    sql::MetaTable meta_table;
+    ASSERT_TRUE(meta_table.Init(&connection, 98, 98));
+
+    // The autofill_profiles_trash table should exist.
+    EXPECT_TRUE(connection.DoesTableExist("autofill_profiles_trash"));
+  }
+
+  DoMigration();
+
+  // Verify post-conditions.
+  {
+    sql::Database connection;
+    ASSERT_TRUE(connection.Open(GetDatabasePath()));
+    ASSERT_TRUE(sql::MetaTable::DoesTableExist(&connection));
+
+    // Check version.
+    EXPECT_EQ(kCurrentTestedVersionNumber, VersionFromConnection(&connection));
+    // The autofill_profiles_trash table should not exist.
+    EXPECT_FALSE(connection.DoesTableExist("autofill_profiles_trash"));
+  }
+}
+
+TEST_F(WebDatabaseMigrationTest, MigrateVersion99ToCurrent) {
+  ASSERT_NO_FATAL_FAILURE(LoadDatabase(FILE_PATH_LITERAL("version_99.sql")));
+
+  // Verify pre-conditions.
+  {
+    sql::Database connection;
+    ASSERT_TRUE(connection.Open(GetDatabasePath()));
+    ASSERT_TRUE(sql::MetaTable::DoesTableExist(&connection));
+
+    sql::MetaTable meta_table;
+    ASSERT_TRUE(meta_table.Init(&connection, 99, 99));
+
+    // The validity-related columns should exist.
+    EXPECT_TRUE(
+        connection.DoesColumnExist("autofill_profiles", "validity_bitfield"));
+    EXPECT_TRUE(connection.DoesColumnExist(
+        "autofill_profiles", "is_client_validity_states_updated"));
+  }
+
+  DoMigration();
+
+  // Verify post-conditions.
+  {
+    sql::Database connection;
+    ASSERT_TRUE(connection.Open(GetDatabasePath()));
+    ASSERT_TRUE(sql::MetaTable::DoesTableExist(&connection));
+
+    // Check version.
+    EXPECT_EQ(kCurrentTestedVersionNumber, VersionFromConnection(&connection));
+
+    EXPECT_FALSE(
+        connection.DoesColumnExist("autofill_profiles", "validity_bitfield"));
+    EXPECT_FALSE(connection.DoesColumnExist(
+        "autofill_profiles", "is_client_validity_states_updated"));
+  }
+}
+
+TEST_F(WebDatabaseMigrationTest, MigrateVersion100ToCurrent) {
+  ASSERT_NO_FATAL_FAILURE(LoadDatabase(FILE_PATH_LITERAL("version_100.sql")));
+
+  // Verify pre-conditions.
+  {
+    sql::Database connection;
+    ASSERT_TRUE(connection.Open(GetDatabasePath()));
+    ASSERT_TRUE(sql::MetaTable::DoesTableExist(&connection));
+
+    sql::MetaTable meta_table;
+    ASSERT_TRUE(meta_table.Init(&connection, 100, 99));
+
+    // The validity-related columns should exist.
+    EXPECT_TRUE(connection.DoesTableExist("credit_card_art_images"));
+  }
+
+  DoMigration();
+
+  // Verify post-conditions.
+  {
+    sql::Database connection;
+    ASSERT_TRUE(connection.Open(GetDatabasePath()));
+    ASSERT_TRUE(sql::MetaTable::DoesTableExist(&connection));
+
+    // Check version.
+    EXPECT_EQ(kCurrentTestedVersionNumber, VersionFromConnection(&connection));
+
+    EXPECT_FALSE(connection.DoesTableExist("credit_card_art_images"));
+  }
+}
+
+TEST_F(WebDatabaseMigrationTest, MigrateVersion101ToCurrent) {
+  ASSERT_NO_FATAL_FAILURE(LoadDatabase(FILE_PATH_LITERAL("version_101.sql")));
+
+  // Verify pre-conditions.
+  {
+    sql::Database connection;
+    ASSERT_TRUE(connection.Open(GetDatabasePath()));
+    ASSERT_TRUE(sql::MetaTable::DoesTableExist(&connection));
+
+    // Check version.
+    EXPECT_EQ(101, VersionFromConnection(&connection));
+
+    sql::MetaTable meta_table;
+    ASSERT_TRUE(meta_table.Init(&connection, 101, 99));
+
+    // The birthdate table should not exist.
+    EXPECT_FALSE(connection.DoesTableExist("autofill_profile_birthdates"));
+  }
+
+  DoMigration();
+
+  // Verify post-conditions.
+  {
+    sql::Database connection;
+    ASSERT_TRUE(connection.Open(GetDatabasePath()));
+    ASSERT_TRUE(sql::MetaTable::DoesTableExist(&connection));
+
+    // Check version.
+    EXPECT_EQ(kCurrentTestedVersionNumber, VersionFromConnection(&connection));
+
+    // The birthdate table should exist.
+    EXPECT_TRUE(connection.DoesTableExist("autofill_profile_birthdates"));
+  }
+}
+
+// Tests addition of starter_pack_id column in keywords table.
+TEST_F(WebDatabaseMigrationTest, MigrateVersion102ToCurrent) {
+  ASSERT_NO_FATAL_FAILURE(LoadDatabase(FILE_PATH_LITERAL("version_102.sql")));
+
+  // Verify pre-conditions.
+  {
+    sql::Database connection;
+    ASSERT_TRUE(connection.Open(GetDatabasePath()));
+    ASSERT_TRUE(sql::MetaTable::DoesTableExist(&connection));
+
+    sql::MetaTable meta_table;
+    ASSERT_TRUE(meta_table.Init(&connection, 102, 99));
+
+    EXPECT_FALSE(connection.DoesColumnExist("keywords", "starter_pack_id"));
+  }
+
+  DoMigration();
+
+  // Verify post-conditions.
+  {
+    sql::Database connection;
+    ASSERT_TRUE(connection.Open(GetDatabasePath()));
+    ASSERT_TRUE(sql::MetaTable::DoesTableExist(&connection));
+
+    // Check version.
+    EXPECT_EQ(kCurrentTestedVersionNumber, VersionFromConnection(&connection));
+
+    EXPECT_TRUE(connection.DoesColumnExist("keywords", "starter_pack_id"));
+  }
+}
+
+// Tests addition of product_description in masked_credit_cards table.
+TEST_F(WebDatabaseMigrationTest, MigrateVersion103ToCurrent) {
+  ASSERT_NO_FATAL_FAILURE(LoadDatabase(FILE_PATH_LITERAL("version_103.sql")));
+
+  // Verify pre-conditions.
+  {
+    sql::Database connection;
+    ASSERT_TRUE(connection.Open(GetDatabasePath()));
+    ASSERT_TRUE(sql::MetaTable::DoesTableExist(&connection));
+
+    sql::MetaTable meta_table;
+    ASSERT_TRUE(meta_table.Init(&connection, 103, 99));
+
+    EXPECT_FALSE(connection.DoesColumnExist("masked_credit_cards",
+                                            "product_description"));
+  }
+
+  DoMigration();
+
+  // Verify post-conditions.
+  {
+    sql::Database connection;
+    ASSERT_TRUE(connection.Open(GetDatabasePath()));
+    ASSERT_TRUE(sql::MetaTable::DoesTableExist(&connection));
+
+    // Check version.
+    EXPECT_EQ(kCurrentTestedVersionNumber, VersionFromConnection(&connection));
+
+    // The product_description column and should exist.
+    EXPECT_TRUE(connection.DoesColumnExist("masked_credit_cards",
+                                           "product_description"));
   }
 }

@@ -14,7 +14,7 @@
 #include "services/network/public/cpp/features.h"
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/mojom/trust_tokens.mojom.h"
-#include "services/network/trust_tokens/test/trust_token_test_util.h"
+#include "services/network/test/trust_token_test_util.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
@@ -229,7 +229,7 @@ class TrustTokenOriginTrialBrowsertest
   // |on_received_request_| is called once a request arrives at
   // |kTrustTokenUrl|; the request is then placed in |trust_token_request_|.
   base::OnceClosure on_received_request_ GUARDED_BY(mutex_);
-  base::Optional<network::ResourceRequest> trust_token_request_
+  absl::optional<network::ResourceRequest> trust_token_request_
       GUARDED_BY(mutex_);
 };
 
@@ -330,8 +330,8 @@ IN_PROC_BROWSER_TEST_P(TrustTokenOriginTrialBrowsertest,
   }
 
   network::TrustTokenTestParameters trust_token_params(
-      test_description.op, base::nullopt, base::nullopt, base::nullopt,
-      base::nullopt, base::nullopt, base::nullopt);
+      test_description.op, absl::nullopt, absl::nullopt, absl::nullopt,
+      absl::nullopt, absl::nullopt, absl::nullopt);
 
   network::TrustTokenParametersAndSerialization
       expected_params_and_serialization =

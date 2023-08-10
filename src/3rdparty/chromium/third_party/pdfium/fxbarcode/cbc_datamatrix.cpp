@@ -24,6 +24,7 @@
 #include <memory>
 #include <vector>
 
+#include "core/fxcrt/fx_coordinates.h"
 #include "core/fxcrt/fx_memory_wrappers.h"
 #include "fxbarcode/datamatrix/BC_DataMatrixWriter.h"
 
@@ -42,13 +43,13 @@ bool CBC_DataMatrix::Encode(WideStringView contents) {
 }
 
 bool CBC_DataMatrix::RenderDevice(CFX_RenderDevice* device,
-                                  const CFX_Matrix* matrix) {
+                                  const CFX_Matrix& matrix) {
   GetDataMatrixWriter()->RenderDeviceResult(device, matrix);
   return true;
 }
 
 BC_TYPE CBC_DataMatrix::GetType() {
-  return BC_DATAMATRIX;
+  return BC_TYPE::kDataMatrix;
 }
 
 CBC_DataMatrixWriter* CBC_DataMatrix::GetDataMatrixWriter() {

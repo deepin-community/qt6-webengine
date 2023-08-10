@@ -10,10 +10,10 @@
 // this file must not introduce any link-time dependencies on websockets.
 
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
-#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/supports_user_data.h"
 #include "net/base/net_export.h"
@@ -83,6 +83,11 @@ class NET_EXPORT WebSocketHandshakeStreamBase : public HttpStream {
   };
 
   WebSocketHandshakeStreamBase() = default;
+
+  WebSocketHandshakeStreamBase(const WebSocketHandshakeStreamBase&) = delete;
+  WebSocketHandshakeStreamBase& operator=(const WebSocketHandshakeStreamBase&) =
+      delete;
+
   ~WebSocketHandshakeStreamBase() override = default;
 
   // An object that stores data needed for the creation of a
@@ -105,7 +110,8 @@ class NET_EXPORT WebSocketHandshakeStreamBase : public HttpStream {
     // underlying HTTP/2 connection has been established but before the stream
     // has been opened.  This cannot be called more than once.
     virtual std::unique_ptr<WebSocketHandshakeStreamBase> CreateHttp2Stream(
-        base::WeakPtr<SpdySession> session) = 0;
+        base::WeakPtr<SpdySession> session,
+        std::set<std::string> dns_aliases) = 0;
   };
 
   // After the handshake has completed, this method creates a WebSocketStream
@@ -147,9 +153,6 @@ class NET_EXPORT WebSocketHandshakeStreamBase : public HttpStream {
                                  WebSocketExtensionParams* params);
 
   void RecordHandshakeResult(HandshakeResult result);
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(WebSocketHandshakeStreamBase);
 };
 
 }  // namespace net

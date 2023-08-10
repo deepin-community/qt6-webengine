@@ -9,7 +9,6 @@
 #include <vector>
 
 #include "base/files/file_util.h"
-#include "base/strings/string16.h"
 #include "build/build_config.h"
 
 class GURL;
@@ -19,7 +18,7 @@ class DictionaryValue;
 class FilePath;
 }
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 // Detects which version of Firefox is installed from registry. Returns its
 // major version, and drops the minor version. Returns 0 if failed. If there are
 // indicators of both Firefox 2 and Firefox 3 it is biased to return the biggest
@@ -29,7 +28,7 @@ int GetCurrentFirefoxMajorVersionFromRegistry();
 // Detects where Firefox lives. Returns an empty path if Firefox is not
 // installed.
 base::FilePath GetFirefoxInstallPathFromRegistry();
-#endif  // OS_WIN
+#endif  // BUILDFLAG(IS_WIN)
 
 struct FirefoxDetail {
   // |path| represents the Path field in Profiles.ini.
@@ -37,7 +36,7 @@ struct FirefoxDetail {
   // in stored.
   base::FilePath path;
   // The user specified name of the profile.
-  base::string16 name;
+  std::u16string name;
 };
 
 inline bool operator==(const FirefoxDetail& a1, const FirefoxDetail& a2) {
@@ -101,6 +100,6 @@ std::string GetPrefsJsValue(const std::string& prefs,
 // This is useful to differentiate between Firefox and Iceweasel.
 // If anything goes wrong while trying to obtain the branding name,
 // the function assumes it's Firefox.
-base::string16 GetFirefoxImporterName(const base::FilePath& app_path);
+std::u16string GetFirefoxImporterName(const base::FilePath& app_path);
 
 #endif  // CHROME_COMMON_IMPORTER_FIREFOX_IMPORTER_UTILS_H_

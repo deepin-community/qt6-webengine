@@ -68,9 +68,6 @@ class PLATFORM_EXPORT GenericFontFamilySettings {
   bool UpdateFantasy(const AtomicString&, UScriptCode = USCRIPT_COMMON);
   const AtomicString& Fantasy(UScriptCode = USCRIPT_COMMON) const;
 
-  bool UpdatePictograph(const AtomicString&, UScriptCode = USCRIPT_COMMON);
-  const AtomicString& Pictograph(UScriptCode = USCRIPT_COMMON) const;
-
   // Only called by InternalSettings to clear font family maps.
   void Reset();
 
@@ -118,7 +115,6 @@ class PLATFORM_EXPORT GenericFontFamilySettings {
   ScriptFontFamilyMap sans_serif_font_family_map_;
   ScriptFontFamilyMap cursive_font_family_map_;
   ScriptFontFamilyMap fantasy_font_family_map_;
-  ScriptFontFamilyMap pictograph_font_family_map_;
 
   typedef Vector<std::pair<int, String>> IsolatedCopyVector;
   std::unique_ptr<IsolatedCopyVector[]> isolated_copy_;
@@ -126,4 +122,4 @@ class PLATFORM_EXPORT GenericFontFamilySettings {
 
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_RENDERER_PLATFORM_FONTS_GENERIC_FONT_FAMILY_SETTINGS_H_

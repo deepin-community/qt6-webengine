@@ -15,16 +15,17 @@
 #include "base/sys_byteorder.h"
 #include "base/threading/thread_local.h"
 #include "base/trace_event/base_tracing.h"
+#include "base/tracing_buildflags.h"
+
+#if BUILDFLAG(ENABLE_BASE_TRACING)
+#include "third_party/perfetto/protos/perfetto/trace/track_event/chrome_mojo_event_info.pbzero.h"  // nogncheck
+#endif
 
 namespace base {
 
 namespace {
 
 TaskAnnotator::ObserverForTesting* g_task_annotator_observer = nullptr;
-
-// Used as a sentinel to determine if a TLS-stored PendingTask is a dummy one.
-static constexpr int kSentinelSequenceNum =
-    static_cast<int>(0xF00DBAADF00DBAAD);
 
 // Returns the TLS slot that stores the PendingTask currently in progress on
 // each thread. Used to allow creating a breadcrumb of program counters on the
@@ -45,44 +46,23 @@ GetTLSForCurrentScopedIpcHash() {
   return instance.get();
 }
 
-// Determines whether or not the given |task| is a dummy pending task that has
-// been injected by ScopedSetIpcHash solely for the purposes of
-// tracking IPC context.
-bool IsDummyPendingTask(const PendingTask* task) {
-  if (task->sequence_num == kSentinelSequenceNum &&
-      !task->posted_from.has_source_info() &&
-      !task->posted_from.program_counter()) {
-    return true;
-  }
-  return false;
-}
-
 }  // namespace
 
 const PendingTask* TaskAnnotator::CurrentTaskForThread() {
-  auto* current_task = GetTLSForCurrentPendingTask()->Get();
-
-  // Don't return "dummy" current tasks that are only used for storing IPC
-  // context.
-  if (!current_task || (current_task && IsDummyPendingTask(current_task)))
-    return nullptr;
-  return current_task;
+  return GetTLSForCurrentPendingTask()->Get();
 }
 
 TaskAnnotator::TaskAnnotator() = default;
-
 TaskAnnotator::~TaskAnnotator() = default;
 
-void TaskAnnotator::WillQueueTask(const char* trace_event_name,
+void TaskAnnotator::WillQueueTask(perfetto::StaticString trace_event_name,
                                   PendingTask* pending_task,
                                   const char* task_queue_name) {
-  DCHECK(trace_event_name);
   DCHECK(pending_task);
   DCHECK(task_queue_name);
-  TRACE_EVENT_WITH_FLOW1("toplevel.flow", trace_event_name,
-                         TRACE_ID_LOCAL(GetTaskTraceID(*pending_task)),
-                         TRACE_EVENT_FLAG_FLOW_OUT, "task_queue_name",
-                         task_queue_name);
+  TRACE_EVENT_INSTANT(
+      "toplevel.flow", trace_event_name,
+      perfetto::Flow::ProcessScoped(GetTaskTraceID(*pending_task)));
 
   DCHECK(!pending_task->task_backtrace[0])
       << "Task backtrace was already set, task posted twice??";
@@ -110,19 +90,11 @@ void TaskAnnotator::WillQueueTask(const char* trace_event_name,
       parent_task->task_backtrace.back() != nullptr;
 }
 
-void TaskAnnotator::RunTask(const char* trace_event_name,
-                            PendingTask* pending_task) {
-  DCHECK(trace_event_name);
-  DCHECK(pending_task);
+void TaskAnnotator::RunTaskImpl(PendingTask& pending_task) {
+  debug::ScopedTaskRunActivity task_activity(pending_task);
 
-  debug::ScopedTaskRunActivity task_activity(*pending_task);
-
-  TRACE_EVENT1(TRACE_DISABLED_BY_DEFAULT("toplevel.ipc"),
-               "TaskAnnotator::RunTask", "ipc_hash", pending_task->ipc_hash);
-
-  TRACE_EVENT_WITH_FLOW0("toplevel.flow", trace_event_name,
-                         TRACE_ID_LOCAL(GetTaskTraceID(*pending_task)),
-                         TRACE_EVENT_FLAG_FLOW_IN);
+  TRACE_HEAP_PROFILER_API_SCOPED_TASK_EXECUTION(
+      pending_task.posted_from.file_name());
 
   // Before running the task, store the IPC context and the task backtrace with
   // the chain of PostTasks that resulted in this call and deliberately alias it
@@ -148,19 +120,19 @@ void TaskAnnotator::RunTask(const char* trace_event_name,
   task_backtrace.front() = reinterpret_cast<void*>(0xc001c0ded017d00d);
   task_backtrace.back() = reinterpret_cast<void*>(0x0d00d1d1d178119);
 
-  task_backtrace[1] = pending_task->posted_from.program_counter();
-  ranges::copy(pending_task->task_backtrace, task_backtrace.begin() + 2);
+  task_backtrace[1] = pending_task.posted_from.program_counter();
+  ranges::copy(pending_task.task_backtrace, task_backtrace.begin() + 2);
   task_backtrace[kStackTaskTraceSnapshotSize - 2] =
-      reinterpret_cast<void*>(pending_task->ipc_hash);
+      reinterpret_cast<void*>(pending_task.ipc_hash);
   debug::Alias(&task_backtrace);
 
   auto* tls = GetTLSForCurrentPendingTask();
   auto* previous_pending_task = tls->Get();
-  tls->Set(pending_task);
+  tls->Set(&pending_task);
 
   if (g_task_annotator_observer)
-    g_task_annotator_observer->BeforeRunTask(pending_task);
-  std::move(pending_task->task).Run();
+    g_task_annotator_observer->BeforeRunTask(&pending_task);
+  std::move(pending_task.task).Run();
 
   tls->Set(previous_pending_task);
 
@@ -191,6 +163,45 @@ void TaskAnnotator::ClearObserverForTesting() {
   g_task_annotator_observer = nullptr;
 }
 
+#if BUILDFLAG(ENABLE_BASE_TRACING)
+// TRACE_EVENT argument helper, writing the task location data into
+// EventContext.
+void TaskAnnotator::EmitTaskLocation(perfetto::EventContext& ctx,
+                                     const PendingTask& task) const {
+  ctx.event()->set_task_execution()->set_posted_from_iid(
+      base::trace_event::InternedSourceLocation::Get(&ctx, task.posted_from));
+}
+
+// TRACE_EVENT argument helper, writing the incoming task flow information
+// into EventContext if toplevel.flow category is enabled.
+void TaskAnnotator::MaybeEmitIncomingTaskFlow(perfetto::EventContext& ctx,
+                                              const PendingTask& task) const {
+  static const uint8_t* flow_enabled =
+      TRACE_EVENT_API_GET_CATEGORY_GROUP_ENABLED("toplevel.flow");
+  if (!*flow_enabled)
+    return;
+
+  perfetto::TerminatingFlow::ProcessScoped(GetTaskTraceID(task))(ctx);
+}
+
+void TaskAnnotator::MaybeEmitIPCHashAndDelay(perfetto::EventContext& ctx,
+                                             const PendingTask& task) const {
+  static const uint8_t* toplevel_ipc_enabled =
+      TRACE_EVENT_API_GET_CATEGORY_GROUP_ENABLED(
+          TRACE_DISABLED_BY_DEFAULT("toplevel.ipc"));
+  if (!*toplevel_ipc_enabled)
+    return;
+
+  auto* event = ctx.event<perfetto::protos::pbzero::ChromeTrackEvent>();
+  auto* annotator = event->set_chrome_task_annotator();
+  annotator->set_ipc_hash(task.ipc_hash);
+  if (!task.delayed_run_time.is_null()) {
+    annotator->set_task_delay_us(
+        (task.delayed_run_time - task.queue_time).InMicroseconds());
+  }
+}
+#endif  //  BUILDFLAG(ENABLE_BASE_TRACING)
+
 TaskAnnotator::ScopedSetIpcHash::ScopedSetIpcHash(uint32_t ipc_hash)
     : ScopedSetIpcHash(ipc_hash, nullptr) {}
 
@@ -201,8 +212,14 @@ TaskAnnotator::ScopedSetIpcHash::ScopedSetIpcHash(
 TaskAnnotator::ScopedSetIpcHash::ScopedSetIpcHash(
     uint32_t ipc_hash,
     const char* ipc_interface_name) {
-  TRACE_EVENT_BEGIN2("base", "ScopedSetIpcHash", "ipc_hash", ipc_hash,
-                     "ipc_interface_name", ipc_interface_name);
+  TRACE_EVENT_BEGIN(
+      "base", "ScopedSetIpcHash", [&](perfetto::EventContext ctx) {
+        auto* mojo_event = ctx.event()->set_chrome_mojo_event_info();
+        if (ipc_hash > 0)
+          mojo_event->set_ipc_hash(ipc_hash);
+        if (ipc_interface_name != nullptr)
+          mojo_event->set_mojo_interface_tag(ipc_interface_name);
+      });
   auto* tls_ipc_hash = GetTLSForCurrentScopedIpcHash();
   auto* current_ipc_hash = tls_ipc_hash->Get();
   old_scoped_ipc_hash_ = current_ipc_hash;
@@ -225,8 +242,8 @@ uint32_t TaskAnnotator::ScopedSetIpcHash::MD5HashMetricName(
 TaskAnnotator::ScopedSetIpcHash::~ScopedSetIpcHash() {
   auto* tls_ipc_hash = GetTLSForCurrentScopedIpcHash();
   DCHECK_EQ(this, tls_ipc_hash->Get());
-  tls_ipc_hash->Set(old_scoped_ipc_hash_);
-  TRACE_EVENT_END0("base", "ScopedSetIpcHash");
+  tls_ipc_hash->Set(old_scoped_ipc_hash_.get());
+  TRACE_EVENT_END("base");
 }
 
 }  // namespace base

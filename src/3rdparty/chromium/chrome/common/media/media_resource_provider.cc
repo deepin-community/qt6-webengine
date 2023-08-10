@@ -14,7 +14,7 @@ int MediaMessageIdToGrdId(media::MessageId message_id) {
   switch (message_id) {
     case media::DEFAULT_AUDIO_DEVICE_NAME:
       return IDS_DEFAULT_AUDIO_DEVICE_NAME;
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
     case media::COMMUNICATIONS_AUDIO_DEVICE_NAME:
       return IDS_COMMUNICATIONS_AUDIO_DEVICE_NAME;
 #endif
@@ -26,6 +26,6 @@ int MediaMessageIdToGrdId(media::MessageId message_id) {
 
 }  // namespace
 
-base::string16 ChromeMediaLocalizedStringProvider(media::MessageId message_id) {
+std::u16string ChromeMediaLocalizedStringProvider(media::MessageId message_id) {
   return l10n_util::GetStringUTF16(MediaMessageIdToGrdId(message_id));
 }

@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <memory>
 
+#include "absl/strings/string_view.h"
 #include "rtc_base/arraysize.h"
 #include "test/gtest.h"
 #include "test/testsupport/file_utils.h"
@@ -44,17 +45,17 @@ class MAYBE_FileRotatingStreamTest : public ::testing::Test {
   static const char* kFilePrefix;
   static const size_t kMaxFileSize;
 
-  void Init(const std::string& dir_name,
-            const std::string& file_prefix,
+  void Init(absl::string_view dir_name,
+            absl::string_view file_prefix,
             size_t max_file_size,
             size_t num_log_files,
             bool ensure_trailing_delimiter = true) {
     dir_path_ = webrtc::test::OutputPath();
 
     // Append per-test output path in order to run within gtest parallel.
-    dir_path_.append(dir_name);
+    dir_path_.append(dir_name.begin(), dir_name.end());
     if (ensure_trailing_delimiter) {
-      dir_path_.append(webrtc::test::kPathDelimiter);
+      dir_path_.append(std::string(webrtc::test::kPathDelimiter));
     }
     ASSERT_TRUE(webrtc::test::CreateDir(dir_path_));
     stream_.reset(new FileRotatingStream(dir_path_, file_prefix, max_file_size,
@@ -72,7 +73,7 @@ class MAYBE_FileRotatingStreamTest : public ::testing::Test {
 
   // Writes the data to the stream and flushes it.
   void WriteAndFlush(const void* data, const size_t data_len) {
-    EXPECT_EQ(SR_SUCCESS, stream_->WriteAll(data, data_len, nullptr, nullptr));
+    EXPECT_TRUE(stream_->Write(data, data_len));
     EXPECT_TRUE(stream_->Flush());
   }
 
@@ -80,7 +81,7 @@ class MAYBE_FileRotatingStreamTest : public ::testing::Test {
   // end of stream result.
   void VerifyStreamRead(const char* expected_contents,
                         const size_t expected_length,
-                        const std::string& dir_path,
+                        absl::string_view dir_path,
                         const char* file_prefix) {
     FileRotatingStreamReader reader(dir_path, file_prefix);
     EXPECT_EQ(reader.GetSize(), expected_length);
@@ -92,9 +93,10 @@ class MAYBE_FileRotatingStreamTest : public ::testing::Test {
 
   void VerifyFileContents(const char* expected_contents,
                           const size_t expected_length,
-                          const std::string& file_path) {
+                          absl::string_view file_path) {
     std::unique_ptr<uint8_t[]> buffer(new uint8_t[expected_length + 1]);
-    webrtc::FileWrapper f = webrtc::FileWrapper::OpenReadOnly(file_path);
+    webrtc::FileWrapper f =
+        webrtc::FileWrapper::OpenReadOnly(std::string(file_path));
     ASSERT_TRUE(f.is_open());
     size_t size_read = f.Read(buffer.get(), expected_length + 1);
     EXPECT_EQ(size_read, expected_length);
@@ -114,11 +116,11 @@ const size_t MAYBE_FileRotatingStreamTest::kMaxFileSize = 2;
 TEST_F(MAYBE_FileRotatingStreamTest, State) {
   Init("FileRotatingStreamTestState", kFilePrefix, kMaxFileSize, 3);
 
-  EXPECT_EQ(SS_CLOSED, stream_->GetState());
+  EXPECT_FALSE(stream_->IsOpen());
   ASSERT_TRUE(stream_->Open());
-  EXPECT_EQ(SS_OPEN, stream_->GetState());
+  EXPECT_TRUE(stream_->IsOpen());
   stream_->Close();
-  EXPECT_EQ(SS_CLOSED, stream_->GetState());
+  EXPECT_FALSE(stream_->IsOpen());
 }
 
 // Tests that nothing is written to file when data of length zero is written.
@@ -190,7 +192,8 @@ TEST_F(MAYBE_FileRotatingStreamTest, WriteWithoutDelimiterAndRead) {
   // Reopen for read.
   std::string expected_contents("bbccd");
   VerifyStreamRead(expected_contents.c_str(), expected_contents.size(),
-                   dir_path_ + webrtc::test::kPathDelimiter, kFilePrefix);
+                   dir_path_ + std::string(webrtc::test::kPathDelimiter),
+                   kFilePrefix);
 }
 
 // Tests that a write operation followed by a read (without trailing delimiter)
@@ -255,12 +258,12 @@ TEST_F(MAYBE_FileRotatingStreamTest, GetFilePath) {
 
 class MAYBE_CallSessionFileRotatingStreamTest : public ::testing::Test {
  protected:
-  void Init(const std::string& dir_name, size_t max_total_log_size) {
+  void Init(absl::string_view dir_name, size_t max_total_log_size) {
     dir_path_ = webrtc::test::OutputPath();
 
     // Append per-test output path in order to run within gtest parallel.
-    dir_path_.append(dir_name);
-    dir_path_.append(webrtc::test::kPathDelimiter);
+    dir_path_.append(dir_name.begin(), dir_name.end());
+    dir_path_.append(std::string(webrtc::test::kPathDelimiter));
     ASSERT_TRUE(webrtc::test::CreateDir(dir_path_));
     stream_.reset(
         new CallSessionFileRotatingStream(dir_path_, max_total_log_size));
@@ -277,7 +280,7 @@ class MAYBE_CallSessionFileRotatingStreamTest : public ::testing::Test {
 
   // Writes the data to the stream and flushes it.
   void WriteAndFlush(const void* data, const size_t data_len) {
-    EXPECT_EQ(SR_SUCCESS, stream_->WriteAll(data, data_len, nullptr, nullptr));
+    EXPECT_TRUE(stream_->Write(data, data_len));
     EXPECT_TRUE(stream_->Flush());
   }
 
@@ -285,7 +288,7 @@ class MAYBE_CallSessionFileRotatingStreamTest : public ::testing::Test {
   // end of stream result.
   void VerifyStreamRead(const char* expected_contents,
                         const size_t expected_length,
-                        const std::string& dir_path) {
+                        absl::string_view dir_path) {
     CallSessionFileRotatingStreamReader reader(dir_path);
     EXPECT_EQ(reader.GetSize(), expected_length);
     std::unique_ptr<uint8_t[]> buffer(new uint8_t[expected_length]);
@@ -334,8 +337,7 @@ TEST_F(MAYBE_CallSessionFileRotatingStreamTest, WriteAndReadLarge) {
   std::unique_ptr<uint8_t[]> buffer(new uint8_t[buffer_size]);
   for (int i = 0; i < 8; i++) {
     memset(buffer.get(), i, buffer_size);
-    EXPECT_EQ(SR_SUCCESS,
-              stream_->WriteAll(buffer.get(), buffer_size, nullptr, nullptr));
+    EXPECT_TRUE(stream_->Write(buffer.get(), buffer_size));
   }
 
   const int expected_vals[] = {0, 1, 2, 6, 7};
@@ -369,8 +371,7 @@ TEST_F(MAYBE_CallSessionFileRotatingStreamTest, WriteAndReadFirstHalf) {
   std::unique_ptr<uint8_t[]> buffer(new uint8_t[buffer_size]);
   for (int i = 0; i < 2; i++) {
     memset(buffer.get(), i, buffer_size);
-    EXPECT_EQ(SR_SUCCESS,
-              stream_->WriteAll(buffer.get(), buffer_size, nullptr, nullptr));
+    EXPECT_TRUE(stream_->Write(buffer.get(), buffer_size));
   }
 
   const int expected_vals[] = {0, 1};

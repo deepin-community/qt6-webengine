@@ -14,7 +14,7 @@ Polymer({
 
   properties: {
     /**
-     * @type {?chromeos.cellularSetup.mojom.ESimProfileRemote}
+     * @type {?ash.cellularSetup.mojom.ESimProfileRemote}
      */
     profile: {
       type: Object,
@@ -39,12 +39,21 @@ Polymer({
     },
 
     /**
-     * @type {?chromeos.cellularSetup.mojom.ESimProfileProperties}
+     * @type {?ash.cellularSetup.mojom.ESimProfileProperties}
      * @private
      */
     profileProperties_: {
       type: Object,
       value: null,
+    },
+
+    /**
+     * @type {boolean}
+     * @private
+     */
+    isDarkModeActive_: {
+      type: Boolean,
+      value: false,
     },
   },
 
@@ -57,6 +66,17 @@ Polymer({
     this.profile.getProperties().then(response => {
       this.profileProperties_ = response.properties;
     });
+  },
+
+  /**
+   * @param {KeyboardEvent} e
+   * @private
+   */
+  onKeyDown_(e) {
+    if (e.key === 'Enter') {
+      this.fire('forward-navigation-requested');
+    }
+    e.stopPropagation();
   },
 
   /**
@@ -76,5 +96,15 @@ Polymer({
       return '';
     }
     return String.fromCharCode(...this.profileProperties_.name.data);
+  },
+
+  /**
+   * @return {string}
+   * @private
+   */
+  getProfileImage_() {
+    return this.isDarkModeActive_ ?
+        'chrome://resources/cr_components/chromeos/cellular_setup/default_esim_profile_dark.svg' :
+        'chrome://resources/cr_components/chromeos/cellular_setup/default_esim_profile.svg';
   },
 });

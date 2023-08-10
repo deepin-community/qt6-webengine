@@ -55,7 +55,7 @@ bool IsMonotonic(const StreamParser::BufferQueue& buffers) {
 }
 
 bool IsAlmostEqual(DecodeTimestamp t0, DecodeTimestamp t1) {
-  base::TimeDelta kMaxDeviation = base::TimeDelta::FromMilliseconds(5);
+  base::TimeDelta kMaxDeviation = base::Milliseconds(5);
   base::TimeDelta diff = t1 - t0;
   return (diff >= -kMaxDeviation && diff <= kMaxDeviation);
 }
@@ -166,17 +166,18 @@ class Mp2tStreamParserTest : public testing::Test {
         video_frame_count_(0),
         has_audio_(true),
         has_video_(true),
-        audio_min_dts_(kNoDecodeTimestamp()),
-        audio_max_dts_(kNoDecodeTimestamp()),
-        video_min_dts_(kNoDecodeTimestamp()),
-        video_max_dts_(kNoDecodeTimestamp()),
+        audio_min_dts_(kNoDecodeTimestamp),
+        audio_max_dts_(kNoDecodeTimestamp),
+        video_min_dts_(kNoDecodeTimestamp),
+        video_max_dts_(kNoDecodeTimestamp),
         audio_track_id_(0),
         video_track_id_(0),
         current_audio_config_(),
         current_video_config_(),
         capture_buffers(false) {
     bool has_sbr = false;
-    parser_.reset(new Mp2tStreamParser({"avc1.64001e", "mp3", "aac"}, has_sbr));
+    const std::string codecs[] = {"avc1.64001e", "mp3", "aac"};
+    parser_ = std::make_unique<Mp2tStreamParser>(codecs, has_sbr);
   }
 
  protected:
@@ -206,10 +207,10 @@ class Mp2tStreamParserTest : public testing::Test {
     config_count_ = 0;
     audio_frame_count_ = 0;
     video_frame_count_ = 0;
-    audio_min_dts_ = kNoDecodeTimestamp();
-    audio_max_dts_ = kNoDecodeTimestamp();
-    video_min_dts_ = kNoDecodeTimestamp();
-    video_max_dts_ = kNoDecodeTimestamp();
+    audio_min_dts_ = kNoDecodeTimestamp;
+    audio_max_dts_ = kNoDecodeTimestamp;
+    video_min_dts_ = kNoDecodeTimestamp;
+    video_max_dts_ = kNoDecodeTimestamp;
   }
 
   bool AppendData(const uint8_t* data, size_t length) {
@@ -316,18 +317,18 @@ class Mp2tStreamParserTest : public testing::Test {
     if (!video_buffers.empty()) {
       DecodeTimestamp first_dts = video_buffers.front()->GetDecodeTimestamp();
       DecodeTimestamp last_dts = video_buffers.back()->GetDecodeTimestamp();
-      if (video_max_dts_ != kNoDecodeTimestamp() && first_dts < video_max_dts_)
+      if (video_max_dts_ != kNoDecodeTimestamp && first_dts < video_max_dts_)
         return false;
-      if (video_min_dts_ == kNoDecodeTimestamp())
+      if (video_min_dts_ == kNoDecodeTimestamp)
         video_min_dts_ = first_dts;
       video_max_dts_ = last_dts;
     }
     if (!audio_buffers.empty()) {
       DecodeTimestamp first_dts = audio_buffers.front()->GetDecodeTimestamp();
       DecodeTimestamp last_dts = audio_buffers.back()->GetDecodeTimestamp();
-      if (audio_max_dts_ != kNoDecodeTimestamp() && first_dts < audio_max_dts_)
+      if (audio_max_dts_ != kNoDecodeTimestamp && first_dts < audio_max_dts_)
         return false;
-      if (audio_min_dts_ == kNoDecodeTimestamp())
+      if (audio_min_dts_ == kNoDecodeTimestamp)
         audio_min_dts_ = first_dts;
       audio_max_dts_ = last_dts;
     }
@@ -473,7 +474,8 @@ TEST_F(Mp2tStreamParserTest, AudioInPrivateStream1) {
 // Checks the allowed_codecs argument filters streams using disallowed codecs.
 TEST_F(Mp2tStreamParserTest, DisableAudioStream) {
   // Reset the parser with no audio codec allowed.
-  parser_.reset(new Mp2tStreamParser({"avc1.64001e"}, true));
+  const std::string codecs[] = {"avc1.64001e"};
+  parser_ = std::make_unique<Mp2tStreamParser>(codecs, true);
   has_audio_ = false;
 
   InitializeParser();
@@ -511,7 +513,8 @@ TEST_F(Mp2tStreamParserTest, HLSSampleAES) {
     decrypted_audio_buffers.push_back(decrypted_audio_buffer);
   }
 
-  parser_.reset(new Mp2tStreamParser({"avc1.64001e", "mp3", "aac"}, false));
+  const std::string codecs[] = {"avc1.64001e", "mp3", "aac"};
+  parser_ = std::make_unique<Mp2tStreamParser>(codecs, false);
   ResetStats();
   InitializeParser();
   video_buffer_capture_.clear();

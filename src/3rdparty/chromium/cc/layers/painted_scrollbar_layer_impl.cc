@@ -51,7 +51,7 @@ PaintedScrollbarLayerImpl::PaintedScrollbarLayerImpl(
 PaintedScrollbarLayerImpl::~PaintedScrollbarLayerImpl() = default;
 
 std::unique_ptr<LayerImpl> PaintedScrollbarLayerImpl::CreateLayerImpl(
-    LayerTreeImpl* tree_impl) {
+    LayerTreeImpl* tree_impl) const {
   return PaintedScrollbarLayerImpl::Create(tree_impl, id(), orientation(),
                                            is_left_side_vertical_scrollbar(),
                                            is_overlay_scrollbar());
@@ -157,11 +157,12 @@ void PaintedScrollbarLayerImpl::AppendQuads(
   }
 }
 
-gfx::Rect PaintedScrollbarLayerImpl::GetEnclosingRectInTargetSpace() const {
+gfx::Rect PaintedScrollbarLayerImpl::GetEnclosingVisibleRectInTargetSpace()
+    const {
   if (internal_content_bounds_.IsEmpty())
     return gfx::Rect();
   DCHECK_GT(internal_contents_scale_, 0.f);
-  return GetScaledEnclosingRectInTargetSpace(internal_contents_scale_);
+  return GetScaledEnclosingVisibleRectInTargetSpace(internal_contents_scale_);
 }
 
 void PaintedScrollbarLayerImpl::SetJumpOnTrackClick(bool jump_on_track_click) {

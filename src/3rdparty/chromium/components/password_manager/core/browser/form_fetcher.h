@@ -6,14 +6,12 @@
 #define COMPONENTS_PASSWORD_MANAGER_CORE_BROWSER_FORM_FETCHER_H_
 
 #include <memory>
+#include <string>
 #include <vector>
 
-#include "base/containers/span.h"
-#include "base/macros.h"
 #include "base/observer_list_types.h"
-#include "base/strings/string16.h"
 #include "components/autofill/core/common/gaia_id_hash.h"
-#include "components/password_manager/core/browser/insecure_credentials_table.h"
+#include "components/password_manager/core/browser/password_form.h"
 
 namespace password_manager {
 
@@ -42,6 +40,9 @@ class FormFetcher {
 
   FormFetcher() = default;
 
+  FormFetcher(const FormFetcher&) = delete;
+  FormFetcher& operator=(const FormFetcher&) = delete;
+
   virtual ~FormFetcher() = default;
 
   // Adds |consumer|, which must not be null. If the current state is
@@ -65,16 +66,19 @@ class FormFetcher {
   virtual const std::vector<InteractionsStats>& GetInteractionsStats()
       const = 0;
 
-  // Insecure credentials records for the current site.
-  virtual base::span<const InsecureCredential> GetInsecureCredentials()
-      const = 0;
+  // Returns all PasswordForm entries that have insecure features.
+  // Do not store the result of this call. The pointers become invalid if `this`
+  // receives new results from a password store.
+  virtual std::vector<const PasswordForm*> GetInsecureCredentials() const = 0;
 
-  // Non-federated matches obtained from the backend. Valid only if GetState()
-  // returns NOT_WAITING.
+  // Non-federated matches obtained from the backend.
+  // Do not store the result of this call. The pointers become invalid if `this`
+  // receives new results from a password store.
   virtual std::vector<const PasswordForm*> GetNonFederatedMatches() const = 0;
 
-  // Federated matches obtained from the backend. Valid only if GetState()
-  // returns NOT_WAITING.
+  // Federated matches obtained from the backend.
+  // Do not store the result of this call. The pointers become invalid if `this`
+  // receives new results from a password store.
   virtual std::vector<const PasswordForm*> GetFederatedMatches() const = 0;
 
   // Whether there are blocklisted matches in the backend. Valid only if
@@ -86,7 +90,7 @@ class FormFetcher {
   // |destination| GaiaIdHash is blocked. This is relevant only for account
   // store users.
   virtual bool IsMovingBlocked(const autofill::GaiaIdHash& destination,
-                               const base::string16& username) const = 0;
+                               const std::u16string& username) const = 0;
 
   // Non-federated matches obtained from the backend that have the same scheme
   // of this form.
@@ -102,9 +106,6 @@ class FormFetcher {
   // Creates a copy of |*this| with contains the same credentials without the
   // need for calling Fetch().
   virtual std::unique_ptr<FormFetcher> Clone() = 0;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(FormFetcher);
 };
 
 }  // namespace password_manager

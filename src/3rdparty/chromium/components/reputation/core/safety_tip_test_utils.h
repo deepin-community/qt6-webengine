@@ -31,7 +31,14 @@ void SetSafetyTipBadRepPatterns(std::vector<std::string> pattern);
 // |target_patterns| is the list of hostname regexes allowed to be targets of
 // lookalikes.
 void SetSafetyTipAllowlistPatterns(std::vector<std::string> patterns,
-                                   std::vector<std::string> target_patterns);
+                                   std::vector<std::string> target_patterns,
+                                   std::vector<std::string> common_words);
+
+// Adds a launch config for the given heuristic with the given percentage. See
+// the proto definition for the meaning of various launch percentage values.
+void AddSafetyTipHeuristicLaunchConfigForTesting(
+    reputation::HeuristicLaunchConfig::Heuristic heuristic,
+    int launch_percentage);
 
 // Ensure that the allowlist has been initialized. This is important as some
 // code (e.g. the elision policy) is fail-open (i.e. it won't elide without an

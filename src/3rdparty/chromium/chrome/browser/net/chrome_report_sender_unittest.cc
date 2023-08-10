@@ -34,7 +34,6 @@ class FakeSharedURLLoaderFactory : public network::SharedURLLoaderFactory {
   // network::SharedURLLoaderFactory
   void CreateLoaderAndStart(
       mojo::PendingReceiver<network::mojom::URLLoader> receiver,
-      int32_t routing_id,
       int32_t request_id,
       uint32_t options,
       const network::ResourceRequest& url_request,
@@ -48,7 +47,8 @@ class FakeSharedURLLoaderFactory : public network::SharedURLLoaderFactory {
     head->headers =
         net::HttpResponseHeaders::TryToCreate("HTTP/1.1 200 OK\n\n");
     head->mime_type = "text/html";
-    client_remote->OnReceiveResponse(std::move(head));
+    client_remote->OnReceiveResponse(std::move(head),
+                                     mojo::ScopedDataPipeConsumerHandle());
     client_remote->OnComplete(network::URLLoaderCompletionStatus());
   }
 

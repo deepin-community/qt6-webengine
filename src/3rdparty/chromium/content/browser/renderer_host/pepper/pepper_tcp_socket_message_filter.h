@@ -12,11 +12,9 @@
 #include <string>
 #include <vector>
 
-#include "base/compiler_specific.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
-#include "base/optional.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
 #include "content/browser/renderer_host/pepper/browser_ppapi_host_impl.h"
@@ -37,6 +35,7 @@
 #include "services/network/public/mojom/network_context.mojom.h"
 #include "services/network/public/mojom/tcp_socket.mojom.h"
 #include "services/network/public/mojom/tls_socket.mojom.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
 #include "chromeos/network/firewall_hole.h"
@@ -74,6 +73,10 @@ class CONTENT_EXPORT PepperTCPSocketMessageFilter
                                BrowserPpapiHostImpl* host,
                                PP_Instance instance,
                                ppapi::TCPSocketVersion version);
+
+  PepperTCPSocketMessageFilter(const PepperTCPSocketMessageFilter&) = delete;
+  PepperTCPSocketMessageFilter& operator=(const PepperTCPSocketMessageFilter&) =
+      delete;
 
   // Switches state to CONNECTED using the provided pipes. May only be called
   // before any messages are received,
@@ -122,7 +125,7 @@ class CONTENT_EXPORT PepperTCPSocketMessageFilter
   void OnComplete(
       int result,
       const net::ResolveErrorInfo& resolve_error_info,
-      const base::Optional<net::AddressList>& resolved_addresses) override;
+      const absl::optional<net::AddressList>& resolved_addresses) override;
 
   // network::mojom::SocketObserver overrides.
   void OnReadError(int net_error) override;
@@ -171,7 +174,7 @@ class CONTENT_EXPORT PepperTCPSocketMessageFilter
 
   void OnResolveCompleted(
       int net_result,
-      const base::Optional<net::AddressList>& resolved_addresses);
+      const absl::optional<net::AddressList>& resolved_addresses);
 
   // Attempts to connect to all addresses in |address_list| in order.
   void StartConnect(const ppapi::host::ReplyMessageContext& context,
@@ -179,8 +182,8 @@ class CONTENT_EXPORT PepperTCPSocketMessageFilter
 
   void OnConnectCompleted(const ppapi::host::ReplyMessageContext& context,
                           int net_result,
-                          const base::Optional<net::IPEndPoint>& local_addr,
-                          const base::Optional<net::IPEndPoint>& peer_addr,
+                          const absl::optional<net::IPEndPoint>& local_addr,
+                          const absl::optional<net::IPEndPoint>& peer_addr,
                           mojo::ScopedDataPipeConsumerHandle receive_stream,
                           mojo::ScopedDataPipeProducerHandle send_stream);
 
@@ -189,21 +192,21 @@ class CONTENT_EXPORT PepperTCPSocketMessageFilter
       int net_result,
       mojo::ScopedDataPipeConsumerHandle receive_stream,
       mojo::ScopedDataPipeProducerHandle send_stream,
-      const base::Optional<net::SSLInfo>& ssl_info);
+      const absl::optional<net::SSLInfo>& ssl_info);
 
   void OnListenCompleted(const ppapi::host::ReplyMessageContext& context,
                          int net_result);
 
   void OnBindCompleted(const ppapi::host::ReplyMessageContext& context,
                        int net_result,
-                       const base::Optional<net::IPEndPoint>& local_addr);
+                       const absl::optional<net::IPEndPoint>& local_addr);
 
   void OnAcceptCompleted(
       const ppapi::host::ReplyMessageContext& context,
       mojo::PendingReceiver<network::mojom::SocketObserver>
           socket_observer_receiver,
       int net_result,
-      const base::Optional<net::IPEndPoint>& remote_addr,
+      const absl::optional<net::IPEndPoint>& remote_addr,
       mojo::PendingRemote<network::mojom::TCPConnectedSocket> connected_socket,
       mojo::ScopedDataPipeConsumerHandle receive_stream,
       mojo::ScopedDataPipeProducerHandle send_stream);
@@ -243,7 +246,7 @@ class CONTENT_EXPORT PepperTCPSocketMessageFilter
                         int32_t pp_error);
   void SendSSLHandshakeReply(const ppapi::host::ReplyMessageContext& context,
                              int32_t pp_result,
-                             const base::Optional<net::SSLInfo>& ssl_info);
+                             const absl::optional<net::SSLInfo>& ssl_info);
   // The read and write reply messages use the |pending_*_context_| fields, and
   // clear fields related to the pending read / write request as needed.
   void SendReadReply(int32_t pp_result, const std::string& data);
@@ -284,9 +287,9 @@ class CONTENT_EXPORT PepperTCPSocketMessageFilter
 
   // The following fields are used only on the IO thread.
   // Non-owning ptr.
-  BrowserPpapiHostImpl* host_;
+  raw_ptr<BrowserPpapiHostImpl> host_;
   // Non-owning ptr.
-  ContentBrowserPepperHostFactory* factory_;
+  raw_ptr<ContentBrowserPepperHostFactory> factory_;
   PP_Instance instance_;
 
   // The following fields are used only on the UI thread.
@@ -369,8 +372,6 @@ class CONTENT_EXPORT PepperTCPSocketMessageFilter
   // Vends weak pointers on the UI thread, for callbacks passed through Mojo
   // pipes not owned by |this|. All weak pointers released in Close().
   base::WeakPtrFactory<PepperTCPSocketMessageFilter> weak_ptr_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(PepperTCPSocketMessageFilter);
 };
 
 }  // namespace content

@@ -6,11 +6,11 @@
 #define UI_VIEWS_CONTROLS_COMBOBOX_COMBOBOX_H_
 
 #include <memory>
+#include <string>
 #include <utility>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/scoped_observation.h"
-#include "base/strings/string16.h"
 #include "base/time/time.h"
 #include "ui/base/models/combobox_model.h"
 #include "ui/base/models/combobox_model_observer.h"
@@ -32,7 +32,6 @@ namespace test {
 class ComboboxTestApi;
 }
 
-class FocusRing;
 class MenuRunner;
 class PrefixSelector;
 
@@ -59,6 +58,8 @@ class VIEWS_EXPORT Combobox : public View,
   explicit Combobox(ui::ComboboxModel* model,
                     int text_context = kDefaultComboboxTextContext,
                     int text_style = kDefaultComboboxTextStyle);
+  Combobox(const Combobox&) = delete;
+  Combobox& operator=(const Combobox&) = delete;
   ~Combobox() override;
 
   const gfx::FontList& GetFontList() const;
@@ -71,12 +72,12 @@ class VIEWS_EXPORT Combobox : public View,
   // Gets/Sets the selected index.
   int GetSelectedIndex() const { return selected_index_; }
   void SetSelectedIndex(int index);
-  base::CallbackListSubscription AddSelectedIndexChangedCallback(
-      views::PropertyChangedCallback callback) WARN_UNUSED_RESULT;
+  [[nodiscard]] base::CallbackListSubscription AddSelectedIndexChangedCallback(
+      views::PropertyChangedCallback callback);
 
   // Looks for the first occurrence of |value| in |model()|. If found, selects
   // the found index and returns true. Otherwise simply noops and returns false.
-  bool SelectValue(const base::string16& value);
+  bool SelectValue(const std::u16string& value);
 
   void SetOwnedModel(std::unique_ptr<ui::ComboboxModel> model);
 
@@ -85,12 +86,12 @@ class VIEWS_EXPORT Combobox : public View,
 
   // Gets/Sets the tooltip text, and the accessible name if it is currently
   // empty.
-  base::string16 GetTooltipTextAndAccessibleName() const;
-  void SetTooltipTextAndAccessibleName(const base::string16& tooltip_text);
+  std::u16string GetTooltipTextAndAccessibleName() const;
+  void SetTooltipTextAndAccessibleName(const std::u16string& tooltip_text);
 
   // Set the accessible name of the combobox.
-  void SetAccessibleName(const base::string16& name);
-  base::string16 GetAccessibleName() const;
+  void SetAccessibleName(const std::u16string& name);
+  std::u16string GetAccessibleName() const;
 
   // Visually marks the combobox as having an invalid value selected.
   // When invalid, it paints with white text on a red background.
@@ -101,6 +102,13 @@ class VIEWS_EXPORT Combobox : public View,
   // Whether the combobox should use the largest label as the content size.
   void SetSizeToLargestLabel(bool size_to_largest_label);
   bool GetSizeToLargestLabel() const { return size_to_largest_label_; }
+
+  // Use the time when combobox was closed in order for parent view to not
+  // treat a user event already treated by the combobox.
+  base::TimeTicks GetClosedTime() { return closed_time_; }
+
+  // Returns whether or not the menu is currently running.
+  bool IsMenuRunning() const;
 
   // Overridden from View:
   gfx::Size CalculatePreferredSize() const override;
@@ -118,11 +126,12 @@ class VIEWS_EXPORT Combobox : public View,
   int GetRowCount() override;
   int GetSelectedRow() override;
   void SetSelectedRow(int row) override;
-  base::string16 GetTextForRow(int row) override;
+  std::u16string GetTextForRow(int row) override;
 
  protected:
   // Overridden from ComboboxModelObserver:
   void OnComboboxModelChanged(ui::ComboboxModel* model) override;
+  void OnComboboxModelDestroying(ui::ComboboxModel* model) override;
 
   // Getters to be used by metadata.
   const base::RepeatingClosure& GetCallback() const;
@@ -157,20 +166,19 @@ class VIEWS_EXPORT Combobox : public View,
   // Finds the size of the largest menu label.
   gfx::Size GetContentSize() const;
 
+  void OnContentSizeMaybeChanged();
+
   // Handles the clicking event.
   void HandleClickEvent();
 
   PrefixSelector* GetPrefixSelector();
-
-  // Returns the color to use for the combobox's focus ring.
-  SkColor GetFocusRingColor() const;
 
   // Optionally used to tie the lifetime of the model to this combobox. See
   // constructor.
   std::unique_ptr<ui::ComboboxModel> owned_model_;
 
   // Reference to our model, which may be owned or not.
-  ui::ComboboxModel* model_ = nullptr;
+  raw_ptr<ui::ComboboxModel> model_ = nullptr;
 
   // Typography context for the text written in the combobox and the options
   // shown in the drop-down menu.
@@ -190,7 +198,7 @@ class VIEWS_EXPORT Combobox : public View,
   bool invalid_ = false;
 
   // The accessible name of this combobox.
-  base::string16 accessible_name_;
+  std::u16string accessible_name_;
 
   // A helper used to select entries by keyboard input.
   std::unique_ptr<PrefixSelector> selector_;
@@ -212,7 +220,7 @@ class VIEWS_EXPORT Combobox : public View,
   // A transparent button that handles events and holds button state. Placed on
   // top of the combobox as a child view. Doesn't paint itself, but serves as a
   // host for inkdrops.
-  Button* arrow_button_;
+  raw_ptr<Button> arrow_button_;
 
   // Set while the dropdown is showing. Ensures the menu is closed if |this| is
   // destroyed.
@@ -223,13 +231,8 @@ class VIEWS_EXPORT Combobox : public View,
   // true, the parent view must relayout in ChildPreferredSizeChanged().
   bool size_to_largest_label_ = true;
 
-  // The focus ring for this Combobox.
-  FocusRing* focus_ring_ = nullptr;
-
   base::ScopedObservation<ui::ComboboxModel, ui::ComboboxModelObserver>
       observation_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(Combobox);
 };
 
 BEGIN_VIEW_BUILDER(VIEWS_EXPORT, Combobox, View)
@@ -239,8 +242,8 @@ VIEW_BUILDER_PROPERTY(ui::ComboboxModel*, Model)
 VIEW_BUILDER_PROPERTY(int, SelectedIndex)
 VIEW_BUILDER_PROPERTY(bool, Invalid)
 VIEW_BUILDER_PROPERTY(bool, SizeToLargestLabel)
-VIEW_BUILDER_PROPERTY(base::string16, AccessibleName)
-VIEW_BUILDER_PROPERTY(base::string16, TooltipTextAndAccessibleName)
+VIEW_BUILDER_PROPERTY(std::u16string, AccessibleName)
+VIEW_BUILDER_PROPERTY(std::u16string, TooltipTextAndAccessibleName)
 END_VIEW_BUILDER
 
 }  // namespace views

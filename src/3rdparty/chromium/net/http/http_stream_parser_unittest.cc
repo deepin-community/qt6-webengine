@@ -7,6 +7,7 @@
 #include <stdint.h>
 
 #include <algorithm>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -17,7 +18,6 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/memory/ref_counted.h"
 #include "base/run_loop.h"
-#include "base/stl_util.h"
 #include "base/strings/string_piece.h"
 #include "base/test/task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -74,6 +74,10 @@ class ReadErrorUploadDataStream : public UploadDataStream {
   explicit ReadErrorUploadDataStream(FailureMode mode)
       : UploadDataStream(true, 0), async_(mode) {}
 
+  ReadErrorUploadDataStream(const ReadErrorUploadDataStream&) = delete;
+  ReadErrorUploadDataStream& operator=(const ReadErrorUploadDataStream&) =
+      delete;
+
  private:
   void CompleteRead() { UploadDataStream::OnReadCompleted(ERR_FAILED); }
 
@@ -95,8 +99,6 @@ class ReadErrorUploadDataStream : public UploadDataStream {
   const FailureMode async_;
 
   base::WeakPtrFactory<ReadErrorUploadDataStream> weak_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(ReadErrorUploadDataStream);
 };
 
 TEST(HttpStreamParser, DataReadErrorSynchronous) {
@@ -203,6 +205,10 @@ class InitAsyncUploadDataStream : public ChunkedUploadDataStream {
   explicit InitAsyncUploadDataStream(int64_t identifier)
       : ChunkedUploadDataStream(identifier) {}
 
+  InitAsyncUploadDataStream(const InitAsyncUploadDataStream&) = delete;
+  InitAsyncUploadDataStream& operator=(const InitAsyncUploadDataStream&) =
+      delete;
+
  private:
   void CompleteInit() { UploadDataStream::OnInitCompleted(OK); }
 
@@ -214,8 +220,6 @@ class InitAsyncUploadDataStream : public ChunkedUploadDataStream {
   }
 
   base::WeakPtrFactory<InitAsyncUploadDataStream> weak_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(InitAsyncUploadDataStream);
 };
 
 TEST(HttpStreamParser, InitAsynchronousUploadDataStream) {
@@ -268,7 +272,7 @@ TEST(HttpStreamParser, InitAsynchronousUploadDataStream) {
                                    callback1.callback());
   EXPECT_EQ(ERR_IO_PENDING, result1);
   base::RunLoop().RunUntilIdle();
-  upload_data_stream.AppendData(kChunk, base::size(kChunk) - 1, true);
+  upload_data_stream.AppendData(kChunk, std::size(kChunk) - 1, true);
 
   // Check progress after read completes.
   progress = upload_data_stream.GetUploadProgress();
@@ -639,11 +643,11 @@ TEST(HttpStreamParser, SentBytesChunkedPostError) {
                                                &response, callback.callback()));
 
   base::RunLoop().RunUntilIdle();
-  upload_data_stream.AppendData(kChunk, base::size(kChunk) - 1, false);
+  upload_data_stream.AppendData(kChunk, std::size(kChunk) - 1, false);
 
   base::RunLoop().RunUntilIdle();
   // This write should fail.
-  upload_data_stream.AppendData(kChunk, base::size(kChunk) - 1, false);
+  upload_data_stream.AppendData(kChunk, std::size(kChunk) - 1, false);
   EXPECT_THAT(callback.WaitForResult(), IsError(ERR_FAILED));
 
   EXPECT_EQ(CountWriteBytes(writes), parser.sent_bytes());
@@ -715,7 +719,7 @@ TEST(HttpStreamParser, AsyncSingleChunkAndAsyncSocket) {
   ASSERT_FALSE(callback.have_result());
 
   // Now append the only chunk and wait for the callback.
-  upload_stream.AppendData(kChunk, base::size(kChunk) - 1, true);
+  upload_stream.AppendData(kChunk, std::size(kChunk) - 1, true);
   ASSERT_THAT(callback.WaitForResult(), IsOk());
 
   // Attempt to read the response status and the response headers.
@@ -767,7 +771,7 @@ TEST(HttpStreamParser, SyncSingleChunkAndAsyncSocket) {
                                  NetLogWithSource()),
               IsOk());
   // Append the only chunk.
-  upload_stream.AppendData(kChunk, base::size(kChunk) - 1, true);
+  upload_stream.AppendData(kChunk, std::size(kChunk) - 1, true);
 
   SequencedSocketData data(reads, writes);
   std::unique_ptr<StreamSocket> stream_socket = CreateConnectedSocket(&data);
@@ -848,7 +852,7 @@ TEST(HttpStreamParser, AsyncChunkAndAsyncSocketWithMultipleChunks) {
   };
 
   ChunkedUploadDataStream upload_stream(0);
-  upload_stream.AppendData(kChunk1, base::size(kChunk1) - 1, false);
+  upload_stream.AppendData(kChunk1, std::size(kChunk1) - 1, false);
   ASSERT_THAT(upload_stream.Init(TestCompletionCallback().callback(),
                                  NetLogWithSource()),
               IsOk());
@@ -884,12 +888,12 @@ TEST(HttpStreamParser, AsyncChunkAndAsyncSocketWithMultipleChunks) {
   ASSERT_FALSE(callback.have_result());
 
   // Now append another chunk.
-  upload_stream.AppendData(kChunk2, base::size(kChunk2) - 1, false);
+  upload_stream.AppendData(kChunk2, std::size(kChunk2) - 1, false);
   ASSERT_FALSE(callback.have_result());
 
   // Add the final chunk, while the write for the second is still pending,
   // which should not confuse the state machine.
-  upload_stream.AppendData(kChunk3, base::size(kChunk3) - 1, true);
+  upload_stream.AppendData(kChunk3, std::size(kChunk3) - 1, true);
   ASSERT_FALSE(callback.have_result());
 
   // Wait for writes to complete.
@@ -1118,7 +1122,7 @@ TEST(HttpStreamParser, TruncatedHeaders) {
   for (size_t protocol = 0; protocol < NUM_PROTOCOLS; protocol++) {
     SCOPED_TRACE(protocol);
 
-    for (size_t i = 0; i < base::size(reads); i++) {
+    for (size_t i = 0; i < std::size(reads); i++) {
       SCOPED_TRACE(i);
       SequencedSocketData data(reads[i], writes);
       std::unique_ptr<StreamSocket> stream_socket(CreateConnectedSocket(&data));
@@ -1147,7 +1151,7 @@ TEST(HttpStreamParser, TruncatedHeaders) {
 
       int rv = parser.ReadResponseHeaders(callback.callback());
       EXPECT_EQ(CountWriteBytes(writes), parser.sent_bytes());
-      if (i == base::size(reads) - 1) {
+      if (i == std::size(reads) - 1) {
         EXPECT_THAT(rv, IsOk());
         EXPECT_TRUE(response_info.headers.get());
         EXPECT_EQ(CountReadBytes(reads[i]), parser.received_bytes());
@@ -1253,16 +1257,16 @@ class SimpleGetRunner {
   void SetupParserAndSendRequest() {
     reads_.push_back(MockRead(SYNCHRONOUS, 0, sequence_number_++));  // EOF
 
-    data_.reset(new SequencedSocketData(reads_, writes_));
+    data_ = std::make_unique<SequencedSocketData>(reads_, writes_);
     stream_socket_ = CreateConnectedSocket(data_.get());
 
     request_info_.method = "GET";
     request_info_.url = url_;
     request_info_.load_flags = LOAD_NORMAL;
 
-    parser_.reset(new HttpStreamParser(stream_socket_.get(),
-                                       false /* is_reused */, &request_info_,
-                                       read_buffer(), NetLogWithSource()));
+    parser_ = std::make_unique<HttpStreamParser>(
+        stream_socket_.get(), false /* is_reused */, &request_info_,
+        read_buffer(), NetLogWithSource());
 
     TestCompletionCallback callback;
     ASSERT_EQ(OK, parser_->SendRequest("GET / HTTP/1.1\r\n", request_headers_,
@@ -1360,7 +1364,7 @@ TEST(HttpStreamParser, Http09PortTests) {
               get_runner.response_info()->headers->GetStatusLine());
 
     EXPECT_EQ(0, get_runner.parser()->received_bytes());
-    int read_lengths[] = {kResponse.size(), 0};
+    int read_lengths[] = {static_cast<int>(kResponse.size()), 0};
     get_runner.ReadBody(kResponse.size(), read_lengths);
     EXPECT_EQ(kResponse.size(),
               static_cast<size_t>(get_runner.parser()->received_bytes()));
@@ -1385,13 +1389,32 @@ TEST(HttpStreamParser, Http09PortTests) {
               get_runner.response_info()->headers->GetStatusLine());
 
     EXPECT_EQ(0, get_runner.parser()->received_bytes());
-    int read_lengths[] = {kShoutcastResponse.size(), 0};
+    int read_lengths[] = {static_cast<int>(kShoutcastResponse.size()), 0};
     get_runner.ReadBody(kShoutcastResponse.size(), read_lengths);
     EXPECT_EQ(kShoutcastResponse.size(),
               static_cast<size_t>(get_runner.parser()->received_bytes()));
     EXPECT_EQ(HttpResponseInfo::CONNECTION_INFO_HTTP0_9,
               get_runner.response_info()->connection_info);
   }
+}
+
+TEST(HttpStreamParser, ContinueWithBody) {
+  const std::string kResponse =
+      "HTTP/1.1 100 Continue\r\n\r\nhello\r\nworld\r\n";
+
+  SimpleGetRunner get_runner;
+  get_runner.set_url(GURL("http://foo.com/"));
+  get_runner.AddRead(kResponse);
+  get_runner.SetupParserAndSendRequest();
+
+  get_runner.ReadHeadersExpectingError(OK);
+  ASSERT_TRUE(get_runner.response_info()->headers);
+  EXPECT_EQ("HTTP/1.1 100 Continue",
+            get_runner.response_info()->headers->GetStatusLine());
+
+  // We ignore informational responses and start reading the next response in
+  // the stream. This simulates the behavior.
+  get_runner.ReadHeadersExpectingError(ERR_INVALID_HTTP_RESPONSE);
 }
 
 TEST(HttpStreamParser, NullFails) {
@@ -1406,7 +1429,7 @@ TEST(HttpStreamParser, NullFails) {
   // Need to start at 4 because HttpStreamParser will treat the response as
   // HTTP/0.9 if it doesn't see "HTTP", and need to end at -1 because "\r\n\r"
   // is currently treated as a valid end of header marker.
-  for (size_t i = 4; i < base::size(kTestHeaders) - 1; ++i) {
+  for (size_t i = 4; i < std::size(kTestHeaders) - 1; ++i) {
     std::string read_data(kTestHeaders);
     read_data.insert(i, 1, '\0');
     read_data.append("body");
@@ -1699,13 +1722,13 @@ TEST(HttpStreamParser, NonInformationalResponseStart) {
 
   EXPECT_THAT(parser.ReadResponseHeaders(callback.callback()),
               IsError(ERR_IO_PENDING));
-  task_environment.AdvanceClock(base::TimeDelta::FromSeconds(1));
+  task_environment.AdvanceClock(base::Seconds(1));
 
   // [seq=1 --> seq=2] The parser reads the first fragment of the response
   // headers and then pauses to advance the mock clock.
   base::TimeTicks first_response_start_time = task_environment.NowTicks();
   sequenced_socket_data.RunUntilPaused();
-  task_environment.AdvanceClock(base::TimeDelta::FromSeconds(1));
+  task_environment.AdvanceClock(base::Seconds(1));
 
   // [seq=3] The parser reads the second fragment of the response headers.
   sequenced_socket_data.Resume();
@@ -1796,7 +1819,7 @@ TEST(HttpStreamParser, ReceivedBytesIncludesContinueHeader) {
   // response headers and then pauses to advance the mock clock.
   base::TimeTicks first_response_start_time = task_environment.NowTicks();
   sequenced_socket_data.RunUntilPaused();
-  task_environment.AdvanceClock(base::TimeDelta::FromSeconds(1));
+  task_environment.AdvanceClock(base::Seconds(1));
 
   // [seq=3] The parser reads the second fragment of the informational response
   // headers.
@@ -1812,7 +1835,7 @@ TEST(HttpStreamParser, ReceivedBytesIncludesContinueHeader) {
 
   // [seq=4] The parser pauses to advance the clock.
   sequenced_socket_data.RunUntilPaused();
-  task_environment.AdvanceClock(base::TimeDelta::FromSeconds(1));
+  task_environment.AdvanceClock(base::Seconds(1));
 
   // [seq=5 --> seq=6] The parser reads the first fragment of the
   // non-informational response headers and then pauses to advance the mock
@@ -1821,13 +1844,13 @@ TEST(HttpStreamParser, ReceivedBytesIncludesContinueHeader) {
       task_environment.NowTicks();
   sequenced_socket_data.Resume();
   sequenced_socket_data.RunUntilPaused();
-  task_environment.AdvanceClock(base::TimeDelta::FromSeconds(1));
+  task_environment.AdvanceClock(base::Seconds(1));
 
   // [seq=7] The parser reads the second fragment of the non-informational
   // response headers.
   sequenced_socket_data.Resume();
   EXPECT_THAT(callback.WaitForResult(), IsOk());
-  task_environment.AdvanceClock(base::TimeDelta::FromSeconds(1));
+  task_environment.AdvanceClock(base::Seconds(1));
 
   // Check the received headers.
   EXPECT_EQ(200, response.headers->response_code());
@@ -1929,13 +1952,13 @@ TEST(HttpStreamParser, EarlyHints) {
   // response headers and then pauses to advance the mock clock.
   base::TimeTicks first_response_start_time = task_environment.NowTicks();
   sequenced_socket_data.RunUntilPaused();
-  task_environment.AdvanceClock(base::TimeDelta::FromSeconds(1));
+  task_environment.AdvanceClock(base::Seconds(1));
 
   // [seq=3 --> seq=4] The parser reads the second fragment of the informational
   // response headers and then pauses to advance the mock clock.
   sequenced_socket_data.Resume();
   sequenced_socket_data.RunUntilPaused();
-  task_environment.AdvanceClock(base::TimeDelta::FromSeconds(1));
+  task_environment.AdvanceClock(base::Seconds(1));
 
   // [seq=5] The parser reads the third fragment of the informational response
   // headers.
@@ -1951,7 +1974,7 @@ TEST(HttpStreamParser, EarlyHints) {
 
   // [seq=6] The parser pauses to advance the clock.
   sequenced_socket_data.RunUntilPaused();
-  task_environment.AdvanceClock(base::TimeDelta::FromSeconds(1));
+  task_environment.AdvanceClock(base::Seconds(1));
 
   // [seq=7 --> seq=8] The parser reads the first fragment of the
   // non-informational response headers and then pauses to advance the mock
@@ -1960,13 +1983,13 @@ TEST(HttpStreamParser, EarlyHints) {
       task_environment.NowTicks();
   sequenced_socket_data.Resume();
   sequenced_socket_data.RunUntilPaused();
-  task_environment.AdvanceClock(base::TimeDelta::FromSeconds(1));
+  task_environment.AdvanceClock(base::Seconds(1));
 
   // [seq=9] The parser reads the second fragment of the non-informational
   // response headers.
   sequenced_socket_data.Resume();
   EXPECT_THAT(callback.WaitForResult(), IsOk());
-  task_environment.AdvanceClock(base::TimeDelta::FromSeconds(1));
+  task_environment.AdvanceClock(base::Seconds(1));
 
   // Check the received headers.
   EXPECT_EQ(200, response.headers->response_code());
@@ -2060,7 +2083,7 @@ TEST(HttpStreamParser, MixedResponseHeaders) {
   // response headers and then pauses to advance the mock clock.
   base::TimeTicks first_response_start_time = task_environment.NowTicks();
   sequenced_socket_data.RunUntilPaused();
-  task_environment.AdvanceClock(base::TimeDelta::FromSeconds(1));
+  task_environment.AdvanceClock(base::Seconds(1));
 
   // [seq=3] The parser reads the second fragment of the informational response
   // headers.
@@ -2080,7 +2103,7 @@ TEST(HttpStreamParser, MixedResponseHeaders) {
   base::TimeTicks non_informational_response_start_time =
       task_environment.NowTicks();
   sequenced_socket_data.RunUntilPaused();
-  task_environment.AdvanceClock(base::TimeDelta::FromSeconds(1));
+  task_environment.AdvanceClock(base::Seconds(1));
 
   // [seq=5] The parser reads the second fragment of the non-informational
   // response headers.

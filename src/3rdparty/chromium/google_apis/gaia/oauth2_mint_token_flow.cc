@@ -15,7 +15,6 @@
 #include "base/containers/span.h"
 #include "base/json/json_reader.h"
 #include "base/metrics/histogram_functions.h"
-#include "base/optional.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
@@ -28,6 +27,7 @@
 #include "net/base/net_errors.h"
 #include "net/cookies/cookie_constants.h"
 #include "services/network/public/mojom/url_response_head.mojom.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace {
 
@@ -75,7 +75,7 @@ static GoogleServiceAuthError CreateAuthError(
   if (body)
     response_body = std::move(*body);
 
-  base::Optional<base::Value> value = base::JSONReader::Read(response_body);
+  absl::optional<base::Value> value = base::JSONReader::Read(response_body);
   if (!value || !value->is_dict()) {
     int http_response_code = -1;
     if (head && head->headers)
@@ -238,7 +238,7 @@ void OAuth2MintTokenFlow::ProcessApiCallSuccess(
   if (body)
     response_body = std::move(*body);
 
-  base::Optional<base::Value> value = base::JSONReader::Read(response_body);
+  absl::optional<base::Value> value = base::JSONReader::Read(response_body);
   if (!value || !value->is_dict()) {
     RecordApiCallResult(OAuth2MintTokenApiCallResult::kParseJsonFailure);
     ReportFailure(GoogleServiceAuthError::FromUnexpectedServiceResponse(
@@ -363,7 +363,7 @@ bool OAuth2MintTokenFlow::ParseRemoteConsentResponse(
       resolution_dict->FindListKey("browserCookies");
   base::span<const base::Value> cookie_list;
   if (browser_cookies)
-    cookie_list = browser_cookies->GetList();
+    cookie_list = browser_cookies->GetListDeprecated();
 
   base::Time time_now = base::Time::Now();
   bool success = true;
@@ -388,8 +388,8 @@ bool OAuth2MintTokenFlow::ParseRemoteConsentResponse(
     const std::string* path = cookie_dict.FindStringKey("path");
     const std::string* max_age_seconds =
         cookie_dict.FindStringKey("maxAgeSeconds");
-    base::Optional<bool> is_secure = cookie_dict.FindBoolKey("isSecure");
-    base::Optional<bool> is_http_only = cookie_dict.FindBoolKey("isHttpOnly");
+    absl::optional<bool> is_secure = cookie_dict.FindBoolKey("isSecure");
+    absl::optional<bool> is_http_only = cookie_dict.FindBoolKey("isHttpOnly");
     const std::string* same_site = cookie_dict.FindStringKey("sameSite");
 
     int64_t max_age = -1;
@@ -400,7 +400,7 @@ bool OAuth2MintTokenFlow::ParseRemoteConsentResponse(
 
     base::Time expiration_time = base::Time();
     if (max_age > 0)
-      expiration_time = time_now + base::TimeDelta::FromSeconds(max_age);
+      expiration_time = time_now + base::Seconds(max_age);
 
     std::unique_ptr<net::CanonicalCookie> cookie =
         net::CanonicalCookie::CreateSanitizedCookie(
@@ -408,7 +408,8 @@ bool OAuth2MintTokenFlow::ParseRemoteConsentResponse(
             time_now, expiration_time, time_now, is_secure ? *is_secure : false,
             is_http_only ? *is_http_only : false,
             net::StringToCookieSameSite(same_site ? *same_site : ""),
-            net::COOKIE_PRIORITY_DEFAULT, /* same_party */ false);
+            net::COOKIE_PRIORITY_DEFAULT, /* same_party */ false,
+            /* partition_key */ absl::nullopt);
     cookies.push_back(*cookie);
   }
 

@@ -8,7 +8,7 @@
 #include <map>
 #include <string>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/task/cancelable_task_tracker.h"
@@ -41,6 +41,9 @@ class FaviconSource : public content::URLDataSource {
   // |type| is the type of icon this FaviconSource will provide.
   explicit FaviconSource(Profile* profile, chrome::FaviconUrlFormat format);
 
+  FaviconSource(const FaviconSource&) = delete;
+  FaviconSource& operator=(const FaviconSource&) = delete;
+
   ~FaviconSource() override;
 
   // content::URLDataSource implementation.
@@ -58,11 +61,12 @@ class FaviconSource : public content::URLDataSource {
 
  protected:
   // Exposed for testing.
-  virtual ui::NativeTheme* GetNativeTheme();
+  virtual ui::NativeTheme* GetNativeTheme(
+      const content::WebContents::Getter& wc_getter);
   virtual base::RefCountedMemory* LoadIconBytes(float scale_factor,
                                                 int resource_id);
 
-  Profile* profile_;
+  raw_ptr<Profile> profile_;
 
  private:
   // Defines the allowed pixel sizes for requested favicons.
@@ -79,27 +83,29 @@ class FaviconSource : public content::URLDataSource {
   void OnFaviconDataAvailable(
       content::URLDataSource::GotDataCallback callback,
       const chrome::ParsedFaviconPath& parsed,
+      const content::WebContents::Getter& wc_getter,
       const favicon_base::FaviconRawBitmapResult& bitmap_result);
 
   // Sends the 16x16 DIP 1x default favicon.
-  void SendDefaultResponse(content::URLDataSource::GotDataCallback callback);
+  void SendDefaultResponse(content::URLDataSource::GotDataCallback callback,
+                           const content::WebContents::Getter& wc_getter);
 
   // Sends back default favicon or fallback monogram.
   void SendDefaultResponse(content::URLDataSource::GotDataCallback callback,
-                           const chrome::ParsedFaviconPath& parsed);
+                           const chrome::ParsedFaviconPath& parsed,
+                           const content::WebContents::Getter& wc_getter);
 
   // Sends the default favicon.
   void SendDefaultResponse(content::URLDataSource::GotDataCallback callback,
                            int size_in_dip,
-                           float scale_factor);
+                           float scale_factor,
+                           bool dark_mode);
 
   chrome::FaviconUrlFormat url_format_;
 
   base::CancelableTaskTracker cancelable_task_tracker_;
 
   base::WeakPtrFactory<FaviconSource> weak_ptr_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(FaviconSource);
 };
 
 #endif  // CHROME_BROWSER_UI_WEBUI_FAVICON_SOURCE_H_

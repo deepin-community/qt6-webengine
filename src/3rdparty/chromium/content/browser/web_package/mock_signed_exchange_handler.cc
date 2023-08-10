@@ -6,7 +6,6 @@
 
 #include "base/bind.h"
 #include "base/callback.h"
-#include "base/strings/stringprintf.h"
 #include "content/browser/web_package/prefetched_signed_exchange_cache_entry.h"
 #include "content/browser/web_package/signed_exchange_cert_fetcher_factory.h"
 #include "net/filter/source_stream.h"
@@ -32,8 +31,7 @@ MockSignedExchangeHandlerParams::MockSignedExchangeHandlerParams(
       response_headers(std::move(response_headers)),
       header_integrity(header_integrity),
       signature_expire_time(signature_expire_time.is_null()
-                                ? base::Time::Now() +
-                                      base::TimeDelta::FromDays(1)
+                                ? base::Time::Now() + base::Days(1)
                                 : signature_expire_time) {}
 
 MockSignedExchangeHandlerParams::MockSignedExchangeHandlerParams(

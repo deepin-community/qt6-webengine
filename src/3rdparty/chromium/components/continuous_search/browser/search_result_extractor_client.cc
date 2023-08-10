@@ -4,6 +4,8 @@
 
 #include "components/continuous_search/browser/search_result_extractor_client.h"
 
+#include "base/strings/utf_string_conversions.h"
+#include "components/continuous_search/common/title_validator.h"
 #include "components/google/core/common/google_util.h"
 #include "content/public/browser/web_contents.h"
 #include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
@@ -24,11 +26,13 @@ SearchResultExtractorClientStatus ToSearchResultExtractorClientStatus(
 
 }  // namespace
 
-SearchResultExtractorClient::SearchResultExtractorClient() = default;
+SearchResultExtractorClient::SearchResultExtractorClient(bool test_mode)
+    : test_mode_(test_mode) {}
 SearchResultExtractorClient::~SearchResultExtractorClient() = default;
 
 void SearchResultExtractorClient::RequestData(
     content::WebContents* web_contents,
+    const std::vector<mojom::ResultType>& result_types,
     RequestDataCallback callback) {
   if (!web_contents || !web_contents->GetMainFrame() ||
       !web_contents->GetMainFrame()->GetRemoteAssociatedInterfaces()) {
@@ -38,7 +42,7 @@ void SearchResultExtractorClient::RequestData(
   }
 
   const GURL& url = web_contents->GetLastCommittedURL();
-  if (!google_util::IsGoogleSearchUrl(url)) {
+  if (!google_util::IsGoogleSearchUrl(url) && !test_mode_) {
     std::move(callback).Run(
         SearchResultExtractorClientStatus::kWebContentsHasNonSrpUrl,
         mojom::CategoryResults::New());
@@ -51,6 +55,7 @@ void SearchResultExtractorClient::RequestData(
 
   mojom::SearchResultExtractor* extractor_ptr = extractor.get();
   extractor_ptr->ExtractCurrentSearchResults(
+      result_types,
       base::BindOnce(&SearchResultExtractorClient::RequestDataCallbackAdapter,
                      weak_ptr_factory_.GetWeakPtr(), std::move(extractor), url,
                      std::move(callback)));
@@ -75,9 +80,16 @@ void SearchResultExtractorClient::RequestDataCallbackAdapter(
     return;
   }
 
+  // Validate all the returned titles (URL already needs to be valid for mojom).
+  for (mojom::ResultGroupPtr& group : results->groups) {
+    for (mojom::SearchResultPtr& result : group->results) {
+      result->title = ValidateTitle(result->title);
+    }
+  }
+
   // `url` and transitively `document_url` should always be a search URL. If
   // this is not the case an invariant has been violated.
-  CHECK(google_util::IsGoogleSearchUrl(results->document_url));
+  CHECK(google_util::IsGoogleSearchUrl(results->document_url) || test_mode_);
   std::move(callback).Run(SearchResultExtractorClientStatus::kSuccess,
                           std::move(results));
 }

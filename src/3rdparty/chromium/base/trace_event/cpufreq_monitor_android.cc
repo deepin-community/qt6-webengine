@@ -6,7 +6,6 @@
 
 #include <fcntl.h>
 
-#include "base/atomicops.h"
 #include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_file.h"
@@ -15,7 +14,6 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/stringprintf.h"
-#include "base/task/post_task.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
 #include "base/trace_event/trace_event.h"
@@ -146,7 +144,7 @@ void CPUFreqMonitor::Start() {
   // It's the responsibility of the caller to ensure that Start/Stop are
   // synchronized. If Start/Stop are called asynchronously where this value
   // may be incorrect, we have bigger problems.
-  if (base::subtle::NoBarrier_Load(&is_enabled_) == 1 ||
+  if (is_enabled_.load(std::memory_order_relaxed) ||
       !delegate_->IsTraceCategoryEnabled()) {
     return;
   }
@@ -167,7 +165,7 @@ void CPUFreqMonitor::Start() {
   if (fds.size() == 0)
     return;
 
-  base::subtle::Release_Store(&is_enabled_, 1);
+  is_enabled_.store(true, std::memory_order_release);
 
   GetOrCreateTaskRunner()->PostTask(
       FROM_HERE,
@@ -176,16 +174,16 @@ void CPUFreqMonitor::Start() {
 }
 
 void CPUFreqMonitor::Stop() {
-  base::subtle::Release_Store(&is_enabled_, 0);
+  is_enabled_.store(false, std::memory_order_release);
 }
 
 void CPUFreqMonitor::Sample(
     std::vector<std::pair<unsigned int, base::ScopedFD>> fds) {
-  // For the same reason as above we use NoBarrier_Load, because if this value
-  // is in transition and we use Acquire_Load then we'll never shut down our
+  // For the same reason as above we use relaxed ordering, because if this value
+  // is in transition and we use acquire ordering then we'll never shut down our
   // original Sample tasks until the next Stop, so it's still the responsibility
   // of callers to sync Start/Stop.
-  if (base::subtle::NoBarrier_Load(&is_enabled_) == 0)
+  if (!is_enabled_.load(std::memory_order_relaxed))
     return;
 
   for (auto& id_fd : fds) {
@@ -212,11 +210,11 @@ void CPUFreqMonitor::Sample(
       FROM_HERE,
       base::BindOnce(&CPUFreqMonitor::Sample, weak_ptr_factory_.GetWeakPtr(),
                      std::move(fds)),
-      base::TimeDelta::FromMilliseconds(kDefaultCPUFreqSampleIntervalMs));
+      base::Milliseconds(kDefaultCPUFreqSampleIntervalMs));
 }
 
 bool CPUFreqMonitor::IsEnabledForTesting() {
-  return base::subtle::Acquire_Load(&is_enabled_) == 1;
+  return is_enabled_.load(std::memory_order_acquire);
 }
 
 const scoped_refptr<SingleThreadTaskRunner>&

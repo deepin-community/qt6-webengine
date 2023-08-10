@@ -13,9 +13,9 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/rand_util.h"
-#include "base/task/post_task.h"
 #include "base/trace_event/memory_dump_manager.h"
 #include "third_party/blink/public/platform/scheduler/web_thread_scheduler.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread_scheduler.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
@@ -96,16 +96,19 @@ bool CachedStorageArea::SetItem(const String& key,
     return false;
 
   const FormatOption value_format = GetValueFormat();
-  base::Optional<Vector<uint8_t>> optional_old_value;
+  absl::optional<Vector<uint8_t>> optional_old_value;
   if (!old_value.IsNull() && should_send_old_value_on_mutations_)
     optional_old_value = StringToUint8Vector(old_value, value_format);
   KURL page_url = source->GetPageUrl();
   String source_id = areas_->at(source);
   String source_string = PackSource(page_url, source_id);
-  remote_area_->Put(StringToUint8Vector(key, GetKeyFormat()),
-                    StringToUint8Vector(value, value_format),
-                    optional_old_value, source_string,
-                    MakeSuccessCallback(source));
+
+  if (!is_session_storage_for_prerendering_) {
+    remote_area_->Put(StringToUint8Vector(key, GetKeyFormat()),
+                      StringToUint8Vector(value, value_format),
+                      optional_old_value, source_string,
+                      MakeSuccessCallback(source));
+  }
   if (!IsSessionStorage())
     EnqueuePendingMutation(key, value, old_value, source_string);
   else if (old_value != value)
@@ -121,15 +124,17 @@ void CachedStorageArea::RemoveItem(const String& key, Source* source) {
   if (!map_->RemoveItem(key, &old_value))
     return;
 
-  base::Optional<Vector<uint8_t>> optional_old_value;
+  absl::optional<Vector<uint8_t>> optional_old_value;
   if (should_send_old_value_on_mutations_)
     optional_old_value = StringToUint8Vector(old_value, GetValueFormat());
   KURL page_url = source->GetPageUrl();
   String source_id = areas_->at(source);
   String source_string = PackSource(page_url, source_id);
-  remote_area_->Delete(StringToUint8Vector(key, GetKeyFormat()),
-                       optional_old_value, source_string,
-                       MakeSuccessCallback(source));
+  if (!is_session_storage_for_prerendering_) {
+    remote_area_->Delete(StringToUint8Vector(key, GetKeyFormat()),
+                         optional_old_value, source_string,
+                         MakeSuccessCallback(source));
+  }
   if (!IsSessionStorage())
     EnqueuePendingMutation(key, String(), old_value, source_string);
   else
@@ -164,8 +169,10 @@ void CachedStorageArea::Clear(Source* source) {
   KURL page_url = source->GetPageUrl();
   String source_id = areas_->at(source);
   String source_string = PackSource(page_url, source_id);
-  remote_area_->DeleteAll(source_string, std::move(new_observer),
-                          MakeSuccessCallback(source));
+  if (!is_session_storage_for_prerendering_) {
+    remote_area_->DeleteAll(source_string, std::move(new_observer),
+                            MakeSuccessCallback(source));
+  }
   if (!IsSessionStorage())
     EnqueuePendingMutation(String(), String(), String(), source_string);
   else if (!already_empty)
@@ -180,15 +187,19 @@ String CachedStorageArea::RegisterSource(Source* source) {
 
 CachedStorageArea::CachedStorageArea(
     AreaType type,
-    scoped_refptr<const SecurityOrigin> origin,
+    const BlinkStorageKey& storage_key,
+    const LocalDOMWindow* local_dom_window,
     scoped_refptr<base::SingleThreadTaskRunner> task_runner,
-    StorageNamespace* storage_namespace)
+    StorageNamespace* storage_namespace,
+    bool is_session_storage_for_prerendering,
+    mojo::PendingRemote<mojom::blink::StorageArea> storage_area)
     : type_(type),
-      origin_(std::move(origin)),
+      storage_key_(storage_key),
       storage_namespace_(storage_namespace),
+      is_session_storage_for_prerendering_(is_session_storage_for_prerendering),
       task_runner_(std::move(task_runner)),
       areas_(MakeGarbageCollected<HeapHashMap<WeakMember<Source>, String>>()) {
-  BindStorageArea();
+  BindStorageArea(std::move(storage_area), local_dom_window);
   base::trace_event::MemoryDumpManager::GetInstance()->RegisterDumpProvider(
       this, "DOMStorage",
       ThreadScheduler::Current()->DeprecatedDefaultTaskRunner());
@@ -199,15 +210,36 @@ CachedStorageArea::~CachedStorageArea() {
       this);
 }
 
+const LocalDOMWindow* CachedStorageArea::GetBestCurrentDOMWindow() {
+  for (auto key : areas_->Keys()) {
+    if (!key->GetDOMWindow()) {
+      continue;
+    }
+    return key->GetDOMWindow();
+  }
+  return nullptr;
+}
+
 void CachedStorageArea::BindStorageArea(
-    mojo::PendingRemote<mojom::blink::StorageArea> new_area) {
+    mojo::PendingRemote<mojom::blink::StorageArea> new_area,
+    const LocalDOMWindow* local_dom_window) {
   // Some tests may not provide a StorageNamespace.
   DCHECK(!remote_area_);
-  if (new_area) {
+  if (!local_dom_window)
+    local_dom_window = GetBestCurrentDOMWindow();
+  if (!local_dom_window) {
+    // If there isn't a local_dom_window to bind to, clear out storage areas and
+    // mutations. When EnsureLoaded is called it will attempt to re-bind.
+    map_ = nullptr;
+    pending_mutations_by_key_.clear();
+    pending_mutations_by_source_.clear();
+    return;
+  } else if (new_area) {
     remote_area_.Bind(std::move(new_area), task_runner_);
   } else if (storage_namespace_) {
     storage_namespace_->BindStorageArea(
-        origin_, remote_area_.BindNewPipeAndPassReceiver(task_runner_));
+        *local_dom_window,
+        remote_area_.BindNewPipeAndPassReceiver(task_runner_));
   } else {
     return;
   }
@@ -218,6 +250,7 @@ void CachedStorageArea::BindStorageArea(
 
 void CachedStorageArea::ResetConnection(
     mojo::PendingRemote<mojom::blink::StorageArea> new_area) {
+  DCHECK(!is_session_storage_for_prerendering_);
   remote_area_.reset();
   BindStorageArea(std::move(new_area));
 
@@ -299,7 +332,7 @@ void CachedStorageArea::ResetConnection(
 void CachedStorageArea::KeyChanged(
     const Vector<uint8_t>& key,
     const Vector<uint8_t>& new_value,
-    const base::Optional<Vector<uint8_t>>& old_value,
+    const absl::optional<Vector<uint8_t>>& old_value,
     const String& source) {
   DCHECK(!IsSessionStorage());
 
@@ -379,7 +412,7 @@ void CachedStorageArea::KeyChangeFailed(const Vector<uint8_t>& key,
 
 void CachedStorageArea::KeyDeleted(
     const Vector<uint8_t>& key,
-    const base::Optional<Vector<uint8_t>>& old_value,
+    const absl::optional<Vector<uint8_t>>& old_value,
     const String& source) {
   DCHECK(!IsSessionStorage());
 
@@ -558,6 +591,8 @@ void CachedStorageArea::MaybeApplyNonLocalMutationForKey(
 void CachedStorageArea::EnsureLoaded() {
   if (map_)
     return;
+  if (!remote_area_)
+    BindStorageArea();
 
   // There might be something weird happening during the sync call that destroys
   // this object. Keep a reference to either fix or rule out that this is the
@@ -640,7 +675,7 @@ void CachedStorageArea::EnqueueStorageEvent(const String& key,
   }
   areas_->RemoveAll(areas_to_remove_);
   if (storage_namespace_) {
-    storage_namespace_->DidDispatchStorageEvent(origin_.get(), key, old_value,
+    storage_namespace_->DidDispatchStorageEvent(storage_key_, key, old_value,
                                                 new_value);
   }
 }
@@ -780,6 +815,10 @@ Vector<uint8_t> CachedStorageArea::StringToUint8Vector(
     }
   }
   NOTREACHED();
+}
+
+void CachedStorageArea::EvictCachedData() {
+  map_.reset();
 }
 
 }  // namespace blink

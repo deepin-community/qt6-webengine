@@ -4,6 +4,7 @@
 
 #include "chrome/browser/devtools/chrome_devtools_manager_delegate.h"
 
+#include <memory>
 #include <utility>
 
 #include "base/bind.h"
@@ -110,8 +111,8 @@ ChromeDevToolsManagerDelegate::ChromeDevToolsManagerDelegate() {
     // we are controlled entirely by the automation process.
     // Keep the application running until explicit close through DevTools
     // protocol.
-    keep_alive_.reset(new ScopedKeepAlive(KeepAliveOrigin::REMOTE_DEBUGGING,
-                                          KeepAliveRestartOption::DISABLED));
+    keep_alive_ = std::make_unique<ScopedKeepAlive>(
+        KeepAliveOrigin::REMOTE_DEBUGGING, KeepAliveRestartOption::DISABLED);
   }
 #endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
 }
@@ -190,7 +191,7 @@ bool ChromeDevToolsManagerDelegate::AllowInspection(
     const extensions::Extension* extension) {
 #if BUILDFLAG(IS_CHROMEOS_ASH)
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
-  if (command_line->HasSwitch(chromeos::switches::kForceDevToolsAvailable))
+  if (command_line->HasSwitch(ash::switches::kForceDevToolsAvailable))
     return true;
 #endif
 
@@ -247,11 +248,6 @@ ChromeDevToolsManagerDelegate::CreateNewTarget(const GURL& url) {
     return nullptr;
   return DevToolsAgentHost::GetOrCreateFor(
       params.navigated_or_inserted_contents);
-}
-
-std::string ChromeDevToolsManagerDelegate::GetDiscoveryPageHTML() {
-  return ui::ResourceBundle::GetSharedInstance().LoadDataResourceString(
-      IDR_DEVTOOLS_DISCOVERY_PAGE_HTML);
 }
 
 std::vector<content::BrowserContext*>

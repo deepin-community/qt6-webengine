@@ -17,6 +17,9 @@ CPDF_RenderOptions::Options::Options() = default;
 CPDF_RenderOptions::Options::Options(const CPDF_RenderOptions::Options& rhs) =
     default;
 
+CPDF_RenderOptions::Options& CPDF_RenderOptions::Options::operator=(
+    const CPDF_RenderOptions::Options& rhs) = default;
+
 CPDF_RenderOptions::CPDF_RenderOptions() {
   // TODO(thestig): Make constexpr to initialize |m_Options| once C++14 is
   // available.
@@ -50,10 +53,10 @@ FX_ARGB CPDF_RenderOptions::TranslateObjectColor(
     return TranslateColor(argb);
 
   switch (object_type) {
-    case CPDF_PageObject::Type::PATH:
+    case CPDF_PageObject::Type::kPath:
       return render_type == RenderType::kFill ? m_ColorScheme.path_fill_color
                                               : m_ColorScheme.path_stroke_color;
-    case CPDF_PageObject::Type::TEXT:
+    case CPDF_PageObject::Type::kText:
       return render_type == RenderType::kFill ? m_ColorScheme.text_fill_color
                                               : m_ColorScheme.text_stroke_color;
     default:

@@ -201,8 +201,7 @@ TEST_F(HistogramBaseTest, AddTimeMillisecondsGranularityOverflow) {
   while (large_positive > std::numeric_limits<HistogramBase::Sample>::max()) {
     // Add the TimeDelta corresponding to |large_positive| milliseconds to the
     // histogram.
-    histogram->AddTimeMillisecondsGranularity(
-        TimeDelta::FromMilliseconds(large_positive));
+    histogram->AddTimeMillisecondsGranularity(Milliseconds(large_positive));
     ++add_count;
     // Reduce the value of |large_positive|. The choice of 7 here is
     // arbitrary.
@@ -219,8 +218,7 @@ TEST_F(HistogramBaseTest, AddTimeMillisecondsGranularityOverflow) {
   int64_t large_negative = std::numeric_limits<int64_t>::min();
   add_count = 0;
   while (large_negative < std::numeric_limits<HistogramBase::Sample>::min()) {
-    histogram->AddTimeMillisecondsGranularity(
-        TimeDelta::FromMilliseconds(large_negative));
+    histogram->AddTimeMillisecondsGranularity(Milliseconds(large_negative));
     ++add_count;
     large_negative /= 7;
   }
@@ -246,8 +244,7 @@ TEST_F(HistogramBaseTest, AddTimeMicrosecondsGranularityOverflow) {
   while (large_positive > std::numeric_limits<HistogramBase::Sample>::max()) {
     // Add the TimeDelta corresponding to |large_positive| microseconds to the
     // histogram.
-    histogram->AddTimeMicrosecondsGranularity(
-        TimeDelta::FromMicroseconds(large_positive));
+    histogram->AddTimeMicrosecondsGranularity(Microseconds(large_positive));
     ++add_count;
     // Reduce the value of |large_positive|. The choice of 7 here is
     // arbitrary.
@@ -264,38 +261,13 @@ TEST_F(HistogramBaseTest, AddTimeMicrosecondsGranularityOverflow) {
   int64_t large_negative = std::numeric_limits<int64_t>::min();
   add_count = 0;
   while (large_negative < std::numeric_limits<HistogramBase::Sample>::min()) {
-    histogram->AddTimeMicrosecondsGranularity(
-        TimeDelta::FromMicroseconds(large_negative));
+    histogram->AddTimeMicrosecondsGranularity(Microseconds(large_negative));
     ++add_count;
     large_negative /= 7;
   }
   samples = histogram->SnapshotSamples();
   // All of the reported values must have gone into the min overflow bucket.
   EXPECT_EQ(add_count, samples->GetCount(0));
-}
-
-// Tests GetPeakBucketSize() returns accurate max bucket size.
-TEST(HistogramTest, GetPeakBucketSize) {
-  Histogram* histogram = static_cast<Histogram*>(
-      Histogram::FactoryGet("Histogram",
-                            /*minimum=*/1,
-                            /*maximum=*/64,
-                            /*bucket_count=*/8,
-                            /*flags=*/HistogramBase::kNoFlags));
-
-  // Add 1 sample to 0th bucket; 2 to 6th; 3 to 313th.
-  for (int i = 0; i < 1; i++) {
-    histogram->Add(0);
-  }
-  for (int i = 0; i < 2; i++) {
-    histogram->Add(6);
-  }
-  for (int i = 0; i < 3; i++) {
-    histogram->Add(313);
-  }
-
-  // The largest bucket size should be 3.
-  EXPECT_EQ(3, histogram->GetPeakBucketSize(*histogram->SnapshotAllSamples()));
 }
 
 }  // namespace base

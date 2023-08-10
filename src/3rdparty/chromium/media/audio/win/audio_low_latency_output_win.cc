@@ -10,13 +10,14 @@
 #include <objbase.h>
 
 #include <climits>
+#include <memory>
 
 #include "base/callback.h"
 #include "base/command_line.h"
 #include "base/logging.h"
 #include "base/metrics/histogram.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
@@ -32,12 +33,22 @@
 #include "media/base/limits.h"
 #include "media/base/media_switches.h"
 
-using base::win::ScopedCOMInitializer;
 using base::win::ScopedCoMem;
+using base::win::ScopedCOMInitializer;
 
 namespace media {
 
 namespace {
+
+constexpr char kOpenFailureHistogram[] = "Media.Audio.Output.Win.OpenError";
+constexpr char kStartFailureHistogram[] = "Media.Audio.Output.Win.StartError";
+constexpr char kStopFailureHistogram[] = "Media.Audio.Output.Win.StopError";
+constexpr char kRunFailureHistogram[] = "Media.Audio.Output.Win.RunError";
+constexpr char kRenderFailureHistogram[] = "Media.Audio.Output.Win.RenderError";
+
+void RecordAudioFailure(const char* histogram, HRESULT hr) {
+  base::UmaHistogramSparse(histogram, hr);
+}
 
 // Converts a COM error into a human-readable string.
 std::string ErrorToString(HRESULT hresult) {
@@ -180,6 +191,7 @@ bool WASAPIAudioOutputStream::Open() {
   Microsoft::WRL::ComPtr<IAudioClient> audio_client(
       CoreAudioUtil::CreateClient(device_id_, eRender, device_role_));
   if (!audio_client.Get()) {
+    RecordAudioFailure(kOpenFailureHistogram, GetLastError());
     SendLogMessage("%s => (ERROR: CAU::CreateClient failed)", __func__);
     return false;
   }
@@ -187,6 +199,7 @@ bool WASAPIAudioOutputStream::Open() {
   // Extra sanity to ensure that the provided device format is still valid.
   if (!CoreAudioUtil::IsFormatSupported(audio_client.Get(), share_mode_,
                                         &format_)) {
+    RecordAudioFailure(kOpenFailureHistogram, GetLastError());
     SendLogMessage("%s => (ERROR: CAU::IsFormatSupported failed)", __func__);
     return false;
   }
@@ -200,6 +213,7 @@ bool WASAPIAudioOutputStream::Open() {
         requested_iaudioclient3_buffer_size_, &endpoint_buffer_size_frames_,
         communications_device ? &kCommunicationsSessionId : nullptr);
     if (FAILED(hr)) {
+      RecordAudioFailure(kOpenFailureHistogram, hr);
       SendLogMessage("%s => (ERROR: IAudioClient::SharedModeInitialize=[%s])",
                      __func__, ErrorToString(hr).c_str());
       return false;
@@ -208,6 +222,7 @@ bool WASAPIAudioOutputStream::Open() {
     REFERENCE_TIME device_period = 0;
     if (FAILED(CoreAudioUtil::GetDevicePeriod(
             audio_client.Get(), AUDCLNT_SHAREMODE_SHARED, &device_period))) {
+      RecordAudioFailure(kOpenFailureHistogram, GetLastError());
       return false;
     }
 
@@ -270,6 +285,7 @@ bool WASAPIAudioOutputStream::Open() {
   Microsoft::WRL::ComPtr<IAudioRenderClient> audio_render_client =
       CoreAudioUtil::CreateRenderClient(audio_client.Get());
   if (!audio_render_client.Get()) {
+    RecordAudioFailure(kOpenFailureHistogram, GetLastError());
     SendLogMessage("%s => (ERROR: CAU::CreateRenderClient failed)", __func__);
     return false;
   }
@@ -280,6 +296,7 @@ bool WASAPIAudioOutputStream::Open() {
 
   hr = audio_client_->GetService(IID_PPV_ARGS(&audio_clock_));
   if (FAILED(hr)) {
+    RecordAudioFailure(kOpenFailureHistogram, hr);
     SendLogMessage("%s => (ERROR: IAudioClient::GetService(IAudioClock)=[%s])",
                    __func__, ErrorToString(hr).c_str());
     return false;
@@ -336,6 +353,7 @@ void WASAPIAudioOutputStream::Start(AudioSourceCallback* callback) {
       audio_render_client_.Reset();
       if (!Open() || !CoreAudioUtil::FillRenderEndpointBufferWithSilence(
                          audio_client_.Get(), audio_render_client_.Get())) {
+        RecordAudioFailure(kStartFailureHistogram, GetLastError());
         SendLogMessage("%s => (ERROR: Recovery attempt failed)", __func__);
         callback->OnError(AudioSourceCallback::ErrorType::kUnknown);
         return;
@@ -350,11 +368,12 @@ void WASAPIAudioOutputStream::Start(AudioSourceCallback* callback) {
 
   // Create and start the thread that will drive the rendering by waiting for
   // render events.
-  render_thread_.reset(new base::DelegateSimpleThread(
+  render_thread_ = std::make_unique<base::DelegateSimpleThread>(
       this, "wasapi_render_thread",
-      base::SimpleThread::Options(base::ThreadPriority::REALTIME_AUDIO)));
+      base::SimpleThread::Options(base::ThreadPriority::REALTIME_AUDIO));
   render_thread_->Start();
   if (!render_thread_->HasBeenStarted()) {
+    RecordAudioFailure(kStartFailureHistogram, GetLastError());
     SendLogMessage("%s => (ERROR: Failed to start \"wasapi_render_thread\")",
                    __func__);
     StopThread();
@@ -365,6 +384,7 @@ void WASAPIAudioOutputStream::Start(AudioSourceCallback* callback) {
   // Start streaming data between the endpoint buffer and the audio engine.
   HRESULT hr = audio_client_->Start();
   if (FAILED(hr)) {
+    RecordAudioFailure(kStartFailureHistogram, hr);
     SendLogMessage("%s => (ERROR: IAudioClient::Start=[%s])", __func__,
                    ErrorToString(hr).c_str());
     StopThread();
@@ -384,6 +404,7 @@ void WASAPIAudioOutputStream::Stop() {
   // Stop output audio streaming.
   HRESULT hr = audio_client_->Stop();
   if (FAILED(hr)) {
+    RecordAudioFailure(kStopFailureHistogram, hr);
     SendLogMessage("%s => (ERROR: IAudioClient::Stop=[%s])", __func__,
                    ErrorToString(hr).c_str());
     source_->OnError(AudioSourceCallback::ErrorType::kUnknown);
@@ -396,6 +417,7 @@ void WASAPIAudioOutputStream::Stop() {
   // Flush all pending data and reset the audio clock stream position to 0.
   hr = audio_client_->Reset();
   if (FAILED(hr)) {
+    RecordAudioFailure(kStopFailureHistogram, hr);
     SendLogMessage("%s => (ERROR: IAudioClient::Reset=[%s])", __func__,
                    ErrorToString(hr).c_str());
     callback->OnError(AudioSourceCallback::ErrorType::kUnknown);
@@ -494,6 +516,7 @@ void WASAPIAudioOutputStream::Run() {
   hr = audio_clock_->GetFrequency(&device_frequency);
   error = FAILED(hr);
   if (error) {
+    RecordAudioFailure(kRunFailureHistogram, hr);
     LOG(ERROR) << "WAOS::" << __func__
                << " => (ERROR: IAudioClock::GetFrequency=["
                << ErrorToString(hr).c_str() << "])";
@@ -503,7 +526,7 @@ void WASAPIAudioOutputStream::Run() {
   // is signaled. An error event can also break the main thread loop.
   while (playing && !error) {
     // Wait for a close-down event, stream-switch event or a new render event.
-    DWORD wait_result = WaitForMultipleObjects(base::size(wait_array),
+    DWORD wait_result = WaitForMultipleObjects(std::size(wait_array),
                                                wait_array, FALSE, INFINITE);
 
     switch (wait_result) {
@@ -522,6 +545,7 @@ void WASAPIAudioOutputStream::Run() {
   }
 
   if (playing && error) {
+    RecordAudioFailure(kRunFailureHistogram, GetLastError());
     LOG(ERROR) << "WAOS::" << __func__
                << " => (ERROR: WASAPI rendering failed)";
 
@@ -561,6 +585,7 @@ bool WASAPIAudioOutputStream::RenderAudioFromSource(UINT64 device_frequency) {
     num_available_frames =
         endpoint_buffer_size_frames_ - num_queued_frames;
     if (FAILED(hr)) {
+      RecordAudioFailure(kRenderFailureHistogram, hr);
       LOG(ERROR) << "WAOS::" << __func__
                  << " => (ERROR: IAudioClient::GetCurrentPadding=["
                  << ErrorToString(hr).c_str() << "])";
@@ -606,6 +631,7 @@ bool WASAPIAudioOutputStream::RenderAudioFromSource(UINT64 device_frequency) {
     hr = audio_render_client_->GetBuffer(packet_size_frames_,
                                          &audio_data);
     if (FAILED(hr)) {
+      RecordAudioFailure(kRenderFailureHistogram, hr);
       LOG(ERROR) << "WAOS::" << __func__
                  << " => (ERROR: IAudioRenderClient::GetBuffer=["
                  << ErrorToString(hr).c_str() << "])";
@@ -651,8 +677,8 @@ bool WASAPIAudioOutputStream::RenderAudioFromSource(UINT64 device_frequency) {
         if (qpc_position_diff_us - position_diff_us > buffer_duration_us / 2) {
           ++num_glitches_detected_;
 
-          base::TimeDelta glitch_duration = base::TimeDelta::FromMicroseconds(
-              qpc_position_diff_us - position_diff_us);
+          base::TimeDelta glitch_duration =
+              base::Microseconds(qpc_position_diff_us - position_diff_us);
 
           if (glitch_duration > largest_glitch_)
             largest_glitch_ = glitch_duration;
@@ -669,14 +695,15 @@ bool WASAPIAudioOutputStream::RenderAudioFromSource(UINT64 device_frequency) {
       const uint64_t delay_frames = num_written_frames_ - played_out_frames;
 
       // Convert the delay from frames to time.
-      delay = base::TimeDelta::FromMicroseconds(
-          delay_frames * base::Time::kMicrosecondsPerSecond /
-          format_.Format.nSamplesPerSec);
+      delay =
+          base::Microseconds(delay_frames * base::Time::kMicrosecondsPerSecond /
+                             format_.Format.nSamplesPerSec);
       // Note: the obtained |qpc_position| value is in 100ns intervals and from
       // the same time origin as QPC. We can simply convert it into us dividing
       // by 10.0 since 10x100ns = 1us.
-      delay_timestamp += base::TimeDelta::FromMicroseconds(qpc_position * 0.1);
+      delay_timestamp += base::Microseconds(qpc_position * 0.1);
     } else {
+      RecordAudioFailure(kRenderFailureHistogram, hr);
       LOG(ERROR) << "WAOS::" << __func__
                  << " => (ERROR: IAudioClock::GetPosition=["
                  << ErrorToString(hr).c_str() << "])";

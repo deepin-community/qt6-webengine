@@ -20,21 +20,20 @@
 
 namespace device {
 class OpenXrDevice;
-class OpenXrStatics;
 }  // namespace device
 
 namespace viz {
 class Gpu;
 }  // namespace viz
 
-class IsolatedXRRuntimeProvider
+class IsolatedXRRuntimeProvider final
     : public device::mojom::IsolatedXRRuntimeProvider {
  public:
   explicit IsolatedXRRuntimeProvider(
       mojo::PendingRemote<device::mojom::XRDeviceServiceHost>
           device_service_host,
       scoped_refptr<base::SingleThreadTaskRunner> io_task_runner);
-  ~IsolatedXRRuntimeProvider() final;
+  ~IsolatedXRRuntimeProvider() override;
 
   void RequestDevices(
       mojo::PendingRemote<device::mojom::IsolatedXRRuntimeProviderClient>
@@ -54,8 +53,9 @@ class IsolatedXRRuntimeProvider
       scoped_refptr<base::SingleThreadTaskRunner> task_runner);
 
   bool should_check_openxr_ = false;
+
   std::unique_ptr<device::OpenXrDevice> openxr_device_;
-  std::unique_ptr<device::OpenXrStatics> openxr_statics_;
+
   std::unique_ptr<viz::Gpu> viz_gpu_;
 #endif
 

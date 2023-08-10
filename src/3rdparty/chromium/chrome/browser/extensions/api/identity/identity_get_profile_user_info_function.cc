@@ -9,8 +9,8 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/common/extensions/api/identity.h"
+#include "components/signin/public/base/consent_level.h"
 #include "components/signin/public/identity_manager/account_info.h"
-#include "components/signin/public/identity_manager/consent_level.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "content/public/browser/browser_context.h"
 #include "extensions/common/extension.h"
@@ -26,7 +26,7 @@ signin::ConsentLevel GetConsentLevelFromProfileDetails(
 
   switch (account_status) {
     case api::identity::ACCOUNT_STATUS_ANY:
-      return signin::ConsentLevel::kNotRequired;
+      return signin::ConsentLevel::kSignin;
     case api::identity::ACCOUNT_STATUS_NONE:
     case api::identity::ACCOUNT_STATUS_SYNC:
       return signin::ConsentLevel::kSync;
@@ -49,13 +49,13 @@ ExtensionFunction::ResponseAction IdentityGetProfileUserInfoFunction::Run() {
   }
 
   std::unique_ptr<api::identity::GetProfileUserInfo::Params> params(
-      api::identity::GetProfileUserInfo::Params::Create(*args_));
+      api::identity::GetProfileUserInfo::Params::Create(args()));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
   api::identity::ProfileUserInfo profile_user_info;
 
   if (extension()->permissions_data()->HasAPIPermission(
-          APIPermission::kIdentityEmail)) {
+          mojom::APIPermissionID::kIdentityEmail)) {
     signin::ConsentLevel consent_level =
         GetConsentLevelFromProfileDetails(params->details.get());
     auto account_info = IdentityManagerFactory::GetForProfile(

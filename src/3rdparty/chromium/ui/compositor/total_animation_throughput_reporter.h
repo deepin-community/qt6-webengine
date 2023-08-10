@@ -5,12 +5,11 @@
 #ifndef UI_COMPOSITOR_TOTAL_ANIMATION_THROUGHPUT_REPORTER_H_
 #define UI_COMPOSITOR_TOTAL_ANIMATION_THROUGHPUT_REPORTER_H_
 
-#include <memory>
-
 #include "base/callback_forward.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
-#include "base/optional.h"
 #include "cc/metrics/frame_sequence_metrics.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/compositor/compositor_export.h"
 #include "ui/compositor/compositor_observer.h"
 #include "ui/compositor/throughput_tracker.h"
@@ -75,11 +74,11 @@ class COMPOSITOR_EXPORT TotalAnimationThroughputReporter
 
   void Report(const cc::FrameSequenceMetrics::CustomReportData& data);
 
-  Compositor* compositor_;
+  raw_ptr<Compositor> compositor_;
   ReportRepeatingCallback report_repeating_callback_;
   ReportOnceCallback report_once_callback_;
   bool should_delete_ = false;
-  base::Optional<ThroughputTracker> throughput_tracker_;
+  absl::optional<ThroughputTracker> throughput_tracker_;
 
   base::WeakPtrFactory<TotalAnimationThroughputReporter> ptr_factory_{this};
 };

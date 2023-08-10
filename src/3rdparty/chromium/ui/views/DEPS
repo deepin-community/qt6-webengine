@@ -11,11 +11,13 @@ include_rules = [
   "+ui/accessibility",
   "+ui/aura",
   "+ui/base",
+  "+ui/color",
   "+ui/compositor",
   "+ui/display",
   "+ui/events",
   "+ui/gfx",
   "+ui/gl/test/gl_surface_test_support.h",  # To initialize GL for tests.
+  "+ui/lottie",
   "+ui/native_theme",
   "+ui/ozone/buildflags.h",
   "+ui/ozone/public",
@@ -47,5 +49,6 @@ specific_include_rules = {
   ],
   ".*test\.cc": [
     "+cc/base",
+    "+cc/test",
   ]
 }

@@ -35,7 +35,7 @@
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/platform/web_url.h"
 #include "third_party/blink/public/platform/web_url_response.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/loader/fetch/memory_cache.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_fetcher.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_timing_info.h"
@@ -55,6 +55,8 @@ namespace blink {
 class RawResourceTest : public testing::Test {
  public:
   RawResourceTest() = default;
+  RawResourceTest(const RawResourceTest&) = delete;
+  RawResourceTest& operator=(const RawResourceTest&) = delete;
   ~RawResourceTest() override = default;
 
  protected:
@@ -71,9 +73,6 @@ class RawResourceTest : public testing::Test {
 
   ScopedTestingPlatformSupport<TestingPlatformSupportWithMockScheduler>
       platform_;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(RawResourceTest);
 };
 
 TEST_F(RawResourceTest, DontIgnoreAcceptForCacheReuse) {

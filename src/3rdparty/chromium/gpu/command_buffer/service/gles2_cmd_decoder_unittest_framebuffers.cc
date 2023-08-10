@@ -11,8 +11,7 @@
 #include <memory>
 
 #include "base/command_line.h"
-#include "base/numerics/ranges.h"
-#include "base/stl_util.h"
+#include "base/cxx17_backports.h"
 #include "base/strings/string_number_conversions.h"
 #include "gpu/command_buffer/common/gles2_cmd_format.h"
 #include "gpu/command_buffer/common/gles2_cmd_utils.h"
@@ -624,8 +623,8 @@ void GLES2DecoderTest::CheckReadPixelsOutOfRange(GLint in_read_x,
   // is requesting a larger size.
   GLint read_x = std::max(0, in_read_x);
   GLint read_y = std::max(0, in_read_y);
-  GLint read_end_x = base::ClampToRange(in_read_x + in_read_width, 0, kWidth);
-  GLint read_end_y = base::ClampToRange(in_read_y + in_read_height, 0, kHeight);
+  GLint read_end_x = base::clamp(in_read_x + in_read_width, 0, kWidth);
+  GLint read_end_y = base::clamp(in_read_y + in_read_height, 0, kHeight);
   GLint read_width = read_end_x - read_x;
   GLint read_height = read_end_y - read_y;
   if (read_width > 0 && read_height > 0) {
@@ -1141,7 +1140,7 @@ TEST_P(GLES2DecoderTest, ReadPixelsOutOfRange) {
       },  // completely off right
   };
 
-  for (size_t tt = 0; tt < base::size(tests); ++tt) {
+  for (size_t tt = 0; tt < std::size(tests); ++tt) {
     CheckReadPixelsOutOfRange(
         tests[tt][0], tests[tt][1], tests[tt][2], tests[tt][3], tt == 0);
   }
@@ -3247,7 +3246,7 @@ TEST_P(GLES2DecoderTest, DrawBuffersEXTMainFramebuffer) {
   auto& cmd = *GetImmediateAs<cmds::DrawBuffersEXTImmediate>();
   {
     const GLenum bufs[] = {GL_BACK};
-    const GLsizei count = base::size(bufs);
+    const GLsizei count = std::size(bufs);
     cmd.Init(count, bufs);
 
     EXPECT_CALL(*gl_, DrawBuffersARB(count, Pointee(GL_BACK)))
@@ -3268,7 +3267,7 @@ TEST_P(GLES2DecoderTest, DrawBuffersEXTMainFramebuffer) {
   }
   {
     const GLenum bufs[] = {GL_BACK, GL_NONE};
-    const GLsizei count = base::size(bufs);
+    const GLsizei count = std::size(bufs);
     cmd.Init(count, bufs);
 
     EXPECT_CALL(*gl_, DrawBuffersARB(_, _)).Times(0).RetiresOnSaturation();

@@ -2,15 +2,15 @@
 // the same name |Foo|.
 
 struct Foo {
-  b : f32;
+  b : f32
 };
 
-fn Foo() ->void {
+fn Foo() {
   return;
 }
 
-[[stage(vertex)]]
-fn main() -> void {
+@stage(fragment)
+fn main() {
   var Foo : f32;
   var f : Foo;
   return;

@@ -9,7 +9,6 @@
 
 #include <string>
 
-#include "base/strings/string16.h"
 #include "base/time/time.h"
 #include "components/autofill/core/browser/data_model/form_group.h"
 
@@ -89,10 +88,6 @@ class AutofillDataModel : public FormGroup {
   // Returns whether the data model is deletable: if it has not been used for
   // longer than |kDisusedCreditCardDeletionTimeDelta|.
   virtual bool IsDeletable() const;
-
-  // Returns the validity state of the specified autofill type.
-  virtual ValidityState GetValidityState(ServerFieldType type,
-                                         ValidationSource source) const;
 
  protected:
   // Called to update |use_count_| and |use_date_| when this data model is

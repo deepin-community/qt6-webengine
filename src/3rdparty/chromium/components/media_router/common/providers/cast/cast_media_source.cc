@@ -7,7 +7,9 @@
 #include <algorithm>
 #include <utility>
 
+#include "base/containers/contains.h"
 #include "base/containers/flat_map.h"
+#include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_split.h"
@@ -17,6 +19,7 @@
 #include "components/media_router/common/media_source.h"
 #include "net/base/escape.h"
 #include "net/base/url_util.h"
+#include "third_party/openscreen/src/cast/common/public/cast_streaming_app_ids.h"
 #include "url/gurl.h"
 #include "url/url_util.h"
 
@@ -91,8 +94,8 @@ constexpr int kMaxCastPresentationUrlLength = 64 * 1024;
 
 namespace {
 
-// A nonmember version of base::Optional::value_or that works on pointers as
-// well as instance of base::Optional.
+// A nonmember version of absl::optional::value_or that works on pointers as
+// well as instance of absl::optional.
 template <typename T>
 inline auto value_or(const T& optional,
                      const std::decay_t<decltype(*optional)>& default_value)
@@ -149,17 +152,15 @@ base::flat_map<std::string, std::string> MakeQueryMap(const GURL& url) {
   base::flat_map<std::string, std::string> result;
   for (net::QueryIterator query_it(url); !query_it.IsAtEnd();
        query_it.Advance()) {
-    result[query_it.GetKey()] = query_it.GetUnescapedValue();
+    result[std::string(query_it.GetKey())] = query_it.GetUnescapedValue();
   }
   return result;
 }
 
-// TODO(jrw): Move to common utils?
-//
-// TODO(jrw): Should this use net::UnescapeURLComponent instead of
-// url::DecodeURLEscapeSequences?
+// TODO(crbug.com/1291718): Move to common utils?  Should this use
+// net::UnescapeURLComponent instead of url::DecodeURLEscapeSequences?
 std::string DecodeURLComponent(const std::string& encoded) {
-  url::RawCanonOutputT<base::char16> unescaped;
+  url::RawCanonOutputT<char16_t> unescaped;
   std::string output;
   url::DecodeURLEscapeSequences(encoded.data(), encoded.size(),
                                 url::DecodeURLMode::kUTF8OrIsomorphic,
@@ -257,8 +258,7 @@ std::unique_ptr<CastMediaSource> CreateFromURLParams(
   int launch_timeout_millis = 0;
   if (base::StringToInt(launch_timeout_str, &launch_timeout_millis) &&
       launch_timeout_millis > 0) {
-    cast_source->set_launch_timeout(
-        base::TimeDelta::FromMilliseconds(launch_timeout_millis));
+    cast_source->set_launch_timeout(base::Milliseconds(launch_timeout_millis));
   }
 
   int target_playout_delay_millis = 0;
@@ -266,7 +266,7 @@ std::unique_ptr<CastMediaSource> CreateFromURLParams(
                         &target_playout_delay_millis) &&
       target_playout_delay_millis > 0) {
     cast_source->set_target_playout_delay(
-        base::TimeDelta::FromMilliseconds(target_playout_delay_millis));
+        base::Milliseconds(target_playout_delay_millis));
   }
 
   if (audio_capture_str == "0")
@@ -389,8 +389,13 @@ bool IsAutoJoinAllowed(AutoJoinPolicy policy,
 }
 
 bool IsSiteInitiatedMirroringSource(const MediaSource::Id& source_id) {
-  return base::StartsWith(source_id, kMirroringAppUri,
-                          base::CompareCase::SENSITIVE);
+  // A Cast SDK enabled website (e.g. Google Slides) may use the mirroring app
+  // ID rather than the tab mirroring URN.
+  return base::StartsWith(
+      source_id,
+      base::StrCat(
+          {"cast:", openscreen::cast::GetCastStreamingAudioVideoAppId()}),
+      base::CompareCase::SENSITIVE);
 }
 
 CastAppInfo::CastAppInfo(
@@ -404,13 +409,14 @@ CastAppInfo::CastAppInfo(const CastAppInfo& other) = default;
 
 // static
 CastAppInfo CastAppInfo::ForCastStreaming() {
-  return CastAppInfo(kCastStreamingAppId, {CastDeviceCapability::VIDEO_OUT,
-                                           CastDeviceCapability::AUDIO_OUT});
+  return CastAppInfo(
+      openscreen::cast::GetCastStreamingAudioVideoAppId(),
+      {CastDeviceCapability::VIDEO_OUT, CastDeviceCapability::AUDIO_OUT});
 }
 
 // static
 CastAppInfo CastAppInfo::ForCastStreamingAudio() {
-  return CastAppInfo(kCastStreamingAudioAppId,
+  return CastAppInfo(openscreen::cast::GetCastStreamingAudioOnlyAppId(),
                      {CastDeviceCapability::AUDIO_OUT});
 }
 
@@ -452,6 +458,11 @@ std::unique_ptr<CastMediaSource> CastMediaSource::FromAppId(
   return FromMediaSourceId(kCastPresentationUrlScheme + (":" + app_id));
 }
 
+// static
+std::unique_ptr<CastMediaSource> CastMediaSource::ForSiteInitiatedMirroring() {
+  return FromAppId(openscreen::cast::GetCastStreamingAudioVideoAppId());
+}
+
 CastMediaSource::CastMediaSource(const MediaSource::Id& source_id,
                                  const std::vector<CastAppInfo>& app_infos,
                                  AutoJoinPolicy auto_join_policy,
@@ -479,7 +490,7 @@ bool CastMediaSource::ContainsAnyAppFrom(
 }
 
 bool CastMediaSource::ContainsStreamingApp() const {
-  return ContainsAnyAppFrom({kCastStreamingAppId, kCastStreamingAudioAppId});
+  return ContainsAnyAppFrom(openscreen::cast::GetCastStreamingAppIds());
 }
 
 std::vector<std::string> CastMediaSource::GetAppIds() const {
@@ -495,8 +506,7 @@ bool CastMediaSource::ProvidesStreamingAudioCapture() const {
     return false;
   }
   for (const auto& info : app_infos_) {
-    if ((info.app_id == kCastStreamingAppId ||
-         info.app_id == kCastStreamingAudioAppId) &&
+    if (openscreen::cast::IsCastStreamingAppId(info.app_id) &&
         info.required_capabilities.Has(CastDeviceCapability::AUDIO_OUT)) {
       return true;
     }

@@ -5,6 +5,7 @@
 #include "gpu/command_buffer/service/shared_image_representation_d3d.h"
 
 #include "components/viz/common/resources/resource_format_utils.h"
+#include "gpu/command_buffer/common/constants.h"
 #include "gpu/command_buffer/common/shared_image_usage.h"
 #include "gpu/command_buffer/service/shared_image_backing_d3d.h"
 
@@ -45,11 +46,14 @@ SharedImageRepresentationDawnD3D::SharedImageRepresentationDawnD3D(
     SharedImageManager* manager,
     SharedImageBacking* backing,
     MemoryTypeTracker* tracker,
-    WGPUDevice device)
+    WGPUDevice device,
+    dawn::native::d3d12::ExternalImageDXGI* external_image)
     : SharedImageRepresentationDawn(manager, backing, tracker),
       device_(device),
-      dawn_procs_(dawn_native::GetProcs()) {
+      external_image_(external_image),
+      dawn_procs_(dawn::native::GetProcs()) {
   DCHECK(device_);
+  DCHECK(external_image_);
 
   // Keep a reference to the device so that it stays valid (it might become
   // lost in which case operations will be noops).
@@ -66,38 +70,20 @@ WGPUTexture SharedImageRepresentationDawnD3D::BeginAccess(
   SharedImageBackingD3D* d3d_image_backing =
       static_cast<SharedImageBackingD3D*>(backing());
 
-  const HANDLE shared_handle = d3d_image_backing->GetSharedHandle();
-  const viz::ResourceFormat viz_resource_format = d3d_image_backing->format();
-  WGPUTextureFormat wgpu_format = viz::ToWGPUFormat(viz_resource_format);
-  if (wgpu_format == WGPUTextureFormat_Undefined) {
-    DLOG(ERROR) << "Unsupported viz format found: " << viz_resource_format;
+  if (!d3d_image_backing->BeginAccessD3D12())
     return nullptr;
-  }
 
-  uint64_t shared_mutex_acquire_key;
-  if (!d3d_image_backing->BeginAccessD3D12(&shared_mutex_acquire_key)) {
-    return nullptr;
-  }
-
-  WGPUTextureDescriptor texture_descriptor = {};
-  texture_descriptor.nextInChain = nullptr;
-  texture_descriptor.format = wgpu_format;
-  texture_descriptor.usage = usage;
-  texture_descriptor.dimension = WGPUTextureDimension_2D;
-  texture_descriptor.size = {size().width(), size().height(), 1};
-  texture_descriptor.mipLevelCount = 1;
-  texture_descriptor.sampleCount = 1;
-
-  dawn_native::d3d12::ExternalImageDescriptorDXGISharedHandle descriptor;
-  descriptor.cTextureDescriptor = &texture_descriptor;
+  dawn::native::d3d12::ExternalImageAccessDescriptorDXGIKeyedMutex descriptor;
   descriptor.isInitialized = IsCleared();
-  descriptor.sharedHandle = shared_handle;
-  descriptor.acquireMutexKey = shared_mutex_acquire_key;
+  descriptor.acquireMutexKey = kDXGIKeyedMutexAcquireKey;
+  descriptor.releaseMutexKey = kDXGIKeyedMutexAcquireKey;
   descriptor.isSwapChainTexture =
       (d3d_image_backing->usage() &
        SHARED_IMAGE_USAGE_WEBGPU_SWAP_CHAIN_TEXTURE);
+  descriptor.usage = usage;
 
-  texture_ = dawn_native::d3d12::WrapSharedHandle(device_, &descriptor);
+  DCHECK(external_image_);
+  texture_ = external_image_->ProduceTexture(device_, &descriptor);
   if (!texture_) {
     d3d_image_backing->EndAccessD3D12();
   }
@@ -113,7 +99,7 @@ void SharedImageRepresentationDawnD3D::EndAccess() {
   SharedImageBackingD3D* d3d_image_backing =
       static_cast<SharedImageBackingD3D*>(backing());
 
-  if (dawn_native::IsTextureSubresourceInitialized(texture_, 0, 1, 0, 1)) {
+  if (dawn::native::IsTextureSubresourceInitialized(texture_, 0, 1, 0, 1)) {
     SetCleared();
   }
 
@@ -123,6 +109,7 @@ void SharedImageRepresentationDawnD3D::EndAccess() {
 
   dawn_procs_.textureRelease(texture_);
   texture_ = nullptr;
+  external_image_ = nullptr;
 
   d3d_image_backing->EndAccessD3D12();
 }
@@ -131,23 +118,32 @@ void SharedImageRepresentationDawnD3D::EndAccess() {
 SharedImageRepresentationOverlayD3D::SharedImageRepresentationOverlayD3D(
     SharedImageManager* manager,
     SharedImageBacking* backing,
-    MemoryTypeTracker* tracker)
-    : SharedImageRepresentationOverlay(manager, backing, tracker) {}
+    MemoryTypeTracker* tracker,
+    scoped_refptr<gl::GLImage> gl_image)
+    : SharedImageRepresentationOverlay(manager, backing, tracker),
+      gl_image_(std::move(gl_image)) {}
+
+SharedImageRepresentationOverlayD3D::~SharedImageRepresentationOverlayD3D() =
+    default;
 
 bool SharedImageRepresentationOverlayD3D::BeginReadAccess(
     std::vector<gfx::GpuFence>* acquire_fences) {
-  // Note: only the DX11 video decoder uses this overlay and does not need to
-  // synchronize read access from different devices.
+  // Only D3D images need keyed mutex synchronization.
+  if (gl_image_->GetType() == gl::GLImage::Type::D3D)
+    return static_cast<SharedImageBackingD3D*>(backing())->BeginAccessD3D11();
   return true;
 }
 
 void SharedImageRepresentationOverlayD3D::EndReadAccess(
     gfx::GpuFenceHandle release_fence) {
   DCHECK(release_fence.is_null());
+  // Only D3D images need keyed mutex synchronization.
+  if (gl_image_->GetType() == gl::GLImage::Type::D3D)
+    static_cast<SharedImageBackingD3D*>(backing())->EndAccessD3D11();
 }
 
 gl::GLImage* SharedImageRepresentationOverlayD3D::GetGLImage() {
-  return static_cast<SharedImageBackingD3D*>(backing())->GetGLImage();
+  return gl_image_.get();
 }
 
 }  // namespace gpu

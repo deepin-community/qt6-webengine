@@ -4,10 +4,11 @@
 
 #include "content/browser/screenlock_monitor/screenlock_monitor_device_source.h"
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/callback_helpers.h"
 #include "base/logging.h"
-#include "base/task/post_task.h"
 #include "base/task/thread_pool.h"
 #include "base/win/message_window.h"
 
@@ -58,7 +59,7 @@ void ScreenlockMonitorDeviceSource::SessionMessageWindow::
 
 ScreenlockMonitorDeviceSource::SessionMessageWindow::SessionMessageWindow() {
   // Create a window for receiving session change notifications.
-  window_.reset(new base::win::MessageWindow());
+  window_ = std::make_unique<base::win::MessageWindow>();
   if (!window_->Create(base::BindRepeating(&SessionMessageWindow::OnWndProc,
                                            base::Unretained(this)))) {
     DLOG(ERROR) << "Failed to create the screenlock monitor window.";

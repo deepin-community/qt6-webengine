@@ -21,11 +21,13 @@ std::string ToString(const mojom::CSPSourceListPtr& source_list);
 // Return true when at least one source in the |source_list| matches the
 // |url|.
 COMPONENT_EXPORT(NETWORK_CPP)
-bool CheckCSPSourceList(const mojom::CSPSourceList& source_list,
+bool CheckCSPSourceList(mojom::CSPDirectiveName directive_name,
+                        const mojom::CSPSourceList& source_list,
                         const GURL& url,
                         const mojom::CSPSource& self_source,
                         bool has_followed_redirect = false,
-                        bool is_response_check = false);
+                        bool is_response_check = false,
+                        bool is_opaque_fenced_frame = false);
 
 // Check if |source_list_a| subsumes |source_list_b| with origin |origin_b| for
 // directive |directive| according to

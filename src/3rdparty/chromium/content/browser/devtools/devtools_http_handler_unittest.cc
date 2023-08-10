@@ -15,9 +15,9 @@
 #include "base/location.h"
 #include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
-#include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "content/public/browser/browser_task_traits.h"
@@ -109,8 +109,9 @@ class BrowserClient : public ContentBrowserClient {
  public:
   BrowserClient() {}
   ~BrowserClient() override {}
-  DevToolsManagerDelegate* GetDevToolsManagerDelegate() override {
-    return new DevToolsManagerDelegate();
+  std::unique_ptr<content::DevToolsManagerDelegate>
+  CreateDevToolsManagerDelegate() override {
+    return std::make_unique<DevToolsManagerDelegate>();
   }
 };
 

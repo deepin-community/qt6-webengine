@@ -6,7 +6,7 @@
 // TranslatorMetal:
 //   A GLSL-based translator that outputs shaders that fit GL_KHR_vulkan_glsl.
 //   It takes into account some considerations for Metal backend also.
-//   The shaders are then fed into glslang to spit out SPIR-V (libANGLE-side).
+//   The shaders are then fed into glslang to spit out SPIR-V.
 //   See: https://www.khronos.org/registry/vulkan/specs/misc/GL_KHR_vulkan_glsl.txt
 //
 //   The SPIR-V will then be translated to Metal Shading Language later in Metal backend.
@@ -15,6 +15,7 @@
 #ifndef LIBANGLE_RENDERER_METAL_TRANSLATORMETAL_H_
 #define LIBANGLE_RENDERER_METAL_TRANSLATORMETAL_H_
 
+#include "compiler/translator/DriverUniformMetal.h"
 #include "compiler/translator/TranslatorVulkan.h"
 #include "compiler/translator/tree_util/DriverUniform.h"
 #include "compiler/translator/tree_util/SpecializationConstant.h"
@@ -35,22 +36,6 @@ class SpecConstMetal : public SpecConst
   private:
 };
 
-class DriverUniformMetal : public DriverUniform
-{
-  public:
-    DriverUniformMetal() : DriverUniform() {}
-    ~DriverUniformMetal() override {}
-
-    TIntermBinary *getHalfRenderAreaRef() const override;
-    TIntermBinary *getFlipXYRef() const override;
-    TIntermBinary *getNegFlipXYRef() const override;
-    TIntermSwizzle *getNegFlipYRef() const override;
-    TIntermBinary *getCoverageMaskFieldRef() const;
-
-  protected:
-    TFieldList *createUniformFields(TSymbolTable *symbolTable) const override;
-};
-
 class TranslatorMetal : public TranslatorVulkan
 {
   public:
@@ -65,9 +50,10 @@ class TranslatorMetal : public TranslatorVulkan
         TIntermBlock *root,
         const DriverUniform *driverUniforms) override;
 
-    ANGLE_NO_DISCARD bool insertSampleMaskWritingLogic(TIntermBlock *root,
+    ANGLE_NO_DISCARD bool insertSampleMaskWritingLogic(TInfoSinkBase &sink,
+                                                       TIntermBlock *root,
                                                        const DriverUniformMetal *driverUniforms);
-    ANGLE_NO_DISCARD bool insertRasterizerDiscardLogic(TIntermBlock *root);
+    ANGLE_NO_DISCARD bool insertRasterizerDiscardLogic(TInfoSinkBase &sink, TIntermBlock *root);
 };
 
 }  // namespace sh

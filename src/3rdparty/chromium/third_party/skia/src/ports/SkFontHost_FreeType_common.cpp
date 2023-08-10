@@ -9,26 +9,55 @@
 #include "include/core/SkBitmap.h"
 #include "include/core/SkCanvas.h"
 #include "include/core/SkColor.h"
+#include "include/core/SkDrawable.h"
 #include "include/core/SkPath.h"
 #include "include/effects/SkGradientShader.h"
+#include "include/pathops/SkPathOps.h"
 #include "include/private/SkColorData.h"
 #include "include/private/SkTo.h"
 #include "src/core/SkFDot6.h"
 #include "src/ports/SkFontHost_FreeType_common.h"
 
+#include <algorithm>
 #include <utility>
 
 #include <ft2build.h>
-#include FT_FREETYPE_H
-#include FT_BITMAP_H
+#include <freetype/freetype.h>
+#include <freetype/ftbitmap.h>
 #ifdef FT_COLOR_H
-#   include FT_COLOR_H
+#   include <freetype/ftcolor.h>
 #endif
-#include FT_IMAGE_H
-#include FT_OUTLINE_H
-#include FT_SIZES_H
+#include <freetype/ftimage.h>
+#include <freetype/ftoutln.h>
+#include <freetype/ftsizes.h>
 // In the past, FT_GlyphSlot_Own_Bitmap was defined in this header file.
-#include FT_SYNTHESIS_H
+#include <freetype/ftsynth.h>
+
+namespace {
+[[maybe_unused]] static inline const constexpr bool kSkShowTextBlitCoverage = false;
+}
+
+#ifdef TT_SUPPORT_COLRV1
+// FT_ClipBox and FT_Get_Color_Glyph_ClipBox introduced VER-2-11-0-18-g47cf8ebf4
+// FT_COLR_COMPOSITE_PLUS and renumbering introduced VER-2-11-0-21-ge40ae7569
+// FT_SIZEOF_LONG_LONG introduced VER-2-11-0-31-gffdac8d67
+// FT_PaintRadialGradient changed size and layout at VER-2-11-0-147-gd3d3ff76d
+// FT_STATIC_CAST introduced VER-2-11-0-172-g9079c5d91
+// So undefine TT_SUPPORT_COLRV1 before 2.11.1 but not if FT_STATIC_CAST is defined.
+#if (((FREETYPE_MAJOR)  < 2) || \
+     ((FREETYPE_MAJOR) == 2 && (FREETYPE_MINOR)  < 11) || \
+     ((FREETYPE_MAJOR) == 2 && (FREETYPE_MINOR) == 11 && (FREETYPE_PATCH) < 1)) && \
+    !defined(FT_STATIC_CAST)
+#    undef TT_SUPPORT_COLRV1
+#else
+#    include "src/core/SkScopeExit.h"
+#endif
+#endif
+
+// FT_OUTLINE_OVERLAP was added in FreeType 2.10.3
+#ifndef FT_OUTLINE_OVERLAP
+#    define FT_OUTLINE_OVERLAP 0x40
+#endif
 
 // FT_LOAD_COLOR and the corresponding FT_Pixel_Mode::FT_PIXEL_MODE_BGRA
 // were introduced in FreeType 2.5.0.
@@ -54,7 +83,11 @@ const char* SkTraceFtrGetError(int e) {
 }
 #endif  // SK_DEBUG
 
-#define SK_AFTER_FT_TRANSFORM_RENAME FREETYPE_MAJOR >= 2 && FREETYPE_MINOR >= 11
+#ifdef TT_SUPPORT_COLRV1
+bool operator==(const FT_OpaquePaint& a, const FT_OpaquePaint& b) {
+    return a.p == b.p && a.insert_root_transform == b.insert_root_transform;
+}
+#endif
 
 namespace {
 
@@ -71,18 +104,18 @@ FT_Pixel_Mode compute_pixel_mode(SkMask::Format format) {
 ///////////////////////////////////////////////////////////////////////////////
 
 uint16_t packTriple(U8CPU r, U8CPU g, U8CPU b) {
-#ifdef SK_SHOW_TEXT_BLIT_COVERAGE
-    r = std::max(r, (U8CPU)0x40);
-    g = std::max(g, (U8CPU)0x40);
-    b = std::max(b, (U8CPU)0x40);
-#endif
+    if constexpr (kSkShowTextBlitCoverage) {
+        r = std::max(r, (U8CPU)0x40);
+        g = std::max(g, (U8CPU)0x40);
+        b = std::max(b, (U8CPU)0x40);
+    }
     return SkPack888ToRGB16(r, g, b);
 }
 
 uint16_t grayToRGB16(U8CPU gray) {
-#ifdef SK_SHOW_TEXT_BLIT_COVERAGE
-    gray = std::max(gray, (U8CPU)0x40);
-#endif
+    if constexpr (kSkShowTextBlitCoverage) {
+        gray = std::max(gray, (U8CPU)0x40);
+    }
     return SkPack888ToRGB16(gray, gray, gray);
 }
 
@@ -273,9 +306,9 @@ void copyFTBitmap(const FT_Bitmap& srcFTBitmap, SkMask& dstMask) {
                 uint8_t r = *src_row++;
                 uint8_t a = *src_row++;
                 *dst_row++ = SkPackARGB32(a, r, g, b);
-#ifdef SK_SHOW_TEXT_BLIT_COVERAGE
-                *(dst_row-1) = SkFourByteInterp256(*(dst_row-1), SK_ColorWHITE, 0x40);
-#endif
+                if constexpr (kSkShowTextBlitCoverage) {
+                    *(dst_row-1) = SkFourByteInterp256(*(dst_row-1), SK_ColorWHITE, 0x40);
+                }
             }
             src += srcPitch;
             dst += dstRowBytes;
@@ -376,13 +409,24 @@ inline SkColorType SkColorType_for_SkMaskFormat(SkMask::Format format) {
 // it does support these features.
 #ifdef TT_SUPPORT_COLRV1
 
+const uint16_t kForegroundColorPaletteIndex = 0xFFFF;
+
+struct OpaquePaintHasher {
+  size_t operator()(const FT_OpaquePaint& opaquePaint) {
+      return SkGoodHash()(opaquePaint.p) ^
+             SkGoodHash()(opaquePaint.insert_root_transform);
+  }
+};
+
+using VisitedSet = SkTHashSet<FT_OpaquePaint, OpaquePaintHasher>;
+
 bool generateFacePathCOLRv1(FT_Face face, SkGlyphID glyphID, SkPath* path);
 
 inline float SkColrV1AlphaToFloat(uint16_t alpha) { return (alpha / float(1 << 14)); }
 
 
-inline SkTileMode ToSkTileMode(FT_PaintExtend extend_mode) {
-    switch (extend_mode) {
+inline SkTileMode ToSkTileMode(FT_PaintExtend extendMode) {
+    switch (extendMode) {
         case FT_COLR_PAINT_EXTEND_REPEAT:
             return SkTileMode::kRepeat;
         case FT_COLR_PAINT_EXTEND_REFLECT:
@@ -392,8 +436,8 @@ inline SkTileMode ToSkTileMode(FT_PaintExtend extend_mode) {
     }
 }
 
-inline SkBlendMode ToSkBlendMode(FT_Composite_Mode composite) {
-    switch (composite) {
+inline SkBlendMode ToSkBlendMode(FT_Composite_Mode compositeMode) {
+    switch (compositeMode) {
         case FT_COLR_COMPOSITE_CLEAR:
             return SkBlendMode::kClear;
         case FT_COLR_COMPOSITE_SRC:
@@ -418,6 +462,8 @@ inline SkBlendMode ToSkBlendMode(FT_Composite_Mode composite) {
             return SkBlendMode::kDstATop;
         case FT_COLR_COMPOSITE_XOR:
             return SkBlendMode::kXor;
+        case FT_COLR_COMPOSITE_PLUS:
+            return SkBlendMode::kPlus;
         case FT_COLR_COMPOSITE_SCREEN:
             return SkBlendMode::kScreen;
         case FT_COLR_COMPOSITE_OVERLAY:
@@ -454,401 +500,831 @@ inline SkBlendMode ToSkBlendMode(FT_Composite_Mode composite) {
 }
 
 inline SkMatrix ToSkMatrix(FT_Affine23 affine23) {
-    // Adjust order to convert from FreeType's FT_Affine23 column major order to SkMatrix row-major
-    // order.
+    // Convert from FreeType's FT_Affine23 column major order to SkMatrix row-major order.
     return SkMatrix::MakeAll(
-        SkFixedToScalar(affine23.xx),  -SkFixedToScalar(affine23.xy), SkFixedToScalar(affine23.dx),
+         SkFixedToScalar(affine23.xx), -SkFixedToScalar(affine23.xy),  SkFixedToScalar(affine23.dx),
         -SkFixedToScalar(affine23.yx),  SkFixedToScalar(affine23.yy), -SkFixedToScalar(affine23.dy),
-        0,                             0,                             1);
+         0,                             0,                             1);
 }
 
 inline SkPoint SkVectorProjection(SkPoint a, SkPoint b) {
     SkScalar length = b.length();
-    if (!length) return SkPoint();
-    SkPoint b_normalized = b;
-    b_normalized.normalize();
-    b_normalized.scale(SkPoint::DotProduct(a, b) / length);
-    return b_normalized;
+    if (!length) {
+        return SkPoint();
+    }
+    SkPoint bNormalized = b;
+    bNormalized.normalize();
+    bNormalized.scale(SkPoint::DotProduct(a, b) / length);
+    return bNormalized;
 }
 
-void colrv1_draw_paint(SkCanvas* canvas,
-                       const FT_Color* palette,
-                       FT_Face face,
-                       FT_COLR_Paint colrv1_paint) {
-    SkPaint paint;
+bool colrv1_configure_skpaint(FT_Face face,
+                              const SkSpan<SkColor>& palette,
+                              const SkColor foregroundColor,
+                              const FT_COLR_Paint& colrPaint,
+                              SkPaint* paint) {
+    auto fetchColorStops = [&face, &palette, &foregroundColor](
+                                               const FT_ColorStopIterator& colorStopIterator,
+                                               std::vector<SkScalar>& stops,
+                                               std::vector<SkColor>& colors) -> bool {
+        const FT_UInt colorStopCount = colorStopIterator.num_color_stops;
+        if (colorStopCount == 0) {
+            return false;
+        }
 
-    switch (colrv1_paint.format) {
+        // 5.7.11.2.4 ColorIndex, ColorStop and ColorLine
+        // "Applications shall apply the colorStops in increasing stopOffset order."
+        struct ColorStop {
+            SkScalar pos;
+            SkColor color;
+        };
+        std::vector<ColorStop> colorStopsSorted;
+        colorStopsSorted.resize(colorStopCount);
+
+        FT_ColorStop color_stop;
+        FT_ColorStopIterator mutable_color_stop_iterator = colorStopIterator;
+        while (FT_Get_Colorline_Stops(face, &color_stop, &mutable_color_stop_iterator)) {
+            FT_UInt index = mutable_color_stop_iterator.current_color_stop - 1;
+            colorStopsSorted[index].pos = color_stop.stop_offset / float(1 << 14);
+            FT_UInt16& palette_index = color_stop.color.palette_index;
+            if (palette_index == kForegroundColorPaletteIndex) {
+                U8CPU newAlpha = SkColorGetA(foregroundColor) *
+                                 SkColrV1AlphaToFloat(color_stop.color.alpha);
+                colorStopsSorted[index].color = SkColorSetA(foregroundColor, newAlpha);
+            } else if (palette_index >= palette.size()) {
+                return false;
+            } else {
+                U8CPU newAlpha = SkColorGetA(palette[palette_index]) *
+                                 SkColrV1AlphaToFloat(color_stop.color.alpha);
+                colorStopsSorted[index].color = SkColorSetA(palette[palette_index], newAlpha);
+            }
+        }
+
+        std::stable_sort(colorStopsSorted.begin(), colorStopsSorted.end(),
+                         [](const ColorStop& a, const ColorStop& b) { return a.pos < b.pos; });
+
+        stops.resize(colorStopCount);
+        colors.resize(colorStopCount);
+        for (size_t i = 0; i < colorStopCount; ++i) {
+            stops[i] = colorStopsSorted[i].pos;
+            colors[i] = colorStopsSorted[i].color;
+        }
+        return true;
+    };
+
+    switch (colrPaint.format) {
+        case FT_COLR_PAINTFORMAT_SOLID: {
+            FT_PaintSolid solid = colrPaint.u.solid;
+
+            // Dont' draw anything with this color if the palette index is out of bounds.
+            SkColor color = SK_ColorTRANSPARENT;
+            if (solid.color.palette_index == kForegroundColorPaletteIndex) {
+                U8CPU newAlpha = SkColorGetA(foregroundColor) *
+                                 SkColrV1AlphaToFloat(solid.color.alpha);
+                color = SkColorSetA(foregroundColor, newAlpha);
+            } else if (solid.color.palette_index >= palette.size()) {
+                return false;
+            } else {
+                U8CPU newAlpha = SkColorGetA(palette[solid.color.palette_index]) *
+                                 SkColrV1AlphaToFloat(solid.color.alpha);
+                color = SkColorSetA(palette[solid.color.palette_index], newAlpha);
+            }
+            paint->setShader(nullptr);
+            paint->setColor(color);
+            return true;
+        }
+        case FT_COLR_PAINTFORMAT_LINEAR_GRADIENT: {
+            const FT_PaintLinearGradient& linearGradient = colrPaint.u.linear_gradient;
+            std::vector<SkScalar> stops;
+            std::vector<SkColor> colors;
+
+            if (!fetchColorStops(linearGradient.colorline.color_stop_iterator, stops, colors)) {
+                return false;
+            }
+
+            if (stops.size() == 1) {
+                paint->setColor(colors[0]);
+                return true;
+            }
+
+            SkPoint linePositions[2] = {SkPoint::Make( SkFixedToScalar(linearGradient.p0.x),
+                                                      -SkFixedToScalar(linearGradient.p0.y)),
+                                        SkPoint::Make( SkFixedToScalar(linearGradient.p1.x),
+                                                      -SkFixedToScalar(linearGradient.p1.y))};
+            SkPoint p0 = linePositions[0];
+            SkPoint p1 = linePositions[1];
+            SkPoint p2 = SkPoint::Make( SkFixedToScalar(linearGradient.p2.x),
+                                       -SkFixedToScalar(linearGradient.p2.y));
+
+            // If p0p1 or p0p2 are degenerate probably nothing should be drawn.
+            // If p0p1 and p0p2 are parallel then one side is the first color and the other side is
+            // the last color, depending on the direction.
+            // For now, just use the first color.
+            if (p1 == p0 || p2 == p0 || !SkPoint::CrossProduct(p1 - p0, p2 - p0)) {
+                paint->setColor(colors[0]);
+                return true;
+            }
+
+            // Follow implementation note in nanoemoji:
+            // https://github.com/googlefonts/nanoemoji/blob/0ac6e7bb4d8202db692574d8530a9b643f1b3b3c/src/nanoemoji/svg.py#L188
+            // to compute a new gradient end point P3 as the orthogonal
+            // projection of the vector from p0 to p1 onto a line perpendicular
+            // to line p0p2 and passing through p0.
+            SkVector perpendicularToP2P0 = (p2 - p0);
+            perpendicularToP2P0 = SkPoint::Make( perpendicularToP2P0.y(),
+                                                -perpendicularToP2P0.x());
+            SkVector p3 = p0 + SkVectorProjection((p1 - p0), perpendicularToP2P0);
+
+            // Project/scale points according to stop extrema along p0p3 line,
+            // p3 being the result of the projection above, then scale stops to
+            // to [0, 1] range so that repeat modes work.  The Skia linear
+            // gradient shader performs the repeat modes over the 0 to 1 range,
+            // that's why we need to scale the stops to within that range.
+            SkVector p0p3 = p3 - p0;
+            SkVector p0Offset = p0p3;
+            p0Offset.scale(stops.front());
+            SkVector p1Offset = p0p3;
+            p1Offset.scale(stops.back());
+
+            linePositions[0] = p0 + p0Offset;
+            linePositions[1] = p0 + p1Offset;
+
+            SkScalar scaleFactor = 1 / (stops.back() - stops.front());
+            SkScalar startOffset = stops.front();
+            for (SkScalar& stop : stops) {
+                stop = (stop - startOffset) * scaleFactor;
+            }
+
+            sk_sp<SkShader> shader(SkGradientShader::MakeLinear(
+                                   linePositions,
+                                   colors.data(), stops.data(), stops.size(),
+                                   ToSkTileMode(linearGradient.colorline.extend)));
+            SkASSERT(shader);
+            // An opaque color is needed to ensure the gradient is not modulated by alpha.
+            paint->setColor(SK_ColorBLACK);
+            paint->setShader(shader);
+            return true;
+        }
+        case FT_COLR_PAINTFORMAT_RADIAL_GRADIENT: {
+            const FT_PaintRadialGradient& radialGradient = colrPaint.u.radial_gradient;
+            SkPoint start = SkPoint::Make( SkFixedToScalar(radialGradient.c0.x),
+                                          -SkFixedToScalar(radialGradient.c0.y));
+            SkScalar startRadius = SkFixedToScalar(radialGradient.r0);
+            SkPoint end = SkPoint::Make( SkFixedToScalar(radialGradient.c1.x),
+                                        -SkFixedToScalar(radialGradient.c1.y));
+            SkScalar endRadius = SkFixedToScalar(radialGradient.r1);
+
+
+            std::vector<SkScalar> stops;
+            std::vector<SkColor> colors;
+            if (!fetchColorStops(radialGradient.colorline.color_stop_iterator, stops, colors)) {
+                return false;
+            }
+
+            if (stops.size() == 1) {
+                paint->setColor(colors[0]);
+                return true;
+            }
+
+            // An opaque color is needed to ensure the gradient is not modulated by alpha.
+            paint->setColor(SK_ColorBLACK);
+
+            paint->setShader(SkGradientShader::MakeTwoPointConical(
+                    start, startRadius, end, endRadius, colors.data(), stops.data(), stops.size(),
+                    ToSkTileMode(radialGradient.colorline.extend)));
+            return true;
+        }
+        case FT_COLR_PAINTFORMAT_SWEEP_GRADIENT: {
+            const FT_PaintSweepGradient& sweepGradient = colrPaint.u.sweep_gradient;
+            SkPoint center = SkPoint::Make( SkFixedToScalar(sweepGradient.center.x),
+                                           -SkFixedToScalar(sweepGradient.center.y));
+            SkScalar startAngle = SkFixedToScalar(sweepGradient.start_angle * 180.0f);
+            SkScalar endAngle = SkFixedToScalar(sweepGradient.end_angle * 180.0f);
+
+            std::vector<SkScalar> stops;
+            std::vector<SkColor> colors;
+            if (!fetchColorStops(sweepGradient.colorline.color_stop_iterator, stops, colors)) {
+                return false;
+            }
+
+            if (stops.size() == 1) {
+                paint->setColor(colors[0]);
+                return true;
+            }
+
+            // An opaque color is needed to ensure the gradient is not modulated by alpha.
+            paint->setColor(SK_ColorBLACK);
+
+            // Prepare angles to be within range for the shader.
+            auto clampAngleToRange = [](SkScalar angle) {
+                SkScalar clampedAngle = SkScalarMod(angle, 360.f);
+                if (clampedAngle < 0) {
+                    return clampedAngle + 360.f;
+                }
+                return clampedAngle;
+            };
+            startAngle = clampAngleToRange(startAngle);
+            endAngle = clampAngleToRange(endAngle);
+#ifdef SK_IGNORE_COLRV1_SWEEP_FIX
+            /* TODO: Spec clarifications on which side of the gradient is to be
+             * painted, repeat modes, how to handle 0 degrees transition, see
+             * https://github.com/googlefonts/colr-gradients-spec/issues/250 */
+            if (startAngle >= endAngle) {
+                endAngle += 360.f;
+            }
+
+            // Skia's angles start from the horizontal x-Axis, rotate left 90
+            // degrees and then mirror horizontally to correct for Skia angles
+            // going clockwise, COLR v1 angles going counterclockwise.
+            SkMatrix angleAdjust = SkMatrix::RotateDeg(-90.f, center);
+            angleAdjust.postScale(-1, 1, center.x(), center.y());
+
+            paint->setShader(SkGradientShader::MakeSweep(
+                    center.x(), center.y(), colors.data(), stops.data(), stops.size(),
+                    SkTileMode::kDecal, startAngle, endAngle, 0, &angleAdjust));
+#else
+            SkScalar sectorAngle =
+                    endAngle > startAngle ? endAngle - startAngle : endAngle + 360.0f - startAngle;
+
+            /* https://docs.microsoft.com/en-us/typography/opentype/spec/colr#sweep-gradients
+             * "The angles are expressed in counter-clockwise degrees from the
+             * direction of the positive x-axis on the design grid. [...]  The
+             * color line progresses from the start angle to the end angle in
+             * the counter-clockwise direction;"
+             */
+
+            SkMatrix localMatrix;
+            localMatrix.postRotate(startAngle, center.x(), center.y());
+            /* Mirror along x-axis to change angle direction. */
+            localMatrix.postScale(1, -1, center.x(), center.y());
+            SkTileMode tileMode = ToSkTileMode(sweepGradient.colorline.extend);
+
+            paint->setShader(SkGradientShader::MakeSweep(
+                    center.x(), center.y(), colors.data(), stops.data(), stops.size(),
+                    tileMode, 0, sectorAngle, 0, &localMatrix));
+#endif
+            return true;
+        }
+        default: {
+            SkASSERT(false);
+            return false;
+        }
+    }
+    SkUNREACHABLE;
+}
+
+bool colrv1_draw_paint(SkCanvas* canvas,
+                       const SkSpan<SkColor>& palette,
+                       const SkColor foregroundColor,
+                       FT_Face face,
+                       const FT_COLR_Paint& colrPaint) {
+    switch (colrPaint.format) {
         case FT_COLR_PAINTFORMAT_GLYPH: {
-            FT_UInt glyphID = colrv1_paint.u.glyph.glyphID;
+            FT_UInt glyphID = colrPaint.u.glyph.glyphID;
             SkPath path;
             /* TODO: Currently this call retrieves the path at units_per_em size. If we want to get
              * correct hinting for the scaled size under the transforms at this point in the color
              * glyph graph, we need to extract at least the requested glyph width and height and
              * pass that to the path generation. */
-            if (generateFacePathCOLRv1(face, glyphID, &path)) {
-
-#ifdef SK_SHOW_TEXT_BLIT_COVERAGE
-              SkPaint highlight_paint;
-              highlight_paint.setColor(0x33FF0000);
-              canvas->drawRect(path.getBounds(), highlight_paint);
-#endif
-              canvas->clipPath(path, true /* doAntiAlias */);
+            if (!generateFacePathCOLRv1(face, glyphID, &path)) {
+                return false;
             }
-            break;
-        }
-        case FT_COLR_PAINTFORMAT_SOLID: {
-            SkColor color =
-                    SkColorSetARGB(palette[colrv1_paint.u.solid.color.palette_index].alpha *
-                                           SkColrV1AlphaToFloat(colrv1_paint.u.solid.color.alpha),
-                                   palette[colrv1_paint.u.solid.color.palette_index].red,
-                                   palette[colrv1_paint.u.solid.color.palette_index].green,
-                                   palette[colrv1_paint.u.solid.color.palette_index].blue);
-            paint.setShader(nullptr);
-            paint.setColor(color);
-            canvas->drawPaint(paint);
-            break;
-        }
-        case FT_COLR_PAINTFORMAT_LINEAR_GRADIENT: {
-            /* retrieve color stop */
-
-            SkPoint line_positions[2];
-            line_positions[0].fX = colrv1_paint.u.linear_gradient.p0.x;
-            line_positions[0].fY = -colrv1_paint.u.linear_gradient.p0.y;
-            line_positions[1].fX = colrv1_paint.u.linear_gradient.p1.x;
-            line_positions[1].fY = -colrv1_paint.u.linear_gradient.p1.y;
-
-            SkPoint& p0 = line_positions[0];
-            SkPoint& p1 = line_positions[1];
-            SkPoint p2;
-            p2.set(colrv1_paint.u.linear_gradient.p2.x,
-                   -colrv1_paint.u.linear_gradient.p2.y);
-
-            // Do not draw the gradient of p0p1 is parallel to p0p2.
-            if (p1 == p0 || p2 == p0 || !SkPoint::CrossProduct(p1 - p0, p2 - p0)) break;
-
-            // Follow implementation note in nanoemoji:
-            // https://github.com/googlefonts/nanoemoji/blob/0ac6e7bb4d8202db692574d8530a9b643f1b3b3c/src/nanoemoji/svg.py#L188
-            // to compute a new gradient end point as the orthogonal projection of the vector from p0 to p1 onto a line
-            // perpendicular to line p0p2 and passing through p0.
-            SkPoint perpendicular_to_p2_p0 = (p2 - p0);
-            perpendicular_to_p2_p0 = SkPoint::Make(perpendicular_to_p2_p0.y(), -perpendicular_to_p2_p0.x());
-            line_positions[1] = p0 + SkVectorProjection((p1 - p0), perpendicular_to_p2_p0);
-
-            /* populate points */
-            const FT_UInt num_color_stops =
-                    colrv1_paint.u.linear_gradient.colorline.color_stop_iterator.num_color_stops;
-            std::vector<SkScalar> stops;
-            std::vector<SkColor> colors;
-            stops.resize(num_color_stops);
-            colors.resize(num_color_stops);
-
-            FT_ColorStop color_stop;
-            while (FT_Get_Colorline_Stops(
-                    face, &color_stop,
-                    &colrv1_paint.u.linear_gradient.colorline.color_stop_iterator)) {
-                FT_UInt index = colrv1_paint.u.linear_gradient.colorline.color_stop_iterator
-                                        .current_color_stop -
-                                1;
-                stops[index] = color_stop.stop_offset / float(1 << 14);
-                FT_UInt16& palette_index = color_stop.color.palette_index;
-                colors[index] = SkColorSetARGB(
-                        palette[palette_index].alpha * SkColrV1AlphaToFloat(color_stop.color.alpha),
-                        palette[palette_index].red, palette[palette_index].green,
-                        palette[palette_index].blue);
+            if constexpr (kSkShowTextBlitCoverage) {
+                SkPaint highlight_paint;
+                highlight_paint.setColor(0x33FF0000);
+                canvas->drawRect(path.getBounds(), highlight_paint);
             }
-
-            sk_sp<SkShader> shader(SkGradientShader::MakeLinear(
-                    line_positions, colors.data(), stops.data(), num_color_stops,
-                    ToSkTileMode(colrv1_paint.u.linear_gradient.colorline.extend)));
-            SkASSERT(shader);
-            // An opaque color is needed to ensure the gradient's not modulated by alpha.
-            paint.setColor(SK_ColorBLACK);
-            paint.setShader(shader);
-
-
-            canvas->drawPaint(paint);
-            break;
+            canvas->clipPath(path, true /* doAntiAlias */);
+            return true;
         }
-        case FT_COLR_PAINTFORMAT_RADIAL_GRADIENT: {
-            SkPoint start =
-                    SkPoint::Make(colrv1_paint.u.radial_gradient.c0.x,
-                                  -colrv1_paint.u.radial_gradient.c0.y);
-            SkScalar radius = colrv1_paint.u.radial_gradient.r0;
-            SkPoint end = SkPoint::Make(colrv1_paint.u.radial_gradient.c1.x,
-                                        -colrv1_paint.u.radial_gradient.c1.y);
-            SkScalar end_radius = colrv1_paint.u.radial_gradient.r1;
-
-            const FT_UInt num_color_stops =
-                    colrv1_paint.u.radial_gradient.colorline.color_stop_iterator.num_color_stops;
-            std::vector<SkScalar> stops;
-            std::vector<SkColor> colors;
-            stops.resize(num_color_stops);
-            colors.resize(num_color_stops);
-
-            FT_ColorStop color_stop;
-            while (FT_Get_Colorline_Stops(
-                    face, &color_stop,
-                    &colrv1_paint.u.radial_gradient.colorline.color_stop_iterator)) {
-                FT_UInt index = colrv1_paint.u.radial_gradient.colorline.color_stop_iterator
-                                        .current_color_stop -
-                                1;
-                stops[index] = color_stop.stop_offset / float(1 << 14);
-                FT_UInt16& palette_index = color_stop.color.palette_index;
-                colors[index] = SkColorSetARGB(
-                        palette[palette_index].alpha * SkColrV1AlphaToFloat(color_stop.color.alpha),
-                        palette[palette_index].red, palette[palette_index].green,
-                        palette[palette_index].blue);
-            }
-
-            // An opaque color is needed to ensure the gradient's not modulated by alpha.
-            paint.setColor(SK_ColorBLACK);
-
-            paint.setShader(SkGradientShader::MakeTwoPointConical(
-                    start, radius, end, end_radius, colors.data(), stops.data(), num_color_stops,
-                    ToSkTileMode(colrv1_paint.u.radial_gradient.colorline.extend)));
-            canvas->drawPaint(paint);
-            break;
-        }
+        case FT_COLR_PAINTFORMAT_SOLID:
+        case FT_COLR_PAINTFORMAT_LINEAR_GRADIENT:
+        case FT_COLR_PAINTFORMAT_RADIAL_GRADIENT:
         case FT_COLR_PAINTFORMAT_SWEEP_GRADIENT: {
-            SkPoint center = SkPoint::Make(colrv1_paint.u.sweep_gradient.center.x,
-                                           -colrv1_paint.u.sweep_gradient.center.y);
-            SkScalar startAngle = SkFixedToScalar(colrv1_paint.u.sweep_gradient.start_angle);
-            SkScalar endAngle = SkFixedToScalar(colrv1_paint.u.sweep_gradient.end_angle);
-
-            const FT_UInt num_color_stops =
-                    colrv1_paint.u.sweep_gradient.colorline.color_stop_iterator.num_color_stops;
-            std::vector<SkScalar> stops;
-            std::vector<SkColor> colors;
-            stops.resize(num_color_stops);
-            colors.resize(num_color_stops);
-
-            FT_ColorStop color_stop;
-            while (FT_Get_Colorline_Stops(
-                    face, &color_stop,
-                    &colrv1_paint.u.sweep_gradient.colorline.color_stop_iterator)) {
-                FT_UInt index = colrv1_paint.u.sweep_gradient.colorline.color_stop_iterator
-                                        .current_color_stop -
-                                1;
-                stops[index] = color_stop.stop_offset / float(1 << 14);
-                FT_UInt16& palette_index = color_stop.color.palette_index;
-                colors[index] = SkColorSetARGB(
-                        palette[palette_index].alpha * SkColrV1AlphaToFloat(color_stop.color.alpha),
-                        palette[palette_index].red, palette[palette_index].green,
-                        palette[palette_index].blue);
+            SkPaint skPaint;
+            if (!colrv1_configure_skpaint(face, palette, foregroundColor, colrPaint, &skPaint)) {
+                return false;
             }
+            canvas->drawPaint(skPaint);
+            return true;
+        }
+        case FT_COLR_PAINTFORMAT_TRANSFORM:
+        case FT_COLR_PAINTFORMAT_TRANSLATE:
+        case FT_COLR_PAINTFORMAT_SCALE:
+        case FT_COLR_PAINTFORMAT_ROTATE:
+        case FT_COLR_PAINTFORMAT_SKEW:
+            [[fallthrough]];  // Transforms handled in colrv1_transform.
+        default:
+            SkASSERT(false);
+            return false;
+    }
+    SkUNREACHABLE;
+}
 
-            // An opaque color is needed to ensure the gradient's not modulated by alpha.
-            paint.setColor(SK_ColorBLACK);
+bool colrv1_draw_glyph_with_path(SkCanvas* canvas,
+                                 const SkSpan<SkColor>& palette, SkColor foregroundColor,
+                                 FT_Face face,
+                                 const FT_COLR_Paint& glyphPaint, const FT_COLR_Paint& fillPaint) {
+    SkASSERT(glyphPaint.format == FT_COLR_PAINTFORMAT_GLYPH);
+    SkASSERT(fillPaint.format == FT_COLR_PAINTFORMAT_SOLID ||
+             fillPaint.format == FT_COLR_PAINTFORMAT_LINEAR_GRADIENT ||
+             fillPaint.format == FT_COLR_PAINTFORMAT_RADIAL_GRADIENT ||
+             fillPaint.format == FT_COLR_PAINTFORMAT_SWEEP_GRADIENT);
 
-            // Prepare angles to be within range for the shader.
-            auto clampAngleToRange= [](SkScalar angle) {
-              SkScalar clamped_angle = SkScalarMod(angle, 360.f);
-              if (clamped_angle < 0)
-                return clamped_angle + 360.f;
-              return clamped_angle;
-            };
-            startAngle = clampAngleToRange(startAngle);
-            endAngle = clampAngleToRange(endAngle);
-            /* TODO: Spec clarifications on which side of the gradient is to be
-             * painted, repeat modes, how to handle 0 degrees transition, see
-             * https://github.com/googlefonts/colr-gradients-spec/issues/250 */
-            if (startAngle >= endAngle)
-              endAngle += 360.f;
+    SkPaint skiaFillPaint;
+    skiaFillPaint.setAntiAlias(true);
+    if (!colrv1_configure_skpaint(face, palette, foregroundColor, fillPaint, &skiaFillPaint)) {
+        return false;
+    }
 
-            // Skia's angles start from the horizontal x-Axis, rotate left 90
-            // degrees and then mirror horizontally to correct for Skia angles
-            // going clockwise, COLR v1 angles going counterclockwise.
-            SkMatrix angle_adjust = SkMatrix::RotateDeg(-90.f, center);
-            angle_adjust.postScale(-1, 1, center.x(), center.y());
+    FT_UInt glyphID = glyphPaint.u.glyph.glyphID;
+    SkPath path;
+    /* TODO: Currently this call retrieves the path at units_per_em size. If we want to get
+     * correct hinting for the scaled size under the transforms at this point in the color
+     * glyph graph, we need to extract at least the requested glyph width and height and
+     * pass that to the path generation. */
+    if (!generateFacePathCOLRv1(face, glyphID, &path)) {
+        return false;
+    }
+    if constexpr (kSkShowTextBlitCoverage) {
+        SkPaint highlightPaint;
+        highlightPaint.setColor(0x33FF0000);
+        canvas->drawRect(path.getBounds(), highlightPaint);
+    }
+    canvas->drawPath(path, skiaFillPaint);
+    return true;
+}
 
-            paint.setShader(SkGradientShader::MakeSweep(
-                    center.x(), center.y(), colors.data(), stops.data(), num_color_stops,
-                    SkTileMode::kDecal, startAngle, endAngle, 0, &angle_adjust));
-            canvas->drawPaint(paint);
+
+/* In drawing mode, concatenates the transforms directly on SkCanvas. In
+ * bounding box calculation mode, no SkCanvas is specified, but we only want to
+ * retrieve the transform from the FreeType paint object. */
+void colrv1_transform(FT_Face face,
+                      const FT_COLR_Paint& colrPaint,
+                      SkCanvas* canvas,
+                      SkMatrix* outTransform = nullptr) {
+    SkMatrix transform;
+
+    SkASSERT(canvas || outTransform);
+
+    switch (colrPaint.format) {
+        case FT_COLR_PAINTFORMAT_TRANSFORM: {
+            transform = ToSkMatrix(colrPaint.u.transform.affine);
             break;
         }
-#if SK_AFTER_FT_TRANSFORM_RENAME
-        case FT_COLR_PAINTFORMAT_TRANSFORM: {
-            SkMatrix transform = ToSkMatrix(colrv1_paint.u.transform.affine);
-#else
-        case FT_COLR_PAINTFORMAT_TRANSFORMED: {
-            SkMatrix transform = ToSkMatrix(colrv1_paint.u.transformed.affine);
-#endif
-
-            canvas->concat(transform);
+        case FT_COLR_PAINTFORMAT_TRANSLATE: {
+            transform = SkMatrix::Translate( SkFixedToScalar(colrPaint.u.translate.dx),
+                                            -SkFixedToScalar(colrPaint.u.translate.dy));
+            break;
+        }
+        case FT_COLR_PAINTFORMAT_SCALE: {
+            transform.setScale( SkFixedToScalar(colrPaint.u.scale.scale_x),
+                                SkFixedToScalar(colrPaint.u.scale.scale_y),
+                                SkFixedToScalar(colrPaint.u.scale.center_x),
+                               -SkFixedToScalar(colrPaint.u.scale.center_y));
             break;
         }
         case FT_COLR_PAINTFORMAT_ROTATE: {
-            SkMatrix rotation = SkMatrix::RotateDeg(
-                    SkFixedToScalar(colrv1_paint.u.rotate.angle),
-                    SkPoint::Make(SkFixedToScalar(colrv1_paint.u.rotate.center_x),
-                                  -SkFixedToScalar(colrv1_paint.u.rotate.center_y)));
-
-            canvas->concat(rotation);
+            // COLRv1 angles are counter-clockwise, compare
+            // https://docs.microsoft.com/en-us/typography/opentype/spec/colr#formats-24-to-27-paintrotate-paintvarrotate-paintrotatearoundcenter-paintvarrotatearoundcenter
+            transform = SkMatrix::RotateDeg(
+#ifdef SK_IGNORE_COLRV1_TRANSFORM_FIX
+                    SkFixedToScalar(colrPaint.u.rotate.angle) * 180.0f,
+#else
+                    -SkFixedToScalar(colrPaint.u.rotate.angle) * 180.0f,
+#endif
+                    SkPoint::Make( SkFixedToScalar(colrPaint.u.rotate.center_x),
+                                  -SkFixedToScalar(colrPaint.u.rotate.center_y)));
             break;
         }
         case FT_COLR_PAINTFORMAT_SKEW: {
             // In the PAINTFORMAT_ROTATE implementation, SkMatrix setRotate
             // snaps to 0 for values very close to 0. Do the same here.
 
-            SkScalar rad_x = SkDegreesToRadians(-SkFixedToFloat(colrv1_paint.u.skew.x_skew_angle));
-            float tan_x = SkScalarTan(rad_x);
-            tan_x = SkScalarNearlyZero(tan_x) ? 0.0f : tan_x;
+            SkScalar xDeg = SkFixedToScalar(colrPaint.u.skew.x_skew_angle) * 180.0f;
+#ifdef SK_IGNORE_COLRV1_TRANSFORM_FIX
+            SkScalar xRad = SkDegreesToRadians(-xDeg);
+#else
+            SkScalar xRad = SkDegreesToRadians(xDeg);
+#endif
+            SkScalar xTan = SkScalarTan(xRad);
+            xTan = SkScalarNearlyZero(xTan) ? 0.0f : xTan;
 
-            SkScalar rad_y = SkDegreesToRadians(-SkFixedToFloat(colrv1_paint.u.skew.y_skew_angle));
-            float tan_y = SkScalarTan(rad_y);
-            tan_y = SkScalarNearlyZero(tan_y) ? 0.0f : tan_y;
+            SkScalar yDeg = SkFixedToScalar(colrPaint.u.skew.y_skew_angle) * 180.0f;
+            // Negate y_skew_angle due to Skia's y-down coordinate system to achieve
+            // counter-clockwise skew along the y-axis.
+            SkScalar yRad = SkDegreesToRadians(-yDeg);
+            SkScalar yTan = SkScalarTan(yRad);
+            yTan = SkScalarNearlyZero(yTan) ? 0.0f : yTan;
 
-            SkMatrix translate_to_origin = SkMatrix::Translate(
-                    SkFixedToScalar(SkFixedToFloat(colrv1_paint.u.skew.center_x)),
-                    SkFixedToScalar(-SkFixedToFloat(colrv1_paint.u.skew.center_y)));
-
-            SkMatrix translate_from_origin;
-            SkASSERT(translate_to_origin.invert(&translate_from_origin));
-
-            SkMatrix skew_x = SkMatrix::MakeAll(
-                1, tan_x, 0,
-                0, 1, 0,
-                0, 0, 1);
-
-            SkMatrix skew_y = SkMatrix::MakeAll(
-                1, 0, 0,
-                tan_y, 1, 0,
-                0, 0, 1);
-
-            SkMatrix skew = translate_from_origin.postConcat(skew_x).postConcat(skew_y).postConcat(translate_to_origin);
-
-            canvas->concat(skew);
+            transform.setSkew(xTan, yTan,
+                              SkFixedToScalar(colrPaint.u.skew.center_x),
+                             -SkFixedToScalar(colrPaint.u.skew.center_y));
             break;
         }
-        default:
-            paint.setShader(nullptr);
-            paint.setColor(SK_ColorCYAN);
-            break;
+        default: {
+            SkASSERT(false);  // Only transforms are handled in this function.
+        }
+    }
+    if (canvas) {
+        canvas->concat(transform);
+    }
+    if (outTransform) {
+        *outTransform = transform;
     }
 }
 
 bool colrv1_start_glyph(SkCanvas* canvas,
-                        const FT_Color* palette,
-                        FT_Face ft_face,
-                        uint16_t glyph_id,
-                        FT_Color_Root_Transform root_transform);
+                        const SkSpan<SkColor>& palette,
+                        const SkColor foregroundColor,
+                        FT_Face face,
+                        uint16_t glyphId,
+                        FT_Color_Root_Transform rootTransform,
+                        VisitedSet* activePaints);
 
 bool colrv1_traverse_paint(SkCanvas* canvas,
-                           const FT_Color* palette,
+                           const SkSpan<SkColor>& palette,
+                           const SkColor foregroundColor,
                            FT_Face face,
-                           FT_OpaquePaint opaque_paint) {
-    FT_COLR_Paint paint;
-    if (!FT_Get_Paint(face, opaque_paint, &paint)) {
-      return false;
+                           FT_OpaquePaint opaquePaint,
+                           VisitedSet* activePaints) {
+    // Cycle detection, see section "5.7.11.1.9 Color glyphs as a directed acyclic graph".
+    if (activePaints->contains(opaquePaint)) {
+        return false;
     }
 
-    // Keep track of failures to retrieve the FT_COLR_Paint from FreeType in the
-    // recursion, cancel recursion when a paint retrieval fails.
-    bool traverse_result = true;
+    activePaints->add(opaquePaint);
+    SK_AT_SCOPE_EXIT(activePaints->remove(opaquePaint));
+
+    FT_COLR_Paint paint;
+    if (!FT_Get_Paint(face, opaquePaint, &paint)) {
+        return false;
+    }
+
+    SkAutoCanvasRestore autoRestore(canvas, true /* doSave */);
     switch (paint.format) {
         case FT_COLR_PAINTFORMAT_COLR_LAYERS: {
-            FT_LayerIterator& layer_iterator = paint.u.colr_layers.layer_iterator;
-            FT_OpaquePaint opaque_paint_fetch;
-            opaque_paint_fetch.p = nullptr;
-            while (FT_Get_Paint_Layers(face, &layer_iterator, &opaque_paint_fetch)) {
-                colrv1_traverse_paint(canvas, palette, face, opaque_paint_fetch);
+            FT_LayerIterator& layerIterator = paint.u.colr_layers.layer_iterator;
+            FT_OpaquePaint layerPaint{nullptr, 1};
+            while (FT_Get_Paint_Layers(face, &layerIterator, &layerPaint)) {
+                if (!colrv1_traverse_paint(canvas, palette, foregroundColor, face,
+                                           layerPaint, activePaints)) {
+                    return false;
+                }
             }
-            break;
+            return true;
         }
         case FT_COLR_PAINTFORMAT_GLYPH:
-            canvas->saveLayer(nullptr, nullptr);
-            // Traverse / draw operation will clip layer.
-            colrv1_draw_paint(canvas, palette, face, paint);
-            traverse_result = colrv1_traverse_paint(canvas, palette, face, paint.u.glyph.paint);
-            canvas->restore();
-            break;
+            // Special case paint graph leaf situations to improve
+            // performance. These are situations in the graph where a GlyphPaint
+            // is followed by either a solid or a gradient fill. Here we can use
+            // drawPath() + SkPaint directly which is faster than setting a
+            // clipPath() followed by a drawPaint().
+            FT_COLR_Paint fillPaint;
+            if (!FT_Get_Paint(face, paint.u.glyph.paint, &fillPaint)) {
+                return false;
+            }
+            if (fillPaint.format == FT_COLR_PAINTFORMAT_SOLID ||
+                fillPaint.format == FT_COLR_PAINTFORMAT_LINEAR_GRADIENT ||
+                fillPaint.format == FT_COLR_PAINTFORMAT_RADIAL_GRADIENT ||
+                fillPaint.format == FT_COLR_PAINTFORMAT_SWEEP_GRADIENT)
+            {
+                return colrv1_draw_glyph_with_path(canvas, palette, foregroundColor,
+                                                   face, paint, fillPaint);
+            }
+            if (!colrv1_draw_paint(canvas, palette, foregroundColor, face, paint)) {
+                return false;
+            }
+            return colrv1_traverse_paint(canvas, palette, foregroundColor,
+                                         face, paint.u.glyph.paint, activePaints);
         case FT_COLR_PAINTFORMAT_COLR_GLYPH:
-            traverse_result = colrv1_start_glyph(canvas, palette, face, paint.u.colr_glyph.glyphID,
-                                                 FT_COLOR_NO_ROOT_TRANSFORM);
-            break;
-#if SK_AFTER_FT_TRANSFORM_RENAME
+            return colrv1_start_glyph(canvas, palette, foregroundColor,
+                                      face, paint.u.colr_glyph.glyphID, FT_COLOR_NO_ROOT_TRANSFORM,
+                                      activePaints);
         case FT_COLR_PAINTFORMAT_TRANSFORM:
-#else
-        case FT_COLR_PAINTFORMAT_TRANSFORMED:
-#endif
-            canvas->saveLayer(nullptr, nullptr);
-            // Traverse / draw operation will apply transform.
-            colrv1_draw_paint(canvas, palette, face, paint);
-            traverse_result =
-#if SK_AFTER_FT_TRANSFORM_RENAME
-                    colrv1_traverse_paint(canvas, palette, face, paint.u.transform.paint);
-#else
-                    colrv1_traverse_paint(canvas, palette, face, paint.u.transformed.paint);
-#endif
-            canvas->restore();
-            break;
-      case FT_COLR_PAINTFORMAT_ROTATE:
-            canvas->saveLayer(nullptr, nullptr);
-            // Traverse / draw operation will apply transform.
-            colrv1_draw_paint(canvas, palette, face, paint);
-            traverse_result = colrv1_traverse_paint(canvas, palette, face, paint.u.rotate.paint);
-            canvas->restore();
-            break;
+            colrv1_transform(face, paint, canvas);
+            return colrv1_traverse_paint(canvas, palette, foregroundColor,
+                                         face, paint.u.transform.paint, activePaints);
+        case FT_COLR_PAINTFORMAT_TRANSLATE:
+            colrv1_transform(face, paint, canvas);
+            return colrv1_traverse_paint(canvas, palette, foregroundColor,
+                                         face, paint.u.translate.paint, activePaints);
+        case FT_COLR_PAINTFORMAT_SCALE:
+            colrv1_transform(face, paint, canvas);
+            return colrv1_traverse_paint(canvas, palette, foregroundColor,
+                                         face, paint.u.scale.paint, activePaints);
+        case FT_COLR_PAINTFORMAT_ROTATE:
+            colrv1_transform(face, paint, canvas);
+            return colrv1_traverse_paint(canvas, palette, foregroundColor,
+                                         face, paint.u.rotate.paint, activePaints);
         case FT_COLR_PAINTFORMAT_SKEW:
-            canvas->saveLayer(nullptr, nullptr);
-            // Traverse / draw operation will apply transform.
-            colrv1_draw_paint(canvas, palette, face, paint);
-            traverse_result = colrv1_traverse_paint(canvas, palette, face, paint.u.skew.paint);
-            canvas->restore();
-            break;
+            colrv1_transform(face, paint, canvas);
+            return colrv1_traverse_paint(canvas, palette, foregroundColor,
+                                         face, paint.u.skew.paint, activePaints);
         case FT_COLR_PAINTFORMAT_COMPOSITE: {
-            traverse_result =
-                    colrv1_traverse_paint(canvas, palette, face, paint.u.composite.backdrop_paint);
-            SkPaint blend_mode_paint;
-            blend_mode_paint.setBlendMode(ToSkBlendMode(paint.u.composite.composite_mode));
-            canvas->saveLayer(nullptr, &blend_mode_paint);
-            traverse_result =
-                    traverse_result &&
-                    colrv1_traverse_paint(canvas, palette, face, paint.u.composite.source_paint);
-            canvas->restore();
-            break;
+            SkAutoCanvasRestore acr(canvas, false);
+            canvas->saveLayer(nullptr, nullptr);
+            if (!colrv1_traverse_paint(canvas, palette, foregroundColor,
+                                       face, paint.u.composite.backdrop_paint, activePaints)) {
+                return false;
+            }
+            SkPaint blendModePaint;
+            blendModePaint.setBlendMode(ToSkBlendMode(paint.u.composite.composite_mode));
+            canvas->saveLayer(nullptr, &blendModePaint);
+            return colrv1_traverse_paint(canvas, palette, foregroundColor,
+                                         face, paint.u.composite.source_paint, activePaints);
         }
         case FT_COLR_PAINTFORMAT_SOLID:
         case FT_COLR_PAINTFORMAT_LINEAR_GRADIENT:
         case FT_COLR_PAINTFORMAT_RADIAL_GRADIENT:
         case FT_COLR_PAINTFORMAT_SWEEP_GRADIENT: {
-            colrv1_draw_paint(canvas, palette, face, paint);
-            break;
+            return colrv1_draw_paint(canvas, palette, foregroundColor, face, paint);
         }
         default:
             SkASSERT(false);
-            break;
+            return false;
     }
-    return traverse_result;
+    SkUNREACHABLE;
+}
+
+SkPath GetClipBoxPath(FT_Face face, uint16_t glyphId, bool untransformed) {
+    SkPath resultPath;
+
+    using DoneFTSize = SkFunctionWrapper<decltype(FT_Done_Size), FT_Done_Size>;
+    std::unique_ptr<std::remove_pointer_t<FT_Size>, DoneFTSize> unscaledFtSize = nullptr;
+
+    FT_Size oldSize = face->size;
+    FT_Matrix oldTransform;
+    FT_Vector oldDelta;
+    FT_Error err = 0;
+
+    if (untransformed) {
+        unscaledFtSize.reset(
+                [face]() -> FT_Size {
+                    FT_Size size;
+                    FT_Error err = FT_New_Size(face, &size);
+                    if (err != 0) {
+                        SK_TRACEFTR(err,
+                                    "FT_New_Size(%s) failed in generateFacePathStaticCOLRv1.",
+                                    face->family_name);
+                        return nullptr;
+                    }
+                    return size;
+                }());
+        if (!unscaledFtSize) {
+            return resultPath;
+        }
+
+        err = FT_Activate_Size(unscaledFtSize.get());
+        if (err != 0) {
+            return resultPath;
+        }
+
+        err = FT_Set_Char_Size(face, SkIntToFDot6(face->units_per_EM), 0, 0, 0);
+        if (err != 0) {
+            return resultPath;
+        }
+
+        FT_Get_Transform(face, &oldTransform, &oldDelta);
+        FT_Set_Transform(face, nullptr, nullptr);
+    }
+
+    FT_ClipBox colrGlyphClipBox;
+    if (FT_Get_Color_Glyph_ClipBox(face, glyphId, &colrGlyphClipBox)) {
+        resultPath = SkPath::Polygon({{ SkFDot6ToScalar(colrGlyphClipBox.bottom_left.x),
+                                       -SkFDot6ToScalar(colrGlyphClipBox.bottom_left.y)},
+                                      { SkFDot6ToScalar(colrGlyphClipBox.top_left.x),
+                                       -SkFDot6ToScalar(colrGlyphClipBox.top_left.y)},
+                                      { SkFDot6ToScalar(colrGlyphClipBox.top_right.x),
+                                       -SkFDot6ToScalar(colrGlyphClipBox.top_right.y)},
+                                      { SkFDot6ToScalar(colrGlyphClipBox.bottom_right.x),
+                                       -SkFDot6ToScalar(colrGlyphClipBox.bottom_right.y)}},
+                                     true);
+    }
+
+    if (untransformed) {
+        err = FT_Activate_Size(oldSize);
+        if (err != 0) {
+          return resultPath;
+        }
+        FT_Set_Transform(face, &oldTransform, &oldDelta);
+    }
+
+    return resultPath;
 }
 
 bool colrv1_start_glyph(SkCanvas* canvas,
-                        const FT_Color* palette,
-                        FT_Face ft_face,
-                        uint16_t glyph_id,
-                        FT_Color_Root_Transform root_transform) {
-    FT_OpaquePaint opaque_paint;
-    opaque_paint.p = nullptr;
-    bool has_colrv1_layers = false;
-    if (FT_Get_Color_Glyph_Paint(ft_face, glyph_id, root_transform, &opaque_paint)) {
-        has_colrv1_layers = true;
-        colrv1_traverse_paint(canvas, palette, ft_face, opaque_paint);
+                        const SkSpan<SkColor>& palette,
+                        const SkColor foregroundColor,
+                        FT_Face face,
+                        uint16_t glyphId,
+                        FT_Color_Root_Transform rootTransform,
+                        VisitedSet* activePaints) {
+    FT_OpaquePaint opaquePaint{nullptr, 1};
+    if (!FT_Get_Color_Glyph_Paint(face, glyphId, rootTransform, &opaquePaint)) {
+        return false;
     }
-    return has_colrv1_layers;
+
+    bool untransformed = rootTransform == FT_COLOR_NO_ROOT_TRANSFORM;
+    SkPath clipBoxPath = GetClipBoxPath(face, glyphId, untransformed);
+    if (!clipBoxPath.isEmpty()) {
+        canvas->clipPath(clipBoxPath, true);
+    }
+
+    if (!colrv1_traverse_paint(canvas, palette, foregroundColor,
+                               face, opaquePaint, activePaints)) {
+        return false;
+    }
+
+    return true;
+}
+
+bool colrv1_start_glyph_bounds(SkMatrix *ctm,
+                               SkRect* bounds,
+                               FT_Face face,
+                               uint16_t glyphId,
+                               FT_Color_Root_Transform rootTransform,
+                               VisitedSet* activePaints);
+
+bool colrv1_traverse_paint_bounds(SkMatrix* ctm,
+                                  SkRect* bounds,
+                                  FT_Face face,
+                                  FT_OpaquePaint opaquePaint,
+                                  VisitedSet* activePaints) {
+    // Cycle detection, see section "5.7.11.1.9 Color glyphs as a directed acyclic graph".
+    if (activePaints->contains(opaquePaint)) {
+        return false;
+    }
+
+    activePaints->add(opaquePaint);
+    SK_AT_SCOPE_EXIT(activePaints->remove(opaquePaint));
+
+    FT_COLR_Paint paint;
+    if (!FT_Get_Paint(face, opaquePaint, &paint)) {
+        return false;
+    }
+
+    SkMatrix restoreMatrix = *ctm;
+    SK_AT_SCOPE_EXIT(*ctm = restoreMatrix);
+
+    switch (paint.format) {
+        case FT_COLR_PAINTFORMAT_COLR_LAYERS: {
+            FT_LayerIterator& layerIterator = paint.u.colr_layers.layer_iterator;
+            FT_OpaquePaint layerPaint{nullptr, 1};
+            while (FT_Get_Paint_Layers(face, &layerIterator, &layerPaint)) {
+                if (!colrv1_traverse_paint_bounds(ctm, bounds, face, layerPaint, activePaints)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        case FT_COLR_PAINTFORMAT_GLYPH: {
+            FT_UInt glyphID = paint.u.glyph.glyphID;
+            SkPath path;
+            if (!generateFacePathCOLRv1(face, glyphID, &path)) {
+                return false;
+            }
+            path.transform(*ctm);
+            bounds->join(path.getBounds());
+            return true;
+        }
+        case FT_COLR_PAINTFORMAT_COLR_GLYPH: {
+            FT_UInt glyphID = paint.u.colr_glyph.glyphID;
+            return colrv1_start_glyph_bounds(ctm, bounds, face, glyphID, FT_COLOR_NO_ROOT_TRANSFORM,
+                                             activePaints);
+        }
+        case FT_COLR_PAINTFORMAT_TRANSFORM: {
+            SkMatrix transformMatrix;
+            colrv1_transform(face, paint, nullptr, &transformMatrix);
+            ctm->preConcat(transformMatrix);
+            FT_OpaquePaint& transformPaint = paint.u.transform.paint;
+            return colrv1_traverse_paint_bounds(ctm, bounds, face, transformPaint, activePaints);
+        }
+        case FT_COLR_PAINTFORMAT_TRANSLATE: {
+            SkMatrix transformMatrix;
+            colrv1_transform(face, paint, nullptr, &transformMatrix);
+            ctm->preConcat(transformMatrix);
+            FT_OpaquePaint& translatePaint = paint.u.translate.paint;
+            return colrv1_traverse_paint_bounds(ctm, bounds, face, translatePaint, activePaints);
+        }
+        case FT_COLR_PAINTFORMAT_SCALE: {
+            SkMatrix transformMatrix;
+            colrv1_transform(face, paint, nullptr, &transformMatrix);
+            ctm->preConcat(transformMatrix);
+            FT_OpaquePaint& scalePaint = paint.u.scale.paint;
+            return colrv1_traverse_paint_bounds(ctm, bounds, face, scalePaint, activePaints);
+        }
+        case FT_COLR_PAINTFORMAT_ROTATE: {
+            SkMatrix transformMatrix;
+            colrv1_transform(face, paint, nullptr, &transformMatrix);
+            ctm->preConcat(transformMatrix);
+            FT_OpaquePaint& rotatePaint = paint.u.rotate.paint;
+            return colrv1_traverse_paint_bounds(ctm, bounds, face, rotatePaint, activePaints);
+        }
+        case FT_COLR_PAINTFORMAT_SKEW: {
+            SkMatrix transformMatrix;
+            colrv1_transform(face, paint, nullptr, &transformMatrix);
+            ctm->preConcat(transformMatrix);
+            FT_OpaquePaint& skewPaint = paint.u.skew.paint;
+            return colrv1_traverse_paint_bounds(ctm, bounds, face, skewPaint, activePaints);
+        }
+        case FT_COLR_PAINTFORMAT_COMPOSITE: {
+            FT_OpaquePaint& backdropPaint = paint.u.composite.backdrop_paint;
+            FT_OpaquePaint&   sourcePaint = paint.u.composite.  source_paint;
+            return colrv1_traverse_paint_bounds(ctm, bounds, face, backdropPaint, activePaints) &&
+                   colrv1_traverse_paint_bounds(ctm, bounds, face,   sourcePaint, activePaints);
+        }
+        case FT_COLR_PAINTFORMAT_SOLID:
+        case FT_COLR_PAINTFORMAT_LINEAR_GRADIENT:
+        case FT_COLR_PAINTFORMAT_RADIAL_GRADIENT:
+        case FT_COLR_PAINTFORMAT_SWEEP_GRADIENT: {
+            return true;
+        }
+        default:
+            SkASSERT(false);
+            return false;
+    }
+    SkUNREACHABLE;
+}
+
+
+bool colrv1_start_glyph_bounds(SkMatrix *ctm,
+                               SkRect* bounds,
+                               FT_Face face,
+                               uint16_t glyphId,
+                               FT_Color_Root_Transform rootTransform,
+                               VisitedSet* activePaints) {
+    FT_OpaquePaint opaquePaint{nullptr, 1};
+    return FT_Get_Color_Glyph_Paint(face, glyphId, rootTransform, &opaquePaint) &&
+           colrv1_traverse_paint_bounds(ctm, bounds, face, opaquePaint, activePaints);
 }
 #endif // TT_SUPPORT_COLRV1
 
 }  // namespace
 
-void SkScalerContext_FreeType_Base::generateGlyphImage(
-    FT_Face face,
-    const SkGlyph& glyph,
-    const SkMatrix& bitmapTransform)
-{
-    const bool doBGR = SkToBool(fRec.fFlags & SkScalerContext::kLCD_BGROrder_Flag);
-    const bool doVert = SkToBool(fRec.fFlags & SkScalerContext::kLCD_Vertical_Flag);
 
+#ifdef TT_SUPPORT_COLRV1
+bool SkScalerContext_FreeType_Base::drawCOLRv1Glyph(FT_Face face,
+                                                    const SkGlyph& glyph,
+                                                    uint32_t loadGlyphFlags,
+                                                    SkSpan<SkColor> palette,
+                                                    SkCanvas* canvas) {
+    if (this->isSubpixel()) {
+        canvas->translate(SkFixedToScalar(glyph.getSubXFixed()),
+                          SkFixedToScalar(glyph.getSubYFixed()));
+    }
+
+    VisitedSet activePaints;
+    bool haveLayers =  colrv1_start_glyph(canvas, palette,
+                                          fRec.fForegroundColor,
+                                          face, glyph.getGlyphID(),
+                                          FT_COLOR_INCLUDE_ROOT_TRANSFORM,
+                                          &activePaints);
+    SkASSERTF(haveLayers, "Could not get COLRv1 layers from '%s'.", face->family_name);
+    return haveLayers;
+}
+#endif  // TT_SUPPORT_COLRV1
+
+#ifdef FT_COLOR_H
+bool SkScalerContext_FreeType_Base::drawCOLRv0Glyph(FT_Face face,
+                                                    const SkGlyph& glyph,
+                                                    uint32_t loadGlyphFlags,
+                                                    SkSpan<SkColor> palette,
+                                                    SkCanvas* canvas) {
+    if (this->isSubpixel()) {
+        canvas->translate(SkFixedToScalar(glyph.getSubXFixed()),
+                          SkFixedToScalar(glyph.getSubYFixed()));
+    }
+
+    bool haveLayers = false;
+    FT_LayerIterator layerIterator;
+    layerIterator.p = nullptr;
+    FT_UInt layerGlyphIndex = 0;
+    FT_UInt layerColorIndex = 0;
+    SkPaint paint;
+    paint.setAntiAlias(!(loadGlyphFlags & FT_LOAD_TARGET_MONO));
+    while (FT_Get_Color_Glyph_Layer(face, glyph.getGlyphID(), &layerGlyphIndex,
+                                    &layerColorIndex, &layerIterator)) {
+        haveLayers = true;
+        if (layerColorIndex == 0xFFFF) {
+            paint.setColor(fRec.fForegroundColor);
+        } else {
+            paint.setColor(palette[layerColorIndex]);
+        }
+        SkPath path;
+        if (this->generateFacePath(face, layerGlyphIndex, loadGlyphFlags, &path)) {
+            canvas->drawPath(path, paint);
+        }
+    }
+    SkASSERTF(haveLayers, "Could not get COLRv0 layers from '%s'.", face->family_name);
+    return haveLayers;
+}
+#endif  // FT_COLOR_H
+
+void SkScalerContext_FreeType_Base::generateGlyphImage(FT_Face face,
+                                                       const SkGlyph& glyph,
+                                                       const SkMatrix& bitmapTransform)
+{
     switch ( face->glyph->format ) {
         case FT_GLYPH_FORMAT_OUTLINE: {
             FT_Outline* outline = &face->glyph->outline;
@@ -863,98 +1339,22 @@ void SkScalerContext_FreeType_Base::generateGlyphImage(
 
             memset(glyph.fImage, 0, glyph.rowBytes() * glyph.fHeight);
 
-#ifdef FT_COLOR_H
-            if (SkMask::kARGB32_Format == glyph.fMaskFormat) {
-                SkBitmap dstBitmap;
-                // TODO: mark this as sRGB when the blits will be sRGB.
-                dstBitmap.setInfo(SkImageInfo::Make(glyph.fWidth, glyph.fHeight,
-                                                    kN32_SkColorType,
-                                                    kPremul_SkAlphaType),
-                                                    glyph.rowBytes());
-                dstBitmap.setPixels(glyph.fImage);
-
-                // Scale unscaledBitmap into dstBitmap.
-                SkCanvas canvas(dstBitmap);
-#ifdef SK_SHOW_TEXT_BLIT_COVERAGE
-                canvas.clear(0x33FF0000);
-#else
-                canvas.clear(SK_ColorTRANSPARENT);
-#endif
-                canvas.translate(-glyph.fLeft, -glyph.fTop);
-
-                if (this->isSubpixel()) {
-                    canvas.translate(SkFixedToScalar(glyph.getSubXFixed()),
-                                     SkFixedToScalar(glyph.getSubYFixed()));
-                }
-
-                SkPaint paint;
-                paint.setAntiAlias(true);
-
-                FT_Color *palette;
-                FT_Error err = FT_Palette_Select(face, 0, &palette);
-                if (err) {
-                    SK_TRACEFTR(err, "Could not get palette from %s fontFace.", face->family_name);
-                    return;
-                }
-
-                FT_Bool haveLayers = false;
-
-#ifdef TT_SUPPORT_COLRV1
-                // Only attempt to draw COLRv1 glyph is FreeType is new enough
-                // to have the COLRv1 additions, as indicated by the
-                // TT_SUPPORT_COLRV1 flag defined by the FreeType headers in
-                // that case.
-
-                haveLayers = colrv1_start_glyph(&canvas, palette, face, glyph.getGlyphID(),
-                                                FT_COLOR_INCLUDE_ROOT_TRANSFORM);
-#else
-                haveLayers = false;
-#endif
-                if (!haveLayers) {
-                    // If we didn't have colr v1 layers, try v0 layers.
-                    FT_LayerIterator layerIterator;
-                    layerIterator.p = NULL;
-                    FT_UInt layerGlyphIndex = 0;
-                    FT_UInt layerColorIndex = 0;
-                    while (FT_Get_Color_Glyph_Layer(face, glyph.getGlyphID(), &layerGlyphIndex,
-                                                    &layerColorIndex, &layerIterator)) {
-                        haveLayers = true;
-                        if (layerColorIndex == 0xFFFF) {
-                            paint.setColor(SK_ColorBLACK);
-                        } else {
-                            SkColor color = SkColorSetARGB(palette[layerColorIndex].alpha,
-                                                           palette[layerColorIndex].red,
-                                                           palette[layerColorIndex].green,
-                                                           palette[layerColorIndex].blue);
-                            paint.setColor(color);
-                        }
-                        SkPath path;
-                        if (this->generateFacePath(face, layerGlyphIndex, &path)) {
-                            canvas.drawPath(path, paint);
-                        }
-                    }
-                }
-
-                if (!haveLayers) {
-                    SK_TRACEFTR(err, "Could not get layers (neither v0, nor v1) from %s fontFace.",
-                                face->family_name);
-                    return;
-                }
-            } else
-#endif
             if (SkMask::kLCD16_Format == glyph.fMaskFormat) {
+                const bool doBGR = SkToBool(fRec.fFlags & SkScalerContext::kLCD_BGROrder_Flag);
+                const bool doVert = SkToBool(fRec.fFlags & SkScalerContext::kLCD_Vertical_Flag);
+
                 FT_Outline_Translate(outline, dx, dy);
                 FT_Error err = FT_Render_Glyph(face->glyph, doVert ? FT_RENDER_MODE_LCD_V :
                                                                      FT_RENDER_MODE_LCD);
                 if (err) {
-                    SK_TRACEFTR(err, "Could not render glyph %x.", face->glyph);
+                    SK_TRACEFTR(err, "Could not render glyph %p.", face->glyph);
                     return;
                 }
 
                 SkMask mask = glyph.mask();
-#ifdef SK_SHOW_TEXT_BLIT_COVERAGE
-                memset(mask.fImage, 0x80, mask.fBounds.height() * mask.fRowBytes);
-#endif
+                if constexpr (kSkShowTextBlitCoverage) {
+                    memset(mask.fImage, 0x80, mask.fBounds.height() * mask.fRowBytes);
+                }
                 FT_GlyphSlotRec& ftGlyph = *face->glyph;
 
                 if (!SkIRect::Intersects(mask.fBounds,
@@ -1037,14 +1437,23 @@ void SkScalerContext_FreeType_Base::generateGlyphImage(
                 target.num_grays = 256;
 
                 FT_Outline_Get_Bitmap(face->glyph->library, outline, &target);
-#ifdef SK_SHOW_TEXT_BLIT_COVERAGE
-                for (int y = 0; y < glyph.fHeight; ++y) {
-                    for (int x = 0; x < glyph.fWidth; ++x) {
-                        uint8_t& a = ((uint8_t*)glyph.fImage)[(glyph.rowBytes() * y) + x];
-                        a = std::max<uint8_t>(a, 0x20);
+                if constexpr (kSkShowTextBlitCoverage) {
+                    if (glyph.fMaskFormat == SkMask::kBW_Format) {
+                        for (unsigned y = 0; y < target.rows; y += 2) {
+                            for (unsigned x = (y & 0x2); x < target.width; x+=4) {
+                                uint8_t& b = target.buffer[(target.pitch * y) + (x >> 3)];
+                                b = b ^ (1 << (0x7 - (x & 0x7)));
+                            }
+                        }
+                    } else {
+                        for (unsigned y = 0; y < target.rows; ++y) {
+                            for (unsigned x = 0; x < target.width; ++x) {
+                                uint8_t& a = target.buffer[(target.pitch * y) + x];
+                                a = std::max<uint8_t>(a, 0x20);
+                            }
+                        }
                     }
                 }
-#endif
             }
         } break;
 
@@ -1109,11 +1518,11 @@ void SkScalerContext_FreeType_Base::generateGlyphImage(
 
             // Scale unscaledBitmap into dstBitmap.
             SkCanvas canvas(dstBitmap);
-#ifdef SK_SHOW_TEXT_BLIT_COVERAGE
-            canvas.clear(0x33FF0000);
-#else
-            canvas.clear(SK_ColorTRANSPARENT);
-#endif
+            if constexpr (kSkShowTextBlitCoverage) {
+                canvas.clear(0x33FF0000);
+            } else {
+                canvas.clear(SK_ColorTRANSPARENT);
+            }
             canvas.translate(-glyph.fLeft, -glyph.fTop);
             canvas.concat(bitmapTransform);
             canvas.translate(face->glyph->bitmap_left, -face->glyph->bitmap_top);
@@ -1228,7 +1637,7 @@ class SkFTGeometrySink {
 public:
     SkFTGeometrySink(SkPath* path) : fPath{path}, fStarted{false}, fCurrent{0,0} {}
 
-    static constexpr const FT_Outline_Funcs Funcs{
+    inline static constexpr const FT_Outline_Funcs Funcs{
         /*move_to =*/ SkFTGeometrySink::Move,
         /*line_to =*/ SkFTGeometrySink::Line,
         /*conic_to =*/ SkFTGeometrySink::Quad,
@@ -1251,12 +1660,11 @@ bool generateGlyphPathStatic(FT_Face face, SkPath* path) {
     return true;
 }
 
-bool generateFacePathStatic(FT_Face face, SkGlyphID glyphID, SkPath* path) {
-    uint32_t flags = 0; //fLoadGlyphFlags;
-    flags |= FT_LOAD_NO_BITMAP; // ignore embedded bitmaps so we're sure to get the outline
-    flags &= ~FT_LOAD_RENDER;   // don't scan convert (we just want the outline)
+bool generateFacePathStatic(FT_Face face, SkGlyphID glyphID, uint32_t loadGlyphFlags, SkPath* path){
+    loadGlyphFlags |= FT_LOAD_NO_BITMAP; // ignore embedded bitmaps so we're sure to get the outline
+    loadGlyphFlags &= ~FT_LOAD_RENDER;   // don't scan convert (we just want the outline)
 
-    FT_Error err = FT_Load_Glyph(face, glyphID, flags);
+    FT_Error err = FT_Load_Glyph(face, glyphID, loadGlyphFlags);
     if (err != 0) {
         path->reset();
         return false;
@@ -1274,16 +1682,17 @@ bool generateFacePathCOLRv1(FT_Face face, SkGlyphID glyphID, SkPath* path) {
     uint32_t flags = 0;
     flags |= FT_LOAD_NO_BITMAP; // ignore embedded bitmaps so we're sure to get the outline
     flags &= ~FT_LOAD_RENDER;   // don't scan convert (we just want the outline)
-
+    flags |= FT_LOAD_NO_HINTING;
+    flags |= FT_LOAD_NO_AUTOHINT;
     flags |= FT_LOAD_IGNORE_TRANSFORM;
-
 
     using DoneFTSize = SkFunctionWrapper<decltype(FT_Done_Size), FT_Done_Size>;
     std::unique_ptr<std::remove_pointer_t<FT_Size>, DoneFTSize> unscaledFtSize([face]() -> FT_Size {
         FT_Size size;
         FT_Error err = FT_New_Size(face, &size);
         if (err != 0) {
-            SK_TRACEFTR(err, "FT_New_Size(%s) failed in generateFacePathStaticCOLRv1.", face->family_name);
+            SK_TRACEFTR(err, "FT_New_Size(%s) failed in generateFacePathStaticCOLRv1.",
+                        face->family_name);
             return nullptr;
         }
         return size;
@@ -1295,7 +1704,7 @@ bool generateFacePathCOLRv1(FT_Face face, SkGlyphID glyphID, SkPath* path) {
 
     FT_Size oldSize = face->size;
 
-    auto try_generate_path = [face, &unscaledFtSize, glyphID, flags, path]() {
+    auto tryGeneratePath = [face, &unscaledFtSize, glyphID, flags, path]() {
         FT_Error err = 0;
 
         err = FT_Activate_Size(unscaledFtSize.get());
@@ -1304,7 +1713,7 @@ bool generateFacePathCOLRv1(FT_Face face, SkGlyphID glyphID, SkPath* path) {
         }
 
         err = FT_Set_Char_Size(face, SkIntToFDot6(face->units_per_EM),
-                               SkIntToFDot6(face->units_per_EM), 72, 72);
+                                     SkIntToFDot6(face->units_per_EM), 72, 72);
         if (err != 0) {
             return false;
         }
@@ -1323,22 +1732,55 @@ bool generateFacePathCOLRv1(FT_Face face, SkGlyphID glyphID, SkPath* path) {
         return true;
     };
 
-    bool path_generation_result = try_generate_path();
+    bool pathGenerationResult = tryGeneratePath();
 
     FT_Activate_Size(oldSize);
 
-    return path_generation_result;
+    return pathGenerationResult;
 }
 #endif
 
 }  // namespace
 
 bool SkScalerContext_FreeType_Base::generateGlyphPath(FT_Face face, SkPath* path) {
-    return generateGlyphPathStatic(face, path);
+    if (!generateGlyphPathStatic(face, path)) {
+        return false;
+    }
+    if (face->glyph->outline.flags & FT_OUTLINE_OVERLAP) {
+        Simplify(*path, path);
+    }
+    return true;
 }
 
 bool SkScalerContext_FreeType_Base::generateFacePath(FT_Face face,
                                                      SkGlyphID glyphID,
+                                                     uint32_t loadGlyphFlags,
                                                      SkPath* path) {
-    return generateFacePathStatic(face, glyphID, path);
+    return generateFacePathStatic(face, glyphID, loadGlyphFlags, path);
+}
+
+bool SkScalerContext_FreeType_Base::computeColrV1GlyphBoundingBox(FT_Face face,
+                                                                  SkGlyphID glyphID,
+                                                                  FT_BBox* boundingBox) {
+#ifdef TT_SUPPORT_COLRV1
+    SkMatrix ctm;
+    SkRect bounds = SkRect::MakeEmpty();
+    VisitedSet activePaints;
+    if (!colrv1_start_glyph_bounds(&ctm, &bounds, face, glyphID,
+                                   FT_COLOR_INCLUDE_ROOT_TRANSFORM, &activePaints)) {
+        return false;
+    }
+
+    /* Convert back to FT_BBox as caller needs it in this format. */
+    bounds.sort();
+    boundingBox->xMin = SkScalarToFDot6(bounds.left());
+    boundingBox->xMax = SkScalarToFDot6(bounds.right());
+    boundingBox->yMin = SkScalarToFDot6(-bounds.bottom());
+    boundingBox->yMax = SkScalarToFDot6(-bounds.top());
+
+    return true;
+#else
+    SkASSERT(false);
+    return false;
+#endif
 }

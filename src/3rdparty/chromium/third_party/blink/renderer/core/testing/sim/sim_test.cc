@@ -19,7 +19,7 @@
 namespace blink {
 
 SimTest::SimTest() {
-  Document::SetThreadedParsingEnabledForTesting(false);
+  Document::SetForceSynchronousParsingForTesting(true);
   // Threaded animations are usually enabled for blink. However these tests use
   // synchronous compositing, which can not run threaded animations.
   bool was_threaded_animation_enabled =
@@ -30,7 +30,7 @@ SimTest::SimTest() {
 }
 
 SimTest::~SimTest() {
-  Document::SetThreadedParsingEnabledForTesting(true);
+  Document::SetForceSynchronousParsingForTesting(false);
   content::TestBlinkWebUnitTestSupport::SetThreadedAnimationEnabled(true);
   WebCache::Clear();
 }
@@ -50,6 +50,10 @@ void SimTest::SetUp() {
   web_view_helper_ =
       std::make_unique<frame_test_helpers::WebViewHelper>(base::BindRepeating(
           &SimTest::CreateTestWebFrameWidget, base::Unretained(this)));
+  // These tests don't simulate a browser interface and hence fetching code
+  // caching doesn't work in these tests. Currently tests that use this testing
+  // set up don't test / need code caches. Disable code caches for these tests.
+  DocumentLoader::DisableCodeCacheForTesting();
 
   web_view_helper_->Initialize(web_frame_client_.get(), web_view_client_.get());
   compositor_->SetWebView(WebView(), *web_view_client_);

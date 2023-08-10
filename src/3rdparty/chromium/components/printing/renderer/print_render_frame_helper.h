@@ -11,9 +11,13 @@
 #include "base/callback.h"
 #include "base/gtest_prod_util.h"
 #include "base/memory/read_only_shared_memory_region.h"
+#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
+#include "base/values.h"
 #include "build/build_config.h"
+#include "build/chromeos_buildflags.h"
 #include "cc/paint/paint_canvas.h"
 #include "components/printing/common/print.mojom.h"
 #include "content/public/renderer/render_frame_observer.h"
@@ -32,19 +36,11 @@
 
 // RenderViewTest-based tests crash on Android
 // http://crbug.com/187500
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 #define MAYBE_PrintRenderFrameHelperTest DISABLED_PrintRenderFrameHelperTest
-#define MAYBE_PrintRenderFrameHelperPreviewTest \
-  DISABLED_PrintRenderFrameHelperPreviewTest
 #else
 #define MAYBE_PrintRenderFrameHelperTest PrintRenderFrameHelperTest
-#define MAYBE_PrintRenderFrameHelperPreviewTest \
-  PrintRenderFrameHelperPreviewTest
-#endif  // defined(OS_ANDROID)
-
-namespace base {
-class DictionaryValue;
-}
+#endif  // BUILDFLAG(IS_ANDROID)
 
 namespace blink {
 class WebLocalFrame;
@@ -82,6 +78,29 @@ class FrameReference {
  private:
   blink::WebView* view_;
   blink::WebLocalFrame* frame_;
+};
+
+// Helper to ensure that quit closures for Mojo response are called.
+class ClosuresForMojoResponse
+    : public base::RefCounted<ClosuresForMojoResponse> {
+ public:
+  ClosuresForMojoResponse();
+  ClosuresForMojoResponse(const ClosuresForMojoResponse&) = delete;
+  ClosuresForMojoResponse& operator=(const ClosuresForMojoResponse&) = delete;
+
+  void SetScriptedPrintPreviewQuitClosure(base::OnceClosure quit_print_preview);
+  bool HasScriptedPrintPreviewQuitClosure() const;
+  void RunScriptedPrintPreviewQuitClosure();
+  void SetPrintSettingFromUserQuitClosure(base::OnceClosure quit_print_setting);
+  void RunPrintSettingFromUserQuitClosure();
+
+ private:
+  friend class base::RefCounted<ClosuresForMojoResponse>;
+  ~ClosuresForMojoResponse();
+
+  // Stores quit closures for the runloops that are waiting for Mojo replies.
+  base::OnceClosure scripted_print_preview_quit_closure_;
+  base::OnceClosure get_print_settings_from_user_quit_closure_;
 };
 
 // PrintRenderFrameHelper handles most of the printing grunt work for
@@ -142,8 +161,9 @@ class PrintRenderFrameHelper
   const mojo::AssociatedRemote<mojom::PrintManagerHost>& GetPrintManagerHost();
 
  private:
+  friend class PrintRenderFrameHelperPreviewTest;
   friend class PrintRenderFrameHelperTestBase;
-  FRIEND_TEST_ALL_PREFIXES(MAYBE_PrintRenderFrameHelperPreviewTest,
+  FRIEND_TEST_ALL_PREFIXES(PrintRenderFrameHelperPreviewTest,
                            BlockScriptInitiatedPrinting);
   FRIEND_TEST_ALL_PREFIXES(MAYBE_PrintRenderFrameHelperTest,
                            PrintRequestedPages);
@@ -151,17 +171,19 @@ class PrintRenderFrameHelper
                            BlockScriptInitiatedPrinting);
   FRIEND_TEST_ALL_PREFIXES(MAYBE_PrintRenderFrameHelperTest,
                            BlockScriptInitiatedPrintingFromPopup);
-#if defined(OS_WIN) || defined(OS_APPLE)
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_APPLE)
   FRIEND_TEST_ALL_PREFIXES(MAYBE_PrintRenderFrameHelperTest, PrintLayoutTest);
   FRIEND_TEST_ALL_PREFIXES(MAYBE_PrintRenderFrameHelperTest, PrintWithIframe);
-#endif  // defined(OS_WIN) || defined(OS_APPLE)
+#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_APPLE)
 
   // CREATE_IN_PROGRESS signifies that the preview document is being rendered
   // asynchronously by a PrintRenderer.
   enum CreatePreviewDocumentResult {
-    CREATE_SUCCESS,
-    CREATE_IN_PROGRESS,
-    CREATE_FAIL,
+    CREATE_SUCCESS = 0,
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+    CREATE_IN_PROGRESS = 1,
+#endif
+    CREATE_FAIL = 2,
   };
 
   enum PrintingResult {
@@ -179,7 +201,7 @@ class PrintRenderFrameHelper
   // enum PrintPreviewFailureType in tools/metrics/histograms/enums.xml.
   enum PrintPreviewErrorBuckets {
     PREVIEW_ERROR_NONE = 0,  // Always first.
-    PREVIEW_ERROR_BAD_SETTING = 1,
+    PREVIEW_ERROR_BAD_SETTING_DEPRECATED = 1,
     PREVIEW_ERROR_METAFILE_COPY_FAILED = 2,
     PREVIEW_ERROR_METAFILE_INIT_FAILED_DEPRECATED = 3,
     PREVIEW_ERROR_ZERO_PAGES = 4,
@@ -222,9 +244,10 @@ class PrintRenderFrameHelper
   void OnDestruct() override;
   void DidStartNavigation(
       const GURL& url,
-      base::Optional<blink::WebNavigationType> navigation_type) override;
+      absl::optional<blink::WebNavigationType> navigation_type) override;
   void DidFailProvisionalLoad() override;
   void DidFinishLoad() override;
+  void DidFinishLoadForPrinting() override;
   void ScriptedPrint(bool user_initiated) override;
 
   void BindPrintRenderFrameReceiver(
@@ -232,8 +255,8 @@ class PrintRenderFrameHelper
 
   // printing::mojom::PrintRenderFrame:
   void PrintRequestedPages() override;
-  void PrintForSystemDialog() override;
 #if BUILDFLAG(ENABLE_PRINT_PREVIEW)
+  void PrintForSystemDialog() override;
   void SetPrintPreviewUI(
       mojo::PendingAssociatedRemote<mojom::PrintPreviewUI> preview) override;
   void InitiatePrintPreview(
@@ -247,6 +270,10 @@ class PrintRenderFrameHelper
   void PrintingDone(bool success) override;
   void SetPrintingEnabled(bool enabled) override;
   void PrintNodeUnderContextMenu() override;
+#if BUILDFLAG(ENABLE_PRINT_CONTENT_ANALYSIS)
+  void SnapshotForContentAnalysis(
+      SnapshotForContentAnalysisCallback callback) override;
+#endif  // BUILDFLAG(ENABLE_PRINT_CONTENT_ANALYSIS)
 
   // Get |page_size| and |content_area| information from
   // |page_layout_in_points|.
@@ -256,7 +283,7 @@ class PrintRenderFrameHelper
       gfx::Rect* content_area);
 
   // Update |ignore_css_margins_| based on settings.
-  void UpdateFrameMarginsCssInfo(const base::DictionaryValue& settings);
+  void UpdateFrameMarginsCssInfo(const base::Value::Dict& settings);
 
 #if BUILDFLAG(ENABLE_PRINT_PREVIEW)
   // Prepare frame for creating preview document.
@@ -323,7 +350,7 @@ class PrintRenderFrameHelper
   // name, number of copies, page range, etc.
   bool UpdatePrintSettings(blink::WebLocalFrame* frame,
                            const blink::WebNode& node,
-                           const base::DictionaryValue& passed_job_settings);
+                           const base::Value::Dict& passed_job_settings);
 #endif  // BUILDFLAG(ENABLE_PRINT_PREVIEW)
 
   // Returns final print settings from the user.
@@ -414,7 +441,8 @@ class PrintRenderFrameHelper
 
   // WARNING: |this| may be gone after this method returns when |type| is
   // PRINT_PREVIEW_SCRIPTED.
-  void RequestPrintPreview(PrintPreviewRequestType type);
+  void RequestPrintPreview(PrintPreviewRequestType type,
+                           bool already_notified_frame);
 
   // Checks whether print preview should continue or not.
   // Returns true if canceling, false if continuing.
@@ -461,12 +489,14 @@ class PrintRenderFrameHelper
   // Used to check the prerendering status.
   const std::unique_ptr<Delegate> delegate_;
 
+#if BUILDFLAG(IS_CHROMEOS_ASH)
   // Settings used by a PrintRenderer to create a preview document.
   base::Value print_renderer_job_settings_;
 
   // Used to render print documents from an external source (ARC, Crostini,
   // etc.).
   mojo::AssociatedRemote<mojom::PrintRenderer> print_renderer_;
+#endif
 
 #if BUILDFLAG(ENABLE_PRINT_PREVIEW)
   // Used to notify the browser of preview UI actions.
@@ -530,16 +560,19 @@ class PrintRenderFrameHelper
     // Helper functions
     uint32_t GetNextPageNumber();
     bool IsRendering() const;
+#if BUILDFLAG(IS_CHROMEOS_ASH)
     bool IsForArc() const;
+#endif
     bool IsPlugin() const;
     bool IsModifiable() const;
-    bool IsPdf() const;
     bool HasSelection();
     bool IsLastPageOfPrintReadyMetafile() const;
     bool IsFinalPageRendered() const;
 
     // Setters
+#if BUILDFLAG(IS_CHROMEOS_ASH)
     void SetIsForArc(bool is_for_arc);
+#endif
     void set_error(enum PrintPreviewErrorBuckets error);
 
     // Getters
@@ -602,12 +635,10 @@ class PrintRenderFrameHelper
     // True, if the document source is modifiable. e.g. HTML and not PDF.
     bool is_modifiable_ = true;
 
-    // True, if the document source is a PDF. Used to distinguish from
-    // other plugins such as Flash.
-    bool is_pdf_ = false;
-
+#if BUILDFLAG(IS_CHROMEOS_ASH)
     // True, if the document source is from ARC.
     bool is_for_arc_ = false;
+#endif
 
     // Specifies the total number of pages in the print ready metafile.
     int print_ready_metafile_page_count_ = 0;
@@ -638,6 +669,8 @@ class PrintRenderFrameHelper
     int count_ = 0;
   };
 
+  void WaitForLoad(PrintPreviewRequestType type);
+
   ScriptingThrottler scripting_throttler_;
 
   bool print_node_in_progress_ = false;
@@ -656,15 +689,17 @@ class PrintRenderFrameHelper
   // is enabled.
   std::unique_ptr<content::AXTreeSnapshotter> snapshotter_;
 
-  // Used to fix a race condition where the source is a PDF and print preview
-  // hangs because RequestPrintPreview is called before DidStopLoading() is
-  // called. This is a store for the RequestPrintPreview() call and its
-  // parameters so that it can be invoked after DidStopLoading.
+  // Used for two reasons:
+  // * To give the document time to finish loading any pending resources that
+  //   are desired for printing.
+  // * To fix a race condition where the source is a PDF and print preview
+  //   hangs because RequestPrintPreview is called before DidStopLoading() is
+  //   called. This is a store for the RequestPrintPreview() call and its
+  //   parameters so that it can be invoked after DidStopLoading.
   base::OnceClosure on_stop_loading_closure_;
 
-  // Stores quit closures for the runloops that are waiting for Mojo replies.
-  base::OnceClosure scripted_print_preview_quit_closure_;
-  base::OnceClosure get_print_settings_from_user_quit_closure_;
+  // Stores the quit closures of Mojo responses.
+  scoped_refptr<ClosuresForMojoResponse> closures_for_mojo_responses_;
 
   bool do_deferred_print_for_system_dialog_ = false;
 

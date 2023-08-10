@@ -762,6 +762,27 @@ TString ResourcesHLSL::uniformBlocksHeader(
     return (interfaceBlocks.empty() ? "" : ("// Uniform Blocks\n\n" + interfaceBlocks));
 }
 
+void ResourcesHLSL::allocateShaderStorageBlockRegisters(
+    const ReferencedInterfaceBlocks &referencedInterfaceBlocks)
+{
+    for (const auto &interfaceBlockReference : referencedInterfaceBlocks)
+    {
+        const TInterfaceBlock &interfaceBlock = *interfaceBlockReference.second->block;
+        const TVariable *instanceVariable     = interfaceBlockReference.second->instanceVariable;
+
+        mShaderStorageBlockRegisterMap[interfaceBlock.name().data()] = mUAVRegister;
+
+        if (instanceVariable != nullptr && instanceVariable->getType().isArray())
+        {
+            mUAVRegister += instanceVariable->getType().getOutermostArraySize();
+        }
+        else
+        {
+            mUAVRegister += 1u;
+        }
+    }
+}
+
 TString ResourcesHLSL::shaderStorageBlocksHeader(
     const ReferencedInterfaceBlocks &referencedInterfaceBlocks)
 {
@@ -772,8 +793,7 @@ TString ResourcesHLSL::shaderStorageBlocksHeader(
         const TInterfaceBlock &interfaceBlock = *interfaceBlockReference.second->block;
         const TVariable *instanceVariable     = interfaceBlockReference.second->instanceVariable;
 
-        unsigned int activeRegister                                  = mUAVRegister;
-        mShaderStorageBlockRegisterMap[interfaceBlock.name().data()] = activeRegister;
+        unsigned int activeRegister = mShaderStorageBlockRegisterMap[interfaceBlock.name().data()];
 
         if (instanceVariable != nullptr && instanceVariable->getType().isArray())
         {
@@ -783,17 +803,15 @@ TString ResourcesHLSL::shaderStorageBlocksHeader(
                 interfaceBlocks += shaderStorageBlockString(
                     interfaceBlock, instanceVariable, activeRegister + arrayIndex, arrayIndex);
             }
-            mUAVRegister += instanceArraySize;
         }
         else
         {
             interfaceBlocks += shaderStorageBlockString(interfaceBlock, instanceVariable,
                                                         activeRegister, GL_INVALID_INDEX);
-            mUAVRegister += 1u;
         }
     }
 
-    return (interfaceBlocks.empty() ? "" : ("// Shader Storage Blocks\n\n" + interfaceBlocks));
+    return interfaceBlocks;
 }
 
 TString ResourcesHLSL::uniformBlockString(const TInterfaceBlock &interfaceBlock,
@@ -915,7 +933,8 @@ TString ResourcesHLSL::uniformBlockMembersString(const TInterfaceBlock &interfac
 
     Std140PaddingHelper padHelper = mStructureHLSL->getPaddingHelper();
 
-    for (unsigned int typeIndex = 0; typeIndex < interfaceBlock.fields().size(); typeIndex++)
+    const unsigned int fieldCount = static_cast<unsigned int>(interfaceBlock.fields().size());
+    for (unsigned int typeIndex = 0; typeIndex < fieldCount; typeIndex++)
     {
         const TField &field    = *interfaceBlock.fields()[typeIndex];
         const TType &fieldType = *field.type();
@@ -935,7 +954,8 @@ TString ResourcesHLSL::uniformBlockMembersString(const TInterfaceBlock &interfac
         {
             const bool useHLSLRowMajorPacking =
                 (fieldType.getLayoutQualifier().matrixPacking == EmpColumnMajor);
-            hlsl += padHelper.postPaddingString(fieldType, useHLSLRowMajorPacking, false);
+            hlsl += padHelper.postPaddingString(fieldType, useHLSLRowMajorPacking,
+                                                typeIndex == fieldCount - 1, false);
         }
     }
 

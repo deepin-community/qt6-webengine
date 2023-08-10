@@ -7,12 +7,14 @@
 
 #include <vector>
 
+#include "base/memory/raw_ptr.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/rect_f.h"
-#include "ui/gfx/rrect_f.h"
-#include "ui/gfx/transform.h"
+#include "ui/gfx/geometry/rrect_f.h"
+#include "ui/gfx/geometry/transform.h"
+#include "ui/gfx/video_types.h"
 #include "ui/gl/gl_export.h"
 
 namespace gl {
@@ -33,7 +35,8 @@ struct GL_EXPORT CARendererLayerParams {
                         unsigned background_color,
                         unsigned edge_aa_mask,
                         float opacity,
-                        unsigned filter);
+                        unsigned filter,
+                        gfx::ProtectedVideoType protected_video_type);
   CARendererLayerParams(const CARendererLayerParams& other);
   ~CARendererLayerParams();
 
@@ -42,13 +45,14 @@ struct GL_EXPORT CARendererLayerParams {
   const gfx::RRectF rounded_corner_bounds;
   unsigned sorting_context_id;
   const gfx::Transform transform;
-  gl::GLImage* image;
+  raw_ptr<gl::GLImage> image;
   const gfx::RectF contents_rect;
   const gfx::Rect rect;
   unsigned background_color;
   unsigned edge_aa_mask;
   float opacity;
   unsigned filter;
+  gfx::ProtectedVideoType protected_video_type;
 
   // This is a subset of cc::FilterOperation::FilterType.
   enum class FilterEffectType : uint32_t {

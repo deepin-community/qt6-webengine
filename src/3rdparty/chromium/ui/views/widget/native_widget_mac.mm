@@ -11,23 +11,25 @@
 #include <utility>
 
 #include "base/base64.h"
-#include "base/bind.h"
+#include "base/callback.h"
 #include "base/mac/scoped_nsobject.h"
 #include "base/no_destructor.h"
 #include "base/strings/sys_string_conversions.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "components/crash/core/common/crash_key.h"
 #import "components/remote_cocoa/app_shim/bridged_content_view.h"
 #import "components/remote_cocoa/app_shim/native_widget_mac_nswindow.h"
 #import "components/remote_cocoa/app_shim/native_widget_ns_window_bridge.h"
 #import "components/remote_cocoa/app_shim/views_nswindow_delegate.h"
-#import "ui/base/cocoa/constrained_window/constrained_window_animation.h"
 #import "ui/base/cocoa/window_size_constants.h"
 #include "ui/base/ime/init/input_method_factory.h"
 #include "ui/base/ime/input_method.h"
+#include "ui/compositor/compositor.h"
+#include "ui/compositor/layer.h"
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
+#include "ui/events/gestures/gesture_recognizer.h"
 #include "ui/events/gestures/gesture_recognizer_impl_mac.h"
+#include "ui/events/gestures/gesture_types.h"
 #include "ui/gfx/font_list.h"
 #import "ui/gfx/mac/coordinate_conversion.h"
 #include "ui/native_theme/native_theme.h"
@@ -35,7 +37,9 @@
 #import "ui/views/cocoa/drag_drop_client_mac.h"
 #import "ui/views/cocoa/native_widget_mac_ns_window_host.h"
 #include "ui/views/cocoa/text_input_host.h"
+#include "ui/views/views_features.h"
 #include "ui/views/widget/drop_helper.h"
+#include "ui/views/widget/native_widget_delegate.h"
 #include "ui/views/widget/widget_aura_utils.h"
 #include "ui/views/widget/widget_delegate.h"
 #include "ui/views/window/native_frame_view.h"
@@ -157,14 +161,6 @@ void NativeWidgetMac::OnWindowKeyStatusChanged(
   if (is_key) {
     widget->OnNativeFocus();
     widget->GetFocusManager()->RestoreFocusedView();
-    if (NativeWidgetMacNSWindowHost* parent_host = ns_window_host_->parent()) {
-      // Unclear under what circumstances this would be null, but speculatively
-      // working around https://crbug/1050430
-      if (Widget* top_widget =
-              parent_host->native_widget_mac()->GetTopLevelWidget()) {
-        parent_key_lock_ = top_widget->LockPaintAsActive();
-      }
-    }
   } else {
     widget->OnNativeBlur();
     widget->GetFocusManager()->StoreFocusedView(true);
@@ -221,6 +217,10 @@ void NativeWidgetMac::InitNativeWidget(Widget::InitParams params) {
         [CreateNSWindow(create_window_params.get()) retain]);
     ns_window_host_->CreateInProcessNSWindowBridge(std::move(window));
   }
+  // TODO(https://crbug.com/1302857): Remove this once FullscreenControllerMac
+  // is on by default.
+  if (base::FeatureList::IsEnabled(features::kFullscreenControllerMac))
+    GetNSWindowMojo()->CreateFullscreenController();
   ns_window_host_->SetParent(parent_host);
   ns_window_host_->InitWindow(params,
                               ConvertBoundsToScreenIfNeeded(params.bounds));
@@ -383,7 +383,7 @@ void NativeWidgetMac::GetWindowPlacement(
     *show_state = ui::SHOW_STATE_NORMAL;
 }
 
-bool NativeWidgetMac::SetWindowTitle(const base::string16& title) {
+bool NativeWidgetMac::SetWindowTitle(const std::u16string& title) {
   if (!ns_window_host_)
     return false;
   return ns_window_host_->SetWindowTitle(title);
@@ -409,6 +409,13 @@ void NativeWidgetMac::InitModalType(ui::ModalType modal_type) {
   DCHECK(ns_window_host_->parent() || modal_type == ui::MODAL_TYPE_WINDOW);
 
   // Everything happens upon show.
+}
+
+const gfx::ImageSkia* NativeWidgetMac::GetWindowIcon() {
+  return nullptr;
+}
+const gfx::ImageSkia* NativeWidgetMac::GetWindowAppIcon() {
+  return nullptr;
 }
 
 gfx::Rect NativeWidgetMac::GetWindowBoundsInScreen() const {
@@ -552,10 +559,15 @@ void NativeWidgetMac::Show(ui::WindowShowState show_state,
       break;
   }
   auto window_state = WindowVisibilityState::kShowAndActivateWindow;
-  if (show_state == ui::SHOW_STATE_INACTIVE)
+  if (show_state == ui::SHOW_STATE_INACTIVE) {
     window_state = WindowVisibilityState::kShowInactive;
-  else if (show_state == ui::SHOW_STATE_MINIMIZED)
+  } else if (show_state == ui::SHOW_STATE_MINIMIZED) {
     window_state = WindowVisibilityState::kHideWindow;
+  } else if (show_state == ui::SHOW_STATE_DEFAULT) {
+    window_state = delegate_->CanActivate()
+                       ? window_state
+                       : WindowVisibilityState::kShowInactive;
+  }
   GetNSWindowMojo()->SetVisibilityState(window_state);
 
   // Ignore the SetInitialFocus() result. BridgedContentView should get
@@ -634,14 +646,20 @@ bool NativeWidgetMac::IsMinimized() const {
 void NativeWidgetMac::Restore() {
   if (!GetNSWindowMojo())
     return;
-  GetNSWindowMojo()->SetFullscreen(false);
+  if (base::FeatureList::IsEnabled(features::kFullscreenControllerMac)) {
+    GetNSWindowMojo()->ExitFullscreen();
+  } else {
+    GetNSWindowMojo()->SetFullscreen(false);
+  }
   GetNSWindowMojo()->SetMiniaturized(false);
 }
 
-void NativeWidgetMac::SetFullscreen(bool fullscreen) {
+void NativeWidgetMac::SetFullscreen(bool fullscreen,
+                                    const base::TimeDelta& delay,
+                                    int64_t target_display_id) {
   if (!ns_window_host_)
     return;
-  ns_window_host_->SetFullscreen(fullscreen);
+  ns_window_host_->SetFullscreen(fullscreen, delay, target_display_id);
 }
 
 bool NativeWidgetMac::IsFullscreen() const {
@@ -743,12 +761,12 @@ Widget::MoveLoopResult NativeWidgetMac::RunMoveLoop(
     Widget::MoveLoopSource source,
     Widget::MoveLoopEscapeBehavior escape_behavior) {
   if (!GetInProcessNSWindowBridge())
-    return Widget::MOVE_LOOP_CANCELED;
+    return Widget::MoveLoopResult::kCanceled;
 
   ReleaseCapture();
   return GetInProcessNSWindowBridge()->RunMoveLoop(drag_offset)
-             ? Widget::MOVE_LOOP_SUCCESSFUL
-             : Widget::MOVE_LOOP_CANCELED;
+             ? Widget::MoveLoopResult::kSuccessful
+             : Widget::MoveLoopResult::kCanceled;
 }
 
 void NativeWidgetMac::EndMoveLoop() {
@@ -795,6 +813,11 @@ bool NativeWidgetMac::IsTranslucentWindowOpacitySupported() const {
 ui::GestureRecognizer* NativeWidgetMac::GetGestureRecognizer() {
   static base::NoDestructor<ui::GestureRecognizerImplMac> recognizer;
   return recognizer.get();
+}
+
+ui::GestureConsumer* NativeWidgetMac::GetGestureConsumer() {
+  NOTIMPLEMENTED();
+  return nullptr;
 }
 
 void NativeWidgetMac::OnSizeConstraintsChanged() {
@@ -888,9 +911,10 @@ void NativeWidgetMac::OnDidChangeFocus(View* focused_before,
 
   ui::TextInputClient* new_text_input_client =
       input_method->GetTextInputClient();
-  // Sanity check: When focus moves away from the widget (i.e. |focused_now|
-  // is nil), then the textInputClient will be cleared.
-  DCHECK(!!focused_now || !new_text_input_client);
+  // Sanity check: For a top level widget, when focus moves away from the widget
+  // (i.e. |focused_now| is nil), then the textInputClient will be cleared.
+  DCHECK(!!focused_now || !new_text_input_client ||
+         !GetWidget()->is_top_level());
   if (ns_window_host_) {
     ns_window_host_->text_input_host()->SetTextInputClient(
         new_text_input_client);
@@ -937,10 +961,6 @@ void Widget::CloseAllSecondaryWidgets() {
   }
 }
 
-const ui::NativeTheme* Widget::GetNativeTheme() const {
-  return ui::NativeTheme::GetInstanceForNativeUi();
-}
-
 namespace internal {
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -975,8 +995,11 @@ NativeWidgetPrivate* NativeWidgetPrivate::GetTopLevelNativeWidget(
       NativeWidgetMacNSWindowHost::GetFromNativeView(native_view);
   if (!window_host)
     return nullptr;
-  while (window_host->parent())
+  while (window_host->parent()) {
+    if (window_host->native_widget_mac()->GetWidget()->is_top_level())
+      break;
     window_host = window_host->parent();
+  }
   return window_host->native_widget_mac();
 }
 

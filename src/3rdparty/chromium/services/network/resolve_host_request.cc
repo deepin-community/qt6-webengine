@@ -8,11 +8,11 @@
 
 #include "base/bind.h"
 #include "base/check_op.h"
-#include "base/no_destructor.h"
-#include "base/optional.h"
+#include "base/stl_util.h"
 #include "net/base/net_errors.h"
 #include "net/log/net_log.h"
 #include "net/log/net_log_with_source.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace network {
 
@@ -20,14 +20,16 @@ ResolveHostRequest::ResolveHostRequest(
     net::HostResolver* resolver,
     const net::HostPortPair& host,
     const net::NetworkIsolationKey& network_isolation_key,
-    const base::Optional<net::HostResolver::ResolveHostParameters>&
+    const absl::optional<net::HostResolver::ResolveHostParameters>&
         optional_parameters,
     net::NetLog* net_log) {
   DCHECK(resolver);
+  DCHECK(net_log);
 
   internal_request_ = resolver->CreateRequest(
       host, network_isolation_key,
-      net::NetLogWithSource::Make(net_log, net::NetLogSourceType::NONE),
+      net::NetLogWithSource::Make(
+          net_log, net::NetLogSourceType::NETWORK_SERVICE_HOST_RESOLVER),
       optional_parameters);
 }
 
@@ -37,7 +39,7 @@ ResolveHostRequest::~ResolveHostRequest() {
   if (response_client_.is_bound()) {
     response_client_->OnComplete(net::ERR_NAME_NOT_RESOLVED,
                                  net::ResolveErrorInfo(net::ERR_FAILED),
-                                 base::nullopt);
+                                 absl::nullopt);
     response_client_.reset();
   }
 }
@@ -58,7 +60,8 @@ int ResolveHostRequest::Start(
   mojo::Remote<mojom::ResolveHostClient> response_client(
       std::move(pending_response_client));
   if (rv != net::ERR_IO_PENDING) {
-    response_client->OnComplete(rv, GetResolveErrorInfo(), GetAddressResults());
+    response_client->OnComplete(rv, GetResolveErrorInfo(),
+                                base::OptionalFromPtr(GetAddressResults()));
     return rv;
   }
 
@@ -95,7 +98,7 @@ void ResolveHostRequest::OnComplete(int error) {
   control_handle_receiver_.reset();
   SignalNonAddressResults();
   response_client_->OnComplete(error, GetResolveErrorInfo(),
-                               GetAddressResults());
+                               base::OptionalFromPtr(GetAddressResults()));
   response_client_.reset();
 
   // Invoke completion callback last as it may delete |this|.
@@ -111,12 +114,9 @@ net::ResolveErrorInfo ResolveHostRequest::GetResolveErrorInfo() const {
   return internal_request_->GetResolveErrorInfo();
 }
 
-const base::Optional<net::AddressList>& ResolveHostRequest::GetAddressResults()
-    const {
+const net::AddressList* ResolveHostRequest::GetAddressResults() const {
   if (cancelled_) {
-    static base::NoDestructor<base::Optional<net::AddressList>>
-        cancelled_result(base::nullopt);
-    return *cancelled_result;
+    return nullptr;
   }
 
   DCHECK(internal_request_);

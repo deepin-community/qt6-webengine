@@ -8,9 +8,8 @@
 #include <memory>
 #include <string>
 
-#include "base/callback_forward.h"
 #include "base/feature_list.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/timer/timer.h"
 #include "base/values.h"
@@ -86,6 +85,14 @@ class SafeBrowsingPrivateEventRouter
   static const char kKeyMalwareFamily[];
   static const char kKeyMalwareCategory[];
   static const char kKeyEvidenceLockerFilePath[];
+  static const char kKeyScanId[];
+  static const char kKeyIsFederated[];
+  static const char kKeyFederatedOrigin[];
+  static const char kKeyLoginUserName[];
+  static const char kKeyPasswordBreachIdentities[];
+  static const char kKeyPasswordBreachIdentitiesUrl[];
+  static const char kKeyPasswordBreachIdentitiesUsername[];
+  static const char kKeyUserJustification[];
 
   static const char kKeyPasswordReuseEvent[];
   static const char kKeyPasswordChangedEvent[];
@@ -93,7 +100,9 @@ class SafeBrowsingPrivateEventRouter
   static const char kKeyInterstitialEvent[];
   static const char kKeySensitiveDataEvent[];
   static const char kKeyUnscannedFileEvent[];
-  static const char* kAllEvents[6];
+  static const char kKeyLoginEvent[];
+  static const char kKeyPasswordBreachEvent[];
+  static const char* kAllEvents[8];
 
   static const char kKeyUnscannedReason[];
 
@@ -105,12 +114,22 @@ class SafeBrowsingPrivateEventRouter
 
   explicit SafeBrowsingPrivateEventRouter(content::BrowserContext* context);
 
+  SafeBrowsingPrivateEventRouter(const SafeBrowsingPrivateEventRouter&) =
+      delete;
+  SafeBrowsingPrivateEventRouter& operator=(
+      const SafeBrowsingPrivateEventRouter&) = delete;
+
   ~SafeBrowsingPrivateEventRouter() override;
 
   // Notifies listeners that the user reused a protected password.
+  // - `url` is the URL where the password was reused
+  // - `user_name` is the user associated with the reused password
+  // - `is_phising_url` is whether the URL is thought to be a phishing one
+  // - `warning_shown` is whether a warning dialog was shown to the user
   void OnPolicySpecifiedPasswordReuseDetected(const GURL& url,
                                               const std::string& user_name,
-                                              bool is_phishing_url);
+                                              bool is_phishing_url,
+                                              bool warning_shown);
 
   // Notifies listeners that the user changed the password associated with
   // |user_name|.
@@ -121,6 +140,7 @@ class SafeBrowsingPrivateEventRouter
                                  const std::string& file_name,
                                  const std::string& download_digest_sha256,
                                  const std::string& mime_type,
+                                 const std::string& scan_id,
                                  const download::DownloadDangerType danger_type,
                                  const int64_t content_size);
 
@@ -141,6 +161,7 @@ class SafeBrowsingPrivateEventRouter
       const std::string& download_digest_sha256,
       const std::string& mime_type,
       const std::string& trigger,
+      const std::string& scan_id,
       safe_browsing::DeepScanAccessPoint access_point,
       const enterprise_connectors::ContentAnalysisResponse::Result& result,
       const int64_t content_size,
@@ -153,9 +174,11 @@ class SafeBrowsingPrivateEventRouter
       const std::string& download_digest_sha256,
       const std::string& mime_type,
       const std::string& trigger,
+      const std::string& scan_id,
       safe_browsing::DeepScanAccessPoint access_point,
       const enterprise_connectors::ContentAnalysisResponse::Result& result,
-      const int64_t content_size);
+      const int64_t content_size,
+      absl::optional<std::u16string> user_justification);
 
   // Notifies listeners that deep scanning failed, for the given |reason|.
   void OnUnscannedFileEvent(const GURL& url,
@@ -178,6 +201,7 @@ class SafeBrowsingPrivateEventRouter
                                 const std::string& download_digest_sha256,
                                 const std::string& threat_type,
                                 const std::string& mime_type,
+                                const std::string& scan_id,
                                 const int64_t content_size,
                                 safe_browsing::EventResult event_result);
   void OnDangerousDownloadEvent(const GURL& url,
@@ -185,6 +209,7 @@ class SafeBrowsingPrivateEventRouter
                                 const std::string& download_digest_sha256,
                                 const download::DownloadDangerType danger_type,
                                 const std::string& mime_type,
+                                const std::string& scan_id,
                                 const int64_t content_size,
                                 safe_browsing::EventResult event_result);
 
@@ -199,6 +224,7 @@ class SafeBrowsingPrivateEventRouter
       const std::string& download_digest_sha256,
       const std::string& threat_type,
       const std::string& mime_type,
+      const std::string& scan_id,
       const int64_t content_size);
   void OnDangerousDownloadWarningBypassed(
       const GURL& url,
@@ -206,7 +232,17 @@ class SafeBrowsingPrivateEventRouter
       const std::string& download_digest_sha256,
       const download::DownloadDangerType danger_type,
       const std::string& mime_type,
+      const std::string& scan_id,
       const int64_t content_size);
+
+  void OnLoginEvent(const GURL& url,
+                    bool is_federated,
+                    const url::Origin& federated_origin,
+                    const std::u16string& username);
+
+  void OnPasswordBreach(
+      const std::string& trigger,
+      const std::vector<std::pair<GURL, std::u16string>>& identities);
 
   // Returns true if enterprise real-time reporting should be initialized,
   // checking both the feature flag. This function is public so that it can
@@ -226,13 +262,11 @@ class SafeBrowsingPrivateEventRouter
  protected:
   // Report safe browsing event through real-time reporting channel, if enabled.
   // Declared as virtual for tests. Declared as protected to be called directly
-  // by tests. Events are created lazily to avoid doing useless work if they are
-  // discarded.
-  using EventBuilder = base::OnceCallback<base::Value()>;
+  // by tests.
   virtual void ReportRealtimeEvent(
       const std::string&,
-      enterprise_connectors::ReportingSettings settings,
-      EventBuilder event_builder);
+      const enterprise_connectors::ReportingSettings& settings,
+      base::Value::Dict event);
 
  private:
   // Initialize a real-time report client if needed.  This client is used only
@@ -255,8 +289,8 @@ class SafeBrowsingPrivateEventRouter
 
   // Determines if the real-time reporting feature is enabled.
   // Obtain settings to apply to a reporting event from ConnectorsService.
-  // base::nullopt represents that reporting should not be done.
-  base::Optional<enterprise_connectors::ReportingSettings>
+  // absl::nullopt represents that reporting should not be done.
+  absl::optional<enterprise_connectors::ReportingSettings>
   GetReportingSettings();
 
   // Called whenever the real-time reporting policy changes.
@@ -284,6 +318,9 @@ class SafeBrowsingPrivateEventRouter
   // Determines if real-time reporting is available based on platform and user.
   static bool IsRealtimeReportingAvailable();
 
+  // Removes any path information and returns just the basename.
+  static std::string GetBaseName(const std::string& filename);
+
   // Returns the Gaia email address of the account signed in to the profile or
   // an empty string if the profile is not signed in.
   std::string GetProfileUserName() const;
@@ -300,7 +337,8 @@ class SafeBrowsingPrivateEventRouter
       safe_browsing::EventResult event_result,
       const std::string& malware_family,
       const std::string& malware_category,
-      const std::string& evidence_locker_filepath);
+      const std::string& evidence_locker_filepath,
+      const std::string& scan_id);
 
   // Notifies listeners that the analysis connector detected a violation.
   void OnSensitiveDataEvent(
@@ -309,21 +347,22 @@ class SafeBrowsingPrivateEventRouter
       const std::string& download_digest_sha256,
       const std::string& mime_type,
       const std::string& trigger,
+      const std::string& scan_id,
       const enterprise_connectors::ContentAnalysisResponse::Result& result,
       const int64_t content_size,
       safe_browsing::EventResult event_result);
 
   void RemoveDmTokenFromRejectedSet(const std::string& dm_token);
 
-  content::BrowserContext* context_;
-  signin::IdentityManager* identity_manager_ = nullptr;
-  EventRouter* event_router_ = nullptr;
+  raw_ptr<content::BrowserContext> context_;
+  raw_ptr<signin::IdentityManager> identity_manager_ = nullptr;
+  raw_ptr<EventRouter> event_router_ = nullptr;
 
   // The cloud policy clients used to upload browser events and profile events
   // to the cloud. These clients are never used to fetch policies. These
   // pointers are not owned by the class.
-  policy::CloudPolicyClient* browser_client_ = nullptr;
-  policy::CloudPolicyClient* profile_client_ = nullptr;
+  raw_ptr<policy::CloudPolicyClient> browser_client_ = nullptr;
+  raw_ptr<policy::CloudPolicyClient> profile_client_ = nullptr;
 
   // The private clients are used on platforms where we cannot just get a
   // client and we create our own (used through the above client pointers).
@@ -336,7 +375,6 @@ class SafeBrowsingPrivateEventRouter
       rejected_dm_token_timers_;
 
   base::WeakPtrFactory<SafeBrowsingPrivateEventRouter> weak_ptr_factory_{this};
-  DISALLOW_COPY_AND_ASSIGN(SafeBrowsingPrivateEventRouter);
 };
 
 }  // namespace extensions

@@ -18,9 +18,9 @@ namespace media {
 
 namespace {
 
-uint8_t* Mmap(const size_t length, const int fd) {
-  void* addr =
-      mmap(nullptr, length, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0u);
+uint8_t* Mmap(const size_t length, const int fd, int permissions) {
+  void* addr = mmap(nullptr, length, permissions, MAP_SHARED, fd, 0u);
+
   if (addr == MAP_FAILED) {
     VLOGF(1) << "Failed to mmap.";
     return nullptr;
@@ -58,6 +58,7 @@ scoped_refptr<VideoFrame> CreateMappedVideoFrame(
         layout.planes()[0].size, src_video_frame->timestamp());
   }
   if (!video_frame) {
+    MunmapBuffers(chunks, /*video_frame=*/nullptr);
     return nullptr;
   }
 
@@ -78,9 +79,12 @@ bool IsFormatSupported(VideoPixelFormat format) {
       PIXEL_FORMAT_I420,
       PIXEL_FORMAT_NV12,
       PIXEL_FORMAT_YV12,
+
+      // Compressed format.
+      PIXEL_FORMAT_MJPEG,
   };
   return std::find(std::cbegin(supported_formats), std::cend(supported_formats),
-                   format);
+                   format) != std::cend(supported_formats);
 }
 
 }  // namespace
@@ -100,7 +104,8 @@ GenericDmaBufVideoFrameMapper::GenericDmaBufVideoFrameMapper(
     : VideoFrameMapper(format) {}
 
 scoped_refptr<VideoFrame> GenericDmaBufVideoFrameMapper::Map(
-    scoped_refptr<const VideoFrame> video_frame) const {
+    scoped_refptr<const VideoFrame> video_frame,
+    int permissions) const {
   if (!video_frame) {
     LOG(ERROR) << "Video frame is nullptr";
     return nullptr;
@@ -141,8 +146,17 @@ scoped_refptr<VideoFrame> GenericDmaBufVideoFrameMapper::Map(
 
     // Map the current buffer.
     const auto& last_plane = planes[next_buf - 1];
-    const size_t mapped_size = last_plane.offset + last_plane.size;
-    uint8_t* mapped_addr = Mmap(mapped_size, dmabuf_fds[i].get());
+
+    size_t mapped_size = 0;
+    if (!base::CheckAdd<size_t>(last_plane.offset, last_plane.size)
+             .AssignIfValid(&mapped_size)) {
+      VLOGF(1) << "Overflow happens with offset=" << last_plane.offset
+               << " + size=" << last_plane.size;
+      MunmapBuffers(chunks, /*video_frame=*/nullptr);
+      return nullptr;
+    }
+
+    uint8_t* mapped_addr = Mmap(mapped_size, dmabuf_fds[i].get(), permissions);
     chunks.emplace_back(mapped_addr, mapped_size);
     for (size_t j = i; j < next_buf; ++j)
       plane_addrs[j] = mapped_addr + planes[j].offset;

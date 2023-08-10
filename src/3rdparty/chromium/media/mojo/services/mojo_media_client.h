@@ -9,14 +9,15 @@
 #include <string>
 #include <vector>
 
-#include "base/callback_forward.h"
 #include "base/memory/ref_counted.h"
 #include "base/unguessable_token.h"
+#include "build/build_config.h"
 #include "media/base/overlay_info.h"
 #include "media/base/supported_video_decoder_config.h"
 #include "media/media_buildflags.h"
 #include "media/mojo/buildflags.h"
 #include "media/mojo/mojom/frame_interface_factory.mojom.h"
+#include "media/mojo/mojom/renderer_extensions.mojom.h"
 #include "media/mojo/mojom/video_decoder.mojom.h"
 #include "media/mojo/services/media_mojo_export.h"
 
@@ -31,16 +32,11 @@ class ColorSpace;
 namespace media {
 
 class AudioDecoder;
+class AudioEncoder;
 class CdmFactory;
 class MediaLog;
 class Renderer;
 class VideoDecoder;
-
-// Map of mojo VideoDecoder implementations to the vector of configs that they
-// (probably) support.
-using SupportedVideoDecoderConfigMap =
-    base::flat_map<VideoDecoderImplementation,
-                   std::vector<SupportedVideoDecoderConfig>>;
 
 // Provides a way for MediaService to create concrete (e.g. platform specific)
 // media components’ implementations. When MediaService is created, a
@@ -59,13 +55,18 @@ class MEDIA_MOJO_EXPORT MojoMediaClient {
   virtual std::unique_ptr<AudioDecoder> CreateAudioDecoder(
       scoped_refptr<base::SingleThreadTaskRunner> task_runner);
 
-  virtual SupportedVideoDecoderConfigMap GetSupportedVideoDecoderConfigs();
+  virtual std::unique_ptr<AudioEncoder> CreateAudioEncoder(
+      scoped_refptr<base::SequencedTaskRunner> task_runner);
+
+  virtual std::vector<SupportedVideoDecoderConfig>
+  GetSupportedVideoDecoderConfigs();
+
+  virtual VideoDecoderType GetDecoderImplementationType();
 
   virtual std::unique_ptr<VideoDecoder> CreateVideoDecoder(
       scoped_refptr<base::SingleThreadTaskRunner> task_runner,
       MediaLog* media_log,
       mojom::CommandBufferIdPtr command_buffer_id,
-      VideoDecoderImplementation implementation,
       RequestOverlayInfoCB request_overlay_info_cb,
       const gfx::ColorSpace& target_color_space);
 
@@ -91,9 +92,20 @@ class MEDIA_MOJO_EXPORT MojoMediaClient {
       const base::UnguessableToken& overlay_plane_id);
 #endif  // BUILDFLAG(ENABLE_CAST_RENDERER)
 
-  // Returns the CdmFactory to be used by MojoCdmService. |frame_interfaces| can
-  // be used to request interfaces provided remotely by the host. It may be a
-  // nullptr if the host chose not to bind the InterfacePtr.
+#if BUILDFLAG(IS_WIN)
+  virtual std::unique_ptr<Renderer> CreateMediaFoundationRenderer(
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner,
+      mojom::FrameInterfaceFactory* frame_interfaces,
+      mojo::PendingRemote<mojom::MediaLog> media_log_remote,
+      mojo::PendingReceiver<mojom::MediaFoundationRendererExtension>
+          renderer_extension_receiver,
+      mojo::PendingRemote<media::mojom::MediaFoundationRendererClientExtension>
+          client_extension_remote);
+#endif  // BUILDFLAG(IS_WIN)
+
+  // Returns the CdmFactory to be used by MojoCdmService. |frame_interfaces|
+  // can be used to request interfaces provided remotely by the host. It may
+  // be a nullptr if the host chose not to bind the InterfacePtr.
   virtual std::unique_ptr<CdmFactory> CreateCdmFactory(
       mojom::FrameInterfaceFactory* frame_interfaces);
 

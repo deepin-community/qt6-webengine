@@ -32,12 +32,12 @@ void DevToolsProtocolTestBase::DispatchProtocolMessage(
     base::span<const uint8_t> message) {
   base::StringPiece message_str(reinterpret_cast<const char*>(message.data()),
                                 message.size());
-  base::Optional<base::Value> parsed_message =
+  absl::optional<base::Value> parsed_message =
       base::JSONReader::Read(message_str);
   ASSERT_TRUE(parsed_message.has_value());
   if (auto id = parsed_message->FindIntPath("id")) {
     base::Value* result = parsed_message->FindDictPath("result");
-    ASSERT_TRUE(result);
+    ASSERT_TRUE(result) << "message: " << message_str;
     result_ = result->Clone();
     in_dispatch_ = false;
     if (*id && *id == waiting_for_command_result_id_) {
@@ -46,7 +46,7 @@ void DevToolsProtocolTestBase::DispatchProtocolMessage(
     }
   } else {
     std::string* notification = parsed_message->FindStringPath("method");
-    ASSERT_TRUE(notification);
+    ASSERT_TRUE(notification) << "message: " << message_str;
     notifications_.push_back(*notification);
     base::Value* params = parsed_message->FindPath("params");
     notification_params_.push_back(params ? params->Clone() : base::Value());
@@ -145,4 +145,12 @@ void DevToolsProtocolTestBase::AgentHostClosed(
 
 bool DevToolsProtocolTestBase::AllowUnsafeOperations() {
   return allow_unsafe_operations_;
+}
+absl::optional<url::Origin>
+DevToolsProtocolTestBase::GetNavigationInitiatorOrigin() {
+  return navigation_initiator_origin_;
+}
+
+bool DevToolsProtocolTestBase::MaySendInputEventsToBrowser() {
+  return may_send_input_event_to_browser_;
 }

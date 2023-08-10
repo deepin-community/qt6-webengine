@@ -14,11 +14,10 @@
 
 #include "minidump/minidump_string_writer.h"
 
+#include <iterator>
 #include <string>
 
-#include "base/compiler_specific.h"
 #include "base/format_macros.h"
-#include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "gtest/gtest.h"
@@ -45,14 +44,14 @@ TEST(MinidumpStringWriter, MinidumpUTF16StringWriter) {
         MinidumpStringAtRVA(string_file.string(), 0);
     EXPECT_TRUE(minidump_string);
     EXPECT_EQ(MinidumpStringAtRVAAsString(string_file.string(), 0),
-              base::string16());
+              std::u16string());
   }
 
   static constexpr struct {
     size_t input_length;
     const char* input_string;
     size_t output_length;
-    base::char16 output_string[10];
+    char16_t output_string[10];
   } kTestData[] = {
       {0, "", 0, {}},
       {1, "a", 1, {'a'}},
@@ -67,16 +66,15 @@ TEST(MinidumpStringWriter, MinidumpUTF16StringWriter) {
       {4, "\360\220\204\202", 2, {0xd800, 0xdd02}},  // 𐄂 (non-BMP)
   };
 
-  for (size_t index = 0; index < base::size(kTestData); ++index) {
+  for (size_t index = 0; index < std::size(kTestData); ++index) {
     SCOPED_TRACE(base::StringPrintf(
         "index %" PRIuS ", input %s", index, kTestData[index].input_string));
 
     // Make sure that the expected output string with its NUL terminator fits in
     // the space provided.
-    ASSERT_EQ(
-        kTestData[index]
-            .output_string[base::size(kTestData[index].output_string) - 1],
-        0);
+    ASSERT_EQ(kTestData[index]
+                  .output_string[std::size(kTestData[index].output_string) - 1],
+              0);
 
     string_file.Reset();
     crashpad::internal::MinidumpUTF16StringWriter string_writer;
@@ -86,8 +84,7 @@ TEST(MinidumpStringWriter, MinidumpUTF16StringWriter) {
 
     const size_t expected_utf16_units_with_nul =
         kTestData[index].output_length + 1;
-    MINIDUMP_STRING* tmp;
-    ALLOW_UNUSED_LOCAL(tmp);
+    [[maybe_unused]] MINIDUMP_STRING* tmp;
     const size_t expected_utf16_bytes =
         expected_utf16_units_with_nul * sizeof(tmp->Buffer[0]);
     ASSERT_EQ(string_file.string().size(), sizeof(*tmp) + expected_utf16_bytes);
@@ -95,7 +92,7 @@ TEST(MinidumpStringWriter, MinidumpUTF16StringWriter) {
     const MINIDUMP_STRING* minidump_string =
         MinidumpStringAtRVA(string_file.string(), 0);
     EXPECT_TRUE(minidump_string);
-    base::string16 expect_string = base::string16(
+    std::u16string expect_string = std::u16string(
         kTestData[index].output_string, kTestData[index].output_length);
     EXPECT_EQ(MinidumpStringAtRVAAsString(string_file.string(), 0),
               expect_string);
@@ -114,7 +111,7 @@ TEST(MinidumpStringWriter, ConvertInvalidUTF8ToUTF16) {
       "\303\0\251",  // NUL in middle of valid sequence
   };
 
-  for (size_t index = 0; index < base::size(kTestData); ++index) {
+  for (size_t index = 0; index < std::size(kTestData); ++index) {
     SCOPED_TRACE(base::StringPrintf(
         "index %" PRIuS ", input %s", index, kTestData[index]));
     string_file.Reset();
@@ -130,15 +127,14 @@ TEST(MinidumpStringWriter, ConvertInvalidUTF8ToUTF16) {
     const MINIDUMP_STRING* minidump_string =
         MinidumpStringAtRVA(string_file.string(), 0);
     EXPECT_TRUE(minidump_string);
-    MINIDUMP_STRING* tmp;
-    ALLOW_UNUSED_LOCAL(tmp);
+    [[maybe_unused]] MINIDUMP_STRING* tmp;
     EXPECT_EQ(
         minidump_string->Length,
         string_file.string().size() - sizeof(*tmp) - sizeof(tmp->Buffer[0]));
-    base::string16 output_string =
+    std::u16string output_string =
         MinidumpStringAtRVAAsString(string_file.string(), 0);
     EXPECT_FALSE(output_string.empty());
-    EXPECT_NE(output_string.find(0xfffd), base::string16::npos);
+    EXPECT_NE(output_string.find(0xfffd), std::u16string::npos);
   }
 }
 
@@ -176,7 +172,7 @@ TEST(MinidumpStringWriter, MinidumpUTF8StringWriter) {
       {4, "\360\220\204\202"},  // 𐄂 (non-BMP)
   };
 
-  for (size_t index = 0; index < base::size(kTestData); ++index) {
+  for (size_t index = 0; index < std::size(kTestData); ++index) {
     SCOPED_TRACE(base::StringPrintf(
         "index %" PRIuS ", input %s", index, kTestData[index].string));
 
@@ -201,10 +197,10 @@ TEST(MinidumpStringWriter, MinidumpUTF8StringWriter) {
 
 struct MinidumpUTF16StringListWriterTraits {
   using MinidumpStringListWriterType = MinidumpUTF16StringListWriter;
-  static base::string16 ExpectationForUTF8(const std::string& utf8) {
+  static std::u16string ExpectationForUTF8(const std::string& utf8) {
     return base::UTF8ToUTF16(utf8);
   }
-  static base::string16 ObservationAtRVA(const std::string& file_contents,
+  static std::u16string ObservationAtRVA(const std::string& file_contents,
                                          RVA rva) {
     return MinidumpStringAtRVAAsString(file_contents, rva);
   }

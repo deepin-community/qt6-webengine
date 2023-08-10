@@ -17,11 +17,11 @@ std::unique_ptr<base::DictionaryValue> CreateCommandValue(
     const extensions::Command& command,
     bool active) {
   std::unique_ptr<base::DictionaryValue> result(new base::DictionaryValue());
-  result->SetString("name", command.command_name());
-  result->SetString("description", command.description());
-  result->SetString("shortcut",
-                    active ? command.accelerator().GetShortcutText() :
-                             base::string16());
+  result->SetStringKey("name", command.command_name());
+  result->SetStringKey("description", command.description());
+  result->SetStringKey("shortcut", active
+                                       ? command.accelerator().GetShortcutText()
+                                       : std::u16string());
   return result;
 }
 

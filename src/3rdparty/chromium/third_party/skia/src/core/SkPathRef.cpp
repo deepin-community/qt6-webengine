@@ -8,6 +8,7 @@
 #include "include/private/SkPathRef.h"
 
 #include "include/core/SkPath.h"
+#include "include/core/SkRRect.h"
 #include "include/private/SkNx.h"
 #include "include/private/SkOnce.h"
 #include "include/private/SkTo.h"
@@ -490,16 +491,14 @@ void SkPathRef::addGenIDChangeListener(sk_sp<SkIDChangeListener> listener) {
     if (this == gEmpty) {
         return;
     }
-    bool singleThreaded = this->unique();
-    fGenIDChangeListeners.add(std::move(listener), singleThreaded);
+    fGenIDChangeListeners.add(std::move(listener));
 }
 
 int SkPathRef::genIDChangeListenerCount() { return fGenIDChangeListeners.count(); }
 
 // we need to be called *before* the genID gets changed or zerod
 void SkPathRef::callGenIDChangeListeners() {
-    bool singleThreaded = this->unique();
-    fGenIDChangeListeners.changed(singleThreaded);
+    fGenIDChangeListeners.changed();
 }
 
 SkRRect SkPathRef::getRRect() const {
@@ -542,6 +541,21 @@ SkRRect SkPathRef::getRRect() const {
     rrect.setRectRadii(bounds, radii);
     return rrect;
 }
+
+bool SkPathRef::isRRect(SkRRect* rrect, bool* isCCW, unsigned* start) const {
+        if (fIsRRect) {
+            if (rrect) {
+                *rrect = this->getRRect();
+            }
+            if (isCCW) {
+                *isCCW = SkToBool(fRRectOrOvalIsCCW);
+            }
+            if (start) {
+                *start = fRRectOrOvalStartIdx;
+            }
+        }
+        return SkToBool(fIsRRect);
+    }
 
 ///////////////////////////////////////////////////////////////////////////////
 

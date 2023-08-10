@@ -17,15 +17,15 @@
 #include "base/location.h"
 #include "base/message_loop/message_pump_type.h"
 #include "base/run_loop.h"
-#include "base/single_thread_task_runner.h"
-#include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/synchronization/lock.h"
 #include "base/synchronization/waitable_event.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/task/thread_pool/thread_pool_instance.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "base/time/time.h"
 #include "net/proxy_resolution/proxy_config.h"
 #include "net/proxy_resolution/proxy_config_service_common_unittest.h"
 #include "net/test/test_with_task_environment.h"
@@ -286,7 +286,7 @@ class SyncConfigGetter : public ProxyConfigService::Observer {
     // Start the main IO thread.
     base::Thread::Options options;
     options.message_pump_type = base::MessagePumpType::IO;
-    main_thread_.StartWithOptions(options);
+    main_thread_.StartWithOptions(std::move(options));
 
     // Make sure the thread started.
     main_thread_.task_runner()->PostTask(
@@ -752,7 +752,7 @@ TEST_F(ProxyConfigServiceLinuxTest, BasicGSettingsTest) {
       },
   };
 
-  for (size_t i = 0; i < base::size(tests); ++i) {
+  for (size_t i = 0; i < std::size(tests); ++i) {
     SCOPED_TRACE(base::StringPrintf("Test[%" PRIuS "] %s", i,
                                     tests[i].description.c_str()));
     std::unique_ptr<MockEnvironment> env(new MockEnvironment);
@@ -1081,7 +1081,7 @@ TEST_F(ProxyConfigServiceLinuxTest, BasicEnvTest) {
       },
   };
 
-  for (size_t i = 0; i < base::size(tests); ++i) {
+  for (size_t i = 0; i < std::size(tests); ++i) {
     SCOPED_TRACE(base::StringPrintf("Test[%" PRIuS "] %s", i,
                                     tests[i].description.c_str()));
     std::unique_ptr<MockEnvironment> env(new MockEnvironment);
@@ -1661,36 +1661,38 @@ TEST_F(ProxyConfigServiceLinuxTest, KDEConfigParser) {
 
           // Input.
           "[Proxy Settings]\nProxyType=4\nhttpProxy=http_proxy\n"
-          "httpsProxy=https_proxy\nftpProxy=ftp_proxy\nNoProxyFor=no_proxy\n",
+          "httpsProxy=https_proxy\nftpProxy=ftp_proxy\nNoProxyFor=no_proxy\n"
+          "socksProxy=SOCKS_SERVER\n",
           {
               // env_values
-              nullptr,                  // DESKTOP_SESSION
-              nullptr,                  // HOME
-              nullptr,                  // KDEHOME
-              nullptr,                  // KDE_SESSION_VERSION
-              nullptr,                  // XDG_CURRENT_DESKTOP
-              nullptr,                  // auto_proxy
-              nullptr,                  // all_proxy
-              "www.normal.com",         // http_proxy
-              "www.secure.com",         // https_proxy
-              "ftp.foo.com",            // ftp_proxy
-              nullptr, nullptr,         // SOCKS
-              ".google.com, .kde.org",  // no_proxy
+              nullptr,                          // DESKTOP_SESSION
+              nullptr,                          // HOME
+              nullptr,                          // KDEHOME
+              nullptr,                          // KDE_SESSION_VERSION
+              nullptr,                          // XDG_CURRENT_DESKTOP
+              nullptr,                          // auto_proxy
+              nullptr,                          // all_proxy
+              "www.normal.com",                 // http_proxy
+              "www.secure.com",                 // https_proxy
+              "ftp.foo.com",                    // ftp_proxy
+              "socks.comfy.com:1234", nullptr,  // SOCKS
+              ".google.com, .kde.org",          // no_proxy
           },
 
           // Expected result.
           ProxyConfigService::CONFIG_VALID,
           false,   // auto_detect
           GURL(),  // pac_url
-          ProxyRulesExpectation::PerScheme(
-              "www.normal.com:80",        // http
-              "www.secure.com:80",        // https
-              "ftp.foo.com:80",           // ftp
-              "*.google.com,*.kde.org"),  // bypass rules
+          ProxyRulesExpectation::PerSchemeWithSocks(
+              "www.normal.com:80",              // http
+              "www.secure.com:80",              // https
+              "ftp.foo.com:80",                 // ftp
+              "socks5://socks.comfy.com:1234",  // socks
+              "*.google.com,*.kde.org"),        // bypass rules
       },
   };
 
-  for (size_t i = 0; i < base::size(tests); ++i) {
+  for (size_t i = 0; i < std::size(tests); ++i) {
     SCOPED_TRACE(base::StringPrintf("Test[%" PRIuS "] %s", i,
                                     tests[i].description.c_str()));
     std::unique_ptr<MockEnvironment> env(new MockEnvironment);

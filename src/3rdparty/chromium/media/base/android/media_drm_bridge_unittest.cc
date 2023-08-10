@@ -9,6 +9,7 @@
 #include "base/callback_helpers.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
+#include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
 #include "base/test/task_environment.h"
 #include "media/base/android/media_drm_bridge.h"
@@ -74,7 +75,7 @@ class ProvisionFetcherWrapper : public ProvisionFetcher {
   }
 
  private:
-  ProvisionFetcher* provision_fetcher_;
+  raw_ptr<ProvisionFetcher> provision_fetcher_;
 };
 
 }  // namespace
@@ -127,16 +128,11 @@ TEST_F(MediaDrmBridgeTest, IsKeySystemSupported_Widevine) {
   EXPECT_TRUE_IF_WIDEVINE_AVAILABLE(
       IsKeySystemSupportedWithType(kWidevineKeySystem, kVideoMp4));
 
-  if (base::android::BuildInfo::GetInstance()->sdk_int() <=
-      base::android::SDK_VERSION_KITKAT) {
-    EXPECT_FALSE(IsKeySystemSupportedWithType(kWidevineKeySystem, kAudioWebM));
-    EXPECT_FALSE(IsKeySystemSupportedWithType(kWidevineKeySystem, kVideoWebM));
-  } else {
-    EXPECT_TRUE_IF_WIDEVINE_AVAILABLE(
+
+  EXPECT_TRUE_IF_WIDEVINE_AVAILABLE(
         IsKeySystemSupportedWithType(kWidevineKeySystem, kAudioWebM));
-    EXPECT_TRUE_IF_WIDEVINE_AVAILABLE(
+  EXPECT_TRUE_IF_WIDEVINE_AVAILABLE(
         IsKeySystemSupportedWithType(kWidevineKeySystem, kVideoWebM));
-  }
 
   EXPECT_FALSE(IsKeySystemSupportedWithType(kWidevineKeySystem, "unknown"));
   EXPECT_FALSE(IsKeySystemSupportedWithType(kWidevineKeySystem, "video/avi"));

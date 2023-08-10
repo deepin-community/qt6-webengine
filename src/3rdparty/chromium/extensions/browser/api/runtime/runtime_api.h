@@ -8,8 +8,8 @@
 #include <memory>
 #include <string>
 
-#include "base/macros.h"
-#include "base/scoped_observer.h"
+#include "base/memory/raw_ptr.h"
+#include "base/scoped_observation.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "content/public/browser/notification_registrar.h"
@@ -86,6 +86,10 @@ class RuntimeAPI : public BrowserContextKeyedAPI,
   static void RegisterPrefs(PrefRegistrySimple* registry);
 
   explicit RuntimeAPI(content::BrowserContext* context);
+
+  RuntimeAPI(const RuntimeAPI&) = delete;
+  RuntimeAPI& operator=(const RuntimeAPI&) = delete;
+
   ~RuntimeAPI() override;
 
   void ReloadExtension(const std::string& extension_id);
@@ -153,15 +157,15 @@ class RuntimeAPI : public BrowserContextKeyedAPI,
 
   std::unique_ptr<RuntimeAPIDelegate> delegate_;
 
-  content::BrowserContext* browser_context_;
+  raw_ptr<content::BrowserContext> browser_context_;
 
   content::NotificationRegistrar registrar_;
 
   // Listen to extension notifications.
-  ScopedObserver<ExtensionRegistry, ExtensionRegistryObserver>
-      extension_registry_observer_{this};
-  ScopedObserver<ProcessManager, ProcessManagerObserver>
-      process_manager_observer_{this};
+  base::ScopedObservation<ExtensionRegistry, ExtensionRegistryObserver>
+      extension_registry_observation_{this};
+  base::ScopedObservation<ProcessManager, ProcessManagerObserver>
+      process_manager_observation_{this};
 
   // The ID of the first extension to call the restartAfterDelay API. Any other
   // extensions to call this API after that will fail.
@@ -186,8 +190,6 @@ class RuntimeAPI : public BrowserContextKeyedAPI,
   bool was_last_restart_due_to_delayed_restart_api_;
 
   base::WeakPtrFactory<RuntimeAPI> weak_ptr_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(RuntimeAPI);
 };
 
 template <>

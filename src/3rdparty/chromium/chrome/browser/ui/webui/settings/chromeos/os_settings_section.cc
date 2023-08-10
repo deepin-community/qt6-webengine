@@ -18,7 +18,7 @@ namespace settings {
 constexpr const char OsSettingsSection::kSettingIdUrlParam[];
 
 // static
-base::string16 OsSettingsSection::GetHelpUrlWithBoard(
+std::u16string OsSettingsSection::GetHelpUrlWithBoard(
     const std::string& original_url) {
   return base::ASCIIToUTF16(original_url +
                             "&b=" + base::SysInfo::GetLsbReleaseBoard());
@@ -60,7 +60,7 @@ mojom::SearchResultPtr OsSettingsSection::GenerateSectionSearchResult(
       ModifySearchResultUrl(mojom::SearchResultType::kSection,
                             {.section = GetSection()}, GetSectionPath()),
       GetSectionIcon(), relevance_score,
-      std::vector<base::string16>{
+      std::vector<std::u16string>{
           l10n_util::GetStringUTF16(IDS_INTERNAL_APP_SETTINGS),
           l10n_util::GetStringUTF16(GetSectionNameMessageId())},
       mojom::SearchResultDefaultRank::kMedium,
@@ -74,11 +74,9 @@ std::string OsSettingsSection::GetDefaultModifiedUrl(
     mojom::SearchResultType type,
     OsSettingsIdentifier id,
     const std::string& url_to_modify) {
-  if (!chromeos::features::IsDeepLinkingEnabled() ||
-      type != mojom::SearchResultType::kSetting) {
-    // Default case for static URLs which do not need to be modified.
+  // Default case for static URLs which do not need to be modified.
+  if (type != mojom::SearchResultType::kSetting)
     return url_to_modify;
-  }
 
   std::stringstream ss;
   ss << url_to_modify;

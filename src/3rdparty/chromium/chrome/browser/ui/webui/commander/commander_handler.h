@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_UI_WEBUI_COMMANDER_COMMANDER_HANDLER_H_
 #define CHROME_BROWSER_UI_WEBUI_COMMANDER_COMMANDER_HANDLER_H_
 
+#include "base/memory/raw_ptr.h"
 #include "chrome/browser/ui/commander/commander_view_model.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_message_handler.h"
@@ -18,7 +19,7 @@ class CommanderHandler : public content::WebUIMessageHandler {
   class Delegate {
    public:
     // Called when the text is changed in the WebUI interface.
-    virtual void OnTextChanged(const base::string16& text) = 0;
+    virtual void OnTextChanged(const std::u16string& text) = 0;
     // Called when an option is selected (clicked or enter pressed) in the WebUI
     // interface.
     virtual void OnOptionSelected(size_t option_index, int result_set_id) = 0;
@@ -71,7 +72,7 @@ class CommanderHandler : public content::WebUIMessageHandler {
   // representing the new height.
   void HandleHeightChanged(const base::ListValue* args);
 
-  Delegate* delegate_ = nullptr;
+  raw_ptr<Delegate> delegate_ = nullptr;
 };
 
 #endif  // CHROME_BROWSER_UI_WEBUI_COMMANDER_COMMANDER_HANDLER_H_

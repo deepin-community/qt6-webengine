@@ -1,8 +1,8 @@
 #!/usr/bin/python3 -i
 #
-# Copyright (c) 2015-2021 The Khronos Group Inc.
-# Copyright (c) 2015-2021 Valve Corporation
-# Copyright (c) 2015-2021 LunarG, Inc.
+# Copyright (c) 2015-2022 The Khronos Group Inc.
+# Copyright (c) 2015-2022 Valve Corporation
+# Copyright (c) 2015-2022 LunarG, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 # limitations under the License.
 #
 # Author: Mark Lobodzinski <mark@lunarg.com>
+# Author: Nadav Geva <nadav.geva@amd.com>
 
 import os,re,sys,string,json
 import xml.etree.ElementTree as etree
@@ -33,27 +34,26 @@ class BestPracticesOutputGeneratorOptions(GeneratorOptions):
                  filename = None,
                  directory = '.',
                  genpath = None,
-                 apiname = None,
+                 apiname = 'vulkan',
                  profile = None,
                  versions = '.*',
                  emitversions = '.*',
-                 defaultExtensions = None,
+                 defaultExtensions = 'vulkan',
                  addExtensions = None,
                  removeExtensions = None,
                  emitExtensions = None,
                  emitSpirv = None,
                  sortProcedure = regSortFeatures,
-                 prefixText = "",
                  genFuncPointers = True,
                  protectFile = True,
-                 protectFeature = True,
-                 apicall = '',
-                 apientry = '',
-                 apientryp = '',
+                 protectFeature = False,
+                 apicall = 'VKAPI_ATTR ',
+                 apientry = 'VKAPI_CALL ',
+                 apientryp = 'VKAPI_PTR *',
                  indentFuncProto = True,
                  indentFuncPointer = False,
-                 alignFuncParam = 0,
-                 expandEnumerants = True):
+                 alignFuncParam = 48,
+                 expandEnumerants = False):
         GeneratorOptions.__init__(self,
                 conventions = conventions,
                 filename = filename,
@@ -69,7 +69,6 @@ class BestPracticesOutputGeneratorOptions(GeneratorOptions):
                 emitExtensions = emitExtensions,
                 emitSpirv = emitSpirv,
                 sortProcedure = sortProcedure)
-        self.prefixText      = prefixText
         self.genFuncPointers = genFuncPointers
         self.protectFile     = protectFile
         self.protectFeature  = protectFeature
@@ -119,10 +118,11 @@ class BestPracticesOutputGenerator(OutputGenerator):
             'vkGetPhysicalDeviceSurfaceFormatsKHR',
             'vkGetPhysicalDeviceSurfaceFormats2KHR',
             'vkGetPhysicalDeviceDisplayPlanePropertiesKHR',
-            'vkCreateSwapchainKHR',
             'vkGetSwapchainImagesKHR',
-            'vkEnumeratePhysicalDevices',
-            'vkCreateDevice',
+            # AMD tracked
+            'vkCreateComputePipelines',
+            'vkCmdPipelineBarrier',
+            'vkQueueSubmit',
             ]
 
         self.extension_info = dict()
@@ -154,9 +154,9 @@ class BestPracticesOutputGenerator(OutputGenerator):
         copyright += '\n'
         copyright += '/***************************************************************************\n'
         copyright += ' *\n'
-        copyright += ' * Copyright (c) 2015-2021 The Khronos Group Inc.\n'
-        copyright += ' * Copyright (c) 2015-2021 Valve Corporation\n'
-        copyright += ' * Copyright (c) 2015-2021 LunarG, Inc.\n'
+        copyright += ' * Copyright (c) 2015-2022 The Khronos Group Inc.\n'
+        copyright += ' * Copyright (c) 2015-2022 Valve Corporation\n'
+        copyright += ' * Copyright (c) 2015-2022 LunarG, Inc.\n'
         copyright += ' *\n'
         copyright += ' * Licensed under the Apache License, Version 2.0 (the "License");\n'
         copyright += ' * you may not use this file except in compliance with the License.\n'
@@ -171,6 +171,7 @@ class BestPracticesOutputGenerator(OutputGenerator):
         copyright += ' * limitations under the License.\n'
         copyright += ' *\n'
         copyright += ' * Author: Mark Lobodzinski <mark@lunarg.com>\n'
+        copyright += ' * Author: Nadav Geva <nadav.geva@amd.com>\n'
         copyright += ' *\n'
         copyright += ' ****************************************************************************/\n'
         self.otwrite('both', copyright)
@@ -194,7 +195,7 @@ class BestPracticesOutputGenerator(OutputGenerator):
                 self.otwrite('both', '\n')
 
             # Output data structure containing extension deprecation data
-            ext_deprecation_data = 'const std::unordered_map<std::string, DeprecationData>  deprecated_extensions = {\n'
+            ext_deprecation_data = 'const layer_data::unordered_map<std::string, DeprecationData>  deprecated_extensions = {\n'
             for ext in sorted(self.extension_info):
                 ext_data = self.extension_info[ext]
                 reason = ext_data[0]
@@ -205,7 +206,7 @@ class BestPracticesOutputGenerator(OutputGenerator):
             self.otwrite('hdr', ext_deprecation_data)
 
             # Output data structure containing extension special use data
-            ext_specialuse_data = 'const std::unordered_map<std::string, std::string> special_use_extensions = {\n'
+            ext_specialuse_data = 'const layer_data::unordered_map<std::string, std::string> special_use_extensions = {\n'
             for ext in sorted(self.extension_info):
                 spec_use_data = self.extension_info[ext]
                 special_uses = spec_use_data[2]

@@ -1,11 +1,14 @@
 <template>
   <style include="cr-shared-style">
     :host {
+      --profile-card-avatar-icon-size: 74px;
       --text-font-size: 1.16em;
       --scrollbar-width: 4px;
-      --scrollbar-background: var(--google-grey-refresh-100);
+      --scrollbar-background: var(--google-grey-100);
       --footer-spacing: 40px;
       --profile-card-hover-color: var(--md-background-color);
+      --profile-item-height: 178px;
+      --profile-item-width: 162px;
     }
 
     html {
@@ -58,7 +61,7 @@
     }
 
     .footer.division-line {
-      border-top: 1px solid var(--google-grey-refresh-300);
+      border-top: 1px solid var(--google-grey-300);
     }
 
     .custom-scrollbar::-webkit-scrollbar {
@@ -77,10 +80,10 @@
     }
 
     .profile-avatar {
-      border-radius: 37px;
+      border-radius: 50%;
       flex-shrink: 0;
-      height: var(--avatar-icon-size);
-      width: var(--avatar-icon-size);
+      height: var(--profile-card-avatar-icon-size);
+      width: var(--profile-card-avatar-icon-size);
     }
 
     @media (prefers-color-scheme: dark) {

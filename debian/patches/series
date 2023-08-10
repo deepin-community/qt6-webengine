@@ -1,14 +1,21 @@
+# Use system libraries, fixed upstream in 6.5
+system-openjpeg2.patch
+
+# GCC-13
+gcc-13.patch
+
+# Don't do shift optimisation in ffmpeg, fails on x86
+ffmpeg-remove-x86-optimization.patch
+
 # remove catapult
 remove_catapult_3rdparty.patch
 remove_catapult_core.patch
 
-# CVE-2022-1096 patch
-# fixed in Qt 6.2.5 and Qt 6.3.0
-CVE-2022-1096-qtwebengine-6.2.diff
-
 # reduce debugging info
 reduce_debugging_info.patch
 
-# fit gcc 8.3.0
-uniontech0001-feat-build-on-gcc8.3.0-ok.patch
+# rewrite compressing files in devtools-frontend
+compressing_files.patch
 
+# enable support for i386
+support-i386.patch

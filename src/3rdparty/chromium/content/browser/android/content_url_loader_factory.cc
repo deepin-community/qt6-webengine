@@ -13,8 +13,6 @@
 #include "base/files/file.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
-#include "base/macros.h"
-#include "base/strings/stringprintf.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
 #include "base/time/time.h"
@@ -111,12 +109,15 @@ class ContentURLLoader : public network::mojom::URLLoader {
                               std::move(client_remote));
   }
 
+  ContentURLLoader(const ContentURLLoader&) = delete;
+  ContentURLLoader& operator=(const ContentURLLoader&) = delete;
+
   // network::mojom::URLLoader:
   void FollowRedirect(
       const std::vector<std::string>& removed_headers,
       const net::HttpRequestHeaders& modified_headers,
       const net::HttpRequestHeaders& modified_cors_exempt_headers,
-      const base::Optional<GURL>& new_url) override {}
+      const absl::optional<GURL>& new_url) override {}
   void SetPriority(net::RequestPriority priority,
                    int32_t intra_priority_value) override {}
   void PauseReadingBodyFromNet() override {}
@@ -227,7 +228,8 @@ class ContentURLLoader : public network::mojom::URLLoader {
                                head->mime_type);
     }
 
-    client->OnReceiveResponse(std::move(head));
+    client->OnReceiveResponse(std::move(head),
+                              mojo::ScopedDataPipeConsumerHandle());
     client->OnStartLoadingResponseBody(std::move(consumer_handle));
     client_ = std::move(client);
 
@@ -293,8 +295,6 @@ class ContentURLLoader : public network::mojom::URLLoader {
   // It is used to set some of the URLLoaderCompletionStatus data passed back
   // to the URLLoaderClients (eg SimpleURLLoader).
   size_t total_bytes_written_ = 0;
-
-  DISALLOW_COPY_AND_ASSIGN(ContentURLLoader);
 };
 
 }  // namespace
@@ -309,7 +309,6 @@ ContentURLLoaderFactory::~ContentURLLoaderFactory() = default;
 
 void ContentURLLoaderFactory::CreateLoaderAndStart(
     mojo::PendingReceiver<network::mojom::URLLoader> loader,
-    int32_t routing_id,
     int32_t request_id,
     uint32_t options,
     const network::ResourceRequest& request,

@@ -20,8 +20,10 @@
 #include "net/base/net_errors.h"
 #include "net/http/http_response_headers.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
+#include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/network/public/cpp/simple_url_loader.h"
+#include "services/network/public/mojom/url_response_head.mojom.h"
 
 using content::BrowserThread;
 
@@ -52,7 +54,8 @@ void ThreatDetailsCacheCollector::StartCacheCollection(
   // Post a task in the message loop, so the callers don't need to
   // check if we call their callback immediately.
   content::GetUIThreadTaskRunner({})->PostTask(
-      FROM_HERE, base::BindOnce(&ThreatDetailsCacheCollector::OpenEntry, this));
+      FROM_HERE, base::BindOnce(&ThreatDetailsCacheCollector::OpenEntry,
+                                weak_factory_.GetWeakPtr()));
 }
 
 bool ThreatDetailsCacheCollector::HasStarted() {
@@ -118,6 +121,7 @@ void ThreatDetailsCacheCollector::OpenEntry() {
   current_load_->DownloadToStringOfUnboundedSizeUntilCrashAndDie(
       url_loader_factory_.get(),
       base::BindOnce(&ThreatDetailsCacheCollector::OnURLLoaderComplete,
+                     // This is safe because `current_load_` is owned by `this`.
                      base::Unretained(this)));
 }
 
@@ -227,7 +231,8 @@ void ThreatDetailsCacheCollector::AdvanceEntry() {
 
   // Create a task so we don't take over the UI thread for too long.
   content::GetUIThreadTaskRunner({})->PostTask(
-      FROM_HERE, base::BindOnce(&ThreatDetailsCacheCollector::OpenEntry, this));
+      FROM_HERE, base::BindOnce(&ThreatDetailsCacheCollector::OpenEntry,
+                                weak_factory_.GetWeakPtr()));
 }
 
 void ThreatDetailsCacheCollector::AllDone(bool success) {

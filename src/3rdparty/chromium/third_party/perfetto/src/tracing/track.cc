@@ -24,6 +24,7 @@
 #include "perfetto/ext/base/thread_utils.h"
 #include "perfetto/ext/base/uuid.h"
 #include "perfetto/tracing/internal/track_event_data_source.h"
+#include "protos/perfetto/trace/track_event/counter_descriptor.gen.h"
 #include "protos/perfetto/trace/track_event/process_descriptor.gen.h"
 #include "protos/perfetto/trace/track_event/process_descriptor.pbzero.h"
 #include "protos/perfetto/trace/track_event/thread_descriptor.gen.h"
@@ -91,6 +92,28 @@ void ThreadTrack::Serialize(protos::pbzero::TrackDescriptor* desc) const {
   desc->AppendRawProtoBytes(bytes.data(), bytes.size());
 }
 
+protos::gen::TrackDescriptor CounterTrack::Serialize() const {
+  auto desc = Track::Serialize();
+  desc.set_name(name_);
+  auto* counter = desc.mutable_counter();
+  if (category_)
+    counter->add_categories(category_);
+  if (unit_ != perfetto::protos::pbzero::CounterDescriptor::UNIT_UNSPECIFIED)
+    counter->set_unit(static_cast<protos::gen::CounterDescriptor_Unit>(unit_));
+  if (unit_name_)
+    counter->set_unit_name(unit_name_);
+  if (unit_multiplier_ != 1)
+    counter->set_unit_multiplier(unit_multiplier_);
+  if (is_incremental_)
+    counter->set_is_incremental(is_incremental_);
+  return desc;
+}
+
+void CounterTrack::Serialize(protos::pbzero::TrackDescriptor* desc) const {
+  auto bytes = Serialize().SerializeAsString();
+  desc->AppendRawProtoBytes(bytes.data(), bytes.size());
+}
+
 namespace internal {
 namespace {
 
@@ -144,12 +167,17 @@ void TrackRegistry::InitializeInstance() {
   if (uint64_t start_time = GetProcessStartTime()) {
     base::Hash hash;
     hash.Update(start_time);
-    hash.Update(base::GetProcessId());
+    hash.Update(Platform::GetCurrentProcessId());
     Track::process_uuid = hash.digest();
   } else {
     // Fall back to a randomly generated identifier.
     Track::process_uuid = static_cast<uint64_t>(base::Uuidv4().lsb());
   }
+}
+
+void TrackRegistry::ResetForTesting() {
+  delete instance_;
+  instance_ = nullptr;
 }
 
 void TrackRegistry::UpdateTrack(Track track,

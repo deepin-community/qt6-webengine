@@ -54,6 +54,9 @@ struct AudioNodeInfo {
 const uint32_t kInputMaxSupportedChannels = 1;
 const uint32_t kOutputMaxSupportedChannels = 2;
 
+const uint32_t kInputAudioEffect = 1;
+const uint32_t kOutputAudioEffect = 0;
+
 const AudioNodeInfo kJabraSpeaker1 = {
     false, kJabraSpeaker1Id, kJabraSpeaker1StableDeviceId, "Jabra Speaker",
     "USB", "Jabra Speaker 1"};
@@ -86,12 +89,17 @@ AudioNode CreateAudioNode(const AudioNodeInfo& info, int version) {
       // stable_device_id_v2:
       version == 2 ? info.stable_id ^ 0xFFFF : 0, info.device_name, info.type,
       info.name, false, 0,
-      info.is_input ? kInputMaxSupportedChannels : kOutputMaxSupportedChannels);
+      info.is_input ? kInputMaxSupportedChannels : kOutputMaxSupportedChannels,
+      info.is_input ? kInputAudioEffect : kOutputAudioEffect);
 }
 
 class AudioApiTest : public ShellApiTest {
  public:
   AudioApiTest() = default;
+
+  AudioApiTest(const AudioApiTest&) = delete;
+  AudioApiTest& operator=(const AudioApiTest&) = delete;
+
   ~AudioApiTest() override = default;
 
   void SetUp() override {
@@ -112,9 +120,6 @@ class AudioApiTest : public ShellApiTest {
  protected:
   std::unique_ptr<base::AutoReset<extensions::mojom::FeatureSessionType>>
       session_feature_type_;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(AudioApiTest);
 };
 
 IN_PROC_BROWSER_TEST_F(AudioApiTest, Audio) {
@@ -273,10 +278,10 @@ IN_PROC_BROWSER_TEST_F(AudioApiTest, OnNodesChangedRemoveNodes) {
   EXPECT_TRUE(result_catcher.GetNextResult()) << result_catcher.message();
 }
 
-class WhitelistedAudioApiTest : public AudioApiTest {
+class AllowlistedAudioApiTest : public AudioApiTest {
  public:
-  WhitelistedAudioApiTest() = default;
-  ~WhitelistedAudioApiTest() override = default;
+  AllowlistedAudioApiTest() = default;
+  ~AllowlistedAudioApiTest() override = default;
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
     command_line->AppendSwitchASCII(
@@ -285,7 +290,7 @@ class WhitelistedAudioApiTest : public AudioApiTest {
   }
 };
 
-IN_PROC_BROWSER_TEST_F(WhitelistedAudioApiTest, DeprecatedApi) {
+IN_PROC_BROWSER_TEST_F(AllowlistedAudioApiTest, DeprecatedApi) {
   // Set up the audio nodes for testing.
   AudioNodeList audio_nodes = {
       CreateAudioNode(kJabraSpeaker1, 2), CreateAudioNode(kJabraSpeaker2, 2),

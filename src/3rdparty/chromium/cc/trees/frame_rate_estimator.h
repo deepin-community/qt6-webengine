@@ -5,7 +5,8 @@
 #ifndef CC_TREES_FRAME_RATE_ESTIMATOR_H_
 #define CC_TREES_FRAME_RATE_ESTIMATOR_H_
 
-#include "base/single_thread_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
+#include "base/time/time.h"
 #include "cc/base/delayed_unique_notifier.h"
 #include "cc/cc_export.h"
 
@@ -20,6 +21,7 @@ class CC_EXPORT FrameRateEstimator {
   void WillDraw(base::TimeTicks now);
   void NotifyInputEvent();
   base::TimeDelta GetPreferredInterval() const;
+  bool input_priority_mode() const { return input_priority_mode_; }
 
  private:
   void OnExitInputPriorityMode();

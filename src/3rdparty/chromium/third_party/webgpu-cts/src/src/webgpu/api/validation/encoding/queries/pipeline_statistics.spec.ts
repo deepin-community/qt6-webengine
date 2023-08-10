@@ -3,11 +3,9 @@ Validation for encoding pipeline statistics queries.
 Excludes query begin/end balance and nesting (begin_end.spec.ts)
 and querySet/queryIndex (general.spec.ts).
 
+TODO: pipeline statistics queries are removed from core; consider moving tests to another suite.
 TODO:
-- Test with an invalid querySet.
-- Test an pipeline statistics query with no draw/dispatch calls.
-  (If that's valid, move the test to api/operation/.)
-- ?
+- Test pipelineStatistics with {undefined, empty, duplicated, full (control case)} values
 `;
 
 import { makeTestGroup } from '../../../../../common/framework/test_group.js';

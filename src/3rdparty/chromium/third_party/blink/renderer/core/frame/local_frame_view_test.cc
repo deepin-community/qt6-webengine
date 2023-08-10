@@ -8,6 +8,7 @@
 
 #include "testing/gmock/include/gmock/gmock.h"
 #include "third_party/blink/public/mojom/scroll/scrollbar_mode.mojom-blink.h"
+#include "third_party/blink/renderer/core/css/css_style_declaration.h"
 #include "third_party/blink/renderer/core/html/html_anchor_element.h"
 #include "third_party/blink/renderer/core/html/html_element.h"
 #include "third_party/blink/renderer/core/html/html_iframe_element.h"
@@ -19,14 +20,12 @@
 #include "third_party/blink/renderer/core/testing/core_unit_test_helper.h"
 #include "third_party/blink/renderer/core/testing/sim/sim_request.h"
 #include "third_party/blink/renderer/core/testing/sim/sim_test.h"
-#include "third_party/blink/renderer/platform/geometry/int_size.h"
 #include "third_party/blink/renderer/platform/graphics/paint/paint_artifact.h"
-#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
+#include "ui/gfx/geometry/size.h"
 
 using blink::test::RunPendingTasks;
 using testing::_;
-using testing::AnyNumber;
 
 namespace blink {
 namespace {
@@ -36,13 +35,12 @@ class AnimationMockChromeClient : public RenderingTestChromeClient {
   AnimationMockChromeClient() : has_scheduled_animation_(false) {}
 
   // ChromeClient
-  MOCK_METHOD2(AttachRootGraphicsLayer,
-               void(GraphicsLayer*, LocalFrame* localRoot));
-  MOCK_METHOD3(MockSetToolTip, void(LocalFrame*, const String&, TextDirection));
-  void SetToolTip(LocalFrame& frame,
-                  const String& tooltip_text,
-                  TextDirection dir) override {
-    MockSetToolTip(&frame, tooltip_text, dir);
+  MOCK_METHOD3(MockUpdateTooltipUnderCursor,
+               void(LocalFrame*, const String&, TextDirection));
+  void UpdateTooltipUnderCursor(LocalFrame& frame,
+                                const String& tooltip_text,
+                                TextDirection dir) override {
+    MockUpdateTooltipUnderCursor(&frame, tooltip_text, dir);
   }
 
   void ScheduleAnimation(const LocalFrameView*,
@@ -56,10 +54,7 @@ class LocalFrameViewTest : public RenderingTest {
  protected:
   LocalFrameViewTest()
       : RenderingTest(MakeGarbageCollected<SingleChildLocalFrameClient>()),
-        chrome_client_(MakeGarbageCollected<AnimationMockChromeClient>()) {
-    EXPECT_CALL(GetAnimationMockChromeClient(), AttachRootGraphicsLayer(_, _))
-        .Times(AnyNumber());
-  }
+        chrome_client_(MakeGarbageCollected<AnimationMockChromeClient>()) {}
 
   ~LocalFrameViewTest() override {
     testing::Mock::VerifyAndClearExpectations(&GetAnimationMockChromeClient());
@@ -127,15 +122,17 @@ TEST_F(LocalFrameViewTest, SetPaintInvalidationOutOfUpdateAllLifecyclePhases) {
 TEST_F(LocalFrameViewTest, HideTooltipWhenScrollPositionChanges) {
   SetBodyInnerHTML("<div style='width:1000px;height:1000px'></div>");
 
-  EXPECT_CALL(GetAnimationMockChromeClient(),
-              MockSetToolTip(GetDocument().GetFrame(), String(), _));
+  EXPECT_CALL(
+      GetAnimationMockChromeClient(),
+      MockUpdateTooltipUnderCursor(GetDocument().GetFrame(), String(), _));
   GetDocument().View()->LayoutViewport()->SetScrollOffset(
       ScrollOffset(1, 1), mojom::blink::ScrollType::kUser);
 
-  // Programmatic scrolling should not dismiss the tooltip, so setToolTip
-  // should not be called for this invocation.
-  EXPECT_CALL(GetAnimationMockChromeClient(),
-              MockSetToolTip(GetDocument().GetFrame(), String(), _))
+  // Programmatic scrolling should not dismiss the tooltip, so
+  // MockUpdateTooltipUnderCursor should not be called for this invocation.
+  EXPECT_CALL(
+      GetAnimationMockChromeClient(),
+      MockUpdateTooltipUnderCursor(GetDocument().GetFrame(), String(), _))
       .Times(0);
   GetDocument().View()->LayoutViewport()->SetScrollOffset(
       ScrollOffset(2, 2), mojom::blink::ScrollType::kProgrammatic);
@@ -147,7 +144,7 @@ TEST_F(LocalFrameViewTest, HideTooltipWhenScrollPositionChanges) {
 TEST_F(LocalFrameViewTest, NoOverflowInIncrementVisuallyNonEmptyPixelCount) {
   EXPECT_FALSE(GetDocument().View()->IsVisuallyNonEmpty());
   GetDocument().View()->IncrementVisuallyNonEmptyPixelCount(
-      IntSize(65536, 65536));
+      gfx::Size(65536, 65536));
   EXPECT_TRUE(GetDocument().View()->IsVisuallyNonEmpty());
 }
 
@@ -179,13 +176,13 @@ TEST_F(LocalFrameViewTest, UpdateLifecyclePhasesForPrintingDetachedFrame) {
   SetBodyInnerHTML("<iframe style='display: none'></iframe>");
   SetChildFrameHTML("A");
 
-  ChildFrame().StartPrinting(FloatSize(200, 200), FloatSize(200, 200), 1);
+  ChildFrame().StartPrinting(gfx::SizeF(200, 200), gfx::SizeF(200, 200), 1);
   ChildDocument().View()->UpdateLifecyclePhasesForPrinting();
 
   // The following checks that the detached frame has been walked for PrePaint.
-  EXPECT_EQ(DocumentLifecycle::kCompositingAssignmentsClean,
+  EXPECT_EQ(DocumentLifecycle::kPrePaintClean,
             GetDocument().Lifecycle().GetState());
-  EXPECT_EQ(DocumentLifecycle::kCompositingAssignmentsClean,
+  EXPECT_EQ(DocumentLifecycle::kPrePaintClean,
             ChildDocument().Lifecycle().GetState());
   auto* child_layout_view = ChildDocument().GetLayoutView();
   EXPECT_TRUE(child_layout_view->FirstFragment().PaintProperties());
@@ -195,20 +192,20 @@ TEST_F(LocalFrameViewTest, PrintFrameUpdateAllLifecyclePhases) {
   SetBodyInnerHTML("<iframe></iframe>");
   SetChildFrameHTML("A");
 
-  ChildFrame().StartPrinting(FloatSize(200, 200), FloatSize(200, 200), 1);
+  ChildFrame().StartPrinting(gfx::SizeF(200, 200), gfx::SizeF(200, 200), 1);
   ChildDocument().View()->UpdateLifecyclePhasesForPrinting();
 
-  EXPECT_EQ(DocumentLifecycle::kCompositingAssignmentsClean,
+  EXPECT_EQ(DocumentLifecycle::kPrePaintClean,
             GetDocument().Lifecycle().GetState());
-  EXPECT_EQ(DocumentLifecycle::kCompositingAssignmentsClean,
+  EXPECT_EQ(DocumentLifecycle::kPrePaintClean,
             ChildDocument().Lifecycle().GetState());
 
   // In case UpdateAllLifecyclePhases is called during child frame printing for
   // any reason, we should not paint.
   UpdateAllLifecyclePhasesForTest();
-  EXPECT_EQ(DocumentLifecycle::kCompositingAssignmentsClean,
+  EXPECT_EQ(DocumentLifecycle::kPrePaintClean,
             GetDocument().Lifecycle().GetState());
-  EXPECT_EQ(DocumentLifecycle::kCompositingAssignmentsClean,
+  EXPECT_EQ(DocumentLifecycle::kPrePaintClean,
             ChildDocument().Lifecycle().GetState());
 
   ChildFrame().EndPrinting();
@@ -347,10 +344,6 @@ TEST_F(LocalFrameViewTest,
 // activate synchronously while rendering is blocked waiting on a stylesheet.
 // See https://crbug.com/851338.
 TEST_F(SimTest, FragmentNavChangesFocusWhileRenderingBlocked) {
-  // Style-sheets are parser-blocking, not render-blocking when
-  // BlockHTMLParserOnStyleSheets is enabled.
-  ScopedBlockHTMLParserOnStyleSheetsForTest scope(false);
-
   SimRequest main_resource("https://example.com/test.html", "text/html");
   SimSubresourceRequest css_resource("https://example.com/sheet.css",
                                      "text/css");
@@ -665,5 +658,26 @@ TEST_F(LocalFrameViewTest, StartOfLifecycleTaskRunsOnFullLifecycle) {
   UpdateAllLifecyclePhasesForTest();
   EXPECT_EQ(callback.calls, 1);
 }
+
+TEST_F(LocalFrameViewTest, DarkModeDocumentBackground) {
+  auto* frame_view = GetDocument().View();
+  GetDocument().documentElement()->SetInlineStyleProperty(
+      CSSPropertyID::kBackgroundColor, "white");
+  UpdateAllLifecyclePhasesForTest();
+  EXPECT_EQ(frame_view->DocumentBackgroundColor(), Color::kWhite);
+
+  // Document background is inverted by the dark mode filter.
+  GetDocument().GetSettings()->SetForceDarkModeEnabled(true);
+  UpdateAllLifecyclePhasesForTest();
+  EXPECT_EQ(frame_view->DocumentBackgroundColor(), Color(18, 18, 18));
+
+  // Using color adjust background for base color in forced dark.
+  GetDocument().documentElement()->SetInlineStyleProperty(
+      CSSPropertyID::kBackgroundColor, "transparent");
+  UpdateAllLifecyclePhasesForTest();
+  frame_view->SetBaseBackgroundColor(Color(255, 0, 0));
+  EXPECT_EQ(frame_view->DocumentBackgroundColor(), Color(18, 18, 18));
+}
+
 }  // namespace
 }  // namespace blink

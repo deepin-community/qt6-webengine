@@ -5,9 +5,10 @@
 #include "third_party/blink/renderer/core/editing/selection_template.h"
 
 #include <ostream>  // NOLINT
+
+#include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/editing/ephemeral_range.h"
 #include "third_party/blink/renderer/core/editing/position_with_affinity.h"
-#include "third_party/blink/renderer/platform/wtf/assertions.h"
 
 namespace blink {
 
@@ -408,11 +409,17 @@ SelectionInDOMTree ConvertToSelectionInDOMTree(
 
 SelectionInFlatTree ConvertToSelectionInFlatTree(
     const SelectionInDOMTree& selection) {
-  return SelectionInFlatTree::Builder()
-      .SetAffinity(selection.Affinity())
-      .SetBaseAndExtent(ToPositionInFlatTree(selection.Base()),
-                        ToPositionInFlatTree(selection.Extent()))
-      .Build();
+  SelectionInFlatTree::Builder builder;
+  const PositionInFlatTree& base = ToPositionInFlatTree(selection.Base());
+  const PositionInFlatTree& extent = ToPositionInFlatTree(selection.Extent());
+  if (base.IsConnected() && extent.IsConnected())
+    builder.SetBaseAndExtent(base, extent);
+  else if (base.IsConnected())
+    builder.Collapse(base);
+  else if (extent.IsConnected())
+    builder.Collapse(extent);
+  builder.SetAffinity(selection.Affinity());
+  return builder.Build();
 }
 
 template <typename Strategy>

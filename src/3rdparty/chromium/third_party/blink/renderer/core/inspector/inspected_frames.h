@@ -5,9 +5,9 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_INSPECTOR_INSPECTED_FRAMES_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_INSPECTOR_INSPECTED_FRAMES_H_
 
-#include "base/macros.h"
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/platform/heap/member.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
@@ -37,6 +37,8 @@ class CORE_EXPORT InspectedFrames final
   };
 
   explicit InspectedFrames(LocalFrame*);
+  InspectedFrames(const InspectedFrames&) = delete;
+  InspectedFrames& operator=(const InspectedFrames&) = delete;
 
   LocalFrame* Root() { return root_; }
   bool Contains(LocalFrame*) const;
@@ -48,7 +50,6 @@ class CORE_EXPORT InspectedFrames final
 
  private:
   Member<LocalFrame> root_;
-  DISALLOW_COPY_AND_ASSIGN(InspectedFrames);
 };
 
 }  // namespace blink

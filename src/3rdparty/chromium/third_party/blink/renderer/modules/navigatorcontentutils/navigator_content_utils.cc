@@ -26,8 +26,9 @@
 
 #include "third_party/blink/renderer/modules/navigatorcontentutils/navigator_content_utils.h"
 
-#include "base/stl_util.h"
+#include "services/network/public/cpp/is_potentially_trustworthy.h"
 #include "third_party/blink/public/common/custom_handlers/protocol_handler_utils.h"
+#include "third_party/blink/public/common/scheme_registry.h"
 #include "third_party/blink/public/common/security/protocol_handler_security_level.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
@@ -36,6 +37,7 @@
 #include "third_party/blink/renderer/modules/navigatorcontentutils/navigator_content_utils_client.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
+#include "third_party/blink/renderer/platform/weborigin/scheme_registry.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
@@ -49,19 +51,17 @@ namespace {
 
 const char kToken[] = "%s";
 
+// Verify custom handler URL security as described in steps 6 and 7
+// https://html.spec.whatwg.org/multipage/system-state.html#normalize-protocol-handler-parameters
 static bool VerifyCustomHandlerURLSecurity(
     const LocalDOMWindow& window,
     const KURL& full_url,
     String& error_message,
     ProtocolHandlerSecurityLevel security_level) {
-  // Although not required by the spec, the spec allows additional security
-  // checks. Bugs have arisen from allowing non-http/https URLs, e.g.
-  // https://crbug.com/971917 and it doesn't make a lot of sense to support
-  // them. We do need to allow extensions to continue using the API.
-  if (!full_url.ProtocolIsInHTTPFamily() &&
-      (security_level < ProtocolHandlerSecurityLevel::kExtensionFeatures ||
-       !full_url.ProtocolIs("chrome-extension"))) {
-    error_message = "The scheme of the url provided must be 'https'.";
+  // The specification says that the API throws SecurityError exception if the
+  // URL's protocol isn't HTTP(S) or is potentially trustworthy.
+  if (!IsAllowedCustomHandlerURL(full_url, security_level)) {
+    error_message = "The scheme of the url provided must be HTTP(S).";
     return false;
   }
 
@@ -113,13 +113,10 @@ bool VerifyCustomHandlerScheme(const String& scheme,
     return false;
   }
 
-  bool allow_ext_plus_prefix =
-      security_level >= ProtocolHandlerSecurityLevel::kExtensionFeatures;
-  bool has_custom_scheme_prefix;
+  bool has_custom_scheme_prefix = false;
   StringUTF8Adaptor scheme_adaptor(scheme);
   if (!IsValidCustomHandlerScheme(scheme_adaptor.AsStringPiece(),
-                                  allow_ext_plus_prefix,
-                                  has_custom_scheme_prefix)) {
+                                  security_level, &has_custom_scheme_prefix)) {
     if (has_custom_scheme_prefix) {
       error_string = "The scheme name '" + scheme +
                      "' is not allowed. Schemes starting with '" + scheme +

@@ -6,7 +6,6 @@ import subprocess
 import sys
 
 from collections import OrderedDict
-from six import ensure_text, ensure_str, iteritems
 
 try:
     from ..manifest import manifest
@@ -38,7 +37,7 @@ if MYPY:
 
 DEFAULT_IGNORE_RULERS = ("resources/testharness*", "resources/testdriver*")
 
-here = ensure_text(os.path.dirname(__file__))
+here = os.path.dirname(__file__)
 wpt_root = os.path.abspath(os.path.join(here, os.pardir, os.pardir))
 
 logger = logging.getLogger()
@@ -98,7 +97,7 @@ def branch_point():
         branch_point = None
 
         # if there are any commits, take the first parent that is not in commits
-        for commit, parents in iteritems(commit_parents):
+        for commit, parents in commit_parents.items():
             for parent in parents:
                 if parent not in commit_parents:
                     branch_point = parent
@@ -136,17 +135,17 @@ def branch_point():
 
 def compile_ignore_rule(rule):
     # type: (Text) -> Pattern[Text]
-    rule = rule.replace(ensure_text(os.path.sep), u"/")
-    parts = rule.split(u"/")
+    rule = rule.replace(os.path.sep, "/")
+    parts = rule.split("/")
     re_parts = []
     for part in parts:
-        if part.endswith(u"**"):
-            re_parts.append(re.escape(part[:-2]) + u".*")
-        elif part.endswith(u"*"):
-            re_parts.append(re.escape(part[:-1]) + u"[^/]*")
+        if part.endswith("**"):
+            re_parts.append(re.escape(part[:-2]) + ".*")
+        elif part.endswith("*"):
+            re_parts.append(re.escape(part[:-1]) + "[^/]*")
         else:
             re_parts.append(re.escape(part))
-    return re.compile(u"^%s$" % u"/".join(re_parts))
+    return re.compile("^%s$" % "/".join(re_parts))
 
 
 def repo_files_changed(revish, include_uncommitted=False, include_new=False):
@@ -155,8 +154,17 @@ def repo_files_changed(revish, include_uncommitted=False, include_new=False):
     if git is None:
         raise Exception("git not found")
 
-    files_list = git("diff", "--name-only", "-z", revish).split(u"\0")
-    assert not files_list[-1]
+    if "..." in revish:
+        raise Exception(f"... not supported when finding files changed (revish: {revish!r}")
+
+    if ".." in revish:
+        # ".." isn't treated as a range for git-diff; what we want is
+        # everything reachable from B but not A, and git diff A...B
+        # gives us that (via the merge-base)
+        revish = revish.replace("..", "...")
+
+    files_list = git("diff", "--no-renames", "--name-only", "-z", revish).split("\0")
+    assert not files_list[-1], f"final item should be empty, got: {files_list[-1]!r}"
     files = set(files_list[:-1])
 
     if include_uncommitted:
@@ -230,7 +238,7 @@ def _in_repo_root(full_path):
 def load_manifest(manifest_path=None, manifest_update=True):
     # type: (Optional[Text], bool) -> manifest.Manifest
     if manifest_path is None:
-        manifest_path = os.path.join(wpt_root, u"MANIFEST.json")
+        manifest_path = os.path.join(wpt_root, "MANIFEST.json")
     return manifest.load_and_update(wpt_root, manifest_path, "/",
                                     update=manifest_update)
 
@@ -243,7 +251,7 @@ def affected_testfiles(files_changed,  # type: Iterable[Text]
     # type: (...) -> Tuple[Set[Text], Set[Text]]
     """Determine and return list of test files that reference changed files."""
     if skip_dirs is None:
-        skip_dirs = {u"conformance-checkers", u"docs", u"tools"}
+        skip_dirs = {"conformance-checkers", "docs", "tools"}
     affected_testfiles = set()
     # Exclude files that are in the repo root, because
     # they are not part of any test.
@@ -251,7 +259,7 @@ def affected_testfiles(files_changed,  # type: Iterable[Text]
     nontests_changed = set(files_changed)
     wpt_manifest = load_manifest(manifest_path, manifest_update)
 
-    test_types = ["crashtest", "testharness", "reftest", "wdspec"]
+    test_types = ["crashtest", "print-reftest", "reftest", "testharness", "wdspec"]
     support_files = {os.path.join(wpt_root, path)
                      for _, path, _ in wpt_manifest.itertypes("support")}
     wdspec_test_files = {os.path.join(wpt_root, path)
@@ -382,8 +390,8 @@ def get_revish(**kwargs):
     # type: (**Any) -> Text
     revish = kwargs.get("revish")
     if revish is None:
-        revish = u"%s..HEAD" % branch_point()
-    return ensure_text(revish).strip()
+        revish = "%s..HEAD" % branch_point()
+    return revish.strip()
 
 
 def run_changed_files(**kwargs):
@@ -394,11 +402,11 @@ def run_changed_files(**kwargs):
                                include_uncommitted=kwargs["modified"],
                                include_new=kwargs["new"])
 
-    separator = u"\0" if kwargs["null"] else u"\n"
+    separator = "\0" if kwargs["null"] else "\n"
 
     for item in sorted(changed):
         line = os.path.relpath(item, wpt_root) + separator
-        sys.stdout.write(ensure_str(line))
+        sys.stdout.write(line)
 
 
 def run_tests_affected(**kwargs):

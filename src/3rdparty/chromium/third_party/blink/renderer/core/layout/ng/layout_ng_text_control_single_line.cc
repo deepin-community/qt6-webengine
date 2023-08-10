@@ -4,6 +4,7 @@
 
 #include "third_party/blink/renderer/core/layout/ng/layout_ng_text_control_single_line.h"
 
+#include "third_party/blink/renderer/core/dom/shadow_root.h"
 #include "third_party/blink/renderer/core/html/forms/text_control_element.h"
 #include "third_party/blink/renderer/core/html/shadow/shadow_element_names.h"
 #include "third_party/blink/renderer/core/layout/layout_text_control.h"
@@ -48,13 +49,14 @@ bool LayoutNGTextControlSingleLine::NodeAtPoint(
     const PhysicalOffset& accumulated_offset,
     HitTestAction hit_test_action) {
   NOT_DESTROYED();
-  if (!LayoutNGBlockFlow::NodeAtPoint(result, hit_test_location,
-                                      accumulated_offset, hit_test_action))
-    return false;
+  bool stop_hit_testing = LayoutNGBlockFlow::NodeAtPoint(
+      result, hit_test_location, accumulated_offset, hit_test_action);
 
   const LayoutObject* stop_node = result.GetHitTestRequest().GetStopNode();
-  if (stop_node && stop_node->NodeForHitTest() == result.InnerNode())
-    return true;
+  if (!result.InnerNode() ||
+      (stop_node && stop_node->NodeForHitTest() == result.InnerNode())) {
+    return stop_hit_testing;
+  }
 
   // Say that we hit the inner text element if
   //  - we hit a node inside the inner editor element,
@@ -76,7 +78,7 @@ bool LayoutNGTextControlSingleLine::NodeAtPoint(
     LayoutTextControl::HitInnerEditorElement(
         *this, *inner_editor, result, hit_test_location, accumulated_offset);
   }
-  return true;
+  return stop_hit_testing;
 }
 
 bool LayoutNGTextControlSingleLine::AllowsNonVisibleOverflow() const {

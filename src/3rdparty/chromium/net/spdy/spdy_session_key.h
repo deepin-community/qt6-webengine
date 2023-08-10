@@ -9,6 +9,7 @@
 #include "net/base/network_isolation_key.h"
 #include "net/base/privacy_mode.h"
 #include "net/base/proxy_server.h"
+#include "net/dns/public/secure_dns_policy.h"
 #include "net/socket/socket_tag.h"
 
 namespace net {
@@ -35,7 +36,7 @@ class NET_EXPORT_PRIVATE SpdySessionKey {
                  IsProxySession is_proxy_session,
                  const SocketTag& socket_tag,
                  const NetworkIsolationKey& network_isolation_key,
-                 bool disable_secure_dns);
+                 SecureDnsPolicy secure_dns_policy);
 
   SpdySessionKey(const SpdySessionKey& other);
 
@@ -92,10 +93,7 @@ class NET_EXPORT_PRIVATE SpdySessionKey {
     return network_isolation_key_;
   }
 
-  bool disable_secure_dns() const { return disable_secure_dns_; }
-
-  // Returns the estimate of dynamically allocated memory in bytes.
-  size_t EstimateMemoryUsage() const;
+  SecureDnsPolicy secure_dns_policy() const { return secure_dns_policy_; }
 
  private:
   HostPortProxyPair host_port_proxy_pair_;
@@ -105,7 +103,7 @@ class NET_EXPORT_PRIVATE SpdySessionKey {
   SocketTag socket_tag_;
   // Used to separate requests made in different contexts.
   NetworkIsolationKey network_isolation_key_;
-  bool disable_secure_dns_;
+  SecureDnsPolicy secure_dns_policy_;
 };
 
 }  // namespace net

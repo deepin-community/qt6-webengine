@@ -9,6 +9,8 @@
 #include "components/autofill_assistant/browser/actions/action_test_utils.h"
 #include "components/autofill_assistant/browser/client_status.h"
 #include "components/autofill_assistant/browser/web/element_finder.h"
+#include "content/public/test/browser_task_environment.h"
+#include "content/public/test/test_browser_context.h"
 #include "content/public/test/test_renderer_host.h"
 #include "content/public/test/web_contents_tester.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -16,37 +18,35 @@
 namespace autofill_assistant {
 namespace {
 
-class ElementStoreTest : public content::RenderViewHostTestHarness {
+class ElementStoreTest : public testing::Test {
  public:
-  ElementStoreTest()
-      : RenderViewHostTestHarness(
-            base::test::TaskEnvironment::MainThreadType::UI,
-            base::test::TaskEnvironment::TimeSource::MOCK_TIME) {}
-  ~ElementStoreTest() override {}
-
   void SetUp() override {
-    RenderViewHostTestHarness::SetUp();
-
-    element_store_ = std::make_unique<ElementStore>(web_contents());
+    web_contents_ = content::WebContentsTester::CreateTestWebContents(
+        &browser_context_, nullptr);
+    element_store_ = std::make_unique<ElementStore>(web_contents_.get());
   }
 
  protected:
-  std::unique_ptr<ElementFinder::Result> CreateElement(
+  std::unique_ptr<ElementFinderResult> CreateElement(
       const std::string& object_id) {
-    auto element = std::make_unique<ElementFinder::Result>();
-    element->dom_object.object_data.object_id = object_id;
-    element->dom_object.object_data.node_frame_id =
-        web_contents()->GetMainFrame()->GetDevToolsFrameToken().ToString();
+    auto element = std::make_unique<ElementFinderResult>();
+    element->SetObjectId(object_id);
+    element->SetNodeFrameId(
+        web_contents_->GetMainFrame()->GetDevToolsFrameToken().ToString());
     return element;
   }
 
   // This consumes the element while adding it to simulate the way of the
   // result going out of life.
   void AddElement(const std::string& client_id,
-                  std::unique_ptr<ElementFinder::Result> element) {
-    element_store_->AddElement(client_id, element->dom_object);
+                  std::unique_ptr<ElementFinderResult> element) {
+    element_store_->AddElement(client_id, element->dom_object());
   }
 
+  content::BrowserTaskEnvironment task_environment_;
+  content::RenderViewHostTestEnabler rvh_test_enabler_;
+  content::TestBrowserContext browser_context_;
+  std::unique_ptr<content::WebContents> web_contents_;
   std::unique_ptr<ElementStore> element_store_;
 };
 
@@ -62,32 +62,32 @@ TEST_F(ElementStoreTest, GetElementFromStore) {
   auto element = CreateElement("1");
   AddElement("1", std::move(element));
 
-  ElementFinder::Result result;
+  ElementFinderResult result;
   EXPECT_EQ(ACTION_APPLIED,
             element_store_->GetElement("1", &result).proto_status());
   EXPECT_EQ("1", result.object_id());
 }
 
 TEST_F(ElementStoreTest, GetElementFromStoreWithBadFrameHost) {
-  auto element = std::make_unique<ElementFinder::Result>();
-  element->dom_object.object_data.object_id = "1";
-  element->dom_object.object_data.node_frame_id = "unknown";
+  auto element = std::make_unique<ElementFinderResult>();
+  element->SetObjectId("1");
+  element->SetNodeFrameId("unknown");
   AddElement("1", std::move(element));
 
-  ElementFinder::Result result;
+  ElementFinderResult result;
   EXPECT_EQ(CLIENT_ID_RESOLUTION_FAILED,
             element_store_->GetElement("1", &result).proto_status());
 }
 
 TEST_F(ElementStoreTest, GetElementFromStoreWithNoFrameId) {
-  auto element = std::make_unique<ElementFinder::Result>();
-  element->dom_object.object_data.object_id = "1";
+  auto element = std::make_unique<ElementFinderResult>();
+  element->SetObjectId("1");
   AddElement("1", std::move(element));
 
-  ElementFinder::Result result;
+  ElementFinderResult result;
   EXPECT_EQ(ACTION_APPLIED,
             element_store_->GetElement("1", &result).proto_status());
-  EXPECT_EQ(web_contents()->GetMainFrame(), result.container_frame_host);
+  EXPECT_EQ(web_contents_->GetMainFrame(), result.render_frame_host());
 }
 
 TEST_F(ElementStoreTest, AddElementToStoreOverwrites) {
@@ -97,14 +97,14 @@ TEST_F(ElementStoreTest, AddElementToStoreOverwrites) {
   AddElement("e", std::move(element_1));
   AddElement("e", std::move(element_2));
 
-  ElementFinder::Result result;
+  ElementFinderResult result;
   EXPECT_EQ(ACTION_APPLIED,
             element_store_->GetElement("e", &result).proto_status());
   EXPECT_EQ("2", result.object_id());
 }
 
 TEST_F(ElementStoreTest, GetUnknownElementFromStore) {
-  ElementFinder::Result result;
+  ElementFinderResult result;
   EXPECT_EQ(CLIENT_ID_RESOLUTION_FAILED,
             element_store_->GetElement("1", &result).proto_status());
 }

@@ -5,10 +5,10 @@
 #include "chrome/browser/media/webrtc/current_tab_desktop_media_list.h"
 
 #include "base/bind.h"
-#include "base/bind_post_task.h"
 #include "base/hash/hash.h"
-#include "base/single_thread_task_runner.h"
-#include "base/task/post_task.h"
+#include "base/task/bind_post_task.h"
+#include "base/task/single_thread_task_runner.h"
+#include "base/task/thread_pool.h"
 #include "build/build_config.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
@@ -23,14 +23,15 @@
 
 namespace {
 
-constexpr base::TimeDelta kUpdatePeriodMs =
-    base::TimeDelta::FromMilliseconds(1000);
+constexpr base::TimeDelta kUpdatePeriodMs = base::Milliseconds(1000);
 
 gfx::ImageSkia ScaleBitmap(const SkBitmap& bitmap, gfx::Size size) {
   const gfx::Rect scaled_rect = media::ComputeLetterboxRegion(
       gfx::Rect(0, 0, size.width(), size.height()),
       gfx::Size(bitmap.info().width(), bitmap.info().height()));
 
+  // TODO(crbug.com/1246835): Consider changing to ResizeMethod::BEST after
+  // evaluating the CPU impact.
   const gfx::ImageSkia resized = gfx::ImageSkiaOperations::CreateResizedImage(
       gfx::ImageSkia::CreateFromBitmap(bitmap, 1.f),
       skia::ImageOperations::ResizeMethod::RESIZE_GOOD, scaled_rect.size());
@@ -53,14 +54,14 @@ gfx::ImageSkia ScaleBitmap(const SkBitmap& bitmap, gfx::Size size) {
 }
 
 void HandleCapturedBitmap(
-    base::OnceCallback<void(uint32_t, const base::Optional<gfx::ImageSkia>&)>
+    base::OnceCallback<void(uint32_t, const absl::optional<gfx::ImageSkia>&)>
         reply,
-    base::Optional<uint32_t> last_hash,
+    absl::optional<uint32_t> last_hash,
     gfx::Size thumbnail_size,
     const SkBitmap& bitmap) {
   DCHECK(!thumbnail_size.IsEmpty());
 
-  base::Optional<gfx::ImageSkia> image;
+  absl::optional<gfx::ImageSkia> image;
 
   // Only scale and update if the frame appears to be new.
   const uint32_t hash = base::FastHash(base::make_span(
@@ -100,7 +101,7 @@ CurrentTabDesktopMediaList::CurrentTabDesktopMediaList(
   }
 
   // The source never changes - it always applies to the current tab.
-  UpdateSourcesList({SourceDescription(media_id_, base::string16())});
+  UpdateSourcesList({SourceDescription(media_id_, std::u16string())});
 }
 
 CurrentTabDesktopMediaList::~CurrentTabDesktopMediaList() = default;
@@ -139,7 +140,7 @@ void CurrentTabDesktopMediaList::Refresh(bool update_thumbnails) {
 
 void CurrentTabDesktopMediaList::OnCaptureHandled(
     uint32_t hash,
-    const base::Optional<gfx::ImageSkia>& image) {
+    const absl::optional<gfx::ImageSkia>& image) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   DCHECK((hash != last_hash_) == image.has_value());  // Only new frames passed.
 

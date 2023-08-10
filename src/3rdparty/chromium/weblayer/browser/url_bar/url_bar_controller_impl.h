@@ -5,12 +5,14 @@
 #ifndef WEBLAYER_BROWSER_URL_BAR_URL_BAR_CONTROLLER_IMPL_H_
 #define WEBLAYER_BROWSER_URL_BAR_URL_BAR_CONTROLLER_IMPL_H_
 
-#include "base/strings/string16.h"
+#include <string>
+
+#include "base/memory/raw_ptr.h"
 #include "build/build_config.h"
 #include "components/omnibox/browser/location_bar_model_delegate.h"
 #include "weblayer/public/url_bar_controller.h"
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 #include "base/android/scoped_java_ref.h"
 #endif
 
@@ -31,26 +33,26 @@ class UrlBarControllerImpl : public UrlBarController,
   UrlBarControllerImpl(const UrlBarControllerImpl&) = delete;
   UrlBarControllerImpl& operator=(const UrlBarControllerImpl&) = delete;
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   base::android::ScopedJavaLocalRef<jstring> GetUrlForDisplay(JNIEnv* env);
   base::android::ScopedJavaLocalRef<jstring> GetPublisherUrl(JNIEnv* env);
   jint GetConnectionSecurityLevel(JNIEnv* env);
 #endif
 
   // UrlBarController:
-  base::string16 GetUrlForDisplay() override;
+  std::u16string GetUrlForDisplay() override;
   security_state::SecurityLevel GetConnectionSecurityLevel() override;
 
   // LocationBarModelDelegate:
   bool GetURL(GURL* url) const override;
   bool ShouldTrimDisplayUrlAfterHostName() const override;
-  base::string16 FormattedStringWithEquivalentMeaning(
+  std::u16string FormattedStringWithEquivalentMeaning(
       const GURL& url,
-      const base::string16& formatted_url) const override;
+      const std::u16string& formatted_url) const override;
 
  private:
   content::WebContents* GetActiveWebContents() const;
-  BrowserImpl* const browser_;
+  const raw_ptr<BrowserImpl> browser_;
   std::unique_ptr<LocationBarModelImpl> location_bar_model_;
 };
 

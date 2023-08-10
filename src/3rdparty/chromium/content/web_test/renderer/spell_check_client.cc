@@ -8,7 +8,6 @@
 
 #include "base/bind.h"
 #include "base/callback_helpers.h"
-#include "base/macros.h"
 #include "content/web_test/renderer/web_test_grammar_checker.h"
 #include "third_party/blink/public/web/blink.h"
 #include "third_party/blink/public/web/web_local_frame.h"
@@ -91,7 +90,7 @@ void SpellCheckClient::FinishLastTextCheck() {
   size_t offset = 0;
   if (!spell_checker_.IsMultiWordMisspelling(last_requested_text_check_string_,
                                              &results)) {
-    base::string16 text = last_requested_text_check_string_.Utf16();
+    std::u16string text = last_requested_text_check_string_.Utf16();
     while (text.length()) {
       size_t misspelled_position = 0;
       size_t misspelled_length = 0;

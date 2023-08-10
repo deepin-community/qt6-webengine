@@ -41,7 +41,6 @@ namespace {
 constexpr size_t kMaxPaddingLength = 224;
 constexpr size_t kMinAudioPaddingLength = 50;
 constexpr size_t kRtpHeaderLength = 12;
-constexpr uint16_t kMaxInitRtpSeqNumber = 32767;  // 2^15 -1.
 
 // Min size needed to get payload padding from packet history.
 constexpr int kMinPayloadPaddingBytes = 50;
@@ -104,6 +103,7 @@ bool IsNonVolatile(RTPExtensionType type) {
   switch (type) {
     case kRtpExtensionTransmissionTimeOffset:
     case kRtpExtensionAudioLevel:
+    case kRtpExtensionCsrcAudioLevel:
     case kRtpExtensionAbsoluteSendTime:
     case kRtpExtensionTransportSequenceNumber:
     case kRtpExtensionTransportSequenceNumber02:
@@ -121,10 +121,11 @@ bool IsNonVolatile(RTPExtensionType type) {
     case kRtpExtensionVideoTiming:
     case kRtpExtensionRepairedRtpStreamId:
     case kRtpExtensionColorSpace:
+    case kRtpExtensionVideoFrameTrackingId:
       return false;
     case kRtpExtensionNone:
     case kRtpExtensionNumberOfExtensions:
-      RTC_NOTREACHED();
+      RTC_DCHECK_NOTREACHED();
       return false;
   }
   RTC_CHECK_NOTREACHED();
@@ -137,7 +138,7 @@ bool HasBweExtension(const RtpHeaderExtensionMap& extensions_map) {
          extensions_map.IsRegistered(kRtpExtensionTransmissionTimeOffset);
 }
 
-double GetMaxPaddingSizeFactor(const WebRtcKeyValueConfig* field_trials) {
+double GetMaxPaddingSizeFactor(const FieldTrialsView* field_trials) {
   // Too low factor means RTX payload padding is rarely used and ineffective.
   // Too high means we risk interrupting regular media packets.
   // In practice, 3x seems to yield reasonable results.
@@ -171,10 +172,6 @@ RTPSender::RTPSender(const RtpRtcpInterface::Configuration& config,
       max_packet_size_(IP_PACKET_SIZE - 28),  // Default is IP-v4/UDP.
       rtp_header_extension_map_(config.extmap_allow_mixed),
       // RTP variables
-      sequencer_(config.local_media_ssrc,
-                 config.rtx_send_ssrc.value_or(config.local_media_ssrc),
-                 /*require_marker_before_media_padding_=*/!config.audio,
-                 config.clock),
       always_send_mid_and_rid_(config.always_send_mid_and_rid),
       ssrc_has_acked_(false),
       rtx_ssrc_has_acked_(false),
@@ -185,9 +182,6 @@ RTPSender::RTPSender(const RtpRtcpInterface::Configuration& config,
   UpdateHeaderSizes();
   // This random initialization is not intended to be cryptographic strong.
   timestamp_offset_ = random_.Rand<uint32_t>();
-  // Random start, 16 bits. Can't be 0.
-  sequencer_.set_rtx_sequence_number(random_.Rand(1, kMaxInitRtpSeqNumber));
-  sequencer_.set_media_sequence_number(random_.Rand(1, kMaxInitRtpSeqNumber));
 
   RTC_DCHECK(paced_sender_);
   RTC_DCHECK(packet_history_);
@@ -238,14 +232,6 @@ bool RTPSender::IsRtpHeaderExtensionRegistered(RTPExtensionType type) const {
   return rtp_header_extension_map_.IsRegistered(type);
 }
 
-int32_t RTPSender::DeregisterRtpHeaderExtension(RTPExtensionType type) {
-  MutexLock lock(&send_mutex_);
-  rtp_header_extension_map_.Deregister(type);
-  supports_bwe_extension_ = HasBweExtension(rtp_header_extension_map_);
-  UpdateHeaderSizes();
-  return 0;
-}
-
 void RTPSender::DeregisterRtpHeaderExtension(absl::string_view uri) {
   MutexLock lock(&send_mutex_);
   rtp_header_extension_map_.Deregister(uri);
@@ -266,6 +252,12 @@ size_t RTPSender::MaxRtpPacketSize() const {
 
 void RTPSender::SetRtxStatus(int mode) {
   MutexLock lock(&send_mutex_);
+  if (mode != kRtxOff &&
+      (!rtx_ssrc_.has_value() || rtx_payload_type_map_.empty())) {
+    RTC_LOG(LS_ERROR)
+        << "Failed to enable RTX without RTX SSRC or payload types.";
+    return;
+  }
   rtx_ = mode;
 }
 
@@ -288,16 +280,7 @@ void RTPSender::SetRtxPayloadType(int payload_type,
 }
 
 int32_t RTPSender::ReSendPacket(uint16_t packet_id) {
-  // Try to find packet in RTP packet history. Also verify RTT here, so that we
-  // don't retransmit too often.
-  absl::optional<RtpPacketHistory::PacketState> stored_packet =
-      packet_history_->GetPacketState(packet_id);
-  if (!stored_packet || stored_packet->pending_transmission) {
-    // Packet not found or already queued for retransmission, ignore.
-    return 0;
-  }
-
-  const int32_t packet_size = static_cast<int32_t>(stored_packet->packet_size);
+  int32_t packet_size = 0;
   const bool rtx = (RtxStatus() & kRtxRetransmitted) > 0;
 
   std::unique_ptr<RtpPacketToSend> packet =
@@ -306,6 +289,7 @@ int32_t RTPSender::ReSendPacket(uint16_t packet_id) {
             // Check if we're overusing retransmission bitrate.
             // TODO(sprang): Add histograms for nack success or failure
             // reasons.
+            packet_size = stored_packet.size();
             std::unique_ptr<RtpPacketToSend> retransmit_packet;
             if (retransmission_rate_limiter_ &&
                 !retransmission_rate_limiter_->TryUseRate(packet_size)) {
@@ -323,7 +307,14 @@ int32_t RTPSender::ReSendPacket(uint16_t packet_id) {
             }
             return retransmit_packet;
           });
+  if (packet_size == 0) {
+    // Packet not found or already queued for retransmission, ignore.
+    RTC_DCHECK(!packet);
+    return 0;
+  }
   if (!packet) {
+    // Packet was found, but lambda helper above chose not to create
+    // `retransmit_packet` out of it.
     return -1;
   }
   packet->set_packet_type(RtpPacketMediaType::kRetransmission);
@@ -357,7 +348,7 @@ void RTPSender::OnReceivedAckOnRtxSsrc(
 void RTPSender::OnReceivedNack(
     const std::vector<uint16_t>& nack_sequence_numbers,
     int64_t avg_rtt) {
-  packet_history_->SetRtt(5 + avg_rtt);
+  packet_history_->SetRtt(TimeDelta::Millis(5 + avg_rtt));
   for (uint16_t seq_no : nack_sequence_numbers) {
     const int32_t bytes_sent = ReSendPacket(seq_no);
     if (bytes_sent < 0) {
@@ -382,7 +373,8 @@ bool RTPSender::SupportsRtxPayloadPadding() const {
 
 std::vector<std::unique_ptr<RtpPacketToSend>> RTPSender::GeneratePadding(
     size_t target_size_bytes,
-    bool media_has_been_sent) {
+    bool media_has_been_sent,
+    bool can_send_padding_on_media_ssrc) {
   // This method does not actually send packets, it just generates
   // them and puts them in the pacer queue. Since this should incur
   // low overhead, keep the lock for the scope of the method in order
@@ -396,7 +388,7 @@ std::vector<std::unique_ptr<RtpPacketToSend>> RTPSender::GeneratePadding(
           packet_history_->GetPayloadPaddingPacket(
               [&](const RtpPacketToSend& packet)
                   -> std::unique_ptr<RtpPacketToSend> {
-                // Limit overshoot, generate <= |max_padding_size_factor_| *
+                // Limit overshoot, generate <= `max_padding_size_factor_` *
                 // target_size_bytes.
                 const size_t max_overshoot_bytes = static_cast<size_t>(
                     ((max_padding_size_factor_ - 1.0) * target_size_bytes) +
@@ -444,10 +436,10 @@ std::vector<std::unique_ptr<RtpPacketToSend>> RTPSender::GeneratePadding(
     padding_packet->set_packet_type(RtpPacketMediaType::kPadding);
     padding_packet->SetMarker(false);
     if (rtx_ == kRtxOff) {
-      padding_packet->SetSsrc(ssrc_);
-      if (!sequencer_.Sequence(*padding_packet)) {
+      if (!can_send_padding_on_media_ssrc) {
         break;
       }
+      padding_packet->SetSsrc(ssrc_);
     } else {
       // Without abs-send-time or transport sequence number a media packet
       // must be sent before padding so that the timestamps used for
@@ -460,11 +452,9 @@ std::vector<std::unique_ptr<RtpPacketToSend>> RTPSender::GeneratePadding(
       }
 
       RTC_DCHECK(rtx_ssrc_);
+      RTC_DCHECK(!rtx_payload_type_map_.empty());
       padding_packet->SetSsrc(*rtx_ssrc_);
       padding_packet->SetPayloadType(rtx_payload_type_map_.begin()->second);
-      if (!sequencer_.Sequence(*padding_packet)) {
-        break;
-      }
     }
 
     if (rtp_header_extension_map_.IsRegistered(TransportSequenceNumber::kId)) {
@@ -487,13 +477,11 @@ std::vector<std::unique_ptr<RtpPacketToSend>> RTPSender::GeneratePadding(
 
 bool RTPSender::SendToNetwork(std::unique_ptr<RtpPacketToSend> packet) {
   RTC_DCHECK(packet);
-  int64_t now_ms = clock_->TimeInMilliseconds();
-
   auto packet_type = packet->packet_type();
   RTC_CHECK(packet_type) << "Packet type must be set before sending.";
 
-  if (packet->capture_time_ms() <= 0) {
-    packet->set_capture_time_ms(now_ms);
+  if (packet->capture_time() <= Timestamp::Zero()) {
+    packet->set_capture_time(clock_->CurrentTime());
   }
 
   std::vector<std::unique_ptr<RtpPacketToSend>> packets;
@@ -506,13 +494,13 @@ bool RTPSender::SendToNetwork(std::unique_ptr<RtpPacketToSend> packet) {
 void RTPSender::EnqueuePackets(
     std::vector<std::unique_ptr<RtpPacketToSend>> packets) {
   RTC_DCHECK(!packets.empty());
-  int64_t now_ms = clock_->TimeInMilliseconds();
+  Timestamp now = clock_->CurrentTime();
   for (auto& packet : packets) {
     RTC_DCHECK(packet);
     RTC_CHECK(packet->packet_type().has_value())
         << "Packet type must be set before sending.";
-    if (packet->capture_time_ms() <= 0) {
-      packet->set_capture_time_ms(now_ms);
+    if (packet->capture_time() <= Timestamp::Zero()) {
+      packet->set_capture_time(now);
     }
   }
 
@@ -552,7 +540,7 @@ std::unique_ptr<RtpPacketToSend> RTPSender::AllocatePacket() const {
   // sender can reduce overhead by omitting these header extensions once it
   // knows that the receiver has "bound" the SSRC.
   // This optimization can be configured by setting
-  // |always_send_mid_and_rid_| appropriately.
+  // `always_send_mid_and_rid_` appropriately.
   //
   // The algorithm here is fairly simple: Always attach a MID and/or RID (if
   // configured) to the outgoing packets until an RTCP receiver report comes
@@ -569,25 +557,6 @@ std::unique_ptr<RtpPacketToSend> RTPSender::AllocatePacket() const {
     }
   }
   return packet;
-}
-
-bool RTPSender::AssignSequenceNumber(RtpPacketToSend* packet) {
-  MutexLock lock(&send_mutex_);
-  if (!sending_media_)
-    return false;
-  return sequencer_.Sequence(*packet);
-}
-
-bool RTPSender::AssignSequenceNumbersAndStoreLastPacketState(
-    rtc::ArrayView<std::unique_ptr<RtpPacketToSend>> packets) {
-  RTC_DCHECK(!packets.empty());
-  MutexLock lock(&send_mutex_);
-  if (!sending_media_)
-    return false;
-  for (auto& packet : packets) {
-    sequencer_.Sequence(*packet);
-  }
-  return true;
 }
 
 void RTPSender::SetSendingMediaStatus(bool enabled) {
@@ -637,28 +606,6 @@ void RTPSender::SetCsrcs(const std::vector<uint32_t>& csrcs) {
   UpdateHeaderSizes();
 }
 
-void RTPSender::SetSequenceNumber(uint16_t seq) {
-  bool updated_sequence_number = false;
-  {
-    MutexLock lock(&send_mutex_);
-    if (sequencer_.media_sequence_number() != seq) {
-      updated_sequence_number = true;
-    }
-    sequencer_.set_media_sequence_number(seq);
-  }
-
-  if (updated_sequence_number) {
-    // Sequence number series has been reset to a new value, clear RTP packet
-    // history, since any packets there may conflict with new ones.
-    packet_history_->Clear();
-  }
-}
-
-uint16_t RTPSender::SequenceNumber() const {
-  MutexLock lock(&send_mutex_);
-  return sequencer_.media_sequence_number();
-}
-
 static void CopyHeaderAndExtensionsToRtxPacket(const RtpPacketToSend& packet,
                                                RtpPacketToSend* rtx_packet) {
   // Set the relevant fixed packet headers. The following are not set:
@@ -685,7 +632,7 @@ static void CopyHeaderAndExtensionsToRtxPacket(const RtpPacketToSend& packet,
       continue;
     }
 
-    // Empty extensions should be supported, so not checking |source.empty()|.
+    // Empty extensions should be supported, so not checking `source.empty()`.
     if (!packet.HasExtension(extension)) {
       continue;
     }
@@ -732,9 +679,6 @@ std::unique_ptr<RtpPacketToSend> RTPSender::BuildRtxPacket(
     // Replace SSRC.
     rtx_packet->SetSsrc(*rtx_ssrc_);
 
-    // Replace sequence number.
-    sequencer_.Sequence(*rtx_packet);
-
     CopyHeaderAndExtensionsToRtxPacket(packet, rtx_packet.get());
 
     // RTX packets are sent on an SSRC different from the main media, so the
@@ -773,7 +717,7 @@ std::unique_ptr<RtpPacketToSend> RTPSender::BuildRtxPacket(
   rtx_packet->set_additional_data(packet.additional_data());
 
   // Copy capture time so e.g. TransmissionOffset is correctly set.
-  rtx_packet->set_capture_time_ms(packet.capture_time_ms());
+  rtx_packet->set_capture_time(packet.capture_time());
 
   return rtx_packet;
 }
@@ -782,7 +726,6 @@ void RTPSender::SetRtpState(const RtpState& rtp_state) {
   MutexLock lock(&send_mutex_);
 
   timestamp_offset_ = rtp_state.start_timestamp;
-  sequencer_.SetRtpState(rtp_state);
   ssrc_has_acked_ = rtp_state.ssrc_has_acked;
   UpdateHeaderSizes();
 }
@@ -793,13 +736,11 @@ RtpState RTPSender::GetRtpState() const {
   RtpState state;
   state.start_timestamp = timestamp_offset_;
   state.ssrc_has_acked = ssrc_has_acked_;
-  sequencer_.PupulateRtpState(state);
   return state;
 }
 
 void RTPSender::SetRtxRtpState(const RtpState& rtp_state) {
   MutexLock lock(&send_mutex_);
-  sequencer_.set_rtx_sequence_number(rtp_state.sequence_number);
   rtx_ssrc_has_acked_ = rtp_state.ssrc_has_acked;
 }
 
@@ -807,7 +748,6 @@ RtpState RTPSender::GetRtxRtpState() const {
   MutexLock lock(&send_mutex_);
 
   RtpState state;
-  state.sequence_number = sequencer_.rtx_sequence_number();
   state.start_timestamp = timestamp_offset_;
   state.ssrc_has_acked = rtx_ssrc_has_acked_;
 

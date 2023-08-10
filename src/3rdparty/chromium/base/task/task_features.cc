@@ -4,15 +4,10 @@
 
 #include "base/task/task_features.h"
 
+#include "base/base_export.h"
 #include "base/feature_list.h"
 
 namespace base {
-
-const Feature kAllTasksUserBlocking{"AllTasksUserBlocking",
-                                    FEATURE_DISABLED_BY_DEFAULT};
-
-const Feature kNoDetachBelowInitialCapacity = {
-    "NoDetachBelowInitialCapacity", base::FEATURE_DISABLED_BY_DEFAULT};
 
 const Feature kMayBlockWithoutDelay = {"MayBlockWithoutDelay",
                                        base::FEATURE_DISABLED_BY_DEFAULT};
@@ -42,12 +37,26 @@ const base::FeatureParam<WakeUpStrategy> kWakeUpStrategyParam{
 const Feature kWakeUpAfterGetWork = {"WakeUpAfterGetWork",
                                      base::FEATURE_DISABLED_BY_DEFAULT};
 
-#if defined(OS_WIN) || defined(OS_APPLE)
+#if HAS_NATIVE_THREAD_POOL()
 const Feature kUseNativeThreadPool = {"UseNativeThreadPool",
                                       base::FEATURE_DISABLED_BY_DEFAULT};
+const Feature kUseBackgroundNativeThreadPool = {
+    "UseBackgroundNativeThreadPool", base::FEATURE_DISABLED_BY_DEFAULT};
 #endif
 
 const Feature kUseFiveMinutesThreadReclaimTime = {
     "UseFiveMinutesThreadReclaimTime", base::FEATURE_DISABLED_BY_DEFAULT};
+
+const BASE_EXPORT Feature kRemoveCanceledTasksInTaskQueue = {
+    "RemoveCanceledTasksInTaskQueue2", base::FEATURE_DISABLED_BY_DEFAULT};
+
+const BASE_EXPORT Feature kAddTaskLeewayFeature = {
+    "AddTaskLeeway", base::FEATURE_ENABLED_BY_DEFAULT};
+
+const base::FeatureParam<TimeDelta> kTaskLeewayParam{&kAddTaskLeewayFeature,
+                                                     "leeway", Milliseconds(8)};
+
+const BASE_EXPORT Feature kAlignWakeUps = {"AlignWakeUps",
+                                           base::FEATURE_DISABLED_BY_DEFAULT};
 
 }  // namespace base

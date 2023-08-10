@@ -12,7 +12,6 @@
 #include "ui/base/ui_base_types.h"
 #include "ui/gfx/paint_vector_icon.h"
 #include "ui/gfx/vector_icon_types.h"
-#include "ui/native_theme/native_theme_color_id.h"
 #include "ui/views/controls/button/checkbox.h"
 #include "ui/views/controls/button/md_text_button.h"
 #include "ui/views/controls/label.h"
@@ -29,7 +28,7 @@ namespace examples {
 
 class ThemeTrackingCheckbox : public views::Checkbox {
  public:
-  explicit ThemeTrackingCheckbox(const base::string16& label)
+  explicit ThemeTrackingCheckbox(const std::u16string& label)
       : Checkbox(label,
                  base::BindRepeating(&ThemeTrackingCheckbox::ButtonPressed,
                                      base::Unretained(this))) {}
@@ -52,7 +51,7 @@ class ThemeTrackingCheckbox : public views::Checkbox {
 class TextVectorImageButton : public views::MdTextButton {
  public:
   TextVectorImageButton(PressedCallback callback,
-                        const base::string16& text,
+                        const std::u16string& text,
                         const gfx::VectorIcon& icon)
       : MdTextButton(callback, text), icon_(icon) {}
   TextVectorImageButton(const TextVectorImageButton&) = delete;
@@ -84,7 +83,7 @@ ColoredDialog::ColoredDialog(AcceptCallback accept_callback) {
 
   SetLayoutManager(std::make_unique<views::FillLayout>());
   set_margins(views::LayoutProvider::Get()->GetDialogInsetsForContentType(
-      views::CONTROL, views::CONTROL));
+      views::DialogContentType::kControl, views::DialogContentType::kControl));
 
   textfield_ = AddChildView(std::make_unique<views::Textfield>());
   textfield_->SetPlaceholderText(
@@ -105,7 +104,7 @@ bool ColoredDialog::ShouldShowCloseButton() const {
 }
 
 void ColoredDialog::ContentsChanged(Textfield* sender,
-                                    const base::string16& new_contents) {
+                                    const std::u16string& new_contents) {
   SetButtonEnabled(ui::DIALOG_BUTTON_OK, !textfield_->GetText().empty());
   DialogModelChanged();
 }
@@ -130,7 +129,7 @@ ColoredDialogChooser::ColoredDialogChooser() {
       views::kInfoIcon));
 
   confirmation_label_ = AddChildView(
-      std::make_unique<views::Label>(base::string16(), style::CONTEXT_LABEL));
+      std::make_unique<views::Label>(std::u16string(), style::CONTEXT_LABEL));
   confirmation_label_->SetVisible(false);
 }
 
@@ -145,9 +144,8 @@ void ColoredDialogChooser::ButtonPressed() {
   widget->Show();
 }
 
-void ColoredDialogChooser::OnFeedbackSubmit(base::string16 text) {
-  constexpr base::TimeDelta kConfirmationDuration =
-      base::TimeDelta::FromSeconds(3);
+void ColoredDialogChooser::OnFeedbackSubmit(std::u16string text) {
+  constexpr base::TimeDelta kConfirmationDuration = base::Seconds(3);
 
   confirmation_label_->SetText(l10n_util::GetStringFUTF16(
       IDS_COLORED_DIALOG_CHOOSER_CONFIRM_LABEL, text));

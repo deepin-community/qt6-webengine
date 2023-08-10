@@ -14,16 +14,27 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.initializePuppeteerNode = void 0;
 const Puppeteer_js_1 = require("./node/Puppeteer.js");
 const revisions_js_1 = require("./revisions.js");
-const pkg_dir_1 = __importDefault(require("pkg-dir"));
-exports.initializePuppeteerNode = (packageName) => {
-    const puppeteerRootDirectory = pkg_dir_1.default.sync(__dirname);
+const pkg_dir_1 = require("pkg-dir");
+const path_1 = require("path");
+function resolvePuppeteerRootDirectory() {
+    try {
+        // In some environments, like esbuild, this will throw an error.
+        // We suppress the error since the bundled binary is not expected
+        // to be used or installed in this case and, therefore, the
+        // root directory does not have to be known.
+        return (0, pkg_dir_1.sync)((0, path_1.dirname)(require.resolve('./initialize-node')));
+    }
+    catch (error) {
+        // Fallback to __dirname.
+        return (0, pkg_dir_1.sync)(__dirname);
+    }
+}
+const initializePuppeteerNode = (packageName) => {
+    const puppeteerRootDirectory = resolvePuppeteerRootDirectory();
     let preferredRevision = revisions_js_1.PUPPETEER_REVISIONS.chromium;
     const isPuppeteerCore = packageName === 'puppeteer-core';
     // puppeteer-core ignores environment variables
@@ -41,4 +52,5 @@ exports.initializePuppeteerNode = (packageName) => {
         productName: productName,
     });
 };
+exports.initializePuppeteerNode = initializePuppeteerNode;
 //# sourceMappingURL=initialize-node.js.map

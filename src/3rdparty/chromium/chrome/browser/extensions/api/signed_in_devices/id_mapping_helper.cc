@@ -27,12 +27,11 @@ std::string GetPublicIdFromGUID(
        !it.IsAtEnd();
        it.Advance()) {
     const base::Value& value = it.value();
-    std::string guid_in_value;
-    if (!value.GetAsString(&guid_in_value)) {
+    if (!value.is_string()) {
       LOG(ERROR) << "Badly formatted dictionary";
       continue;
     }
-    if (guid_in_value == guid) {
+    if (value.GetString() == guid) {
       return it.key();
     }
   }
@@ -77,7 +76,7 @@ void CreateMappingForUnmappedDevices(
     // If the device does not have a local id, set one.
     if (local_id.empty()) {
       local_id = GetRandomId(*value, device_info.size());
-      value->SetString(local_id, device->guid());
+      value->SetStringKey(local_id, device->guid());
     }
     device->set_public_id(local_id);
   }
@@ -97,7 +96,7 @@ std::unique_ptr<DeviceInfo> GetDeviceInfoForClientId(
       return device;
     }
   }
-  return std::unique_ptr<DeviceInfo>();
+  return nullptr;
 }
 
 }  // namespace  extensions

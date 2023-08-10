@@ -14,7 +14,7 @@ MockDownloadItemImpl::MockDownloadItemImpl(DownloadItemImplDelegate* delegate)
                        base::FilePath(),
                        std::vector<GURL>(),
                        GURL(),
-                       GURL(),
+                       std::string(),
                        GURL(),
                        GURL(),
                        url::Origin(),
@@ -37,7 +37,10 @@ MockDownloadItemImpl::MockDownloadItemImpl(DownloadItemImplDelegate* delegate)
                        base::Time(),
                        true,
                        DownloadItem::ReceivedSlices(),
-                       base::nullopt /*download_schedule*/,
+                       DownloadItemRerouteInfo(),
+                       absl::nullopt /*download_schedule*/,
+                       kInvalidRange,
+                       kInvalidRange,
                        nullptr /* download_entry */) {}
 
 MockDownloadItemImpl::~MockDownloadItemImpl() = default;

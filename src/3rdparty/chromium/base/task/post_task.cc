@@ -12,6 +12,7 @@
 #include "base/task/thread_pool/thread_pool_impl.h"
 #include "base/task/thread_pool/thread_pool_instance.h"
 #include "base/threading/post_task_and_reply_impl.h"
+#include "build/build_config.h"
 
 namespace base {
 
@@ -93,23 +94,6 @@ scoped_refptr<SequencedTaskRunner> CreateSequencedTaskRunner(
   return GetTaskExecutorForTraits(traits)->CreateSequencedTaskRunner(traits);
 }
 
-scoped_refptr<UpdateableSequencedTaskRunner>
-CreateUpdateableSequencedTaskRunner(const TaskTraits& traits) {
-  DCHECK(ThreadPoolInstance::Get())
-      << "Ref. Prerequisite section of post_task.h.\n\n"
-         "Hint: if this is in a unit test, you're likely merely missing a "
-         "base::test::TaskEnvironment member in your fixture.\n";
-  DCHECK(traits.use_thread_pool())
-      << "The base::UseThreadPool() trait is mandatory with "
-         "CreateUpdateableSequencedTaskRunner().";
-  CHECK_EQ(traits.extension_id(),
-           TaskTraitsExtensionStorage::kInvalidExtensionId)
-      << "Extension traits cannot be used with "
-         "CreateUpdateableSequencedTaskRunner().";
-  return static_cast<internal::ThreadPoolImpl*>(ThreadPoolInstance::Get())
-      ->CreateUpdateableSequencedTaskRunner(traits);
-}
-
 scoped_refptr<SingleThreadTaskRunner> CreateSingleThreadTaskRunner(
     const TaskTraits& traits,
     SingleThreadTaskRunnerThreadMode thread_mode) {
@@ -117,13 +101,13 @@ scoped_refptr<SingleThreadTaskRunner> CreateSingleThreadTaskRunner(
       traits, thread_mode);
 }
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 scoped_refptr<SingleThreadTaskRunner> CreateCOMSTATaskRunner(
     const TaskTraits& traits,
     SingleThreadTaskRunnerThreadMode thread_mode) {
   return GetTaskExecutorForTraits(traits)->CreateCOMSTATaskRunner(traits,
                                                                   thread_mode);
 }
-#endif  // defined(OS_WIN)
+#endif  // BUILDFLAG(IS_WIN)
 
 }  // namespace base

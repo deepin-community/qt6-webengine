@@ -6,11 +6,12 @@
 
 #include <stdint.h>
 
+#include <memory>
 #include <string>
 #include <utility>
 
 #include "base/threading/simple_thread.h"
-#include "base/trace_event/trace_event.h"
+#include "base/trace_event/base_tracing.h"
 
 namespace cc {
 
@@ -26,8 +27,8 @@ SingleThreadTaskGraphRunner::~SingleThreadTaskGraphRunner() = default;
 void SingleThreadTaskGraphRunner::Start(
     const std::string& thread_name,
     const base::SimpleThread::Options& thread_options) {
-  thread_.reset(
-      new base::DelegateSimpleThread(this, thread_name, thread_options));
+  thread_ = std::make_unique<base::DelegateSimpleThread>(this, thread_name,
+                                                         thread_options);
   thread_->StartAsync();
 }
 
@@ -115,6 +116,11 @@ void SingleThreadTaskGraphRunner::Run() {
 
   while (true) {
     if (!RunTaskWithLockAcquired()) {
+      // Make sure the END of the last trace event emitted before going idle
+      // is flushed to perfetto.
+      // TODO(crbug.com/1021571): Remove this once fixed.
+      PERFETTO_INTERNAL_ADD_EMPTY_EVENT();
+
       // Exit when shutdown is set and no more tasks are pending.
       if (shutdown_)
         break;
@@ -152,7 +158,7 @@ bool SingleThreadTaskGraphRunner::RunTaskWithLockAcquired() {
     prioritized_task.task->RunOnWorkerThread();
   }
 
-  auto* task_namespace = prioritized_task.task_namespace;
+  auto* task_namespace = prioritized_task.task_namespace.get();
   work_queue_.CompleteTask(std::move(prioritized_task));
 
   // If namespace has finished running all tasks, wake up origin thread.

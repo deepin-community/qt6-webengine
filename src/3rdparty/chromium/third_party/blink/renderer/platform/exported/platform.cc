@@ -33,16 +33,19 @@
 #include <memory>
 
 #include "base/allocator/partition_allocator/memory_reclaimer.h"
-#include "base/single_thread_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/threading/thread_checker.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/memory_dump_manager.h"
 #include "build/build_config.h"
 #include "components/viz/common/gpu/raster_context_provider.h"
 #include "gpu/ipc/client/gpu_channel_host.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "third_party/blink/public/common/thread_safe_browser_interface_broker_proxy.h"
 #include "third_party/blink/public/platform/scheduler/web_thread_scheduler.h"
+#include "third_party/blink/public/platform/web_dedicated_worker_host_factory_client.h"
 #include "third_party/blink/public/platform/web_graphics_context_3d_provider.h"
+#include "third_party/blink/public/platform/web_url_loader_factory.h"
 #include "third_party/blink/public/platform/websocket_handshake_throttle.h"
 #include "third_party/blink/renderer/platform/bindings/parkable_string_manager.h"
 #include "third_party/blink/renderer/platform/font_family_names.h"
@@ -60,6 +63,7 @@
 #include "third_party/blink/renderer/platform/scheduler/common/simple_thread_scheduler.h"
 #include "third_party/blink/renderer/platform/scheduler/public/post_cross_thread_task.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread.h"
+#include "third_party/blink/renderer/platform/theme/web_theme_engine_helper.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
 #include "third_party/blink/renderer/platform/wtf/hash_map.h"
@@ -89,6 +93,8 @@ class IdleDelayedTaskHelper : public base::SingleThreadTaskRunner {
 
  public:
   IdleDelayedTaskHelper() = default;
+  IdleDelayedTaskHelper(const IdleDelayedTaskHelper&) = delete;
+  IdleDelayedTaskHelper& operator=(const IdleDelayedTaskHelper&) = delete;
 
   bool RunsTasksInCurrentSequence() const override { return IsMainThread(); }
 
@@ -116,7 +122,6 @@ class IdleDelayedTaskHelper : public base::SingleThreadTaskRunner {
 
  private:
   THREAD_CHECKER(thread_checker_);
-  DISALLOW_COPY_AND_ASSIGN(IdleDelayedTaskHelper);
 };
 
 }  // namespace
@@ -176,6 +181,10 @@ class SimpleMainThread : public Thread {
 };
 
 }  // namespace
+
+WebThemeEngine* Platform::ThemeEngine() {
+  return WebThemeEngineHelper::GetNativeThemeEngine();
+}
 
 void Platform::InitializeBlink() {
   DCHECK(!did_initialize_blink_);
@@ -280,6 +289,36 @@ Platform* Platform::Current() {
   return g_platform;
 }
 
+std::unique_ptr<WebURLLoaderFactory> Platform::WrapURLLoaderFactory(
+    CrossVariantMojoRemote<network::mojom::URLLoaderFactoryInterfaceBase>) {
+  return nullptr;
+}
+
+std::unique_ptr<blink::WebURLLoaderFactory>
+Platform::WrapSharedURLLoaderFactory(
+    scoped_refptr<network::SharedURLLoaderFactory> factory) {
+  return nullptr;
+}
+
+std::unique_ptr<WebDedicatedWorkerHostFactoryClient>
+Platform::CreateDedicatedWorkerHostFactoryClient(
+    WebDedicatedWorker*,
+    const BrowserInterfaceBrokerProxy&) {
+  return nullptr;
+}
+
+void Platform::CreateServiceWorkerSubresourceLoaderFactory(
+    CrossVariantMojoRemote<mojom::ServiceWorkerContainerHostInterfaceBase>
+        service_worker_container_host,
+    const WebString& client_id,
+    std::unique_ptr<network::PendingSharedURLLoaderFactory> fallback_factory,
+    mojo::PendingReceiver<network::mojom::URLLoaderFactory> receiver,
+    scoped_refptr<base::SequencedTaskRunner> task_runner,
+    scoped_refptr<base::SequencedTaskRunner> worker_timing_callback_task_runner,
+    base::RepeatingCallback<
+        void(int, mojo::PendingReceiver<blink::mojom::WorkerTimingContainer>)>
+        worker_timing_callback) {}
+
 ThreadSafeBrowserInterfaceBrokerProxy* Platform::GetBrowserInterfaceBroker() {
   DEFINE_STATIC_LOCAL(DefaultBrowserInterfaceBrokerProxy, proxy, ());
   return &proxy;
@@ -332,6 +371,14 @@ Platform::SharedCompositorWorkerContextProvider() {
 
 scoped_refptr<gpu::GpuChannelHost> Platform::EstablishGpuChannelSync() {
   return nullptr;
+}
+
+void Platform::EstablishGpuChannel(EstablishGpuChannelCallback callback) {
+  std::move(callback).Run(nullptr);
+}
+
+gfx::ColorSpace Platform::GetRenderingColorSpace() const {
+  return {};
 }
 
 }  // namespace blink

@@ -5,11 +5,10 @@
 #ifndef MEDIA_FILTERS_FFMPEG_VIDEO_DECODER_H_
 #define MEDIA_FILTERS_FFMPEG_VIDEO_DECODER_H_
 
-#include <list>
 #include <memory>
 
 #include "base/callback.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/sequence_checker.h"
 #include "media/base/supported_video_decoder_config.h"
@@ -33,6 +32,10 @@ class MEDIA_EXPORT FFmpegVideoDecoder : public VideoDecoder {
   static SupportedVideoDecoderConfigs SupportedConfigsForWebRTC();
 
   explicit FFmpegVideoDecoder(MediaLog* media_log);
+
+  FFmpegVideoDecoder(const FFmpegVideoDecoder&) = delete;
+  FFmpegVideoDecoder& operator=(const FFmpegVideoDecoder&) = delete;
+
   ~FFmpegVideoDecoder() override;
 
   // Allow decoding of individual NALU. Entire frames are required by default.
@@ -41,7 +44,6 @@ class MEDIA_EXPORT FFmpegVideoDecoder : public VideoDecoder {
 
   // VideoDecoder implementation.
   VideoDecoderType GetDecoderType() const override;
-  std::string GetDisplayName() const override;
   void Initialize(const VideoDecoderConfig& config,
                   bool low_delay,
                   CdmContext* cdm_context,
@@ -58,13 +60,10 @@ class MEDIA_EXPORT FFmpegVideoDecoder : public VideoDecoder {
                      AVFrame* frame,
                      int flags);
 
+  void force_allocation_error_for_testing() { force_allocation_error_ = true; }
+
  private:
-  enum DecoderState {
-    kUninitialized,
-    kNormal,
-    kDecodeFinished,
-    kError
-  };
+  enum class DecoderState { kUninitialized, kNormal, kDecodeFinished, kError };
 
   // Handles decoding of an unencrypted encoded buffer. A return value of false
   // indicates that an error has occurred.
@@ -80,9 +79,9 @@ class MEDIA_EXPORT FFmpegVideoDecoder : public VideoDecoder {
 
   SEQUENCE_CHECKER(sequence_checker_);
 
-  MediaLog* media_log_;
+  const raw_ptr<MediaLog> media_log_;
 
-  DecoderState state_;
+  DecoderState state_ = DecoderState::kUninitialized;
 
   OutputCB output_cb_;
 
@@ -93,11 +92,11 @@ class MEDIA_EXPORT FFmpegVideoDecoder : public VideoDecoder {
 
   VideoFramePool frame_pool_;
 
-  bool decode_nalus_;
+  bool decode_nalus_ = false;
+
+  bool force_allocation_error_ = false;
 
   std::unique_ptr<FFmpegDecodingLoop> decoding_loop_;
-
-  DISALLOW_COPY_AND_ASSIGN(FFmpegVideoDecoder);
 };
 
 }  // namespace media

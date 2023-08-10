@@ -42,8 +42,8 @@ TEST_F(PasswordFeatureManagerImplTest, GenerationEnabledIfUserIsOptedIn) {
   features.InitAndEnableFeature(
       password_manager::features::kEnablePasswordsAccountStorage);
 
-  sync_service_.SetAuthenticatedAccountInfo(account_);
-  sync_service_.SetIsAuthenticatedAccountPrimary(false);
+  sync_service_.SetAccountInfo(account_);
+  sync_service_.SetHasSyncConsent(false);
   sync_service_.SetDisableReasons({});
   sync_service_.SetTransportState(syncer::SyncService::TransportState::ACTIVE);
 
@@ -51,7 +51,7 @@ TEST_F(PasswordFeatureManagerImplTest, GenerationEnabledIfUserIsOptedIn) {
 
   ASSERT_EQ(
       password_manager_util::GetPasswordSyncState(&sync_service_),
-      password_manager::SyncState::ACCOUNT_PASSWORDS_ACTIVE_NORMAL_ENCRYPTION);
+      password_manager::SyncState::kAccountPasswordsActiveNormalEncryption);
 
   EXPECT_TRUE(password_feature_manager_.IsGenerationEnabled());
 }
@@ -62,14 +62,14 @@ TEST_F(PasswordFeatureManagerImplTest,
   features.InitAndEnableFeature(
       password_manager::features::kEnablePasswordsAccountStorage);
 
-  sync_service_.SetAuthenticatedAccountInfo(account_);
-  sync_service_.SetIsAuthenticatedAccountPrimary(false);
+  sync_service_.SetAccountInfo(account_);
+  sync_service_.SetHasSyncConsent(false);
   sync_service_.SetDisableReasons({});
   sync_service_.SetTransportState(syncer::SyncService::TransportState::ACTIVE);
   sync_service_.SetActiveDataTypes({});
 
   ASSERT_EQ(password_manager_util::GetPasswordSyncState(&sync_service_),
-            password_manager::SyncState::NOT_SYNCING);
+            password_manager::SyncState::kNotSyncing);
   // The user must be eligible for account storage opt in now.
   ASSERT_TRUE(password_feature_manager_.ShouldShowAccountStorageOptIn());
 
@@ -84,14 +84,14 @@ TEST_F(PasswordFeatureManagerImplTest,
   features.InitAndDisableFeature(
       password_manager::features::kEnablePasswordsAccountStorage);
 
-  sync_service_.SetAuthenticatedAccountInfo(account_);
-  sync_service_.SetIsAuthenticatedAccountPrimary(false);
+  sync_service_.SetAccountInfo(account_);
+  sync_service_.SetHasSyncConsent(false);
   sync_service_.SetDisableReasons({});
   sync_service_.SetTransportState(syncer::SyncService::TransportState::ACTIVE);
   sync_service_.SetActiveDataTypes({});
 
   ASSERT_EQ(password_manager_util::GetPasswordSyncState(&sync_service_),
-            password_manager::SyncState::NOT_SYNCING);
+            password_manager::SyncState::kNotSyncing);
   // The user must not be eligible for account storage opt in now.
   ASSERT_FALSE(password_feature_manager_.ShouldShowAccountStorageOptIn());
 

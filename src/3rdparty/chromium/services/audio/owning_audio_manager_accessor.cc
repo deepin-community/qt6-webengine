@@ -8,14 +8,15 @@
 #include <utility>
 
 #include "base/feature_list.h"
-#include "base/macros.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/sequenced_task_runner.h"
-#include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/task/sequenced_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/threading/thread.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/default_tick_clock.h"
+#include "base/time/time.h"
 #include "media/audio/audio_features.h"
 #include "media/audio/audio_manager.h"
 #include "media/audio/audio_thread.h"
@@ -27,17 +28,17 @@ namespace audio {
 
 namespace {
 
-base::Optional<base::TimeDelta> GetAudioThreadHangDeadline() {
+absl::optional<base::TimeDelta> GetAudioThreadHangDeadline() {
   if (!base::FeatureList::IsEnabled(
           features::kAudioServiceOutOfProcessKillAtHang)) {
-    return base::nullopt;
+    return absl::nullopt;
   }
   const std::string timeout_string = base::GetFieldTrialParamValueByFeature(
       features::kAudioServiceOutOfProcessKillAtHang, "timeout_seconds");
   int timeout_int = 0;
   if (!base::StringToInt(timeout_string, &timeout_int) || timeout_int == 0)
-    return base::nullopt;
-  return base::TimeDelta::FromSeconds(timeout_int);
+    return absl::nullopt;
+  return base::Seconds(timeout_int);
 }
 
 HangAction GetAudioThreadHangAction() {
@@ -58,6 +59,10 @@ HangAction GetAudioThreadHangAction() {
 class MainThread final : public media::AudioThread {
  public:
   MainThread();
+
+  MainThread(const MainThread&) = delete;
+  MainThread& operator=(const MainThread&) = delete;
+
   ~MainThread() final;
 
   // AudioThread implementation.
@@ -74,8 +79,6 @@ class MainThread final : public media::AudioThread {
   scoped_refptr<base::SingleThreadTaskRunner> worker_task_runner_;
 
   media::AudioThreadHangMonitor::Ptr hang_monitor_;
-
-  DISALLOW_COPY_AND_ASSIGN(MainThread);
 };
 
 MainThread::MainThread()
@@ -118,7 +121,7 @@ base::SingleThreadTaskRunner* MainThread::GetWorkerTaskRunner() {
     base::Thread::Options options;
     options.timer_slack = base::TIMER_SLACK_NONE;
     options.priority = base::ThreadPriority::REALTIME_AUDIO;
-    CHECK(worker_thread_.StartWithOptions(options));
+    CHECK(worker_thread_.StartWithOptions(std::move(options)));
     worker_task_runner_ = worker_thread_.task_runner();
   }
   return worker_task_runner_.get();
@@ -143,8 +146,9 @@ media::AudioManager* OwningAudioManagerAccessor::GetAudioManager() {
     DCHECK(audio_manager_factory_cb_);
     DCHECK(log_factory_);
     base::TimeTicks creation_start_time = base::TimeTicks::Now();
-    audio_manager_ = std::move(audio_manager_factory_cb_)
-                         .Run(std::make_unique<MainThread>(), log_factory_);
+    audio_manager_ =
+        std::move(audio_manager_factory_cb_)
+            .Run(std::make_unique<MainThread>(), log_factory_.get());
     DCHECK(audio_manager_);
     UMA_HISTOGRAM_TIMES("Media.AudioService.AudioManagerStartupTime",
                         base::TimeTicks::Now() - creation_start_time);

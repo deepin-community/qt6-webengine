@@ -14,20 +14,18 @@
 #include "net/base/completion_once_callback.h"
 #include "net/base/net_export.h"
 #include "net/base/request_priority.h"
+#include "net/dns/public/secure_dns_policy.h"
 #include "net/http/http_network_session.h"
 #include "net/socket/client_socket_pool.h"
+#include "url/scheme_host_port.h"
 
 namespace base {
 class Value;
-namespace trace_event {
-class ProcessMemoryDump;
-}
 }
 
 namespace net {
 
 class ClientSocketHandle;
-class HostPortPair;
 class NetLogWithSource;
 class NetworkIsolationKey;
 class ProxyInfo;
@@ -35,17 +33,10 @@ class ProxyServer;
 
 struct SSLConfig;
 
-// This should rather be a simple constant but Windows shared libs doesn't
-// really offer much flexiblity in exporting contants.
-enum DefaultMaxValues { kDefaultMaxSocketsPerProxyServer = 32 };
+constexpr int kDefaultMaxSocketsPerProxyServer = 32;
 
 class NET_EXPORT_PRIVATE ClientSocketPoolManager {
  public:
-  enum SocketGroupType {
-    SSL_GROUP,     // For all TLS sockets.
-    NORMAL_GROUP,  // For normal HTTP sockets.
-  };
-
   ClientSocketPoolManager();
   virtual ~ClientSocketPoolManager();
 
@@ -84,12 +75,6 @@ class NET_EXPORT_PRIVATE ClientSocketPoolManager {
 
   // Creates a Value summary of the state of the socket pools.
   virtual std::unique_ptr<base::Value> SocketPoolInfoToValue() const = 0;
-
-  // Dumps memory allocation stats. |parent_dump_absolute_name| is the name
-  // used by the parent MemoryAllocatorDump in the memory dump hierarchy.
-  virtual void DumpMemoryStats(
-      base::trace_event::ProcessMemoryDump* pmd,
-      const std::string& parent_dump_absolute_name) const = 0;
 };
 
 // A helper method that uses the passed in proxy information to initialize a
@@ -100,8 +85,7 @@ class NET_EXPORT_PRIVATE ClientSocketPoolManager {
 // resolved.  If |resolution_callback| does not return OK, then the
 // connection will be aborted with that value.
 int InitSocketHandleForHttpRequest(
-    ClientSocketPoolManager::SocketGroupType group_type,
-    const HostPortPair& endpoint,
+    url::SchemeHostPort endpoint,
     int request_load_flags,
     RequestPriority request_priority,
     HttpNetworkSession* session,
@@ -109,8 +93,8 @@ int InitSocketHandleForHttpRequest(
     const SSLConfig& ssl_config_for_origin,
     const SSLConfig& ssl_config_for_proxy,
     PrivacyMode privacy_mode,
-    const NetworkIsolationKey& network_isolation_key,
-    bool disable_secure_dns,
+    NetworkIsolationKey network_isolation_key,
+    SecureDnsPolicy secure_dns_policy,
     const SocketTag& socket_tag,
     const NetLogWithSource& net_log,
     ClientSocketHandle* socket_handle,
@@ -127,8 +111,7 @@ int InitSocketHandleForHttpRequest(
 // connection will be aborted with that value.
 // This function uses WEBSOCKET_SOCKET_POOL socket pools.
 int InitSocketHandleForWebSocketRequest(
-    ClientSocketPoolManager::SocketGroupType group_type,
-    const HostPortPair& endpoint,
+    url::SchemeHostPort endpoint,
     int request_load_flags,
     RequestPriority request_priority,
     HttpNetworkSession* session,
@@ -136,7 +119,7 @@ int InitSocketHandleForWebSocketRequest(
     const SSLConfig& ssl_config_for_origin,
     const SSLConfig& ssl_config_for_proxy,
     PrivacyMode privacy_mode,
-    const NetworkIsolationKey& network_isolation_key,
+    NetworkIsolationKey network_isolation_key,
     const NetLogWithSource& net_log,
     ClientSocketHandle* socket_handle,
     CompletionOnceCallback callback,
@@ -144,20 +127,18 @@ int InitSocketHandleForWebSocketRequest(
 
 // Similar to InitSocketHandleForHttpRequest except that it initiates the
 // desired number of preconnect streams from the relevant socket pool.
-int PreconnectSocketsForHttpRequest(
-    ClientSocketPoolManager::SocketGroupType group_type,
-    const HostPortPair& endpoint,
-    int request_load_flags,
-    RequestPriority request_priority,
-    HttpNetworkSession* session,
-    const ProxyInfo& proxy_info,
-    const SSLConfig& ssl_config_for_origin,
-    const SSLConfig& ssl_config_for_proxy,
-    PrivacyMode privacy_mode,
-    const NetworkIsolationKey& network_isolation_key,
-    bool disable_secure_dns,
-    const NetLogWithSource& net_log,
-    int num_preconnect_streams);
+int PreconnectSocketsForHttpRequest(url::SchemeHostPort endpoint,
+                                    int request_load_flags,
+                                    RequestPriority request_priority,
+                                    HttpNetworkSession* session,
+                                    const ProxyInfo& proxy_info,
+                                    const SSLConfig& ssl_config_for_origin,
+                                    const SSLConfig& ssl_config_for_proxy,
+                                    PrivacyMode privacy_mode,
+                                    NetworkIsolationKey network_isolation_key,
+                                    SecureDnsPolicy secure_dns_policy,
+                                    const NetLogWithSource& net_log,
+                                    int num_preconnect_streams);
 
 }  // namespace net
 

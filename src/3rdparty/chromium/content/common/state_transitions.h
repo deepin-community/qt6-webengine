@@ -8,8 +8,9 @@
 #include <vector>
 
 #include "base/check_op.h"
+#include "base/containers/contains.h"
 #include "base/no_destructor.h"
-#include "base/stl_util.h"
+#include "content/common/content_export.h"
 
 namespace content {
 

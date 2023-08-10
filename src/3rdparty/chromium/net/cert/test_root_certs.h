@@ -6,16 +6,16 @@
 #define NET_CERT_TEST_ROOT_CERTS_H_
 
 #include "base/lazy_instance.h"
-#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "build/build_config.h"
 #include "net/base/net_export.h"
 #include "net/cert/internal/trust_store_in_memory.h"
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 #include <windows.h>
 #include "base/win/wincrypt_shim.h"
-#elif defined(OS_APPLE)
+#include "crypto/scoped_capi_types.h"
+#elif BUILDFLAG(IS_APPLE)
 #include <CoreFoundation/CFArray.h>
 #include <Security/SecTrust.h>
 #include "base/mac/scoped_cftyperef.h"
@@ -38,6 +38,9 @@ class NET_EXPORT TestRootCerts {
   // Obtains the Singleton instance to the trusted certificates.
   static TestRootCerts* GetInstance();
 
+  TestRootCerts(const TestRootCerts&) = delete;
+  TestRootCerts& operator=(const TestRootCerts&) = delete;
+
   // Returns true if an instance exists, without forcing an initialization.
   static bool HasInstance();
 
@@ -58,26 +61,23 @@ class NET_EXPORT TestRootCerts {
   // Returns true if there are no certificates that have been marked trusted.
   bool IsEmpty() const;
 
-#if defined(OS_APPLE)
+#if BUILDFLAG(IS_APPLE)
   CFArrayRef temporary_roots() const { return temporary_roots_; }
 
   // Modifies the root certificates of |trust_ref| to include the
   // certificates stored in |temporary_roots_|. If IsEmpty() is true, this
   // does not modify |trust_ref|.
   OSStatus FixupSecTrustRef(SecTrustRef trust_ref) const;
-
-  TrustStore* test_trust_store() { return &test_trust_store_; }
-#elif defined(OS_WIN)
+#elif BUILDFLAG(IS_WIN)
   HCERTSTORE temporary_roots() const { return temporary_roots_; }
 
   // Returns an HCERTCHAINENGINE suitable to be used for certificate
   // validation routines, or NULL to indicate that the default system chain
-  // engine is appropriate. The caller is responsible for freeing the
-  // returned HCERTCHAINENGINE.
-  HCERTCHAINENGINE GetChainEngine() const;
-#elif defined(OS_FUCHSIA) || defined(OS_LINUX) || defined(OS_CHROMEOS)
-  TrustStore* test_trust_store() { return &test_trust_store_; }
+  // engine is appropriate.
+  crypto::ScopedHCERTCHAINENGINE GetChainEngine() const;
 #endif
+
+  TrustStore* test_trust_store() { return &test_trust_store_; }
 
  private:
   friend struct base::LazyInstanceTraitsBase<TestRootCerts>;
@@ -85,25 +85,18 @@ class NET_EXPORT TestRootCerts {
   TestRootCerts();
   ~TestRootCerts();
 
-  // Performs platform-dependent initialization.
+  // Performs platform-dependent operations.
   void Init();
+  bool AddImpl(X509Certificate* certificate);
+  void ClearImpl();
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   HCERTSTORE temporary_roots_;
-#elif defined(OS_APPLE)
+#elif BUILDFLAG(IS_APPLE)
   base::ScopedCFTypeRef<CFMutableArrayRef> temporary_roots_;
-  TrustStoreInMemory test_trust_store_;
-#elif defined(OS_FUCHSIA) || defined(OS_LINUX) || defined(OS_CHROMEOS)
-  TrustStoreInMemory test_trust_store_;
 #endif
 
-#if defined(OS_WIN) || defined(OS_ANDROID) || defined(OS_FUCHSIA) || \
-    defined(OS_LINUX) || defined(OS_CHROMEOS)
-  // True if there are no temporarily trusted root certificates.
-  bool empty_ = true;
-#endif
-
-  DISALLOW_COPY_AND_ASSIGN(TestRootCerts);
+  TrustStoreInMemory test_trust_store_;
 };
 
 // Scoped helper for unittests to handle safely managing trusted roots.
@@ -118,6 +111,10 @@ class NET_EXPORT_PRIVATE ScopedTestRoot {
   // TestRootCerts store (if there were existing roots they are
   // cleared).
   explicit ScopedTestRoot(CertificateList certs);
+
+  ScopedTestRoot(const ScopedTestRoot&) = delete;
+  ScopedTestRoot& operator=(const ScopedTestRoot&) = delete;
+
   ~ScopedTestRoot();
 
   // Assigns |certs| to be the new test root certs. If |certs| is empty, undoes
@@ -129,8 +126,6 @@ class NET_EXPORT_PRIVATE ScopedTestRoot {
 
  private:
   CertificateList certs_;
-
-  DISALLOW_COPY_AND_ASSIGN(ScopedTestRoot);
 };
 
 }  // namespace net

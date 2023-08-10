@@ -13,6 +13,7 @@
 #include "ui/ozone/test/mock_platform_window_delegate.h"
 
 using ::testing::_;
+using ::testing::Values;
 
 namespace ui {
 
@@ -26,11 +27,14 @@ class WaylandEventSourceTest : public WaylandTest {
  public:
   WaylandEventSourceTest() {}
 
+  WaylandEventSourceTest(const WaylandEventSourceTest&) = delete;
+  WaylandEventSourceTest& operator=(const WaylandEventSourceTest&) = delete;
+
   void SetUp() override {
     WaylandTest::SetUp();
 
-    event_source_ = connection_->event_source();
-    DCHECK(event_source_);
+    pointer_delegate_ = connection_->event_source();
+    DCHECK(pointer_delegate_);
   }
 
  protected:
@@ -48,10 +52,7 @@ class WaylandEventSourceTest : public WaylandTest {
     return window;
   }
 
-  WaylandEventSource* event_source_ = nullptr;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(WaylandEventSourceTest);
+  WaylandPointer::Delegate* pointer_delegate_ = nullptr;
 };
 
 // Verify WaylandEventSource properly manages its internal state as pointer
@@ -62,11 +63,14 @@ TEST_P(WaylandEventSourceTest, CheckPointerButtonHandling) {
                             WL_SEAT_CAPABILITY_POINTER);
   Sync();
 
-  EXPECT_FALSE(event_source_->IsPointerButtonPressed(EF_LEFT_MOUSE_BUTTON));
-  EXPECT_FALSE(event_source_->IsPointerButtonPressed(EF_RIGHT_MOUSE_BUTTON));
-  EXPECT_FALSE(event_source_->IsPointerButtonPressed(EF_MIDDLE_MOUSE_BUTTON));
-  EXPECT_FALSE(event_source_->IsPointerButtonPressed(EF_BACK_MOUSE_BUTTON));
-  EXPECT_FALSE(event_source_->IsPointerButtonPressed(EF_FORWARD_MOUSE_BUTTON));
+  EXPECT_FALSE(pointer_delegate_->IsPointerButtonPressed(EF_LEFT_MOUSE_BUTTON));
+  EXPECT_FALSE(
+      pointer_delegate_->IsPointerButtonPressed(EF_RIGHT_MOUSE_BUTTON));
+  EXPECT_FALSE(
+      pointer_delegate_->IsPointerButtonPressed(EF_MIDDLE_MOUSE_BUTTON));
+  EXPECT_FALSE(pointer_delegate_->IsPointerButtonPressed(EF_BACK_MOUSE_BUTTON));
+  EXPECT_FALSE(
+      pointer_delegate_->IsPointerButtonPressed(EF_FORWARD_MOUSE_BUTTON));
 
   auto window1 = CreateWaylandWindowWithParams(PlatformWindowType::kWindow,
                                                kDefaultBounds, &delegate);
@@ -88,14 +92,14 @@ TEST_P(WaylandEventSourceTest, CheckPointerButtonHandling) {
   EXPECT_CALL(delegate, DispatchEvent(_)).Times(2);
   Sync();
 
-  EXPECT_TRUE(event_source_->IsPointerButtonPressed(EF_LEFT_MOUSE_BUTTON));
+  EXPECT_TRUE(pointer_delegate_->IsPointerButtonPressed(EF_LEFT_MOUSE_BUTTON));
 
   wl_pointer_send_button(pointer_res, serial++, tstamp++, BTN_RIGHT,
                          WL_POINTER_BUTTON_STATE_PRESSED);
   EXPECT_CALL(delegate, DispatchEvent(_)).Times(1);
   Sync();
 
-  EXPECT_TRUE(event_source_->IsPointerButtonPressed(EF_RIGHT_MOUSE_BUTTON));
+  EXPECT_TRUE(pointer_delegate_->IsPointerButtonPressed(EF_RIGHT_MOUSE_BUTTON));
 
   wl_pointer_send_button(pointer_res, serial++, tstamp++, BTN_LEFT,
                          WL_POINTER_BUTTON_STATE_RELEASED);
@@ -104,15 +108,18 @@ TEST_P(WaylandEventSourceTest, CheckPointerButtonHandling) {
   EXPECT_CALL(delegate, DispatchEvent(_)).Times(2);
   Sync();
 
-  EXPECT_FALSE(event_source_->IsPointerButtonPressed(EF_LEFT_MOUSE_BUTTON));
-  EXPECT_FALSE(event_source_->IsPointerButtonPressed(EF_RIGHT_MOUSE_BUTTON));
+  EXPECT_FALSE(pointer_delegate_->IsPointerButtonPressed(EF_LEFT_MOUSE_BUTTON));
+  EXPECT_FALSE(
+      pointer_delegate_->IsPointerButtonPressed(EF_RIGHT_MOUSE_BUTTON));
 }
 
 INSTANTIATE_TEST_SUITE_P(XdgVersionStableTest,
                          WaylandEventSourceTest,
-                         ::testing::Values(kXdgShellStable));
+                         Values(wl::ServerConfig{
+                             .shell_version = wl::ShellVersion::kStable}));
 INSTANTIATE_TEST_SUITE_P(XdgVersionV6Test,
                          WaylandEventSourceTest,
-                         ::testing::Values(kXdgShellV6));
+                         Values(wl::ServerConfig{
+                             .shell_version = wl::ShellVersion::kV6}));
 
 }  // namespace ui

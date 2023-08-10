@@ -10,7 +10,7 @@
 #include "base/memory/ref_counted.h"
 #include "build/build_config.h"
 
-#if !defined(OS_IOS)
+#if !BUILDFLAG(IS_IOS)
 #import <IOBluetooth/IOBluetooth.h>
 #endif
 
@@ -27,7 +27,7 @@ class BluetoothLowEnergyPeripheralBridge;
   std::unique_ptr<device::BluetoothLowEnergyPeripheralBridge> _bridge;
 }
 
-- (id)initWithBluetoothLowEnergyDeviceMac:
+- (instancetype)initWithBluetoothLowEnergyDeviceMac:
     (device::BluetoothLowEnergyDeviceMac*)device_mac;
 
 @end

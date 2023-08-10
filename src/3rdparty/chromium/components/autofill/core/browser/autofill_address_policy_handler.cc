@@ -21,12 +21,10 @@ AutofillAddressPolicyHandler::~AutofillAddressPolicyHandler() {}
 void AutofillAddressPolicyHandler::ApplyPolicySettings(
     const policy::PolicyMap& policies,
     PrefValueMap* prefs) {
-  const base::Value* value = policies.GetValue(policy_name());
-  bool autofill_profile_enabled;
-  if (value && value->GetAsBoolean(&autofill_profile_enabled) &&
-      !autofill_profile_enabled) {
+  const base::Value* value =
+      policies.GetValue(policy_name(), base::Value::Type::BOOLEAN);
+  if (value && !value->GetBool())
     prefs->SetBoolean(autofill::prefs::kAutofillProfileEnabled, false);
-  }
 }
 
 }  // namespace autofill

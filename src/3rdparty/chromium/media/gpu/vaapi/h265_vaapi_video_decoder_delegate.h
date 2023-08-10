@@ -50,6 +50,9 @@ class H265VaapiVideoDecoderDelegate : public H265Decoder::H265Accelerator,
                      const H265SliceHeader* slice_hdr,
                      const H265Picture::Vector& ref_pic_list0,
                      const H265Picture::Vector& ref_pic_list1,
+                     const H265Picture::Vector& ref_pic_set_lt_curr,
+                     const H265Picture::Vector& ref_pic_set_st_curr_after,
+                     const H265Picture::Vector& ref_pic_set_st_curr_before,
                      scoped_refptr<H265Picture> pic,
                      const uint8_t* data,
                      size_t size,
@@ -88,6 +91,7 @@ class H265VaapiVideoDecoderDelegate : public H265Decoder::H265Accelerator,
   // |slice_param_| filled.
   const uint8_t* last_slice_data_{nullptr};
   size_t last_slice_size_{0};
+  std::string last_transcrypt_params_;
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
   // We need to hold onto this memory here because it's referenced by the

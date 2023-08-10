@@ -10,11 +10,13 @@
 #include <sys/mman.h>
 
 #include <memory>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/callback_helpers.h"
-#include "base/numerics/ranges.h"
+#include "base/cxx17_backports.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "media/base/bind_to_current_loop.h"
 #include "media/gpu/chromeos/fourcc.h"
 #include "media/gpu/chromeos/platform_video_frame_utils.h"
 #include "media/gpu/macros.h"
@@ -170,7 +172,7 @@ void V4L2JpegEncodeAccelerator::EncodedInstance::FillQuantizationTable(
   for (size_t i = 0; i < kDctSize; i++) {
     temp = ((unsigned int)basic_table[kZigZag8x8[i]] * quality + 50) / 100;
     /* limit the values to the valid range */
-    dst_table[i] = base::ClampToRange(temp, 1u, 255u);
+    dst_table[i] = base::clamp(temp, 1u, 255u);
   }
 }
 
@@ -491,7 +493,7 @@ bool V4L2JpegEncodeAccelerator::EncodedInstance::RequestInputBuffers() {
     buffer.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
     buffer.memory = V4L2_MEMORY_MMAP;
     buffer.m.planes = planes;
-    buffer.length = base::size(planes);
+    buffer.length = std::size(planes);
     IOCTL_OR_ERROR_RETURN_FALSE(VIDIOC_QUERYBUF, &buffer);
 
     if (input_buffer_num_planes_ != buffer.length) {
@@ -542,7 +544,7 @@ bool V4L2JpegEncodeAccelerator::EncodedInstance::RequestOutputBuffers() {
     buffer.index = i;
     buffer.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
     buffer.m.planes = planes;
-    buffer.length = base::size(planes);
+    buffer.length = std::size(planes);
     buffer.memory = V4L2_MEMORY_MMAP;
     IOCTL_OR_ERROR_RETURN_FALSE(VIDIOC_QUERYBUF, &buffer);
     if (buffer.length != kMaxJpegPlane) {
@@ -725,7 +727,7 @@ bool V4L2JpegEncodeAccelerator::EncodedInstance::EnqueueInputRecord() {
   qbuf.index = index;
   qbuf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
   qbuf.memory = V4L2_MEMORY_MMAP;
-  qbuf.length = base::size(planes);
+  qbuf.length = std::size(planes);
   for (size_t i = 0; i < input_buffer_num_planes_; i++) {
     // sets this to 0 means the size of the plane.
     planes[i].bytesused = 0;
@@ -755,7 +757,7 @@ bool V4L2JpegEncodeAccelerator::EncodedInstance::EnqueueOutputRecord() {
   qbuf.index = index;
   qbuf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
   qbuf.memory = V4L2_MEMORY_MMAP;
-  qbuf.length = base::size(planes);
+  qbuf.length = std::size(planes);
   qbuf.m.planes = planes;
   IOCTL_OR_ERROR_RETURN_FALSE(VIDIOC_QBUF, &qbuf);
   output_record.at_device = true;
@@ -849,7 +851,7 @@ void V4L2JpegEncodeAccelerator::EncodedInstance::Dequeue() {
     memset(planes, 0, sizeof(planes));
     dqbuf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
     dqbuf.memory = V4L2_MEMORY_MMAP;
-    dqbuf.length = base::size(planes);
+    dqbuf.length = std::size(planes);
     dqbuf.m.planes = planes;
     if (device_->Ioctl(VIDIOC_DQBUF, &dqbuf) != 0) {
       if (errno == EAGAIN) {
@@ -884,7 +886,7 @@ void V4L2JpegEncodeAccelerator::EncodedInstance::Dequeue() {
     memset(planes, 0, sizeof(planes));
     dqbuf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
     dqbuf.memory = V4L2_MEMORY_MMAP;
-    dqbuf.length = base::size(planes);
+    dqbuf.length = std::size(planes);
     dqbuf.m.planes = planes;
     if (device_->Ioctl(VIDIOC_DQBUF, &dqbuf) != 0) {
       if (errno == EAGAIN) {
@@ -1007,7 +1009,7 @@ void V4L2JpegEncodeAccelerator::EncodedInstanceDmaBuf::FillQuantizationTable(
   for (size_t i = 0; i < kDctSize; i++) {
     temp = ((unsigned int)basic_table[kZigZag8x8[i]] * quality + 50) / 100;
     /* limit the values to the valid range */
-    dst_table[i] = base::ClampToRange(temp, 1u, 255u);
+    dst_table[i] = base::clamp(temp, 1u, 255u);
   }
 }
 
@@ -1198,6 +1200,21 @@ bool V4L2JpegEncodeAccelerator::EncodedInstanceDmaBuf::SetUpJpegParameters(
       VLOG(1) << "JPEG Quality: max:" << queryctrl.maximum
               << ", min:" << queryctrl.minimum << ", value:" << quality;
       IOCTL_OR_ERROR_RETURN_FALSE(VIDIOC_S_EXT_CTRLS, &ctrls);
+
+      queryctrl.id = V4L2_CID_JPEG_ACTIVE_MARKER;
+      queryctrl.type = V4L2_CTRL_TYPE_BITMASK;
+      // Driver may not have implemented V4L2_CID_JPEG_ACTIVE_MARKER.
+      // Ignore any error and assume the driver implements the JPEG stream
+      // the way we want it.
+      device_->Ioctl(VIDIOC_QUERY_EXT_CTRL, &queryctrl);
+
+      // Ask for JPEG markers we want. Since not all may be implemented,
+      // ask for the common subset of what we want and what is supported.
+      ctrl.id = V4L2_CID_JPEG_ACTIVE_MARKER;
+      ctrl.value = queryctrl.maximum &
+                   (V4L2_JPEG_ACTIVE_MARKER_APP0 | V4L2_JPEG_ACTIVE_MARKER_DQT |
+                    V4L2_JPEG_ACTIVE_MARKER_DHT);
+      device_->Ioctl(VIDIOC_S_EXT_CTRLS, &ctrls);
       break;
 
     default:
@@ -1500,7 +1517,7 @@ bool V4L2JpegEncodeAccelerator::EncodedInstanceDmaBuf::EnqueueInputRecord() {
   qbuf.index = index;
   qbuf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
   qbuf.memory = V4L2_MEMORY_DMABUF;
-  qbuf.length = base::size(planes);
+  qbuf.length = std::size(planes);
   qbuf.m.planes = planes;
 
   const auto& frame = job_record->input_frame;
@@ -1516,11 +1533,12 @@ bool V4L2JpegEncodeAccelerator::EncodedInstanceDmaBuf::EnqueueInputRecord() {
     }
 
     const auto& fds = frame->DmabufFds();
-    const auto& planes = frame->layout().planes();
+    const auto& layout_planes = frame->layout().planes();
     qbuf.m.planes[i].m.fd = (i < fds.size()) ? fds[i].get() : fds.back().get();
-    qbuf.m.planes[i].data_offset = planes[i].offset;
+    qbuf.m.planes[i].data_offset = layout_planes[i].offset;
     qbuf.m.planes[i].bytesused += qbuf.m.planes[i].data_offset;
-    qbuf.m.planes[i].length = planes[i].size + qbuf.m.planes[i].data_offset;
+    qbuf.m.planes[i].length =
+        layout_planes[i].size + qbuf.m.planes[i].data_offset;
   }
 
   IOCTL_OR_ERROR_RETURN_FALSE(VIDIOC_QBUF, &qbuf);
@@ -1542,7 +1560,7 @@ bool V4L2JpegEncodeAccelerator::EncodedInstanceDmaBuf::EnqueueOutputRecord() {
   qbuf.index = index;
   qbuf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
   qbuf.memory = V4L2_MEMORY_DMABUF;
-  qbuf.length = base::size(planes);
+  qbuf.length = std::size(planes);
   qbuf.m.planes = planes;
 
   auto& job_record = running_job_queue_.back();
@@ -1606,15 +1624,27 @@ size_t V4L2JpegEncodeAccelerator::EncodedInstanceDmaBuf::FinalizeJpegImage(
       }
       memmove(dst_ptr + compressed_data_offset, dst_ptr, buffer_size);
     } else if (output_buffer_pixelformat_ == V4L2_PIX_FMT_JPEG) {
-      // Move data after SOI and APP0 marker for exif room.
+      // V4L2_PIX_FMT_JPEG refers to a valid JPEG bitstream. It does not
+      // imply a standard JFIF bitstream with JFIF-APP0 markers.
+      // Move data after SOI to make room for APP1 marker and EXIF data.
+      // If an APP0 marker is found directly after the SOI marker, skip
+      // over it.
       // The JPEG from V4L2_PIX_FMT_JPEG is
-      // SOI-APP0-DQT-marker1-marker2-...-markerN-compressed stream-EOI
-      // |......| <- src_data_offset = len(SOI) + len(APP0)
+      // SOI-marker1-marker2-...-SOS-compressed stream-EOI
+      // |......| <- src_data_offset = len(SOI) + len(APP0) (if APP0 found)
       // |...................| <- data_offset = len(SOI) + len(APP1)
       size_t data_offset =
           sizeof(kJpegStart) + sizeof(kAppSegment) + exif_buffer_size;
-      size_t app0_length = 2 + ((dst_ptr[4] << 16) | dst_ptr[5]);
-      size_t src_data_offset = sizeof(kJpegStart) + app0_length;
+      size_t src_data_offset = sizeof(kJpegStart);
+      // Check for APP0 segment following SOI marker and skip over it if found
+      if (dst_ptr[2] == JPEG_MARKER_PREFIX && dst_ptr[3] == JPEG_APP0) {
+        src_data_offset += 2 + ((dst_ptr[4] << 8) | dst_ptr[5]);
+        if (src_data_offset >= buffer_size) {
+          LOG(WARNING)
+              << "APP0 segment from encoder extends beyond JPEG buffer";
+          return 0;
+        }
+      }
       buffer_size -= src_data_offset;
       if (buffer_size + data_offset > output_buffer_sizeimage_) {
         LOG(WARNING) << "JPEG buffer is too small for the EXIF metadata";
@@ -1707,7 +1737,7 @@ void V4L2JpegEncodeAccelerator::EncodedInstanceDmaBuf::Dequeue() {
     memset(planes, 0, sizeof(planes));
     dqbuf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
     dqbuf.memory = V4L2_MEMORY_DMABUF;
-    dqbuf.length = base::size(planes);
+    dqbuf.length = std::size(planes);
     dqbuf.m.planes = planes;
     if (device_->Ioctl(VIDIOC_DQBUF, &dqbuf) != 0) {
       if (errno == EAGAIN) {
@@ -1739,7 +1769,7 @@ void V4L2JpegEncodeAccelerator::EncodedInstanceDmaBuf::Dequeue() {
     memset(planes, 0, sizeof(planes));
     dqbuf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
     dqbuf.memory = V4L2_MEMORY_DMABUF;
-    dqbuf.length = base::size(planes);
+    dqbuf.length = std::size(planes);
     dqbuf.m.planes = planes;
     if (device_->Ioctl(VIDIOC_DQBUF, &dqbuf) != 0) {
       if (errno == EAGAIN) {
@@ -1846,31 +1876,43 @@ void V4L2JpegEncodeAccelerator::NotifyError(int32_t task_id, Status status) {
   client_->NotifyError(task_id, status);
 }
 
-chromeos_camera::JpegEncodeAccelerator::Status
-V4L2JpegEncodeAccelerator::Initialize(
-    chromeos_camera::JpegEncodeAccelerator::Client* client) {
+void V4L2JpegEncodeAccelerator::InitializeOnTaskRunner(
+    chromeos_camera::JpegEncodeAccelerator::Client* client,
+    chromeos_camera::JpegEncodeAccelerator::InitCB init_cb) {
   DCHECK(child_task_runner_->BelongsToCurrentThread());
-
   std::unique_ptr<EncodedInstanceDmaBuf> encoded_device(
       new EncodedInstanceDmaBuf(this));
 
   // We just check if we can initialize device here.
   if (!encoded_device->Initialize()) {
     VLOGF(1) << "Failed to initialize device";
-    return HW_JPEG_ENCODE_NOT_SUPPORTED;
+    std::move(init_cb).Run(HW_JPEG_ENCODE_NOT_SUPPORTED);
+    return;
   }
 
   if (!encoder_thread_.Start()) {
     VLOGF(1) << "encoder thread failed to start";
-    return THREAD_CREATION_FAILED;
+    std::move(init_cb).Run(THREAD_CREATION_FAILED);
+    return;
   }
 
   client_ = client;
-
   encoder_task_runner_ = encoder_thread_.task_runner();
 
   VLOGF(2) << "V4L2JpegEncodeAccelerator initialized.";
-  return ENCODE_OK;
+  std::move(init_cb).Run(ENCODE_OK);
+  return;
+}
+
+void V4L2JpegEncodeAccelerator::InitializeAsync(
+    chromeos_camera::JpegEncodeAccelerator::Client* client,
+    chromeos_camera::JpegEncodeAccelerator::InitCB init_cb) {
+  DCHECK(child_task_runner_->BelongsToCurrentThread());
+
+  child_task_runner_->PostTask(
+      FROM_HERE,
+      base::BindOnce(&V4L2JpegEncodeAccelerator::InitializeOnTaskRunner,
+                     weak_ptr_, client, BindToCurrentLoop(std::move(init_cb))));
 }
 
 size_t V4L2JpegEncodeAccelerator::GetMaxCodedBufferSize(
@@ -1912,9 +1954,8 @@ void V4L2JpegEncodeAccelerator::Encode(
       video_frame, quality, exif_buffer, std::move(output_buffer)));
 
   encoder_task_runner_->PostTask(
-      FROM_HERE,
-      base::BindOnce(&V4L2JpegEncodeAccelerator::EncodeTaskLegacy,
-                     base::Unretained(this), base::Passed(&job_record)));
+      FROM_HERE, base::BindOnce(&V4L2JpegEncodeAccelerator::EncodeTaskLegacy,
+                                base::Unretained(this), std::move(job_record)));
 }
 
 void V4L2JpegEncodeAccelerator::EncodeWithDmaBuf(
@@ -1949,9 +1990,8 @@ void V4L2JpegEncodeAccelerator::EncodeWithDmaBuf(
       new JobRecord(input_frame, output_frame, quality, task_id, exif_buffer));
 
   encoder_task_runner_->PostTask(
-      FROM_HERE,
-      base::BindOnce(&V4L2JpegEncodeAccelerator::EncodeTask,
-                     base::Unretained(this), base::Passed(&job_record)));
+      FROM_HERE, base::BindOnce(&V4L2JpegEncodeAccelerator::EncodeTask,
+                                base::Unretained(this), std::move(job_record)));
 }
 
 void V4L2JpegEncodeAccelerator::EncodeTaskLegacy(

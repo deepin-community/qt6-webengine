@@ -2,8 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "extensions/browser/api/declarative_webrequest/webrequest_action.h"
-
 #include <stddef.h>
 
 #include <memory>
@@ -11,7 +9,6 @@
 #include "base/files/file_path.h"
 #include "base/json/json_file_value_serializer.h"
 #include "base/memory/ref_counted.h"
-#include "base/stl_util.h"
 #include "base/test/values_test_util.h"
 #include "base/time/time.h"
 #include "base/values.h"
@@ -21,6 +18,7 @@
 #include "chrome/common/extensions/extension_test_util.h"
 #include "content/public/test/browser_task_environment.h"
 #include "extensions/browser/api/declarative_webrequest/request_stage.h"
+#include "extensions/browser/api/declarative_webrequest/webrequest_action.h"
 #include "extensions/browser/api/declarative_webrequest/webrequest_condition.h"
 #include "extensions/browser/api/declarative_webrequest/webrequest_constants.h"
 #include "extensions/browser/api/web_request/permission_helper.h"
@@ -51,14 +49,13 @@ const char kUnknownActionType[] = "unknownType";
 std::unique_ptr<WebRequestActionSet> CreateSetOfActions(const char* json) {
   std::unique_ptr<base::Value> parsed_value(
       base::test::ParseJsonDeprecated(json));
-  const base::ListValue* parsed_list;
-  CHECK(parsed_value->GetAsList(&parsed_list));
+  CHECK(parsed_value->is_list());
 
   WebRequestActionSet::Values actions;
-  for (auto it = parsed_list->begin(); it != parsed_list->end(); ++it) {
-    const base::DictionaryValue* dict;
-    CHECK(it->GetAsDictionary(&dict));
-    actions.push_back(dict->CreateDeepCopy());
+  for (const base::Value& entry : parsed_value->GetListDeprecated()) {
+    CHECK(entry.is_dict());
+    actions.push_back(base::DictionaryValue::From(
+        base::Value::ToUniquePtrValue(entry.Clone())));
   }
 
   std::string error;
@@ -105,18 +102,13 @@ void WebRequestActionWithThreadsTest::SetUp() {
   std::string error;
   extension_ = LoadManifestUnchecked("permissions",
                                      "web_request_com_host_permissions.json",
-                                     Manifest::INVALID_LOCATION,
-                                     Extension::NO_FLAGS,
-                                     "ext_id_1",
-                                     &error);
+                                     mojom::ManifestLocation::kInvalidLocation,
+                                     Extension::NO_FLAGS, "ext_id_1", &error);
   ASSERT_TRUE(extension_.get()) << error;
-  extension_all_urls_ =
-      LoadManifestUnchecked("permissions",
-                            "web_request_all_host_permissions.json",
-                            Manifest::INVALID_LOCATION,
-                            Extension::NO_FLAGS,
-                            "ext_id_2",
-                            &error);
+  extension_all_urls_ = LoadManifestUnchecked(
+      "permissions", "web_request_all_host_permissions.json",
+      mojom::ManifestLocation::kInvalidLocation, Extension::NO_FLAGS,
+      "ext_id_2", &error);
   ASSERT_TRUE(extension_all_urls_.get()) << error;
   ExtensionRegistry::Get(browser_context())->AddEnabled(extension_);
   ExtensionRegistry::Get(browser_context())->AddEnabled(extension_all_urls_);
@@ -190,14 +182,14 @@ TEST(WebRequestActionTest, CreateAction) {
   EXPECT_FALSE(result.get());
 
   // Test wrong instanceType element.
-  input.SetString(keys::kInstanceTypeKey, kUnknownActionType);
+  input.SetStringKey(keys::kInstanceTypeKey, kUnknownActionType);
   error.clear();
   result = WebRequestAction::Create(NULL, NULL, input, &error, &bad_message);
   EXPECT_NE("", error);
   EXPECT_FALSE(result.get());
 
   // Test success
-  input.SetString(keys::kInstanceTypeKey, keys::kCancelRequestType);
+  input.SetStringKey(keys::kInstanceTypeKey, keys::kCancelRequestType);
   error.clear();
   result = WebRequestAction::Create(NULL, NULL, input, &error, &bad_message);
   EXPECT_EQ("", error);
@@ -223,13 +215,14 @@ TEST(WebRequestActionTest, CreateActionSet) {
   EXPECT_EQ(std::numeric_limits<int>::min(), result->GetMinimumPriority());
 
   base::DictionaryValue correct_action;
-  correct_action.SetString(keys::kInstanceTypeKey, keys::kIgnoreRulesType);
-  correct_action.SetInteger(keys::kLowerPriorityThanKey, 10);
+  correct_action.SetStringKey(keys::kInstanceTypeKey, keys::kIgnoreRulesType);
+  correct_action.SetIntKey(keys::kLowerPriorityThanKey, 10);
   base::DictionaryValue incorrect_action;
-  incorrect_action.SetString(keys::kInstanceTypeKey, kUnknownActionType);
+  incorrect_action.SetStringKey(keys::kInstanceTypeKey, kUnknownActionType);
 
   // Test success.
-  input.push_back(correct_action.CreateDeepCopy());
+  input.push_back(base::DictionaryValue::From(
+      base::Value::ToUniquePtrValue(correct_action.Clone())));
   error.clear();
   result = WebRequestActionSet::Create(NULL, NULL, input, &error, &bad_message);
   EXPECT_TRUE(error.empty()) << error;
@@ -241,7 +234,8 @@ TEST(WebRequestActionTest, CreateActionSet) {
   EXPECT_EQ(10, result->GetMinimumPriority());
 
   // Test failure.
-  input.push_back(incorrect_action.CreateDeepCopy());
+  input.push_back(base::DictionaryValue::From(
+      base::Value::ToUniquePtrValue(incorrect_action.Clone())));
   error.clear();
   result = WebRequestActionSet::Create(NULL, NULL, input, &error, &bad_message);
   EXPECT_NE("", error);
@@ -567,7 +561,7 @@ TEST(WebRequestActionTest, GetName) {
     "declarativeWebRequest.IgnoreRules",
   };
   std::unique_ptr<WebRequestActionSet> action_set(CreateSetOfActions(kActions));
-  ASSERT_EQ(base::size(kExpectedNames), action_set->actions().size());
+  ASSERT_EQ(std::size(kExpectedNames), action_set->actions().size());
   size_t index = 0;
   for (auto it = action_set->actions().cbegin();
        it != action_set->actions().cend(); ++it) {

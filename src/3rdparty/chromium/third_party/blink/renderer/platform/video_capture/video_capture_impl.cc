@@ -16,13 +16,16 @@
 #include <memory>
 #include <utility>
 
+#include <GLES2/gl2extchromium.h>
 #include "base/bind.h"
-#include "base/bind_post_task.h"
+#include "base/callback.h"
 #include "base/callback_helpers.h"
-#include "base/macros.h"
+#include "base/feature_list.h"
+#include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
-#include "base/sequenced_task_runner.h"
-#include "base/stl_util.h"
+#include "base/task/bind_post_task.h"
+#include "base/task/sequenced_task_runner.h"
+#include "base/token.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "gpu/command_buffer/client/shared_image_interface.h"
@@ -30,10 +33,14 @@
 #include "gpu/ipc/common/gpu_memory_buffer_support.h"
 #include "media/base/bind_to_current_loop.h"
 #include "media/base/limits.h"
+#include "media/base/media_switches.h"
 #include "media/base/video_frame.h"
+#include "media/capture/mojom/video_capture_buffer.mojom-blink.h"
 #include "media/capture/mojom/video_capture_types.mojom-blink.h"
+#include "media/capture/video_capture_types.h"
 #include "media/video/gpu_video_accelerator_factories.h"
 #include "mojo/public/cpp/system/platform_handle.h"
+#include "third_party/blink/public/common/browser_interface_broker_proxy.h"
 #include "third_party/blink/public/common/thread_safe_browser_interface_broker_proxy.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
@@ -60,8 +67,8 @@ struct GpuMemoryBufferResources {
   // The GpuMemoryBuffer backing the camera frame.
   std::unique_ptr<gfx::GpuMemoryBuffer> gpu_memory_buffer;
   // The SharedImage created from |gpu_memory_buffer|.
-  gpu::Mailbox mailbox;
-  // The release sync token for |mailbox|.
+  gpu::Mailbox mailboxes[media::VideoFrame::kMaxPlanes];
+  // The release sync token for |mailboxes|.
   gpu::SyncToken release_sync_token;
 };
 
@@ -88,7 +95,7 @@ struct VideoCaptureImpl::BufferContext
         InitializeFromMailbox(std::move(buffer_handle->get_mailbox_handles()));
         break;
       case VideoFrameBufferHandleType::GPU_MEMORY_BUFFER_HANDLE:
-#if !defined(OS_MAC)
+#if !BUILDFLAG(IS_MAC)
         // On macOS, an IOSurfaces passed as a GpuMemoryBufferHandle can be
         // used by both hardware and software paths.
         // https://crbug.com/1125879
@@ -99,6 +106,8 @@ struct VideoCaptureImpl::BufferContext
         break;
     }
   }
+  BufferContext(const BufferContext&) = delete;
+  BufferContext& operator=(const BufferContext&) = delete;
 
   VideoFrameBufferHandleType buffer_type() const { return buffer_type_; }
   const uint8_t* data() const { return data_; }
@@ -117,17 +126,20 @@ struct VideoCaptureImpl::BufferContext
   }
 
   gfx::GpuMemoryBufferHandle TakeGpuMemoryBufferHandle() {
-#if defined(OS_MAC)
+#if BUILDFLAG(IS_MAC) or BUILDFLAG(IS_WIN)
     // The same GpuMemoryBuffersHandles will be reused repeatedly by the
     // unaccelerated macOS path. Each of these uses will call this function.
     // Ensure that this function doesn't invalidate the GpuMemoryBufferHandle
     // on macOS for this reason.
     // https://crbug.com/1159722
+    // It will also be reused repeatedly if GPU process is unavailable in
+    // Windows zero-copy path (e.g. due to repeated GPU process crashes).
     return gmb_resources_->gpu_memory_buffer_handle.Clone();
 #else
     return std::move(gmb_resources_->gpu_memory_buffer_handle);
 #endif
   }
+
   void SetGpuMemoryBuffer(
       std::unique_ptr<gfx::GpuMemoryBuffer> gpu_memory_buffer) {
     gmb_resources_->gpu_memory_buffer = std::move(gpu_memory_buffer);
@@ -136,15 +148,19 @@ struct VideoCaptureImpl::BufferContext
     return gmb_resources_->gpu_memory_buffer.get();
   }
 
-  static void MailboxHolderReleased(scoped_refptr<BufferContext> buffer_context,
-                                    const gpu::SyncToken& release_sync_token) {
+  static void MailboxHolderReleased(
+      scoped_refptr<BufferContext> buffer_context,
+      const gpu::SyncToken& release_sync_token,
+      std::unique_ptr<gfx::GpuMemoryBuffer> gpu_memory_buffer) {
     if (!buffer_context->media_task_runner_->RunsTasksInCurrentSequence()) {
       buffer_context->media_task_runner_->PostTask(
-          FROM_HERE, base::BindOnce(&BufferContext::MailboxHolderReleased,
-                                    buffer_context, release_sync_token));
+          FROM_HERE,
+          base::BindOnce(&BufferContext::MailboxHolderReleased, buffer_context,
+                         release_sync_token, std::move(gpu_memory_buffer)));
       return;
     }
     buffer_context->gmb_resources_->release_sync_token = release_sync_token;
+    // Free |gpu_memory_buffer|.
   }
 
   static void DestroyTextureOnMediaThread(
@@ -157,6 +173,16 @@ struct VideoCaptureImpl::BufferContext
         return;
       sii->DestroySharedImage(release_sync_token, mailbox);
     }
+  }
+
+  // Public because it may be called after initialization when GPU process
+  // dies on Windows to wrap premapped GMBs.
+  void InitializeFromUnsafeShmemRegion(base::UnsafeSharedMemoryRegion region) {
+    DCHECK(region.IsValid());
+    backup_mapping_ = region.Map();
+    DCHECK(backup_mapping_.IsValid());
+    data_ = backup_mapping_.GetMemoryAsSpan<uint8_t>().data();
+    data_size_ = backup_mapping_.size();
   }
 
  private:
@@ -201,11 +227,16 @@ struct VideoCaptureImpl::BufferContext
 
   friend class base::RefCountedThreadSafe<BufferContext>;
   virtual ~BufferContext() {
-    if (gmb_resources_ && gmb_resources_->mailbox.IsSharedImage()) {
+    if (!gmb_resources_)
+      return;
+    for (size_t plane = 0; plane < media::VideoFrame::kMaxPlanes; ++plane) {
+      if (!gmb_resources_->mailboxes[plane].IsSharedImage())
+        continue;
       media_task_runner_->PostTask(
-          FROM_HERE, base::BindOnce(&BufferContext::DestroyTextureOnMediaThread,
-                                    gpu_factories_, gmb_resources_->mailbox,
-                                    gmb_resources_->release_sync_token));
+          FROM_HERE,
+          base::BindOnce(&BufferContext::DestroyTextureOnMediaThread,
+                         gpu_factories_, gmb_resources_->mailboxes[plane],
+                         gmb_resources_->release_sync_token));
     }
   }
 
@@ -216,6 +247,11 @@ struct VideoCaptureImpl::BufferContext
 
   // Only valid for |buffer_type_ == READ_ONLY_SHMEM_REGION|.
   base::ReadOnlySharedMemoryMapping read_only_mapping_;
+
+  // Only valid for |buffer_type == GPU_MEMORY_BUFFER_HANDLE|
+  // if on windows, gpu_factories are unavailable, and
+  // GMB comes premapped from the capturer.
+  base::WritableSharedMemoryMapping backup_mapping_;
 
   // These point into one of the above mappings, which hold the mapping open for
   // the lifetime of this object.
@@ -233,8 +269,6 @@ struct VideoCaptureImpl::BufferContext
   const scoped_refptr<base::SequencedTaskRunner> media_task_runner_;
 
   std::unique_ptr<GpuMemoryBufferResources> gmb_resources_;
-
-  DISALLOW_COPY_AND_ASSIGN(BufferContext);
 };
 
 VideoCaptureImpl::VideoFrameBufferPreparer::VideoFrameBufferPreparer(
@@ -335,7 +369,7 @@ bool VideoCaptureImpl::VideoFrameBufferPreparer::Initialize() {
       break;
     }
     case VideoFrameBufferHandleType::GPU_MEMORY_BUFFER_HANDLE: {
-#if defined(OS_MAC)
+#if BUILDFLAG(IS_MAC)
       // On macOS, an IOSurfaces passed as a GpuMemoryBufferHandle can be
       // used by both hardware and software paths.
       // https://crbug.com/1125879
@@ -344,6 +378,38 @@ bool VideoCaptureImpl::VideoFrameBufferPreparer::Initialize() {
         frame_ = media::VideoFrame::WrapUnacceleratedIOSurface(
             buffer_context_->TakeGpuMemoryBufferHandle(),
             gfx::Rect(frame_info_->visible_rect), frame_info_->timestamp);
+        break;
+      }
+#endif
+#if BUILDFLAG(IS_WIN)
+      // The associated shared memory region is mapped only once
+      if (frame_info_->is_premapped && !buffer_context_->data()) {
+        auto gmb_handle = buffer_context_->TakeGpuMemoryBufferHandle();
+        buffer_context_->InitializeFromUnsafeShmemRegion(
+            std::move(gmb_handle.region));
+        DCHECK(buffer_context_->data());
+      }
+      // On Windows it might happen that the Renderer process loses GPU
+      // connection, while the capturer process will continue to produce
+      // GPU backed frames.
+      if (!video_capture_impl_.gpu_factories_ ||
+          !video_capture_impl_.media_task_runner_) {
+        video_capture_impl_.RequirePremappedFrames();
+        if (!frame_info_->is_premapped || !buffer_context_->data()) {
+          // If the frame isn't premapped, can't do anything here.
+          return false;
+        }
+
+        frame_ = media::VideoFrame::WrapExternalData(
+            frame_info_->pixel_format, gfx::Size(frame_info_->coded_size),
+            gfx::Rect(frame_info_->visible_rect),
+            frame_info_->visible_rect.size(),
+            const_cast<uint8_t*>(buffer_context_->data()),
+            buffer_context_->data_size(), frame_info_->timestamp);
+
+        if (!frame_) {
+          return false;
+        }
         break;
       }
 #endif
@@ -368,19 +434,46 @@ bool VideoCaptureImpl::VideoFrameBufferPreparer::Initialize() {
                 ->CreateGpuMemoryBufferImplFromHandle(
                     buffer_context_->TakeGpuMemoryBufferHandle(),
                     gfx::Size(frame_info_->coded_size), gfx_format,
-                    gfx::BufferUsage::SCANOUT_VEA_CPU_READ, base::DoNothing());
+                    gfx::BufferUsage::SCANOUT_VEA_CPU_READ, base::DoNothing(),
+                    video_capture_impl_.gpu_factories_
+                        ->GpuMemoryBufferManager(),
+                    video_capture_impl_.pool_);
+
+        // Keep one GpuMemoryBuffer for current GpuMemoryHandle alive,
+        // so that any associated structures are kept alive while this buffer id
+        // is still used (e.g. DMA buf handles for linux/CrOS).
         buffer_context_->SetGpuMemoryBuffer(std::move(gmb));
       }
       CHECK(buffer_context_->GetGpuMemoryBuffer());
+
+      auto buffer_handle = buffer_context_->GetGpuMemoryBuffer()->CloneHandle();
+
+      // No need to propagate shared memory region further as it's already
+      // exposed by |buffer_context_->data()|.
+      buffer_handle.region = base::UnsafeSharedMemoryRegion();
+      // The buffer_context_ might still have a mapped shared memory region.
+      // However, it contains valid data only if |is_premapped| is set.
+      uint8_t* premapped_data =
+          frame_info_->is_premapped
+              ? const_cast<uint8_t*>(buffer_context_->data())
+              : nullptr;
 
       // Clone the GpuMemoryBuffer and wrap it in a VideoFrame.
       gpu_memory_buffer_ =
           video_capture_impl_.gpu_memory_buffer_support_
               ->CreateGpuMemoryBufferImplFromHandle(
-                  buffer_context_->GetGpuMemoryBuffer()->CloneHandle(),
+                  std::move(buffer_handle),
                   buffer_context_->GetGpuMemoryBuffer()->GetSize(),
                   buffer_context_->GetGpuMemoryBuffer()->GetFormat(),
-                  gfx::BufferUsage::SCANOUT_VEA_CPU_READ, base::DoNothing());
+                  gfx::BufferUsage::SCANOUT_VEA_CPU_READ, base::DoNothing(),
+                  video_capture_impl_.gpu_factories_->GpuMemoryBufferManager(),
+                  video_capture_impl_.pool_,
+                  base::span<uint8_t>(premapped_data,
+                                      buffer_context_->data_size()));
+      if (!gpu_memory_buffer_) {
+        LOG(ERROR) << "Failed to open GpuMemoryBuffer handle";
+        return false;
+      }
     }
   }
   // After initializing, either |frame_| or |gpu_memory_buffer_| has been set.
@@ -417,33 +510,87 @@ bool VideoCaptureImpl::VideoFrameBufferPreparer::BindVideoFrameOnMediaThread(
   }
   // Don't check VideoFrameOutputFormat until we ensure the context has not
   // been lost (if it is lost, then the format will be UNKNOWN).
-  DCHECK_EQ(buffer_context_->gpu_factories()->VideoFrameOutputFormat(
-                frame_info_->pixel_format),
-            media::GpuVideoAcceleratorFactories::OutputFormat::NV12_SINGLE_GMB);
+  const auto output_format =
+      buffer_context_->gpu_factories()->VideoFrameOutputFormat(
+          frame_info_->pixel_format);
+  DCHECK(
+      output_format ==
+          media::GpuVideoAcceleratorFactories::OutputFormat::NV12_SINGLE_GMB ||
+      output_format ==
+          media::GpuVideoAcceleratorFactories::OutputFormat::NV12_DUAL_GMB);
+
+  std::vector<gfx::BufferPlane> planes;
+
+  uint32_t usage =
+      gpu::SHARED_IMAGE_USAGE_GLES2 | gpu::SHARED_IMAGE_USAGE_RASTER |
+      gpu::SHARED_IMAGE_USAGE_DISPLAY | gpu::SHARED_IMAGE_USAGE_SCANOUT;
+#if BUILDFLAG(IS_MAC)
+  usage |= gpu::SHARED_IMAGE_USAGE_MACOS_VIDEO_TOOLBOX;
+#endif
+
   unsigned texture_target =
       buffer_context_->gpu_factories()->ImageTextureTarget(
           gpu_memory_buffer_->GetFormat());
-  if (should_recreate_shared_image ||
-      buffer_context_->gmb_resources()->mailbox.IsZero()) {
-    uint32_t usage =
-        gpu::SHARED_IMAGE_USAGE_GLES2 | gpu::SHARED_IMAGE_USAGE_RASTER |
-        gpu::SHARED_IMAGE_USAGE_DISPLAY | gpu::SHARED_IMAGE_USAGE_SCANOUT |
-        gpu::SHARED_IMAGE_USAGE_MACOS_VIDEO_TOOLBOX;
-    buffer_context_->gmb_resources()->mailbox = sii->CreateSharedImage(
-        gpu_memory_buffer_.get(),
-        buffer_context_->gpu_factories()->GpuMemoryBufferManager(),
-        *(frame_info_->color_space), kTopLeft_GrSurfaceOrigin,
-        kPremul_SkAlphaType, usage);
-  } else {
-    sii->UpdateSharedImage(buffer_context_->gmb_resources()->release_sync_token,
-                           buffer_context_->gmb_resources()->mailbox);
+
+#if BUILDFLAG(IS_WIN)
+  if (output_format ==
+      media::GpuVideoAcceleratorFactories::OutputFormat::NV12_DUAL_GMB) {
+    planes.push_back(gfx::BufferPlane::Y);
+    planes.push_back(gfx::BufferPlane::UV);
+
+    // Explicitly set GL_TEXTURE_EXTERNAL_OES since ImageTextureTarget() will
+    // return GL_TEXTURE_2D due to GMB factory not supporting NV12 DXGI GMBs.
+    // See https://crbug.com/1253791#c17
+    texture_target = GL_TEXTURE_EXTERNAL_OES;
+
+    if (should_recreate_shared_image ||
+        buffer_context_->gmb_resources()->mailboxes[0].IsZero()) {
+      auto plane_mailboxes = sii->CreateSharedImageVideoPlanes(
+          gpu_memory_buffer_.get(),
+          buffer_context_->gpu_factories()->GpuMemoryBufferManager(), usage);
+      DCHECK_EQ(plane_mailboxes.size(), planes.size());
+      for (size_t plane = 0; plane < planes.size(); ++plane) {
+        buffer_context_->gmb_resources()->mailboxes[plane] =
+            plane_mailboxes[plane];
+      }
+    }
   }
-  gpu::SyncToken sync_token = sii->GenVerifiedSyncToken();
-  CHECK(!buffer_context_->gmb_resources()->mailbox.IsZero());
-  CHECK(buffer_context_->gmb_resources()->mailbox.IsSharedImage());
+#endif  // BUILDFLAG(IS_WIN)
+  if (planes.empty()) {
+    if (base::FeatureList::IsEnabled(
+            media::kMultiPlaneVideoCaptureSharedImages)) {
+      planes.push_back(gfx::BufferPlane::Y);
+      planes.push_back(gfx::BufferPlane::UV);
+    } else {
+      planes.push_back(gfx::BufferPlane::DEFAULT);
+    }
+    for (size_t plane = 0; plane < planes.size(); ++plane) {
+      if (should_recreate_shared_image ||
+          buffer_context_->gmb_resources()->mailboxes[plane].IsZero()) {
+        buffer_context_->gmb_resources()->mailboxes[plane] =
+            sii->CreateSharedImage(
+                gpu_memory_buffer_.get(),
+                buffer_context_->gpu_factories()->GpuMemoryBufferManager(),
+                planes[plane], *(frame_info_->color_space),
+                kTopLeft_GrSurfaceOrigin, kPremul_SkAlphaType, usage);
+      } else {
+        sii->UpdateSharedImage(
+            buffer_context_->gmb_resources()->release_sync_token,
+            buffer_context_->gmb_resources()->mailboxes[plane]);
+      }
+    }
+  }
+
+  const gpu::SyncToken sync_token = sii->GenVerifiedSyncToken();
+
   gpu::MailboxHolder mailbox_holder_array[media::VideoFrame::kMaxPlanes];
-  mailbox_holder_array[0] = gpu::MailboxHolder(
-      buffer_context_->gmb_resources()->mailbox, sync_token, texture_target);
+  for (size_t plane = 0; plane < planes.size(); ++plane) {
+    DCHECK(!buffer_context_->gmb_resources()->mailboxes[plane].IsZero());
+    DCHECK(buffer_context_->gmb_resources()->mailboxes[plane].IsSharedImage());
+    mailbox_holder_array[plane] =
+        gpu::MailboxHolder(buffer_context_->gmb_resources()->mailboxes[plane],
+                           sync_token, texture_target);
+  }
 
   const auto gmb_size = gpu_memory_buffer_->GetSize();
   frame_ = media::VideoFrame::WrapExternalGpuMemoryBuffer(
@@ -451,6 +598,10 @@ bool VideoCaptureImpl::VideoFrameBufferPreparer::BindVideoFrameOnMediaThread(
       std::move(gpu_memory_buffer_), mailbox_holder_array,
       base::BindOnce(&BufferContext::MailboxHolderReleased, buffer_context_),
       frame_info_->timestamp);
+  if (!frame_) {
+    LOG(ERROR) << "Can't wrap GpuMemoryBuffer as VideoFrame";
+    return false;
+  }
   frame_->metadata().allow_overlay = true;
   frame_->metadata().read_lock_fences_enabled = true;
   return true;
@@ -488,24 +639,27 @@ struct VideoCaptureImpl::ClientInfo {
 
 VideoCaptureImpl::VideoCaptureImpl(
     media::VideoCaptureSessionId session_id,
-    scoped_refptr<base::SequencedTaskRunner> main_task_runner)
+    scoped_refptr<base::SequencedTaskRunner> main_task_runner,
+    BrowserInterfaceBrokerProxy* browser_interface_broker)
     : device_id_(session_id),
       session_id_(session_id),
       video_capture_host_for_testing_(nullptr),
       state_(blink::VIDEO_CAPTURE_STATE_STOPPED),
       main_task_runner_(std::move(main_task_runner)),
-      gpu_memory_buffer_support_(new gpu::GpuMemoryBufferSupport()) {
+      gpu_memory_buffer_support_(new gpu::GpuMemoryBufferSupport()),
+      pool_(base::MakeRefCounted<base::UnsafeSharedMemoryPool>()) {
   CHECK(!session_id.is_empty());
   DCHECK(main_task_runner_->RunsTasksInCurrentSequence());
   DETACH_FROM_THREAD(io_thread_checker_);
 
-  Platform::Current()->GetBrowserInterfaceBroker()->GetInterface(
+  browser_interface_broker->GetInterface(
       pending_video_capture_host_.InitWithNewPipeAndPassReceiver());
 
   gpu_factories_ = Platform::Current()->GetGpuFactories();
   if (gpu_factories_) {
     media_task_runner_ = gpu_factories_->GetTaskRunner();
   }
+  weak_this_ = weak_factory_.GetWeakPtr();
 }
 
 void VideoCaptureImpl::OnGpuContextLost(
@@ -589,6 +743,11 @@ void VideoCaptureImpl::StartCapture(
       OnLog("VideoCaptureImpl is in error state.");
       state_update_cb.Run(blink::VIDEO_CAPTURE_STATE_ERROR);
       return;
+    case VIDEO_CAPTURE_STATE_ERROR_SYSTEM_PERMISSIONS_DENIED:
+      OnLog("VideoCaptureImpl is in system permissions error state.");
+      state_update_cb.Run(
+          blink::VIDEO_CAPTURE_STATE_ERROR_SYSTEM_PERMISSIONS_DENIED);
+      return;
     case VIDEO_CAPTURE_STATE_PAUSED:
     case VIDEO_CAPTURE_STATE_RESUMED:
       // The internal |state_| is never set to PAUSED/RESUMED since
@@ -652,13 +811,36 @@ void VideoCaptureImpl::SetGpuMemoryBufferSupportForTesting(
   gpu_memory_buffer_support_ = std::move(gpu_memory_buffer_support);
 }
 
-void VideoCaptureImpl::OnStateChanged(media::mojom::VideoCaptureState state) {
-  DVLOG(1) << __func__ << " state: " << state;
+void VideoCaptureImpl::OnStateChanged(
+    media::mojom::blink::VideoCaptureResultPtr result) {
   DCHECK_CALLED_ON_VALID_THREAD(io_thread_checker_);
 
   // Stop the startup deadline timer as something has happened.
   startup_timeout_.Stop();
 
+  if (result->which() ==
+      media::mojom::blink::VideoCaptureResult::Tag::ERROR_CODE) {
+    DVLOG(1) << __func__ << " Failed with an error.";
+    if (result->get_error_code() ==
+        media::VideoCaptureError::kWinMediaFoundationSystemPermissionDenied) {
+      state_ = VIDEO_CAPTURE_STATE_ERROR_SYSTEM_PERMISSIONS_DENIED;
+      OnLog(
+          "VideoCaptureImpl changing state to "
+          "VIDEO_CAPTURE_STATE_ERROR_SYSTEM_PERMISSIONS_DENIED");
+    } else {
+      state_ = VIDEO_CAPTURE_STATE_ERROR;
+      OnLog("VideoCaptureImpl changing state to VIDEO_CAPTURE_STATE_ERROR");
+    }
+    for (const auto& client : clients_)
+      client.second.state_update_cb.Run(state_);
+    clients_.clear();
+    RecordStartOutcomeUMA(start_timedout_ ? VideoCaptureStartOutcome::kTimedout
+                                          : VideoCaptureStartOutcome::kFailed);
+    return;
+  }
+
+  media::mojom::VideoCaptureState state = result->get_state();
+  DVLOG(1) << __func__ << " state: " << state;
   switch (state) {
     case media::mojom::VideoCaptureState::STARTED:
       OnLog("VideoCaptureImpl changing state to VIDEO_CAPTURE_STATE_STARTED");
@@ -688,17 +870,6 @@ void VideoCaptureImpl::OnStateChanged(media::mojom::VideoCaptureState state) {
     case media::mojom::VideoCaptureState::RESUMED:
       for (const auto& client : clients_)
         client.second.state_update_cb.Run(blink::VIDEO_CAPTURE_STATE_RESUMED);
-      break;
-    case media::mojom::VideoCaptureState::FAILED:
-      OnLog("VideoCaptureImpl changing state to VIDEO_CAPTURE_STATE_ERROR");
-      for (const auto& client : clients_)
-        client.second.state_update_cb.Run(blink::VIDEO_CAPTURE_STATE_ERROR);
-      clients_.clear();
-      state_ = VIDEO_CAPTURE_STATE_ERROR;
-
-      RecordStartOutcomeUMA(start_timedout_
-                                ? VideoCaptureStartOutcome::kTimedout
-                                : VideoCaptureStartOutcome::kFailed);
       break;
     case media::mojom::VideoCaptureState::ENDED:
       OnLog("VideoCaptureImpl changing state to VIDEO_CAPTURE_STATE_ENDED");
@@ -736,10 +907,10 @@ void VideoCaptureImpl::OnBufferReady(
     OnFrameDropped(
         media::VideoCaptureFrameDropReason::kVideoCaptureImplNotInStartedState);
     GetVideoCaptureHost()->ReleaseBuffer(device_id_, buffer->buffer_id,
-                                         media::VideoFrameFeedback());
+                                         DefaultFeedback());
     for (auto& scaled_buffer : scaled_buffers) {
       GetVideoCaptureHost()->ReleaseBuffer(device_id_, scaled_buffer->buffer_id,
-                                           media::VideoFrameFeedback());
+                                           DefaultFeedback());
     }
     return;
   }
@@ -761,8 +932,6 @@ void VideoCaptureImpl::OnBufferReady(
 
   // If the timestamp is not prepared, we use reference time to make a rough
   // estimate. e.g. ThreadSafeCaptureOracle::DidCaptureFrame().
-  // TODO(miu): Fix upstream capturers to always set timestamp and reference
-  // time. See http://crbug/618407/ for tracking.
   if (buffer->info->timestamp.is_zero())
     buffer->info->timestamp = reference_time - first_frame_ref_time_;
 
@@ -796,6 +965,14 @@ void VideoCaptureImpl::OnBufferReady(
     scaled_frame_preparers.push_back(std::move(scaled_frame_preparer));
   }
   if (!init_successful) {
+    OnFrameDropped(media::VideoCaptureFrameDropReason::
+                       kVideoCaptureImplFailedToWrapDataAsMediaVideoFrame);
+    GetVideoCaptureHost()->ReleaseBuffer(
+        device_id_, frame_preparer->buffer_id(), DefaultFeedback());
+    for (auto& scaled_frame_preparer : scaled_frame_preparers) {
+      GetVideoCaptureHost()->ReleaseBuffer(
+          device_id_, scaled_frame_preparer->buffer_id(), DefaultFeedback());
+    }
     return;
   }
 
@@ -870,11 +1047,10 @@ void VideoCaptureImpl::OnVideoFrameReady(
                        kVideoCaptureImplFailedToWrapDataAsMediaVideoFrame);
     // Release all buffers.
     GetVideoCaptureHost()->ReleaseBuffer(
-        device_id_, frame_preparer->buffer_id(), media::VideoFrameFeedback());
+        device_id_, frame_preparer->buffer_id(), DefaultFeedback());
     for (const auto& scaled_frame_preparer : scaled_frame_preparers) {
-      GetVideoCaptureHost()->ReleaseBuffer(device_id_,
-                                           scaled_frame_preparer->buffer_id(),
-                                           media::VideoFrameFeedback());
+      GetVideoCaptureHost()->ReleaseBuffer(
+          device_id_, scaled_frame_preparer->buffer_id(), DefaultFeedback());
     }
     return;
   }
@@ -897,11 +1073,18 @@ void VideoCaptureImpl::OnVideoFrameReady(
 }
 
 void VideoCaptureImpl::OnBufferDestroyed(int32_t buffer_id) {
+  DVLOG(1) << __func__ << " buffer_id: " << buffer_id;
   DCHECK_CALLED_ON_VALID_THREAD(io_thread_checker_);
 
   const auto& cb_iter = client_buffers_.find(buffer_id);
   if (cb_iter != client_buffers_.end()) {
-    DCHECK(!cb_iter->second.get() || cb_iter->second->HasOneRef())
+    // If the BufferContext is non-null, the GpuMemoryBuffer-backed frames can
+    // have more than one reference (held by MailboxHolderReleased). Otherwise,
+    // only one reference should be held.
+    DCHECK(!cb_iter->second.get() ||
+           cb_iter->second->buffer_type() ==
+               VideoFrameBufferHandleType::GPU_MEMORY_BUFFER_HANDLE ||
+           cb_iter->second->HasOneRef())
         << "Instructed to delete buffer we are still using.";
     client_buffers_.erase(cb_iter);
   }
@@ -927,9 +1110,9 @@ void VideoCaptureImpl::OnAllClientsFinishedConsumingFrame(
   DCHECK(!buffer_context->HasOneRef());
   BufferContext* const buffer_raw_ptr = buffer_context.get();
   buffer_context = nullptr;
-  // Now there should be only one reference, from |client_buffers_|.
-  // TODO(https://crbug.com/1128853): This DCHECK is invalid for GpuMemoryBuffer
-  // backed frames, because MailboxHolderReleased may hold on to a reference to
+  // For non-GMB case, there should be only one reference, from
+  // |client_buffers_|. This DCHECK is invalid for GpuMemoryBuffer backed
+  // frames, because MailboxHolderReleased may hold on to a reference to
   // |buffer_context|.
   if (buffer_raw_ptr->buffer_type() !=
       VideoFrameBufferHandleType::GPU_MEMORY_BUFFER_HANDLE) {
@@ -939,8 +1122,11 @@ void VideoCaptureImpl::OnAllClientsFinishedConsumingFrame(
   buffer_context = nullptr;
 #endif
 
+  if (require_premapped_frames_) {
+    feedback_.require_mapped_frame = true;
+  }
   GetVideoCaptureHost()->ReleaseBuffer(device_id_, buffer_id, feedback_);
-  feedback_ = media::VideoFrameFeedback();
+  feedback_ = media::VideoCaptureFeedback();
 }
 
 void VideoCaptureImpl::StopDevice() {
@@ -998,7 +1184,8 @@ void VideoCaptureImpl::OnStartTimedout() {
 
   start_timedout_ = true;
 
-  OnStateChanged(media::mojom::VideoCaptureState::FAILED);
+  OnStateChanged(media::mojom::blink::VideoCaptureResult::NewErrorCode(
+      media::VideoCaptureError::kVideoCaptureImplTimedOutOnStart));
 }
 
 void VideoCaptureImpl::OnDeviceSupportedFormats(
@@ -1055,9 +1242,23 @@ void VideoCaptureImpl::DidFinishConsumingFrame(
 }
 
 void VideoCaptureImpl::ProcessFeedback(
-    const media::VideoFrameFeedback& feedback) {
+    const media::VideoCaptureFeedback& feedback) {
   DCHECK_CALLED_ON_VALID_THREAD(io_thread_checker_);
   feedback_ = feedback;
+}
+
+void VideoCaptureImpl::RequirePremappedFrames() {
+  require_premapped_frames_ = true;
+}
+
+media::VideoCaptureFeedback VideoCaptureImpl::DefaultFeedback() {
+  media::VideoCaptureFeedback feedback;
+  feedback.require_mapped_frame = require_premapped_frames_;
+  return feedback;
+}
+
+base::WeakPtr<VideoCaptureImpl> VideoCaptureImpl::GetWeakPtr() {
+  return weak_this_;
 }
 
 }  // namespace blink

@@ -12,7 +12,10 @@
 #include "base/strings/string_split.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/system/sys_info.h"
-#include "chrome/browser/chromeos/arc/arc_util.h"
+#include "chrome/browser/ash/arc/arc_util.h"
+#include "chrome/browser/ash/policy/core/browser_policy_connector_ash.h"
+#include "chrome/browser/browser_process.h"
+#include "chrome/browser/browser_process_platform_part.h"
 #include "chrome/browser/obsolete_system/obsolete_system.h"
 #include "chrome/browser/ui/webui/management/management_ui.h"
 #include "chrome/browser/ui/webui/settings/about_handler.h"
@@ -113,6 +116,31 @@ const std::vector<SearchConcept>& GetDiagnosticsAppSearchConcepts() {
   return *tags;
 }
 
+const std::vector<SearchConcept>& GetFirmwareUpdatesAppSearchConcepts() {
+  static const base::NoDestructor<std::vector<SearchConcept>> tags({
+      {IDS_OS_SETTINGS_TAG_ABOUT_FIRMWARE_UPDATES,
+       mojom::kAboutChromeOsDetailsSubpagePath,
+       mojom::SearchResultIcon::kChrome,
+       mojom::SearchResultDefaultRank::kMedium,
+       mojom::SearchResultType::kSetting,
+       {.setting = mojom::Setting::kFirmwareUpdates}},
+  });
+  return *tags;
+}
+
+const std::vector<SearchConcept>& GetDeviceNameSearchConcepts() {
+  static const base::NoDestructor<std::vector<SearchConcept>> tags({
+      {IDS_OS_SETTINGS_TAG_ABOUT_DEVICE_NAME,
+       mojom::kDetailedBuildInfoSubpagePath,
+       mojom::SearchResultIcon::kChrome,
+       mojom::SearchResultDefaultRank::kMedium,
+       mojom::SearchResultType::kSetting,
+       {.setting = mojom::Setting::kChangeDeviceName},
+       {IDS_OS_SETTINGS_TAG_ABOUT_DEVICE_NAME_ALT1, SearchConcept::kAltTagEnd}},
+  });
+  return *tags;
+}
+
 #if BUILDFLAG(GOOGLE_CHROME_BRANDING)
 const std::vector<SearchConcept>& GetAboutTermsOfServiceSearchConcepts() {
   static const base::NoDestructor<std::vector<SearchConcept>> tags({
@@ -156,6 +184,13 @@ std::string GetSafetyInfoLink() {
   return std::string();
 }
 
+std::string GetDeviceManager() {
+  policy::BrowserPolicyConnectorAsh* connector =
+      g_browser_process->platform_part()->browser_policy_connector_ash();
+  DCHECK(connector);
+  return connector->GetEnterpriseDomainManager();
+}
+
 }  // namespace
 
 #if BUILDFLAG(GOOGLE_CHROME_BRANDING)
@@ -183,8 +218,15 @@ AboutSection::AboutSection(Profile* profile,
   SearchTagRegistry::ScopedTagUpdater updater = registry()->StartUpdate();
   updater.AddSearchTags(GetAboutSearchConcepts());
 
-  if (base::FeatureList::IsEnabled(chromeos::features::kDiagnosticsApp)) {
-    updater.AddSearchTags(GetDiagnosticsAppSearchConcepts());
+  updater.AddSearchTags(GetDiagnosticsAppSearchConcepts());
+
+  if (base::FeatureList::IsEnabled(chromeos::features::kFirmwareUpdaterApp)) {
+    updater.AddSearchTags(GetFirmwareUpdatesAppSearchConcepts());
+  }
+
+  if (base::FeatureList::IsEnabled(
+          chromeos::features::kEnableHostnameSetting)) {
+    updater.AddSearchTags(GetDeviceNameSearchConcepts());
   }
 }
 
@@ -198,6 +240,7 @@ void AboutSection::AddLoadTimeData(content::WebUIDataSource* html_source) {
     {"aboutReportAnIssue", IDS_SETTINGS_ABOUT_PAGE_REPORT_AN_ISSUE},
 #endif
     {"aboutDiagnostics", IDS_SETTINGS_ABOUT_PAGE_DIAGNOSTICS},
+    {"aboutFirmwareUpdates", IDS_SETTINGS_ABOUT_PAGE_FIRMWARE_UPDATES},
     {"aboutRelaunch", IDS_SETTINGS_ABOUT_PAGE_RELAUNCH},
     {"aboutUpgradeCheckStarted", IDS_SETTINGS_ABOUT_UPGRADE_CHECK_STARTED},
     {"aboutUpgradeRelaunch", IDS_SETTINGS_UPGRADE_SUCCESSFUL_RELAUNCH},
@@ -246,6 +289,18 @@ void AboutSection::AddLoadTimeData(content::WebUIDataSource* html_source) {
     {"aboutDeviceNameInfo", IDS_SETTINGS_ABOUT_PAGE_DEVICE_NAME_INFO},
     {"aboutDeviceNameConstraints",
      IDS_SETTINGS_ABOUT_PAGE_DEVICE_NAME_CONSTRAINTS},
+    {"aboutDeviceNameConstraintsA11yDescription",
+     IDS_SETTINGS_ABOUT_PAGE_DEVICE_NAME_CONSTRAINTS_A11Y_DESCRIPTION},
+    {"aboutDeviceNameInputCharacterCount",
+     IDS_SETTINGS_ABOUT_PAGE_DEVICE_NAME_INPUT_COUNT},
+    {"aboutDeviceNameInputA11yLabel",
+     IDS_SETTINGS_ABOUT_PAGE_DEVICE_NAME_INPUT_A11Y_LABEL},
+    {"aboutDeviceNameDoneBtnA11yLabel",
+     IDS_SETTINGS_ABOUT_PAGE_DEVICE_NAME_DONE_BTN_A11Y_LABEL},
+    {"aboutDeviceNameEditBtnA11yLabel",
+     IDS_SETTINGS_ABOUT_PAGE_DEVICE_NAME_EDIT_BTN_A11Y_LABEL},
+    {"aboutDeviceNameEditBtnA11yDescription",
+     IDS_SETTINGS_ABOUT_PAGE_DEVICE_NAME_EDIT_BTN_A11Y_DESCRIPTION},
 
     // About page, update warning dialog.
     {"aboutUpdateWarningMessage",
@@ -259,10 +314,11 @@ void AboutSection::AddLoadTimeData(content::WebUIDataSource* html_source) {
     {"aboutChannelDev", IDS_SETTINGS_ABOUT_PAGE_CURRENT_CHANNEL_DEV},
     {"aboutChannelLabel", IDS_SETTINGS_ABOUT_PAGE_CHANNEL},
     {"aboutChannelStable", IDS_SETTINGS_ABOUT_PAGE_CURRENT_CHANNEL_STABLE},
-    {"aboutChannelLongTermStable",
-     IDS_SETTINGS_ABOUT_PAGE_CURRENT_CHANNEL_STABLE_TT},
+    {"aboutChannelLongTermSupport",
+     IDS_SETTINGS_ABOUT_PAGE_CURRENT_CHANNEL_LTS},
     {"aboutCheckForUpdates", IDS_SETTINGS_ABOUT_PAGE_CHECK_FOR_UPDATES},
-    {"aboutCurrentlyOnChannel", IDS_SETTINGS_ABOUT_PAGE_CURRENT_CHANNEL},
+    {"aboutCurrentlyOnChannelInfo",
+     IDS_SETTINGS_ABOUT_PAGE_CURRENT_CHANNEL_INFO},
     {"aboutDetailedBuildInfo", IDS_SETTINGS_ABOUT_PAGE_DETAILED_BUILD_INFO},
     {version_ui::kApplicationLabel, IDS_PRODUCT_NAME},
     {version_ui::kPlatform, IDS_PLATFORM_LABEL},
@@ -279,6 +335,11 @@ void AboutSection::AddLoadTimeData(content::WebUIDataSource* html_source) {
     {"aboutOsProductTitle", IDS_PRODUCT_OS_NAME},
     {"aboutReleaseNotesOffline", IDS_SETTINGS_ABOUT_PAGE_RELEASE_NOTES},
     {"aboutShowReleaseNotes", IDS_SETTINGS_ABOUT_PAGE_SHOW_RELEASE_NOTES},
+    {"aboutManagedEndOfLifeSubtitle",
+     IDS_SETTINGS_ABOUT_PAGE_MANAGED_END_OF_LIFE_SUBTITLE},
+    {"aboutUpgradeTryAgain", IDS_SETTINGS_UPGRADE_TRY_AGAIN},
+    {"aboutUpgradeDownloadError", IDS_SETTINGS_UPGRADE_DOWNLOAD_ERROR},
+    {"aboutUpgradeAdministrator", IDS_SETTINGS_UPGRADE_ADMINISTRATOR_ERROR},
   };
   html_source->AddLocalizedStrings(kLocalizedStrings);
 
@@ -289,6 +350,8 @@ void AboutSection::AddLoadTimeData(content::WebUIDataSource* html_source) {
       ui::SubstituteChromeOSDeviceType(IDS_SETTINGS_UPGRADE_UP_TO_DATE));
   html_source->AddString("managementPage",
                          ManagementUI::GetManagementPageSubtitle(profile()));
+
+  html_source->AddString("deviceManager", GetDeviceManager());
 
   if (user_manager::UserManager::IsInitialized()) {
     user_manager::UserManager* user_manager = user_manager::UserManager::Get();
@@ -306,7 +369,9 @@ void AboutSection::AddLoadTimeData(content::WebUIDataSource* html_source) {
           l10n_util::GetStringUTF16(version_info::IsOfficialBuild()
                                         ? IDS_VERSION_UI_OFFICIAL
                                         : IDS_VERSION_UI_UNOFFICIAL),
-          base::UTF8ToUTF16(chrome::GetChannelName()),
+          // Extended stable channel is not supported on Chrome OS Ash.
+          base::UTF8ToUTF16(
+              chrome::GetChannelName(chrome::WithExtendedStable(false))),
           l10n_util::GetStringUTF16(VersionUI::VersionProcessorVariation())));
   html_source->AddString(
       "aboutProductCopyright",
@@ -314,16 +379,16 @@ void AboutSection::AddLoadTimeData(content::WebUIDataSource* html_source) {
           l10n_util::GetStringUTF16(IDS_ABOUT_VERSION_COPYRIGHT),
           base::Time::Now()));
 
-  base::string16 license = l10n_util::GetStringFUTF16(
+  std::u16string license = l10n_util::GetStringFUTF16(
       IDS_VERSION_UI_LICENSE, base::ASCIIToUTF16(chrome::kChromiumProjectURL),
       base::ASCIIToUTF16(chrome::kChromeUICreditsURL));
   html_source->AddString("aboutProductLicense", license);
 
-  base::string16 os_license = l10n_util::GetStringFUTF16(
+  std::u16string os_license = l10n_util::GetStringFUTF16(
       IDS_ABOUT_CROS_VERSION_LICENSE,
       base::ASCIIToUTF16(chrome::kChromeUIOSCreditsURL));
   html_source->AddString("aboutProductOsLicense", os_license);
-  base::string16 os_with_linux_license = l10n_util::GetStringFUTF16(
+  std::u16string os_with_linux_license = l10n_util::GetStringFUTF16(
       IDS_ABOUT_CROS_WITH_LINUX_VERSION_LICENSE,
       base::ASCIIToUTF16(chrome::kChromeUIOSCreditsURL),
       base::ASCIIToUTF16(chrome::kChromeUICrostiniCreditsURL));
@@ -349,8 +414,8 @@ void AboutSection::AddLoadTimeData(content::WebUIDataSource* html_source) {
   html_source->AddBoolean("shouldShowSafetyInfo", !safetyInfoLink.empty());
 
   html_source->AddBoolean(
-      "diagnosticsAppEnabled",
-      base::FeatureList::IsEnabled(chromeos::features::kDiagnosticsApp));
+      "isFirmwareUpdaterAppEnabled",
+      base::FeatureList::IsEnabled(chromeos::features::kFirmwareUpdaterApp));
 
 #if BUILDFLAG(GOOGLE_CHROME_BRANDING)
   html_source->AddString("aboutTermsURL", chrome::kChromeUITermsURL);
@@ -367,7 +432,8 @@ void AboutSection::AddLoadTimeData(content::WebUIDataSource* html_source) {
 void AboutSection::AddHandlers(content::WebUI* web_ui) {
   web_ui->AddMessageHandler(
       std::make_unique<::settings::AboutHandler>(profile()));
-  web_ui->AddMessageHandler(std::make_unique<DeviceNameHandler>());
+  if (features::IsHostnameSettingEnabled())
+    web_ui->AddMessageHandler(std::make_unique<DeviceNameHandler>());
 }
 
 int AboutSection::GetSectionNameMessageId() const {
@@ -400,7 +466,8 @@ void AboutSection::RegisterHierarchy(HierarchyGenerator* generator) const {
   static constexpr mojom::Setting kAboutChromeOsDetailsSettings[] = {
       mojom::Setting::kCheckForOsUpdate,    mojom::Setting::kSeeWhatsNew,
       mojom::Setting::kGetHelpWithChromeOs, mojom::Setting::kReportAnIssue,
-      mojom::Setting::kTermsOfService,      mojom::Setting::kDiagnostics};
+      mojom::Setting::kTermsOfService,      mojom::Setting::kDiagnostics,
+      mojom::Setting::kFirmwareUpdates};
   RegisterNestedSettingBulk(mojom::Subpage::kAboutChromeOsDetails,
                             kAboutChromeOsDetailsSettings, generator);
 
@@ -411,7 +478,7 @@ void AboutSection::RegisterHierarchy(HierarchyGenerator* generator) const {
       mojom::SearchResultIcon::kChrome, mojom::SearchResultDefaultRank::kMedium,
       mojom::kDetailedBuildInfoSubpagePath);
   static constexpr mojom::Setting kDetailedBuildInfoSettings[] = {
-      mojom::Setting::kChangeChromeChannel,
+      mojom::Setting::kChangeChromeChannel, mojom::Setting::kChangeDeviceName,
       mojom::Setting::kCopyDetailedBuildInfo};
   RegisterNestedSettingBulk(mojom::Subpage::kDetailedBuildInfo,
                             kDetailedBuildInfoSettings, generator);

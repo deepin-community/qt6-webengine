@@ -8,6 +8,7 @@
 #include "base/files/file_path_watcher.h"
 
 #include "base/check.h"
+#include "base/files/file_path.h"
 #include "build/build_config.h"
 
 namespace base {
@@ -19,8 +20,8 @@ FilePathWatcher::~FilePathWatcher() {
 
 // static
 bool FilePathWatcher::RecursiveWatchAvailable() {
-#if defined(OS_MAC) || defined(OS_WIN) || defined(OS_LINUX) || \
-    defined(OS_CHROMEOS) || defined(OS_ANDROID) || defined(OS_AIX)
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX) || \
+    BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_AIX)
   return true;
 #else
   // FSEvents isn't available on iOS.

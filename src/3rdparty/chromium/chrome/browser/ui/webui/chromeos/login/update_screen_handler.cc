@@ -9,8 +9,8 @@
 #include "ash/constants/ash_features.h"
 #include "base/values.h"
 #include "build/branding_buildflags.h"
+#include "chrome/browser/ash/login/oobe_screen.h"
 #include "chrome/browser/ash/login/screens/update_screen.h"
-#include "chrome/browser/chromeos/login/oobe_screen.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/login/localized_values_builder.h"
@@ -25,8 +25,13 @@ namespace {
 constexpr bool strings_equal(char const* a, char const* b) {
   return *a == *b && (*a == '\0' || strings_equal(a + 1, b + 1));
 }
-static_assert(strings_equal(UpdateView::kScreenId.name, "oobe-update"),
-              "The update screen id must never change");
+static_assert(
+    strings_equal(UpdateView::kScreenId.name,
+                  "oobe"
+                  // break with comment is used here so the verification value
+                  // won't get automatically renamed by mass renaming tools
+                  "-update"),
+    "The update screen id must never change");
 
 // These values must be kept in sync with UIState in JS code.
 constexpr const char kCheckingForUpdate[] = "checking";
@@ -37,9 +42,8 @@ constexpr const char kCellularPermission[] = "cellular";
 
 }  // namespace
 
-UpdateScreenHandler::UpdateScreenHandler(JSCallsContainer* js_calls_container)
-    : BaseScreenHandler(kScreenId, js_calls_container) {
-  set_user_acted_method_path("login.UpdateScreen.userActed");
+UpdateScreenHandler::UpdateScreenHandler() : BaseScreenHandler(kScreenId) {
+  set_user_acted_method_path_deprecated("login.UpdateScreen.userActed");
 }
 
 UpdateScreenHandler::~UpdateScreenHandler() {
@@ -48,23 +52,23 @@ UpdateScreenHandler::~UpdateScreenHandler() {
 }
 
 void UpdateScreenHandler::Show() {
-  if (!page_is_ready()) {
+  if (!IsJavascriptAllowed()) {
     show_on_init_ = true;
     return;
   }
-  ShowScreen(kScreenId);
+  ShowInWebUI();
 }
 
 void UpdateScreenHandler::Hide() {}
 
 void UpdateScreenHandler::Bind(UpdateScreen* screen) {
   screen_ = screen;
-  BaseScreenHandler::SetBaseScreen(screen_);
+  BaseScreenHandler::SetBaseScreenDeprecated(screen_);
 }
 
 void UpdateScreenHandler::Unbind() {
   screen_ = nullptr;
-  BaseScreenHandler::SetBaseScreen(nullptr);
+  BaseScreenHandler::SetBaseScreenDeprecated(nullptr);
 }
 
 void UpdateScreenHandler::SetUpdateState(UpdateView::UIState value) {
@@ -93,8 +97,8 @@ void UpdateScreenHandler::SetUpdateState(UpdateView::UIState value) {
 
 void UpdateScreenHandler::SetUpdateStatus(
     int percent,
-    const base::string16& percent_message,
-    const base::string16& timeleft_message) {
+    const std::u16string& percent_message,
+    const std::u16string& timeleft_message) {
   CallJS("login.UpdateScreen.setUpdateStatus", percent, percent_message,
          timeleft_message);
 }
@@ -150,7 +154,7 @@ void UpdateScreenHandler::DeclareLocalizedValues(
                IDS_UPDATE_OVER_CELLULAR_PROMPT_MESSAGE);
 }
 
-void UpdateScreenHandler::Initialize() {
+void UpdateScreenHandler::InitializeDeprecated() {
   if (show_on_init_) {
     Show();
     show_on_init_ = false;

@@ -5,7 +5,6 @@
 #ifndef CONTENT_BROWSER_DEVTOOLS_PROTOCOL_EMULATION_HANDLER_H_
 #define CONTENT_BROWSER_DEVTOOLS_PROTOCOL_EMULATION_HANDLER_H_
 
-#include "base/macros.h"
 #include "content/browser/devtools/protocol/devtools_domain_handler.h"
 #include "content/browser/devtools/protocol/emulation.h"
 #include "third_party/blink/public/common/user_agent/user_agent_metadata.h"
@@ -28,6 +27,10 @@ class EmulationHandler : public DevToolsDomainHandler,
                          public Emulation::Backend {
  public:
   EmulationHandler();
+
+  EmulationHandler(const EmulationHandler&) = delete;
+  EmulationHandler& operator=(const EmulationHandler&) = delete;
+
   ~EmulationHandler() override;
 
   static std::vector<EmulationHandler*> ForAgentHost(
@@ -84,9 +87,13 @@ class EmulationHandler : public DevToolsDomainHandler,
 
   bool device_emulation_enabled() { return device_emulation_enabled_; }
 
-  void ApplyOverrides(net::HttpRequestHeaders* headers);
+  // Applies the network request header overrides on `headers`.  If the
+  // User-Agent header was overridden, `user_agent_overridden` is set to true;
+  // otherwise, it's set to false.
+  void ApplyOverrides(net::HttpRequestHeaders* headers,
+                      bool* user_agent_overridden);
   bool ApplyUserAgentMetadataOverrides(
-      base::Optional<blink::UserAgentMetadata>* override_out);
+      absl::optional<blink::UserAgentMetadata>* override_out);
 
  private:
   WebContentsImpl* GetWebContents();
@@ -105,12 +112,12 @@ class EmulationHandler : public DevToolsDomainHandler,
   // |user_agent_metadata_| is meaningful if |user_agent_| is non-empty.
   // In that case nullopt will disable sending of client hints, and a
   // non-nullopt value will be sent.
-  base::Optional<blink::UserAgentMetadata> user_agent_metadata_;
+  absl::optional<blink::UserAgentMetadata> user_agent_metadata_;
   std::string accept_language_;
 
   RenderFrameHostImpl* host_;
 
-  DISALLOW_COPY_AND_ASSIGN(EmulationHandler);
+  base::ScopedClosureRunner capture_handle_;
 };
 
 }  // namespace protocol

@@ -18,8 +18,7 @@
 
 #include <string>
 
-#include "base/macros.h"
-#include "base/sequenced_task_runner.h"
+#include "base/task/sequenced_task_runner.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/net_export.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
@@ -33,6 +32,9 @@ class URLFetcherFactory;
 
 class NET_EXPORT_PRIVATE URLFetcherImpl : public URLFetcher {
  public:
+  URLFetcherImpl(const URLFetcherImpl&) = delete;
+  URLFetcherImpl& operator=(const URLFetcherImpl&) = delete;
+
   ~URLFetcherImpl() override;
 
   // URLFetcher implementation:
@@ -60,7 +62,7 @@ class NET_EXPORT_PRIVATE URLFetcherImpl : public URLFetcher {
                              const std::string& value) override;
   void SetRequestContext(
       URLRequestContextGetter* request_context_getter) override;
-  void SetInitiator(const base::Optional<url::Origin>& initiator) override;
+  void SetInitiator(const absl::optional<url::Origin>& initiator) override;
   void SetURLRequestUserData(
       const void* key,
       const CreateDataCallback& create_data_callback) override;
@@ -131,8 +133,6 @@ class NET_EXPORT_PRIVATE URLFetcherImpl : public URLFetcher {
   static int GetNumFetcherCores();
 
   const scoped_refptr<URLFetcherCore> core_;
-
-  DISALLOW_COPY_AND_ASSIGN(URLFetcherImpl);
 };
 
 }  // namespace net

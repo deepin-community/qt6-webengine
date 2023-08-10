@@ -5,6 +5,7 @@
 #ifndef CONTENT_BROWSER_HANDWRITING_HANDWRITING_RECOGNITION_SERVICE_IMPL_H_
 #define CONTENT_BROWSER_HANDWRITING_HANDWRITING_RECOGNITION_SERVICE_IMPL_H_
 
+#include "content/common/content_export.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "third_party/blink/public/mojom/handwriting/handwriting.mojom.h"
@@ -17,7 +18,7 @@ namespace content {
 // This class does not support any handwriting
 // functionality. But it has the ability bootstrap and hold the mojo connection
 // to renderer, which can be reused by the derived class.
-class HandwritingRecognitionServiceImpl
+class CONTENT_EXPORT HandwritingRecognitionServiceImpl
     : public handwriting::mojom::HandwritingRecognitionService {
  public:
   ~HandwritingRecognitionServiceImpl() override;
@@ -40,10 +41,11 @@ class HandwritingRecognitionServiceImpl
   void CreateHandwritingRecognizer(
       handwriting::mojom::HandwritingModelConstraintPtr model_constraint,
       CreateHandwritingRecognizerCallback callback) override;
-  // Always returns `kNotSupported`.
-  void QueryHandwritingRecognizerSupport(
-      handwriting::mojom::HandwritingFeatureQueryPtr query,
-      QueryHandwritingRecognizerSupportCallback callback) override;
+
+  // Always return `nullptr`.
+  void QueryHandwritingRecognizer(
+      handwriting::mojom::HandwritingModelConstraintPtr model_constraint,
+      QueryHandwritingRecognizerCallback callback) override;
 };
 
 }  // namespace content

@@ -5,18 +5,15 @@
 #ifndef UI_GTK_PRINTING_PRINT_DIALOG_GTK_H_
 #define UI_GTK_PRINTING_PRINT_DIALOG_GTK_H_
 
-#include <gtk/gtk.h>
-#include <gtk/gtkunixprint.h>
 #include <memory>
 
-#include "base/compiler_specific.h"
 #include "base/files/file_path.h"
-#include "base/macros.h"
 #include "base/memory/ref_counted_delete_on_sequence.h"
 #include "printing/print_dialog_gtk_interface.h"
 #include "printing/printing_context_linux.h"
 #include "ui/aura/window_observer.h"
 #include "ui/base/glib/glib_signal.h"
+#include "ui/gtk/gtk_compat.h"
 
 namespace printing {
 class MetafilePlayer;
@@ -34,6 +31,9 @@ class PrintDialogGtk : public printing::PrintDialogGtkInterface,
   static printing::PrintDialogGtkInterface* CreatePrintDialog(
       PrintingContextLinux* context);
 
+  PrintDialogGtk(const PrintDialogGtk&) = delete;
+  PrintDialogGtk& operator=(const PrintDialogGtk&) = delete;
+
   // printing::PrintDialogGtkInterface implementation.
   void UseDefaultSettings() override;
   void UpdateSettings(
@@ -43,7 +43,7 @@ class PrintDialogGtk : public printing::PrintDialogGtkInterface,
       bool has_selection,
       PrintingContextLinux::PrintSettingsCallback callback) override;
   void PrintDocument(const printing::MetafilePlayer& metafile,
-                     const base::string16& document_name) override;
+                     const std::u16string& document_name) override;
   void AddRefToDialog() override;
   void ReleaseDialog() override;
 
@@ -61,7 +61,7 @@ class PrintDialogGtk : public printing::PrintDialogGtkInterface,
   CHROMEG_CALLBACK_1(PrintDialogGtk, void, OnResponse, GtkWidget*, int);
 
   // Prints document named |document_name|.
-  void SendDocumentToPrinter(const base::string16& document_name);
+  void SendDocumentToPrinter(const std::u16string& document_name);
 
   // Helper function for initializing |context_|'s PrintSettings with a given
   // |settings|.
@@ -82,8 +82,6 @@ class PrintDialogGtk : public printing::PrintDialogGtkInterface,
   GtkPrinter* printer_ = nullptr;
 
   base::FilePath path_to_pdf_;
-
-  DISALLOW_COPY_AND_ASSIGN(PrintDialogGtk);
 };
 
 #endif  // UI_GTK_PRINTING_PRINT_DIALOG_GTK_H_

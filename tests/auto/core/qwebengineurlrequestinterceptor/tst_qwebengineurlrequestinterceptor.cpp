@@ -1,30 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2017 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtWebEngine module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:GPL-EXCEPT$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 as published by the Free Software
-** Foundation with exceptions as appearing in the file LICENSE.GPL3-EXCEPT
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2017 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
 #include <util.h>
 #include <QtTest/QtTest>
@@ -231,7 +206,7 @@ void tst_QWebEngineUrlRequestInterceptor::interceptRequest()
     QSignalSpy loadSpy(&page, SIGNAL(loadFinished(bool)));
 
     page.load(QUrl("qrc:///resources/index.html"));
-    QTRY_COMPARE(loadSpy.count(), 1);
+    QTRY_COMPARE_WITH_TIMEOUT(loadSpy.count(), 1, 20000);
     QVariant success = loadSpy.takeFirst().takeFirst();
     QVERIFY(success.toBool());
     loadSpy.clear();
@@ -247,7 +222,7 @@ void tst_QWebEngineUrlRequestInterceptor::interceptRequest()
 
     interceptor.shouldRedirect = true;
     page.load(QUrl("qrc:///resources/__placeholder__"));
-    QTRY_COMPARE(loadSpy.count(), 1);
+    QTRY_COMPARE_WITH_TIMEOUT(loadSpy.count(), 1, 20000);
     success = loadSpy.takeFirst().takeFirst();
     // The redirection for __placeholder__ should succeed.
     QVERIFY(success.toBool());
@@ -258,7 +233,7 @@ void tst_QWebEngineUrlRequestInterceptor::interceptRequest()
     TestRequestInterceptor observer(/* intercept */ false);
     profile.setUrlRequestInterceptor(&observer);
     page.load(QUrl("qrc:///resources/__placeholder__"));
-    QTRY_COMPARE(loadSpy.count(), 1);
+    QTRY_COMPARE_WITH_TIMEOUT(loadSpy.count(), 1, 20000);
     success = loadSpy.takeFirst().takeFirst();
     // Since we do not intercept, loading an invalid path should not succeed.
     QVERIFY(!success.toBool());
@@ -331,7 +306,7 @@ void tst_QWebEngineUrlRequestInterceptor::requestedUrl()
 
     page.setUrl(QUrl("qrc:///resources/__placeholder__"));
     QVERIFY(spy.wait());
-    QTRY_COMPARE(spy.count(), 1);
+    QTRY_COMPARE_WITH_TIMEOUT(spy.count(), 1, 20000);
     QVERIFY(interceptor.requestInfos.count() >= 1);
     QCOMPARE(interceptor.requestInfos.at(0).requestUrl, QUrl("qrc:///resources/content.html"));
     QCOMPARE(page.requestedUrl(), QUrl("qrc:///resources/__placeholder__"));
@@ -340,14 +315,14 @@ void tst_QWebEngineUrlRequestInterceptor::requestedUrl()
     interceptor.shouldRedirect = false;
 
     page.setUrl(QUrl("qrc:/non-existent.html"));
-    QTRY_COMPARE(spy.count(), 2);
+    QTRY_COMPARE_WITH_TIMEOUT(spy.count(), 2, 20000);
     QVERIFY(interceptor.requestInfos.count() >= 3);
     QCOMPARE(interceptor.requestInfos.at(2).requestUrl, QUrl("qrc:/non-existent.html"));
     QCOMPARE(page.requestedUrl(), QUrl("qrc:///resources/__placeholder__"));
     QCOMPARE(page.url(), QUrl("qrc:///resources/content.html"));
 
     page.setUrl(QUrl("http://abcdef.abcdef"));
-    QTRY_COMPARE_WITH_TIMEOUT(spy.count(), 3, 15000);
+    QTRY_COMPARE_WITH_TIMEOUT(spy.count(), 3, 20000);
     QVERIFY(interceptor.requestInfos.count() >= 4);
     QCOMPARE(interceptor.requestInfos.at(3).requestUrl, QUrl("http://abcdef.abcdef/"));
     QCOMPARE(page.requestedUrl(), QUrl("qrc:///resources/__placeholder__"));
@@ -444,7 +419,7 @@ void tst_QWebEngineUrlRequestInterceptor::firstPartyUrlNestedIframes()
     QWebEnginePage page(&profile);
     QSignalSpy loadSpy(&page, SIGNAL(loadFinished(bool)));
     page.setUrl(requestUrl);
-    QTRY_COMPARE(loadSpy.count(), 1);
+    QTRY_COMPARE_WITH_TIMEOUT(loadSpy.count(), 1, 20000);
 
     QVERIFY(interceptor.requestInfos.count() >= 1);
     RequestInfo info = interceptor.requestInfos.at(0);
@@ -534,7 +509,7 @@ void tst_QWebEngineUrlRequestInterceptor::requestInterceptorByResourceType()
     QWebEnginePage page(&profile);
     QSignalSpy loadSpy(&page, SIGNAL(loadFinished(bool)));
     page.setUrl(firstPartyUrl);
-    QTRY_COMPARE(loadSpy.count(), 1);
+    QTRY_COMPARE_WITH_TIMEOUT(loadSpy.count(), 1, 20000);
 
     QTRY_COMPARE(interceptor.getUrlRequestForType(static_cast<QWebEngineUrlRequestInfo::ResourceType>(resourceType)).count(), 1);
     QList<RequestInfo> infos = interceptor.getUrlRequestForType(static_cast<QWebEngineUrlRequestInfo::ResourceType>(resourceType));
@@ -726,8 +701,7 @@ void tst_QWebEngineUrlRequestInterceptor::jsServiceWorker()
     HttpServer server;
     server.setResourceDirs({ QDir(QT_TESTCASE_SOURCEDIR).canonicalPath() + "/resources" });
     QVERIFY(server.start());
-
-    QWebEngineProfile profile(QStringLiteral("Test"));
+    QWebEngineProfile profile;
     std::unique_ptr<ConsolePage> page;
     page.reset(new ConsolePage(&profile));
     TestRequestInterceptor interceptor(/* intercept */ false);
@@ -735,10 +709,17 @@ void tst_QWebEngineUrlRequestInterceptor::jsServiceWorker()
     QVERIFY(loadSync(page.get(), server.url("/sw.html")));
 
     // We expect only one message here, because logging of services workers is not exposed in our API.
-    QTRY_COMPARE(page->messages.count(), 1);
-    QCOMPARE(page->levels.at(0), QWebEnginePage::InfoMessageLevel);
+    // Note this is very fragile setup , you need fresh profile otherwise install event might not get triggered
+    // and this in turn can lead to incorrect intercepted requests, therefore we should keep this off the record.
+    QTRY_COMPARE_WITH_TIMEOUT(page->messages.count(), 5, 20000);
 
-    QUrl firstPartyUrl = QUrl(server.url().toString() + "sw.js");
+    QCOMPARE(page->levels.at(0), QWebEnginePage::InfoMessageLevel);
+    QCOMPARE(page->messages.at(0),QLatin1String("Service worker installing"));
+    QCOMPARE(page->messages.at(1),QLatin1String("Service worker installed"));
+    QCOMPARE(page->messages.at(2),QLatin1String("Service worker activating"));
+    QCOMPARE(page->messages.at(3),QLatin1String("Service worker activated"));
+    QCOMPARE(page->messages.at(4),QLatin1String("Service worker done"));
+    QUrl firstPartyUrl = QUrl(server.url().toString() + "sw.html");
     QList<RequestInfo> infos;
     // Service Worker
     QTRY_VERIFY(interceptor.hasUrlRequestForType(QWebEngineUrlRequestInfo::ResourceTypeServiceWorker));
@@ -804,7 +785,7 @@ void tst_QWebEngineUrlRequestInterceptor::replaceInterceptor()
     });
 
     page.setUrl(server.url("/favicon.html"));
-    QTRY_COMPARE(spy.count(), 2);
+    QTRY_COMPARE_WITH_TIMEOUT(spy.count(), 2, 20000);
     QTRY_VERIFY(fetchFinished);
 
     QString s; QDebug d(&s);
@@ -848,7 +829,7 @@ void tst_QWebEngineUrlRequestInterceptor::replaceOnIntercept()
     };
 
     page.setUrl(server.url("/favicon.html"));
-    QTRY_COMPARE(spy.count(), 1);
+    QTRY_COMPARE_WITH_TIMEOUT(spy.count(), 1, 20000);
     QTRY_COMPARE(profileInterceptor.requestInfos.size(), 2);
 
     // if interceptor for page was replaced on intercept call in profile then, since request first

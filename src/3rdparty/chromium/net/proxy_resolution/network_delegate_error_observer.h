@@ -8,7 +8,6 @@
 #include <memory>
 
 #include "base/compiler_specific.h"
-#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "net/base/net_export.h"
 #include "net/proxy_resolution/proxy_resolver_error_observer.h"
@@ -28,6 +27,11 @@ class NET_EXPORT_PRIVATE NetworkDelegateErrorObserver
  public:
   NetworkDelegateErrorObserver(NetworkDelegate* network_delegate,
                                base::SingleThreadTaskRunner* origin_runner);
+
+  NetworkDelegateErrorObserver(const NetworkDelegateErrorObserver&) = delete;
+  NetworkDelegateErrorObserver& operator=(const NetworkDelegateErrorObserver&) =
+      delete;
+
   ~NetworkDelegateErrorObserver() override;
 
   static std::unique_ptr<ProxyResolverErrorObserver> Create(
@@ -35,14 +39,12 @@ class NET_EXPORT_PRIVATE NetworkDelegateErrorObserver
       const scoped_refptr<base::SingleThreadTaskRunner>& origin_runner);
 
   // ProxyResolverErrorObserver implementation.
-  void OnPACScriptError(int line_number, const base::string16& error) override;
+  void OnPACScriptError(int line_number, const std::u16string& error) override;
 
  private:
   class Core;
 
   scoped_refptr<Core> core_;
-
-  DISALLOW_COPY_AND_ASSIGN(NetworkDelegateErrorObserver);
 };
 
 }  // namespace net

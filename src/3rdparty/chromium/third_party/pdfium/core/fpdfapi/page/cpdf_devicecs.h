@@ -22,8 +22,8 @@ class CPDF_DeviceCS final : public CPDF_ColorSpace {
               float* R,
               float* G,
               float* B) const override;
-  void TranslateImageLine(uint8_t* pDestBuf,
-                          const uint8_t* pSrcBuf,
+  void TranslateImageLine(pdfium::span<uint8_t> dest_span,
+                          pdfium::span<const uint8_t> src_span,
                           int pixels,
                           int image_width,
                           int image_height,
@@ -33,7 +33,7 @@ class CPDF_DeviceCS final : public CPDF_ColorSpace {
                   std::set<const CPDF_Object*>* pVisited) override;
 
  private:
-  explicit CPDF_DeviceCS(int family);
+  explicit CPDF_DeviceCS(Family family);
 };
 
 #endif  // CORE_FPDFAPI_PAGE_CPDF_DEVICECS_H_

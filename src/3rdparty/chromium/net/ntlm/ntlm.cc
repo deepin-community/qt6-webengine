@@ -8,9 +8,7 @@
 
 #include "base/check_op.h"
 #include "base/containers/span.h"
-#include "base/metrics/histogram_macros.h"
 #include "base/notreached.h"
-#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "net/base/net_string_util.h"
 #include "net/ntlm/ntlm_buffer_writer.h"
@@ -108,7 +106,7 @@ void UpdateTargetInfoAvPairs(bool is_mic_enabled,
                            std::move(channel_bindings_hash));
 
     // Convert the SPN to little endian unicode.
-    base::string16 spn16 = base::UTF8ToUTF16(spn);
+    std::u16string spn16 = base::UTF8ToUTF16(spn);
     NtlmBufferWriter spn_writer(spn16.length() * 2);
     bool spn_writer_result =
         spn_writer.WriteUtf16String(spn16) && spn_writer.IsEndOfBuffer();
@@ -173,7 +171,7 @@ void Create3DesKeysFromNtlmHash(
   memset(keys.data() + 19, 0, 5);
 }
 
-void GenerateNtlmHashV1(const base::string16& password,
+void GenerateNtlmHashV1(const std::u16string& password,
                         base::span<uint8_t, kNtlmHashLen> hash) {
   size_t length = password.length() * 2;
   NtlmBufferWriter writer(length);
@@ -218,7 +216,7 @@ void GenerateResponseDesl(base::span<const uint8_t, kNtlmHashLen> hash,
 }
 
 void GenerateNtlmResponseV1(
-    const base::string16& password,
+    const std::u16string& password,
     base::span<const uint8_t, kChallengeLen> server_challenge,
     base::span<uint8_t, kResponseLenV1> ntlm_response) {
   uint8_t ntlm_hash[kNtlmHashLen];
@@ -227,7 +225,7 @@ void GenerateNtlmResponseV1(
 }
 
 void GenerateResponsesV1(
-    const base::string16& password,
+    const std::u16string& password,
     base::span<const uint8_t, kChallengeLen> server_challenge,
     base::span<uint8_t, kResponseLenV1> lm_response,
     base::span<uint8_t, kResponseLenV1> ntlm_response) {
@@ -259,7 +257,7 @@ void GenerateSessionHashV1WithSessionSecurity(
 }
 
 void GenerateNtlmResponseV1WithSessionSecurity(
-    const base::string16& password,
+    const std::u16string& password,
     base::span<const uint8_t, kChallengeLen> server_challenge,
     base::span<const uint8_t, kChallengeLen> client_challenge,
     base::span<uint8_t, kResponseLenV1> ntlm_response) {
@@ -278,7 +276,7 @@ void GenerateNtlmResponseV1WithSessionSecurity(
 }
 
 void GenerateResponsesV1WithSessionSecurity(
-    const base::string16& password,
+    const std::u16string& password,
     base::span<const uint8_t, kChallengeLen> server_challenge,
     base::span<const uint8_t, kChallengeLen> client_challenge,
     base::span<uint8_t, kResponseLenV1> lm_response,
@@ -288,24 +286,20 @@ void GenerateResponsesV1WithSessionSecurity(
                                             client_challenge, ntlm_response);
 }
 
-void GenerateNtlmHashV2(const base::string16& domain,
-                        const base::string16& username,
-                        const base::string16& password,
+void GenerateNtlmHashV2(const std::u16string& domain,
+                        const std::u16string& username,
+                        const std::u16string& password,
                         base::span<uint8_t, kNtlmHashLen> v2_hash) {
   // NOTE: According to [MS-NLMP] Section 3.3.2 only the username and not the
   // domain is uppercased.
-  base::string16 upper_username;
-  bool result = ToUpper(username, &upper_username);
-  DCHECK(result);
 
   // TODO(https://crbug.com/1051924): Using a locale-sensitive upper casing
-  // algorithm is problematic. A more predictable approach is to only uppercase
-  // ASCII characters, so the hash does not change depending on the user's
-  // locale. Histogram how often the locale-sensitive ToUpper() gives a result
-  // that differs from ASCII uppercasing, to see how often this ambiguity arises
-  // in practice.
-  UMA_HISTOGRAM_BOOLEAN("Net.Ntlm.HashDependsOnLocale",
-                        upper_username != base::ToUpperASCII(username));
+  // algorithm is problematic. A more predictable approach would be to only
+  // uppercase ASCII characters, so the hash does not change depending on the
+  // user's locale.
+  std::u16string upper_username;
+  bool result = ToUpper(username, &upper_username);
+  DCHECK(result);
 
   uint8_t v1_hash[kNtlmHashLen];
   GenerateNtlmHashV1(password, v1_hash);

@@ -7,10 +7,10 @@
 #include <algorithm>
 #include <utility>
 
+#include "base/containers/contains.h"
 #include "base/containers/flat_map.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/no_destructor.h"
-#include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "content/public/common/webplugininfo.h"
 #include "content/public/renderer/render_frame.h"
@@ -221,6 +221,12 @@ void MimeHandlerViewContainerManager::DidLoad(int32_t element_instance_id,
       // MimeHandlerViewGuest.
       return;
     }
+    // TODO(crbug.com/1286950) Remove this once a decision is made on
+    // deprecation of the <param> URL functionality.
+    std::set<std::string> kPdfMimeTypes{"application/pdf", "text/pdf"};
+    bool is_pdf = kPdfMimeTypes.count(frame_container->mime_type());
+    frame_container->plugin_element().UseCountParamUrlUsageIfNeeded(is_pdf);
+
     frame_container->set_element_instance_id(element_instance_id);
     auto* content_frame = frame_container->GetContentFrame();
     int32_t content_frame_routing_id =

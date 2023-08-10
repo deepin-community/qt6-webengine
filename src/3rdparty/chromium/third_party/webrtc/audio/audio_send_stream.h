@@ -15,6 +15,7 @@
 #include <utility>
 #include <vector>
 
+#include "api/field_trials_view.h"
 #include "api/sequence_checker.h"
 #include "audio/audio_level.h"
 #include "audio/channel_send.h"
@@ -46,7 +47,7 @@ struct AudioAllocationConfig {
   absl::optional<double> bitrate_priority;
 
   std::unique_ptr<StructParametersParser> Parser();
-  AudioAllocationConfig();
+  explicit AudioAllocationConfig(const FieldTrialsView& field_trials);
 };
 namespace internal {
 class AudioState;
@@ -58,12 +59,12 @@ class AudioSendStream final : public webrtc::AudioSendStream,
                   const webrtc::AudioSendStream::Config& config,
                   const rtc::scoped_refptr<webrtc::AudioState>& audio_state,
                   TaskQueueFactory* task_queue_factory,
-                  ProcessThread* module_process_thread,
                   RtpTransportControllerSendInterface* rtp_transport,
                   BitrateAllocatorInterface* bitrate_allocator,
                   RtcEventLog* event_log,
                   RtcpRttStats* rtcp_rtt_stats,
-                  const absl::optional<RtpState>& suspended_rtp_state);
+                  const absl::optional<RtpState>& suspended_rtp_state,
+                  const FieldTrialsView& field_trials);
   // For unit tests, which need to supply a mock ChannelSend.
   AudioSendStream(Clock* clock,
                   const webrtc::AudioSendStream::Config& config,
@@ -73,7 +74,8 @@ class AudioSendStream final : public webrtc::AudioSendStream,
                   BitrateAllocatorInterface* bitrate_allocator,
                   RtcEventLog* event_log,
                   const absl::optional<RtpState>& suspended_rtp_state,
-                  std::unique_ptr<voe::ChannelSendInterface> channel_send);
+                  std::unique_ptr<voe::ChannelSendInterface> channel_send,
+                  const FieldTrialsView& field_trials);
 
   AudioSendStream() = delete;
   AudioSendStream(const AudioSendStream&) = delete;
@@ -161,11 +163,12 @@ class AudioSendStream final : public webrtc::AudioSendStream,
       RTC_RUN_ON(worker_thread_checker_);
 
   Clock* clock_;
+  const FieldTrialsView& field_trials_;
 
   SequenceChecker worker_thread_checker_;
   SequenceChecker pacer_thread_checker_;
   rtc::RaceChecker audio_capture_race_checker_;
-  rtc::TaskQueue* worker_queue_;
+  rtc::TaskQueue* rtp_transport_queue_;
 
   const bool allocate_audio_without_feedback_;
   const bool force_no_audio_feedback_ = allocate_audio_without_feedback_;
@@ -189,10 +192,10 @@ class AudioSendStream final : public webrtc::AudioSendStream,
   webrtc::voe::AudioLevel audio_level_ RTC_GUARDED_BY(audio_level_lock_);
 
   BitrateAllocatorInterface* const bitrate_allocator_
-      RTC_GUARDED_BY(worker_queue_);
-  // Constrains cached to be accessed from |worker_queue_|.
+      RTC_GUARDED_BY(rtp_transport_queue_);
+  // Constrains cached to be accessed from `rtp_transport_queue_`.
   absl::optional<AudioSendStream::TargetAudioBitrateConstraints>
-      cached_constraints_ RTC_GUARDED_BY(worker_queue_) = absl::nullopt;
+      cached_constraints_ RTC_GUARDED_BY(rtp_transport_queue_) = absl::nullopt;
   RtpTransportControllerSendInterface* const rtp_transport_;
 
   RtpRtcpInterface* const rtp_rtcp_module_;

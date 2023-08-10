@@ -17,10 +17,6 @@ OzoneUIControlsTestHelper* PrintErrorAndReturnNullptr() {
 }
 }  // namespace
 
-OzoneUIControlsTestHelper* CreateOzoneUIControlsTestHelperWayland() {
-  return PrintErrorAndReturnNullptr();
-}
-
 OzoneUIControlsTestHelper* CreateOzoneUIControlsTestHelperWindows() {
   return PrintErrorAndReturnNullptr();
 }
@@ -30,6 +26,10 @@ OzoneUIControlsTestHelper* CreateOzoneUIControlsTestHelperDrm() {
 }
 
 OzoneUIControlsTestHelper* CreateOzoneUIControlsTestHelperScenic() {
+  return PrintErrorAndReturnNullptr();
+}
+
+OzoneUIControlsTestHelper* CreateOzoneUIControlsTestHelperFlatland() {
   return PrintErrorAndReturnNullptr();
 }
 

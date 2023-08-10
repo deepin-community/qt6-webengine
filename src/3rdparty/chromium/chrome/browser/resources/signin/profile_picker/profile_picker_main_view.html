@@ -1,11 +1,8 @@
 <style include="profile-picker-shared cr-hidden-style cr-shared-style">
   :host {
-    --avatar-icon-size: 74px;
     --banner-img-height: 400px;
     --banner-img-width: 169px;
-    --profile-item-height: 178px;
     --profile-item-margin: 4px;
-    --profile-item-width: 162px;
   }
 
   .banner {
@@ -21,6 +18,7 @@
     display: flex;
     flex-flow: column;
     height: calc(100% - var(--cr-button-height) - 2 * var(--footer-spacing));
+    justify-content: space-evenly;
   }
 
   #leftBanner {
@@ -56,7 +54,7 @@
 
   #wrapper {
     display: flex;
-    flex: 1 1 auto;
+    flex: 0 1 auto;
     margin-bottom: 4px;
     margin-inline-end: 140px;
     margin-inline-start: 140px;
@@ -64,7 +62,7 @@
     overflow-y: auto;
   }
 
-  .profiles-container {
+  #profilesContainer {
     --grid-gutter: 8px;
     align-items: center;
     display: grid;
@@ -112,10 +110,10 @@
   }
 
   iron-icon[icon='profiles:add'] {
-    --iron-icon-height: var(--avatar-icon-size);
-    --iron-icon-width: var(--avatar-icon-size);
-    --iron-icon-fill-color: var(--google-grey-refresh-100);
-    --iron-icon-stroke-color: var(--google-grey-refresh-700);
+    --iron-icon-height: var(--profile-card-avatar-icon-size);
+    --iron-icon-width: var(--profile-card-avatar-icon-size);
+    --iron-icon-fill-color: var(--google-grey-100);
+    --iron-icon-stroke-color: var(--google-grey-700);
   }
 
   #browseAsGuestButton {
@@ -147,11 +145,11 @@
 
     .profile-item,
     #addProfile.profile-item {
-      border-color: var(--google-grey-refresh-700);
+      border-color: var(--google-grey-700);
     }
 
     iron-icon[icon='profiles:add'] {
-      --iron-icon-fill-color: var(--google-grey-refresh-500);
+      --iron-icon-fill-color: var(--google-grey-500);
       --iron-icon-stroke-color: rgb(48, 48, 50);
     }
   }
@@ -168,7 +166,7 @@
     <h3>$i18n{mainViewSubtitle}</h3>
   </div>
   <div id="wrapper" hidden$="[[!profilesListLoaded_]]">
-    <div class="profiles-container custom-scrollbar">
+    <div id="profilesContainer" class="custom-scrollbar">
       <template is="dom-repeat" items="[[profilesList_]]">
         <profile-card
             class="profile-item" profile-state="[[item]]">
@@ -192,7 +190,7 @@
     <iron-icon icon="profiles:account-circle"></iron-icon>
     <div>$i18n{browseAsGuestButton}</div>
   </cr-button>
-  <cr-checkbox checked="{{askOnStartup_}}"
+  <cr-checkbox id="askOnStartup" checked="{{askOnStartup_}}"
       on-change="onAskOnStartupChangedByUser_" hidden$="[[hideAskOnStartup_]]">
     $i18n{askOnStartupCheckboxText}
   </cr-checkbox>

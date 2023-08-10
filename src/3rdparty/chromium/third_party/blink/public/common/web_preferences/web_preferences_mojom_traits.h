@@ -17,39 +17,34 @@ namespace mojo {
 template <>
 struct BLINK_COMMON_EXPORT StructTraits<blink::mojom::WebPreferencesDataView,
                                         blink::web_pref::WebPreferences> {
-  static const std::map<std::string, base::string16>& standard_font_family_map(
+  static const std::map<std::string, std::u16string>& standard_font_family_map(
       const blink::web_pref::WebPreferences& r) {
     return r.standard_font_family_map;
   }
 
-  static const std::map<std::string, base::string16>& fixed_font_family_map(
+  static const std::map<std::string, std::u16string>& fixed_font_family_map(
       const blink::web_pref::WebPreferences& r) {
     return r.fixed_font_family_map;
   }
 
-  static const std::map<std::string, base::string16>& serif_font_family_map(
+  static const std::map<std::string, std::u16string>& serif_font_family_map(
       const blink::web_pref::WebPreferences& r) {
     return r.serif_font_family_map;
   }
 
-  static const std::map<std::string, base::string16>&
+  static const std::map<std::string, std::u16string>&
   sans_serif_font_family_map(const blink::web_pref::WebPreferences& r) {
     return r.sans_serif_font_family_map;
   }
 
-  static const std::map<std::string, base::string16>& cursive_font_family_map(
+  static const std::map<std::string, std::u16string>& cursive_font_family_map(
       const blink::web_pref::WebPreferences& r) {
     return r.cursive_font_family_map;
   }
 
-  static const std::map<std::string, base::string16>& fantasy_font_family_map(
+  static const std::map<std::string, std::u16string>& fantasy_font_family_map(
       const blink::web_pref::WebPreferences& r) {
     return r.fantasy_font_family_map;
-  }
-
-  static const std::map<std::string, base::string16>&
-  pictograph_font_family_map(const blink::web_pref::WebPreferences& r) {
-    return r.pictograph_font_family_map;
   }
 
   static uint32_t default_font_size(const blink::web_pref::WebPreferences& r) {
@@ -142,22 +137,12 @@ struct BLINK_COMMON_EXPORT StructTraits<blink::mojom::WebPreferencesDataView,
     return r.data_saver_enabled;
   }
 
-  static bool data_saver_holdback_web_api_enabled(
-      const blink::web_pref::WebPreferences& r) {
-    return r.data_saver_holdback_web_api_enabled;
-  }
-
   static bool local_storage_enabled(const blink::web_pref::WebPreferences& r) {
     return r.local_storage_enabled;
   }
 
   static bool databases_enabled(const blink::web_pref::WebPreferences& r) {
     return r.databases_enabled;
-  }
-
-  static bool application_cache_enabled(
-      const blink::web_pref::WebPreferences& r) {
-    return r.application_cache_enabled;
   }
 
   static bool tabs_to_links(const blink::web_pref::WebPreferences& r) {
@@ -201,19 +186,6 @@ struct BLINK_COMMON_EXPORT StructTraits<blink::mojom::WebPreferencesDataView,
     return r.pepper_3d_enabled;
   }
 
-  static bool flash_3d_enabled(const blink::web_pref::WebPreferences& r) {
-    return r.flash_3d_enabled;
-  }
-
-  static bool flash_stage3d_enabled(const blink::web_pref::WebPreferences& r) {
-    return r.flash_stage3d_enabled;
-  }
-
-  static bool flash_stage3d_baseline_enabled(
-      const blink::web_pref::WebPreferences& r) {
-    return r.flash_stage3d_baseline_enabled;
-  }
-
   static bool privileged_webgl_extensions_enabled(
       const blink::web_pref::WebPreferences& r) {
     return r.privileged_webgl_extensions_enabled;
@@ -233,9 +205,9 @@ struct BLINK_COMMON_EXPORT StructTraits<blink::mojom::WebPreferencesDataView,
     return r.accelerated_2d_canvas_enabled;
   }
 
-  static bool new_canvas_2d_api_enabled(
+  static bool canvas_2d_layers_enabled(
       const blink::web_pref::WebPreferences& r) {
-    return r.new_canvas_2d_api_enabled;
+    return r.canvas_2d_layers_enabled;
   }
 
   static bool antialiased_2d_canvas_disabled(
@@ -442,6 +414,11 @@ struct BLINK_COMMON_EXPORT StructTraits<blink::mojom::WebPreferencesDataView,
     return r.navigate_on_drag_drop;
   }
 
+  static bool fake_no_alloc_direct_call_for_testing_enabled(
+      const blink::web_pref::WebPreferences& r) {
+    return r.fake_no_alloc_direct_call_for_testing_enabled;
+  }
+
   static const blink::mojom::V8CacheOptions& v8_cache_options(
       const blink::web_pref::WebPreferences& r) {
     return r.v8_cache_options;
@@ -551,7 +528,7 @@ struct BLINK_COMMON_EXPORT StructTraits<blink::mojom::WebPreferencesDataView,
     return r.web_app_scope;
   }
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   static float font_scale_factor(const blink::web_pref::WebPreferences& r) {
     return r.font_scale_factor;
   }
@@ -658,14 +635,13 @@ struct BLINK_COMMON_EXPORT StructTraits<blink::mojom::WebPreferencesDataView,
     return r.scroll_top_left_interop_enabled;
   }
 
-  static bool disable_features_depending_on_viz(
-      const blink::web_pref::WebPreferences& r) {
-    return r.disable_features_depending_on_viz;
-  }
-
   static bool disable_accelerated_small_canvases(
       const blink::web_pref::WebPreferences& r) {
     return r.disable_accelerated_small_canvases;
+  }
+
+  static bool disable_webauthn(const blink::web_pref::WebPreferences& r) {
+    return r.disable_webauthn;
   }
 #endif
 

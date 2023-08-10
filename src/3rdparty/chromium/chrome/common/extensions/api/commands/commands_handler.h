@@ -8,7 +8,6 @@
 #include <memory>
 #include <string>
 
-#include "base/macros.h"
 #include "chrome/common/extensions/command.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/manifest.h"
@@ -39,9 +38,13 @@ struct CommandsInfo : public Extension::ManifestData {
 class CommandsHandler : public ManifestHandler {
  public:
   CommandsHandler();
+
+  CommandsHandler(const CommandsHandler&) = delete;
+  CommandsHandler& operator=(const CommandsHandler&) = delete;
+
   ~CommandsHandler() override;
 
-  bool Parse(Extension* extension, base::string16* error) override;
+  bool Parse(Extension* extension, std::u16string* error) override;
   bool AlwaysParseForType(Manifest::Type type) const override;
 
  private:
@@ -52,8 +55,6 @@ class CommandsHandler : public ManifestHandler {
                                     CommandsInfo* info);
 
   base::span<const char* const> Keys() const override;
-
-  DISALLOW_COPY_AND_ASSIGN(CommandsHandler);
 };
 
 }  // namespace extensions

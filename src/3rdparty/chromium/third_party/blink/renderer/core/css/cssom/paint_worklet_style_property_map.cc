@@ -18,7 +18,6 @@
 #include "third_party/blink/renderer/core/css/cssom/css_unsupported_style_value.h"
 #include "third_party/blink/renderer/core/css/properties/css_property_ref.h"
 #include "third_party/blink/renderer/core/dom/document.h"
-#include "third_party/blink/renderer/core/layout/layout_object.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
 
 namespace blink {
@@ -26,7 +25,10 @@ namespace blink {
 namespace {
 
 class PaintWorkletStylePropertyMapIterationSource final
-    : public PairIterable<String, CSSStyleValueVector>::IterationSource {
+    : public PairIterable<String,
+                          IDLString,
+                          CSSStyleValueVector,
+                          IDLSequence<CSSStyleValue>>::IterationSource {
  public:
   explicit PaintWorkletStylePropertyMapIterationSource(
       HeapVector<PaintWorkletStylePropertyMap::StylePropertyMapEntry> values)
@@ -48,7 +50,8 @@ class PaintWorkletStylePropertyMapIterationSource final
 
   void Trace(Visitor* visitor) const override {
     visitor->Trace(values_);
-    PairIterable<String, CSSStyleValueVector>::IterationSource::Trace(visitor);
+    PairIterable<String, IDLString, CSSStyleValueVector,
+                 IDLSequence<CSSStyleValue>>::IterationSource::Trace(visitor);
   }
 
  private:
@@ -73,10 +76,8 @@ bool BuildNativeValues(const ComputedStyle& style,
                 /* allow_visited_style */ false);
     if (value->GetType() == CrossThreadStyleValue::StyleValueType::kUnknownType)
       return false;
-    String key = CSSProperty::Get(property_id).GetPropertyNameString();
-    if (!key.IsSafeToSendToAnotherThread())
-      key = key.IsolatedCopy();
-    data.Set(key, std::move(value));
+    data.Set(CSSProperty::Get(property_id).GetPropertyNameString(),
+             std::move(value));
   }
   return true;
 }
@@ -109,11 +110,7 @@ bool BuildCustomValues(
               ref.GetProperty().PropertyID()));
       input_property_keys.emplace_back(property_name.Utf8(), element_id);
     }
-    // Ensure that the String can be safely passed cross threads.
-    String key = property_name.GetString();
-    if (!key.IsSafeToSendToAnotherThread())
-      key = key.IsolatedCopy();
-    data.Set(key, std::move(value));
+    data.Set(property_name.GetString(), std::move(value));
   }
   return true;
 }
@@ -121,7 +118,7 @@ bool BuildCustomValues(
 }  // namespace
 
 // static
-base::Optional<PaintWorkletStylePropertyMap::CrossThreadData>
+absl::optional<PaintWorkletStylePropertyMap::CrossThreadData>
 PaintWorkletStylePropertyMap::BuildCrossThreadData(
     const Document& document,
     UniqueObjectId unique_object_id,
@@ -134,10 +131,10 @@ PaintWorkletStylePropertyMap::BuildCrossThreadData(
   data.ReserveCapacityForSize(native_properties.size() +
                               custom_properties.size());
   if (!BuildNativeValues(style, native_properties, data))
-    return base::nullopt;
+    return absl::nullopt;
   if (!BuildCustomValues(document, unique_object_id, style, custom_properties,
                          data, input_property_keys))
-    return base::nullopt;
+    return absl::nullopt;
   return data;
 }
 

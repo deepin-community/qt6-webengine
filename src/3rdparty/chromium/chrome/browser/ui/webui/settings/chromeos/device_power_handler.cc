@@ -7,7 +7,7 @@
 #include <memory>
 #include <utility>
 
-#include "ash/public/cpp/ash_pref_names.h"
+#include "ash/constants/ash_pref_names.h"
 #include "ash/public/cpp/power_utils.h"
 #include "base/bind.h"
 #include "base/callback_helpers.h"
@@ -29,12 +29,12 @@ namespace chromeos {
 namespace settings {
 namespace {
 
-base::string16 GetBatteryTimeText(base::TimeDelta time_left) {
+std::u16string GetBatteryTimeText(base::TimeDelta time_left) {
   int hour = 0;
   int min = 0;
   ash::power_utils::SplitTimeIntoHoursAndMinutes(time_left, &hour, &min);
 
-  base::string16 time_text;
+  std::u16string time_text;
   if (hour == 0 || min == 0) {
     // Display only one unit ("2 hours" or "10 minutes").
     return ui::TimeFormat::Simple(ui::TimeFormat::FORMAT_DURATION,
@@ -109,29 +109,36 @@ const char PowerHandler::kBatteryIdleManagedKey[] = "batteryIdleManaged";
 
 const char PowerHandler::kLidClosedControlledKey[] = "lidClosedControlled";
 const char PowerHandler::kHasLidKey[] = "hasLid";
+const char PowerHandler::kAdaptiveChargingKey[] = "adaptiveCharging";
 
 PowerHandler::TestAPI::TestAPI(PowerHandler* handler) : handler_(handler) {}
 
 PowerHandler::TestAPI::~TestAPI() = default;
 
 void PowerHandler::TestAPI::RequestPowerManagementSettings() {
-  base::ListValue args;
-  handler_->HandleRequestPowerManagementSettings(&args);
+  base::Value args(base::Value::Type::LIST);
+  handler_->HandleRequestPowerManagementSettings(args.GetList());
 }
 
 void PowerHandler::TestAPI::SetIdleBehavior(IdleBehavior behavior,
                                             bool when_on_ac) {
-  base::ListValue args;
-  args.AppendInteger(static_cast<int>(behavior));
-  args.AppendBoolean(when_on_ac);
-  handler_->HandleSetIdleBehavior(&args);
+  base::Value args(base::Value::Type::LIST);
+  args.Append(static_cast<int>(behavior));
+  args.Append(when_on_ac);
+  handler_->HandleSetIdleBehavior(args.GetList());
 }
 
 void PowerHandler::TestAPI::SetLidClosedBehavior(
     PowerPolicyController::Action behavior) {
-  base::ListValue args;
-  args.AppendInteger(behavior);
-  handler_->HandleSetLidClosedBehavior(&args);
+  base::Value args(base::Value::Type::LIST);
+  args.Append(behavior);
+  handler_->HandleSetLidClosedBehavior(args.GetList());
+}
+
+void PowerHandler::TestAPI::SetAdaptiveCharging(bool enabled) {
+  base::Value args(base::Value::Type::LIST);
+  args.Append(enabled);
+  handler_->HandleSetAdaptiveCharging(args.GetList());
 }
 
 PowerHandler::PowerHandler(PrefService* prefs) : prefs_(prefs) {}
@@ -157,6 +164,10 @@ void PowerHandler::RegisterMessages() {
   web_ui()->RegisterMessageCallback(
       "setIdleBehavior",
       base::BindRepeating(&PowerHandler::HandleSetIdleBehavior,
+                          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "setAdaptiveCharging",
+      base::BindRepeating(&PowerHandler::HandleSetAdaptiveCharging,
                           base::Unretained(this)));
 }
 
@@ -184,6 +195,8 @@ void PowerHandler::OnJavascriptAllowed() {
   pref_change_registrar_->Add(ash::prefs::kPowerBatteryScreenLockDelayMs,
                               callback);
   pref_change_registrar_->Add(ash::prefs::kPowerLidClosedAction, callback);
+  pref_change_registrar_->Add(ash::prefs::kPowerAdaptiveChargingEnabled,
+                              callback);
 }
 
 void PowerHandler::OnJavascriptDisallowed() {
@@ -208,32 +221,31 @@ void PowerHandler::LidEventReceived(PowerManagerClient::LidState state,
   SendPowerManagementSettings(false /* force */);
 }
 
-void PowerHandler::HandleUpdatePowerStatus(const base::ListValue* args) {
+void PowerHandler::HandleUpdatePowerStatus(const base::Value::List& args) {
   AllowJavascript();
   chromeos::PowerManagerClient::Get()->RequestStatusUpdate();
 }
 
-void PowerHandler::HandleSetPowerSource(const base::ListValue* args) {
+void PowerHandler::HandleSetPowerSource(const base::Value::List& args) {
   AllowJavascript();
 
-  std::string id;
-  CHECK(args->GetString(0, &id));
+  const std::string& id = args[0].GetString();
   chromeos::PowerManagerClient::Get()->SetPowerSource(id);
 }
 
 void PowerHandler::HandleRequestPowerManagementSettings(
-    const base::ListValue* args) {
+    const base::Value::List& args) {
   AllowJavascript();
   SendPowerManagementSettings(true /* force */);
 }
 
-void PowerHandler::HandleSetIdleBehavior(const base::ListValue* args) {
+void PowerHandler::HandleSetIdleBehavior(const base::Value::List& args) {
   AllowJavascript();
 
-  int value = 0;
-  bool when_on_ac = true;
-  CHECK(args->GetInteger(0, &value));
-  CHECK(args->GetBoolean(1, &when_on_ac));
+  const auto& list = args;
+  CHECK_GE(list.size(), 2u);
+  int value = list[0].GetInt();
+  bool when_on_ac = list[1].GetBool();
 
   const char* idle_pref = when_on_ac ? ash::prefs::kPowerAcIdleAction
                                      : ash::prefs::kPowerBatteryIdleAction;
@@ -277,11 +289,12 @@ void PowerHandler::HandleSetIdleBehavior(const base::ListValue* args) {
   }
 }
 
-void PowerHandler::HandleSetLidClosedBehavior(const base::ListValue* args) {
+void PowerHandler::HandleSetLidClosedBehavior(const base::Value::List& args) {
   AllowJavascript();
 
-  int value = 0;
-  CHECK(args->GetInteger(0, &value));
+  const auto& list = args;
+  CHECK_GE(list.size(), 1u);
+  int value = list[0].GetInt();
   switch (static_cast<PowerPolicyController::Action>(value)) {
     case PowerPolicyController::ACTION_SUSPEND:
       prefs_->ClearPref(ash::prefs::kPowerLidClosedAction);
@@ -295,8 +308,17 @@ void PowerHandler::HandleSetLidClosedBehavior(const base::ListValue* args) {
   }
 }
 
+void PowerHandler::HandleSetAdaptiveCharging(const base::Value::List& args) {
+  AllowJavascript();
+
+  CHECK_GE(args.size(), 1u);
+  bool enabled = args[0].GetBool();
+
+  prefs_->SetBoolean(ash::prefs::kPowerAdaptiveChargingEnabled, enabled);
+}
+
 void PowerHandler::SendBatteryStatus() {
-  const base::Optional<power_manager::PowerSupplyProperties>& proto =
+  const absl::optional<power_manager::PowerSupplyProperties>& proto =
       PowerManagerClient::Get()->GetLastStatus();
   DCHECK(proto);
   bool charging = proto->battery_state() ==
@@ -308,13 +330,12 @@ void PowerHandler::SendBatteryStatus() {
   bool show_time = false;
 
   if (!calculating) {
-    time_left = base::TimeDelta::FromSeconds(
-        charging ? proto->battery_time_to_full_sec()
-                 : proto->battery_time_to_empty_sec());
+    time_left = base::Seconds(charging ? proto->battery_time_to_full_sec()
+                                       : proto->battery_time_to_empty_sec());
     show_time = ash::power_utils::ShouldDisplayBatteryTime(time_left);
   }
 
-  base::string16 status_text;
+  std::u16string status_text;
   if (show_time) {
     status_text = l10n_util::GetStringFUTF16(
         charging ? IDS_SETTINGS_BATTERY_STATUS_CHARGING
@@ -326,30 +347,30 @@ void PowerHandler::SendBatteryStatus() {
   }
 
   base::DictionaryValue battery_dict;
-  battery_dict.SetBoolean(
+  battery_dict.SetBoolKey(
       "present",
       proto->battery_state() !=
           power_manager::PowerSupplyProperties_BatteryState_NOT_PRESENT);
-  battery_dict.SetBoolean("charging", charging);
-  battery_dict.SetBoolean("calculating", calculating);
-  battery_dict.SetInteger("percent", percent);
-  battery_dict.SetString("statusText", status_text);
+  battery_dict.SetBoolKey("charging", charging);
+  battery_dict.SetBoolKey("calculating", calculating);
+  battery_dict.SetIntKey("percent", percent);
+  battery_dict.SetStringKey("statusText", status_text);
 
   FireWebUIListener("battery-status-changed", battery_dict);
 }
 
 void PowerHandler::SendPowerSources() {
-  const base::Optional<power_manager::PowerSupplyProperties>& proto =
+  const absl::optional<power_manager::PowerSupplyProperties>& proto =
       PowerManagerClient::Get()->GetLastStatus();
   DCHECK(proto);
   base::ListValue sources_list;
   for (int i = 0; i < proto->available_external_power_source_size(); i++) {
     const auto& source = proto->available_external_power_source(i);
     std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
-    dict->SetString("id", source.id());
-    dict->SetBoolean("is_dedicated_charger", source.active_by_default());
-    dict->SetString("description",
-                    l10n_util::GetStringUTF16(PowerSourceToDisplayId(source)));
+    dict->SetStringKey("id", source.id());
+    dict->SetBoolKey("is_dedicated_charger", source.active_by_default());
+    dict->SetStringKey("description", l10n_util::GetStringUTF16(
+                                          PowerSourceToDisplayId(source)));
     sources_list.Append(std::move(dict));
   }
 
@@ -373,12 +394,16 @@ void PowerHandler::SendPowerManagementSettings(bool force) {
       prefs_->IsManagedPreference(ash::prefs::kPowerLidClosedAction);
   const bool has_lid = lid_state_ != PowerManagerClient::LidState::NOT_PRESENT;
 
+  const bool adaptive_charging =
+      prefs_->GetBoolean(ash::prefs::kPowerAdaptiveChargingEnabled);
+
   // Don't notify the UI if nothing changed.
   if (!force && ac_idle_info == last_ac_idle_info_ &&
       battery_idle_info == last_battery_idle_info_ &&
       lid_closed_behavior == last_lid_closed_behavior_ &&
       lid_closed_controlled == last_lid_closed_controlled_ &&
-      has_lid == last_has_lid_) {
+      has_lid == last_has_lid_ &&
+      adaptive_charging == last_adaptive_charging_) {
     return;
   }
 
@@ -392,15 +417,16 @@ void PowerHandler::SendPowerManagementSettings(bool force) {
                      base::Value(base::Value::Type::LIST));
   for (auto idle_behavior : battery_idle_info.possible_behaviors)
     list->Append(static_cast<int>(idle_behavior));
-  dict.SetInteger(kCurrentAcIdleBehaviorKey,
-                  static_cast<int>(ac_idle_info.current_behavior));
-  dict.SetInteger(kCurrentBatteryIdleBehaviorKey,
-                  static_cast<int>(battery_idle_info.current_behavior));
-  dict.SetInteger(kLidClosedBehaviorKey, lid_closed_behavior);
-  dict.SetBoolean(kAcIdleManagedKey, ac_idle_info.is_managed);
-  dict.SetBoolean(kBatteryIdleManagedKey, battery_idle_info.is_managed);
-  dict.SetBoolean(kLidClosedControlledKey, lid_closed_controlled);
-  dict.SetBoolean(kHasLidKey, has_lid);
+  dict.SetIntKey(kCurrentAcIdleBehaviorKey,
+                 static_cast<int>(ac_idle_info.current_behavior));
+  dict.SetIntKey(kCurrentBatteryIdleBehaviorKey,
+                 static_cast<int>(battery_idle_info.current_behavior));
+  dict.SetIntKey(kLidClosedBehaviorKey, lid_closed_behavior);
+  dict.SetBoolKey(kAcIdleManagedKey, ac_idle_info.is_managed);
+  dict.SetBoolKey(kBatteryIdleManagedKey, battery_idle_info.is_managed);
+  dict.SetBoolKey(kLidClosedControlledKey, lid_closed_controlled);
+  dict.SetBoolKey(kHasLidKey, has_lid);
+  dict.SetBoolKey(kAdaptiveChargingKey, adaptive_charging);
   FireWebUIListener(kPowerManagementSettingsChangedName, dict);
 
   last_ac_idle_info_ = ac_idle_info;
@@ -408,10 +434,11 @@ void PowerHandler::SendPowerManagementSettings(bool force) {
   last_lid_closed_behavior_ = lid_closed_behavior;
   last_lid_closed_controlled_ = lid_closed_controlled;
   last_has_lid_ = has_lid;
+  last_adaptive_charging_ = adaptive_charging;
 }
 
 void PowerHandler::OnGotSwitchStates(
-    base::Optional<PowerManagerClient::SwitchStates> result) {
+    absl::optional<PowerManagerClient::SwitchStates> result) {
   if (!result.has_value())
     return;
   lid_state_ = result->lid_state;

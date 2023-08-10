@@ -7,13 +7,15 @@
 
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "services/device/public/mojom/serial.mojom-blink-forward.h"
+#include "services/device/public/mojom/serial.mojom-blink.h"
 #include "third_party/blink/public/mojom/serial/serial.mojom-blink.h"
 #include "third_party/blink/renderer/bindings/core/v8/active_script_wrappable.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/core/dom/events/event_target.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
-#include "third_party/blink/renderer/platform/heap/heap_allocator.h"
+#include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_set.h"
+#include "third_party/blink/renderer/platform/heap/collection_support/heap_vector.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/mojo/heap_mojo_receiver.h"
 #include "third_party/blink/renderer/platform/mojo/heap_mojo_remote.h"
 #include "third_party/blink/renderer/platform/mojo/heap_mojo_wrapper_mode.h"
@@ -102,9 +104,7 @@ class SerialPort final : public EventTargetWithInlineData,
 
   uint32_t buffer_size_ = 0;
   HeapMojoRemote<device::mojom::blink::SerialPort> port_;
-  HeapMojoReceiver<device::mojom::blink::SerialPortClient,
-                   SerialPort,
-                   HeapMojoWrapperMode::kWithoutContextObserver>
+  HeapMojoReceiver<device::mojom::blink::SerialPortClient, SerialPort>
       client_receiver_;
 
   Member<ReadableStream> readable_;
@@ -120,6 +120,9 @@ class SerialPort final : public EventTargetWithInlineData,
   // Indicates that the port is being closed and so the streams should not be
   // reopened on demand.
   bool closing_ = false;
+
+  // The port was opened with { flowControl: "hardware" }.
+  bool hardware_flow_control_ = false;
 
   // Resolver for the Promise returned by open().
   Member<ScriptPromiseResolver> open_resolver_;

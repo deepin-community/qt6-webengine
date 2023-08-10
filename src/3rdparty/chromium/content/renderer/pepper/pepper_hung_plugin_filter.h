@@ -5,10 +5,9 @@
 #ifndef CONTENT_RENDERER_PEPPER_PEPPER_HUNG_PLUGIN_FILTER_H_
 #define CONTENT_RENDERER_PEPPER_PEPPER_HUNG_PLUGIN_FILTER_H_
 
-#include "base/files/file_path.h"
-#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/synchronization/lock.h"
+#include "base/time/time.h"
 #include "content/common/pepper_plugin.mojom.h"
 #include "ipc/ipc_channel_proxy.h"
 #include "ipc/ipc_sync_message_filter.h"
@@ -36,6 +35,9 @@ class PepperHungPluginFilter
  public:
   PepperHungPluginFilter();
 
+  PepperHungPluginFilter(const PepperHungPluginFilter&) = delete;
+  PepperHungPluginFilter& operator=(const PepperHungPluginFilter&) = delete;
+
   // The |hung_host| is the mojo channel to inform the browser about the new
   // hung status.
   void BindHungDetectorHost(
@@ -50,6 +52,9 @@ class PepperHungPluginFilter
   void OnChannelError() override;
   bool OnMessageReceived(const IPC::Message& message) override;
 
+  // Notification the HostDispatcher on the main thread has been destroyed.
+  void HostDispatcherDestroyed();
+
  protected:
   ~PepperHungPluginFilter() override;
 
@@ -57,6 +62,9 @@ class PepperHungPluginFilter
   // Binds the mojo channel on the IO thread (where it will be used).
   void BindHungDetectorHostOnIOThread(
       mojo::PendingRemote<mojom::PepperHungDetectorHost> hung_host);
+
+  // Unbinds the mojo channel on the IO thread.
+  void UnbindHungDetectorHostOnIOThread();
 
   // Makes sure that the hung timer is scheduled.
   void EnsureTimerScheduled();
@@ -106,8 +114,6 @@ class PepperHungPluginFilter
   bool hung_plugin_showing_ = false;
 
   bool timer_task_pending_ = false;
-
-  DISALLOW_COPY_AND_ASSIGN(PepperHungPluginFilter);
 };
 
 }  // namespace content

@@ -5,14 +5,14 @@
 #ifndef EXTENSIONS_RENDERER_IPC_MESSAGE_SENDER_H_
 #define EXTENSIONS_RENDERER_IPC_MESSAGE_SENDER_H_
 
-#include "base/macros.h"
-
 #include <memory>
 #include <string>
 
+#include "extensions/common/extension_id.h"
+#include "extensions/common/mojom/frame.mojom-forward.h"
 #include "extensions/renderer/bindings/api_binding_types.h"
 
-struct ExtensionHostMsg_Request_Params;
+struct ExtensionHostMsg_APIActionOrEvent_Params;
 
 namespace base {
 class DictionaryValue;
@@ -29,12 +29,17 @@ struct PortId;
 // versions handle main thread vs. service worker threads.
 class IPCMessageSender {
  public:
+  IPCMessageSender(const IPCMessageSender&) = delete;
+  IPCMessageSender& operator=(const IPCMessageSender&) = delete;
+
   virtual ~IPCMessageSender();
 
+  // Used to distinguish API calls & events from each other in activity log.
+  enum class ActivityLogCallType { APICALL, EVENT };
+
   // Sends a request message to the browser.
-  virtual void SendRequestIPC(
-      ScriptContext* context,
-      std::unique_ptr<ExtensionHostMsg_Request_Params> params) = 0;
+  virtual void SendRequestIPC(ScriptContext* context,
+                              mojom::RequestParamsPtr params) = 0;
 
   // Handles sending any additional messages required after receiving a response
   // to a request.
@@ -83,6 +88,17 @@ class IPCMessageSender {
   virtual void SendPostMessageToPort(const PortId& port_id,
                                      const Message& message) = 0;
 
+  // Sends a message indicating that a receiver of a message indicated that it
+  // plans to send a response later.
+  virtual void SendMessageResponsePending(int routing_id,
+                                          const PortId& port_id) = 0;
+
+  // Sends activityLog IPC to the browser process.
+  virtual void SendActivityLogIPC(
+      const ExtensionId& extension_id,
+      ActivityLogCallType call_type,
+      const ExtensionHostMsg_APIActionOrEvent_Params& params) = 0;
+
   // Creates an IPCMessageSender for use on the main thread.
   static std::unique_ptr<IPCMessageSender> CreateMainThreadIPCMessageSender();
 
@@ -93,8 +109,6 @@ class IPCMessageSender {
 
  protected:
   IPCMessageSender();
-
-  DISALLOW_COPY_AND_ASSIGN(IPCMessageSender);
 };
 
 }  // namespace extensions

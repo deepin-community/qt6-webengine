@@ -40,11 +40,13 @@
 namespace webrtc {
 namespace vcm {
 
-VideoReceiver::VideoReceiver(Clock* clock, VCMTiming* timing)
+VideoReceiver::VideoReceiver(Clock* clock,
+                             VCMTiming* timing,
+                             const FieldTrialsView& field_trials)
     : clock_(clock),
       _timing(timing),
-      _receiver(_timing, clock_),
-      _decodedFrameCallback(_timing, clock_),
+      _receiver(_timing, clock_, field_trials),
+      _decodedFrameCallback(_timing, clock_, field_trials),
       _frameTypeCallback(nullptr),
       _packetRequestCallback(nullptr),
       _scheduleKeyRequest(false),
@@ -141,7 +143,7 @@ void VideoReceiver::RegisterExternalDecoder(VideoDecoder* externalDecoder,
     RTC_CHECK(_codecDataBase.DeregisterExternalDecoder(payloadType));
     return;
   }
-  _codecDataBase.RegisterExternalDecoder(externalDecoder, payloadType);
+  _codecDataBase.RegisterExternalDecoder(payloadType, externalDecoder);
 }
 
 // Register a frame type request callback.
@@ -203,8 +205,9 @@ int32_t VideoReceiver::Decode(uint16_t maxWaitTimeMs) {
   }
 
   // If this frame was too late, we should adjust the delay accordingly
-  _timing->UpdateCurrentDelay(frame->RenderTimeMs(),
-                              clock_->TimeInMilliseconds());
+  if (frame->RenderTimeMs() > 0)
+    _timing->UpdateCurrentDelay(Timestamp::Millis(frame->RenderTimeMs()),
+                                clock_->CurrentTime());
 
   if (first_frame_received_()) {
     RTC_LOG(LS_INFO) << "Received first complete decodable video frame";
@@ -246,18 +249,11 @@ int32_t VideoReceiver::Decode(const VCMEncodedFrame& frame) {
 }
 
 // Register possible receive codecs, can be called multiple times
-int32_t VideoReceiver::RegisterReceiveCodec(uint8_t payload_type,
-                                            const VideoCodec* receiveCodec,
-                                            int32_t numberOfCores) {
+void VideoReceiver::RegisterReceiveCodec(
+    uint8_t payload_type,
+    const VideoDecoder::Settings& settings) {
   RTC_DCHECK_RUN_ON(&construction_thread_checker_);
-  if (receiveCodec == nullptr) {
-    return VCM_PARAMETER_ERROR;
-  }
-  if (!_codecDataBase.RegisterReceiveCodec(payload_type, receiveCodec,
-                                           numberOfCores)) {
-    return -1;
-  }
-  return 0;
+  _codecDataBase.RegisterReceiveCodec(payload_type, settings);
 }
 
 // Incoming packet from network parsed and ready for decode, non blocking.
@@ -279,7 +275,7 @@ int32_t VideoReceiver::IncomingPacket(const uint8_t* incomingPayload,
   // Callers don't provide any ntp time.
   const VCMPacket packet(incomingPayload, payloadLength, rtp_header,
                          video_header, /*ntp_time_ms=*/0,
-                         clock_->TimeInMilliseconds());
+                         clock_->CurrentTime());
   int32_t ret = _receiver.InsertPacket(packet);
 
   // TODO(holmer): Investigate if this somehow should use the key frame

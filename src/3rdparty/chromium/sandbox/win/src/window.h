@@ -2,13 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef SANDBOX_SRC_WINDOW_H_
-#define SANDBOX_SRC_WINDOW_H_
-
-#include <windows.h>
+#ifndef SANDBOX_WIN_SRC_WINDOW_H_
+#define SANDBOX_WIN_SRC_WINDOW_H_
 
 #include <string>
 
+#include "base/win/windows_types.h"
 #include "sandbox/win/src/sandbox_types.h"
 
 namespace sandbox {
@@ -34,4 +33,4 @@ std::wstring GetFullDesktopName(HWINSTA winsta, HDESK desktop);
 
 }  // namespace sandbox
 
-#endif  // SANDBOX_SRC_WINDOW_H_
+#endif  // SANDBOX_WIN_SRC_WINDOW_H_

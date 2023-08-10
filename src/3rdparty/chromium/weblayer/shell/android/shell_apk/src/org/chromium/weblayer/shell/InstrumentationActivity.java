@@ -25,9 +25,9 @@ import androidx.fragment.app.FragmentManager;
 import androidx.fragment.app.FragmentTransaction;
 
 import org.chromium.base.ContextUtils;
-import org.chromium.base.Function;
 import org.chromium.components.strictmode.ThreadStrictModeInterceptor;
 import org.chromium.weblayer.Browser;
+import org.chromium.weblayer.BrowserFragmentCreateParams;
 import org.chromium.weblayer.FullscreenCallback;
 import org.chromium.weblayer.NewTabCallback;
 import org.chromium.weblayer.NewTabType;
@@ -54,6 +54,7 @@ public class InstrumentationActivity extends AppCompatActivity {
     public static final String EXTRA_PERSISTENCE_ID = "EXTRA_PERSISTENCE_ID";
     public static final String EXTRA_PROFILE_NAME = "EXTRA_PROFILE_NAME";
     public static final String EXTRA_IS_INCOGNITO = "EXTRA_IS_INCOGNITO";
+    public static final String EXTRA_USE_VIEW_MODEL = "EXTRA_USE_VIEW_MODEL";
     private static final float DEFAULT_TEXT_SIZE = 15.0F;
 
     // Used in tests to specify whether WebLayer should be created automatically on launch.
@@ -72,8 +73,6 @@ public class InstrumentationActivity extends AppCompatActivity {
     public static final String EXTRA_URLBAR_SHOW_PUBLISHER_URL = "EXTRA_URLBAR_SHOW_PUBLISHER_URL";
 
     private static OnCreatedCallback sOnCreatedCallback;
-
-    private static Function<Context, Context> sContextBuilder;
 
     // If true, multiple fragments may be created. Only the first is attached. This is useful for
     // tests that need to create multiple BrowserFragments.
@@ -94,18 +93,6 @@ public class InstrumentationActivity extends AppCompatActivity {
     private boolean mIgnoreRendererCrashes;
     private TabListCallback mTabListCallback;
     private List<Tab> mPreviousTabList = new ArrayList<>();
-
-    public static void setActivityContextBuilder(Function<Context, Context> contextBuilder) {
-        sContextBuilder = contextBuilder;
-    }
-
-    @Override
-    protected void attachBaseContext(Context base) {
-        if (sContextBuilder != null) {
-            base = sContextBuilder.apply(base);
-        }
-        super.attachBaseContext(base);
-    }
 
     private static boolean isJaCoCoEnabled() {
         // Nothing is set at runtime indicating jacoco is being used. This looks for the existence
@@ -208,6 +195,12 @@ public class InstrumentationActivity extends AppCompatActivity {
             return;
         }
         super.startActivityForResult(intent, requestCode, options);
+    }
+
+    @Override
+    public int checkPermission(String permission, int pid, int uid) {
+        // Tests can use a ContextWrapper for tha application context in order to hook this call.
+        return ContextUtils.getApplicationContext().checkPermission(permission, pid, uid);
     }
 
     public View getTopContentsContainer() {
@@ -367,6 +360,15 @@ public class InstrumentationActivity extends AppCompatActivity {
         }
     }
 
+    /**
+     * Removes and adds back the TabListCallback. This is useful for tests that
+     * need to ensure their callback is run first.
+     */
+    public void reregisterTabListCallback() {
+        mBrowser.unregisterTabListCallback(mTabListCallback);
+        mBrowser.registerTabListCallback(mTabListCallback);
+    }
+
     private void setTabCallbacks(Tab tab) {
         tab.registerTabCallback(mRendererCrashListener);
 
@@ -498,9 +500,15 @@ public class InstrumentationActivity extends AppCompatActivity {
         boolean incognito = intent.hasExtra(EXTRA_IS_INCOGNITO)
                 ? intent.getBooleanExtra(EXTRA_IS_INCOGNITO, false)
                 : (profileName == null);
-        Fragment fragment = incognito
-                ? WebLayer.createBrowserFragmentWithIncognitoProfile(profileName, persistenceId)
-                : WebLayer.createBrowserFragment(profileName, persistenceId);
+        boolean useViewModel = intent.hasExtra(EXTRA_USE_VIEW_MODEL)
+                && intent.getBooleanExtra(EXTRA_USE_VIEW_MODEL, false);
+        BrowserFragmentCreateParams createParams = (new BrowserFragmentCreateParams.Builder())
+                                                           .setProfileName(profileName)
+                                                           .setPersistenceId(persistenceId)
+                                                           .setIsIncognito(incognito)
+                                                           .setUseViewModel(useViewModel)
+                                                           .build();
+        Fragment fragment = WebLayer.createBrowserFragmentWithParams(createParams);
         FragmentTransaction transaction = fragmentManager.beginTransaction();
         transaction.add(viewId, fragment);
 

@@ -11,6 +11,7 @@
 #include "third_party/blink/public/mojom/loader/referrer.mojom-blink.h"
 #include "third_party/blink/public/mojom/portal/portal.mojom-blink-forward.h"
 #include "third_party/blink/renderer/core/dom/increment_load_event_delay_count.h"
+#include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
 #include "third_party/blink/renderer/core/frame/remote_frame.h"
 #include "third_party/blink/renderer/core/html/portal/document_portals.h"
@@ -22,7 +23,7 @@
 #include "third_party/blink/renderer/core/loader/document_loader.h"
 #include "third_party/blink/renderer/core/messaging/blink_transferable_message.h"
 #include "third_party/blink/renderer/core/page/page.h"
-#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
 
 namespace blink {
@@ -88,7 +89,7 @@ void PortalContents::OnActivateResponse(
     case mojom::blink::PortalActivateResult::kPredecessorWasAdopted:
       if (auto* page = GetDocument().GetPage())
         page->SetInsidePortal(true);
-      FALLTHROUGH;
+      [[fallthrough]];
     case mojom::blink::PortalActivateResult::kPredecessorWillUnload:
       activation_delegate_->ActivationDidSucceed();
       should_destroy_contents = true;
@@ -174,7 +175,7 @@ void PortalContents::Destroy() {
     portal_element_->PortalContentsWillBeDestroyed(this);
     portal_element_ = nullptr;
   }
-  portal_token_ = base::nullopt;
+  portal_token_ = absl::nullopt;
   remote_portal_.reset();
   portal_client_receiver_.reset();
   DocumentPortals::From(GetDocument()).DeregisterPortalContents(this);

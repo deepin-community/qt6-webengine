@@ -8,15 +8,16 @@
 #include <memory>
 
 #include "base/callback.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
-#include "base/optional.h"
 #include "base/sequence_checker.h"
-#include "base/single_thread_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
 #include "net/nqe/network_quality_estimator_util.h"
 #include "net/socket/socket_performance_watcher.h"
 #include "net/socket/socket_performance_watcher_factory.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace base {
 class TickClock;
@@ -30,7 +31,7 @@ namespace {
 typedef base::RepeatingCallback<void(
     SocketPerformanceWatcherFactory::Protocol protocol,
     const base::TimeDelta& rtt,
-    const base::Optional<nqe::internal::IPHash>& host)>
+    const absl::optional<nqe::internal::IPHash>& host)>
     OnUpdatedRTTAvailableCallback;
 
 typedef base::RepeatingCallback<bool(base::TimeTicks)> ShouldNotifyRTTCallback;
@@ -59,6 +60,9 @@ class SocketWatcherFactory : public SocketPerformanceWatcherFactory {
       OnUpdatedRTTAvailableCallback updated_rtt_observation_callback,
       ShouldNotifyRTTCallback should_notify_rtt_callback,
       const base::TickClock* tick_clock);
+
+  SocketWatcherFactory(const SocketWatcherFactory&) = delete;
+  SocketWatcherFactory& operator=(const SocketWatcherFactory&) = delete;
 
   ~SocketWatcherFactory() override;
 
@@ -92,9 +96,7 @@ class SocketWatcherFactory : public SocketPerformanceWatcherFactory {
   // notification should be notified using |updated_rtt_observation_callback_|.
   ShouldNotifyRTTCallback should_notify_rtt_callback_;
 
-  const base::TickClock* tick_clock_;
-
-  DISALLOW_COPY_AND_ASSIGN(SocketWatcherFactory);
+  raw_ptr<const base::TickClock> tick_clock_;
 };
 
 }  // namespace internal

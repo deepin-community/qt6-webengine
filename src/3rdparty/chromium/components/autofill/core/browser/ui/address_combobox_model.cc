@@ -6,6 +6,7 @@
 
 #include <memory>
 
+#include "base/observer_list.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/autofill/core/browser/data_model/autofill_profile.h"
 #include "components/autofill/core/browser/personal_data_manager.h"
@@ -46,7 +47,7 @@ int AddressComboboxModel::GetItemCount() const {
   return addresses_.size() + kNbHeaderEntries;
 }
 
-base::string16 AddressComboboxModel::GetItemAt(int index) const {
+std::u16string AddressComboboxModel::GetItemAt(int index) const {
   DCHECK_GE(index, 0);
   // A special entry is always added at index 0 and a separator at index 1.
   DCHECK_LT(static_cast<size_t>(index), addresses_.size() + kNbHeaderEntries);
@@ -61,7 +62,7 @@ base::string16 AddressComboboxModel::GetItemAt(int index) const {
 
   // Always show the "Select" entry at the top, default selection position.
   if (index == 1)
-    return base::ASCIIToUTF16("---");
+    return u"---";
 
   return addresses_[index - kNbHeaderEntries].second;
 }
@@ -81,14 +82,6 @@ int AddressComboboxModel::GetDefaultIndex() const {
       return address_index;
   }
   return ui::ComboboxModel::GetDefaultIndex();
-}
-
-void AddressComboboxModel::AddObserver(ui::ComboboxModelObserver* observer) {
-  observers_.AddObserver(observer);
-}
-
-void AddressComboboxModel::RemoveObserver(ui::ComboboxModelObserver* observer) {
-  observers_.RemoveObserver(observer);
 }
 
 int AddressComboboxModel::AddNewProfile(const AutofillProfile& profile) {
@@ -117,7 +110,7 @@ int AddressComboboxModel::GetIndexOfIdentifier(
 
 void AddressComboboxModel::UpdateAddresses() {
   addresses_.clear();
-  std::vector<base::string16> labels;
+  std::vector<std::u16string> labels;
   // CreateDifferentiatingLabels is expecting a pointer vector and we keep
   // profiles as unique_ptr.
   std::vector<AutofillProfile*> profiles;
@@ -130,7 +123,7 @@ void AddressComboboxModel::UpdateAddresses() {
   for (size_t i = 0; i < profiles_cache_.size(); ++i)
     addresses_.emplace_back(profiles_cache_[i]->guid(), labels[i]);
 
-  for (auto& observer : observers_) {
+  for (auto& observer : observers()) {
     observer.OnComboboxModelChanged(this);
   }
 }

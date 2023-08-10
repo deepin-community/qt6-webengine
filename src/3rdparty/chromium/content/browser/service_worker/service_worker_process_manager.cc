@@ -9,12 +9,13 @@
 #include <algorithm>
 #include <utility>
 
-#include "content/browser/renderer_host/render_process_host_impl.h"
+#include "base/containers/contains.h"
 #include "content/browser/service_worker/service_worker_context_wrapper.h"
 #include "content/browser/site_instance_impl.h"
 #include "content/browser/storage_partition_impl.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/render_process_host.h"
 #include "content/public/browser/site_instance.h"
 #include "content/public/common/child_process_host.h"
 #include "url/gurl.h"
@@ -66,8 +67,8 @@ void ServiceWorkerProcessManager::Shutdown() {
     for (const auto& it : worker_process_map_) {
       if (it.second->HasProcess()) {
         RenderProcessHost* process = it.second->GetProcess();
-        if (!process->IsKeepAliveRefCountDisabled())
-          process->DecrementKeepAliveRefCount();
+        if (!process->AreRefCountsDisabled())
+          process->DecrementWorkerRefCount();
       }
     }
   }
@@ -83,8 +84,7 @@ blink::ServiceWorkerStatusCode
 ServiceWorkerProcessManager::AllocateWorkerProcess(
     int embedded_worker_id,
     const GURL& script_url,
-    const base::Optional<network::CrossOriginEmbedderPolicy>&
-        cross_origin_embedder_policy,
+    network::mojom::CrossOriginEmbedderPolicyValue coep_value,
     bool can_use_existing_process,
     AllocatedProcessInfo* out_info) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
@@ -112,29 +112,24 @@ ServiceWorkerProcessManager::AllocateWorkerProcess(
   DCHECK(!base::Contains(worker_process_map_, embedded_worker_id))
       << embedded_worker_id << " already has a process allocated";
 
-  // Create a SiteInstance to get the renderer process from. Use the site URL
-  // from the StoragePartition in case this StoragePartition is for guests
-  // (e.g., <webview>).
-  const bool is_guest =
-      storage_partition_ &&
-      !storage_partition_->site_for_guest_service_worker_or_shared_worker()
-           .is_empty();
-  const GURL service_worker_url =
-      is_guest
-          ? storage_partition_->site_for_guest_service_worker_or_shared_worker()
-          : script_url;
+  // Create a SiteInstance to get the renderer process from.
+  //
+  // TODO(alexmos): Support CrossOriginIsolated for guests.
+  DCHECK(storage_partition_);
+  const bool is_guest = storage_partition_->is_guest();
   const bool is_coop_coep_cross_origin_isolated =
-      !is_guest && cross_origin_embedder_policy.has_value() &&
-      (cross_origin_embedder_policy->value ==
-       network::mojom::CrossOriginEmbedderPolicyValue::kRequireCorp);
+      !is_guest && network::CompatibleWithCrossOriginIsolated(coep_value);
+  UrlInfo url_info(
+      UrlInfoInit(script_url)
+          .WithStoragePartitionConfig(storage_partition_->GetConfig())
+          .WithWebExposedIsolationInfo(
+              is_coop_coep_cross_origin_isolated
+                  ? WebExposedIsolationInfo::CreateIsolated(
+                        url::Origin::Create(script_url))
+                  : WebExposedIsolationInfo::CreateNonIsolated()));
   scoped_refptr<SiteInstanceImpl> site_instance =
       SiteInstanceImpl::CreateForServiceWorker(
-          browser_context_, service_worker_url,
-          is_coop_coep_cross_origin_isolated
-              ? CoopCoepCrossOriginIsolatedInfo::CreateIsolated(
-                    url::Origin::Create(service_worker_url))
-              : CoopCoepCrossOriginIsolatedInfo::CreateNonIsolated(),
-          can_use_existing_process, is_guest);
+          browser_context_, url_info, can_use_existing_process, is_guest);
 
   // Get the process from the SiteInstance.
   RenderProcessHost* rph = site_instance->GetProcess();
@@ -160,8 +155,8 @@ ServiceWorkerProcessManager::AllocateWorkerProcess(
   }
 
   worker_process_map_.emplace(embedded_worker_id, std::move(site_instance));
-  if (!rph->IsKeepAliveRefCountDisabled())
-    rph->IncrementKeepAliveRefCount();
+  if (!rph->AreRefCountsDisabled())
+    rph->IncrementWorkerRefCount();
   out_info->process_id = rph->GetID();
   out_info->start_situation = start_situation;
   return blink::ServiceWorkerStatusCode::kOk;
@@ -190,8 +185,8 @@ void ServiceWorkerProcessManager::ReleaseWorkerProcess(int embedded_worker_id) {
 
   if (it->second->HasProcess()) {
     RenderProcessHost* process = it->second->GetProcess();
-    if (!process->IsKeepAliveRefCountDisabled())
-      process->DecrementKeepAliveRefCount();
+    if (!process->AreRefCountsDisabled())
+      process->DecrementWorkerRefCount();
   }
   worker_process_map_.erase(it);
 }

@@ -8,6 +8,7 @@
 
 #include "base/bind.h"
 #include "base/callback.h"
+#include "base/memory/raw_ptr.h"
 #include "components/domain_reliability/scheduler.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -62,7 +63,7 @@ class MockTimer : public MockableTime::Timer {
     std::move(task_to_run).Run();
   }
 
-  MockTime* time_;
+  raw_ptr<MockTime> time_;
   bool running_;
   int callback_sequence_number_;
   base::OnceClosure user_task_;
@@ -110,11 +111,16 @@ int MockUploader::GetDiscardedUploadCount() const {
   return 0;
 }
 
+base::TimeTicks MockTickClock::NowTicks() const {
+  return mock_time_->NowTicks();
+}
+
 MockTime::MockTime()
     : now_(base::Time::Now()),
       now_ticks_(base::TimeTicks::Now()),
       epoch_ticks_(now_ticks_),
-      task_sequence_number_(0) {
+      task_sequence_number_(0),
+      tick_clock_(this) {
   VLOG(1) << "Creating mock time: T=" << elapsed_sec() << "s";
 }
 
@@ -129,6 +135,10 @@ base::TimeTicks MockTime::NowTicks() const {
 
 std::unique_ptr<MockableTime::Timer> MockTime::CreateTimer() {
   return std::unique_ptr<MockableTime::Timer>(new MockTimer(this));
+}
+
+const base::TickClock* MockTime::AsTickClock() const {
+  return &tick_clock_;
 }
 
 void MockTime::Advance(base::TimeDelta delta) {
@@ -165,9 +175,9 @@ void MockTime::AdvanceToInternal(base::TimeTicks target_ticks) {
 
 DomainReliabilityScheduler::Params MakeTestSchedulerParams() {
   DomainReliabilityScheduler::Params params;
-  params.minimum_upload_delay = base::TimeDelta::FromMinutes(1);
-  params.maximum_upload_delay = base::TimeDelta::FromMinutes(5);
-  params.upload_retry_interval = base::TimeDelta::FromSeconds(15);
+  params.minimum_upload_delay = base::Minutes(1);
+  params.maximum_upload_delay = base::Minutes(5);
+  params.upload_retry_interval = base::Seconds(15);
   return params;
 }
 

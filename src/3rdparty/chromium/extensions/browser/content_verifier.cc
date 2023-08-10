@@ -10,11 +10,12 @@
 
 #include "base/bind.h"
 #include "base/callback_helpers.h"
+#include "base/containers/contains.h"
 #include "base/files/file_path.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/timer/elapsed_timer.h"
@@ -49,8 +50,7 @@ base::FilePath NormalizeRelativePath(const base::FilePath& path) {
   if (path.ReferencesParent())
     return base::FilePath();
 
-  std::vector<base::FilePath::StringType> parts;
-  path.GetComponents(&parts);
+  std::vector<base::FilePath::StringType> parts = path.GetComponents();
   if (parts.empty())
     return base::FilePath();
 
@@ -190,6 +190,10 @@ class ContentVerifier::HashHelper {
  public:
   explicit HashHelper(ContentVerifier* content_verifier)
       : content_verifier_(content_verifier) {}
+
+  HashHelper(const HashHelper&) = delete;
+  HashHelper& operator=(const HashHelper&) = delete;
+
   ~HashHelper() {
     DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
     // TODO(lazyboy): Do we need to Cancel() the callacks?
@@ -251,6 +255,9 @@ class ContentVerifier::HashHelper {
    public:
     IsCancelledChecker() {}
 
+    IsCancelledChecker(const IsCancelledChecker&) = delete;
+    IsCancelledChecker& operator=(const IsCancelledChecker&) = delete;
+
     // Safe to call from any thread.
     void Cancel() {
       base::AutoLock autolock(cancelled_lock_);
@@ -273,8 +280,6 @@ class ContentVerifier::HashHelper {
 
     // A lock for synchronizing access to |cancelled_|.
     base::Lock cancelled_lock_;
-
-    DISALLOW_COPY_AND_ASSIGN(IsCancelledChecker);
   };
 
   // Holds information about each call to HashHelper::GetContentHash(), for a
@@ -409,11 +414,9 @@ class ContentVerifier::HashHelper {
   // List of pending callbacks of GetContentHash().
   std::map<CallbackKey, CallbackInfo> callback_infos_;
 
-  ContentVerifier* const content_verifier_ = nullptr;
+  const raw_ptr<ContentVerifier> content_verifier_ = nullptr;
 
   base::WeakPtrFactory<HashHelper> weak_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(HashHelper);
 };
 
 // static
@@ -431,7 +434,7 @@ ContentVerifier::~ContentVerifier() {
 
 void ContentVerifier::Start() {
   ExtensionRegistry* registry = ExtensionRegistry::Get(context_);
-  observer_.Add(registry);
+  observation_.Observe(registry);
 }
 
 void ContentVerifier::Shutdown() {
@@ -439,7 +442,7 @@ void ContentVerifier::Shutdown() {
   delegate_->Shutdown();
   content::GetIOThreadTaskRunner({})->PostTask(
       FROM_HERE, base::BindOnce(&ContentVerifier::ShutdownOnIO, this));
-  observer_.RemoveAll();
+  observation_.Reset();
 }
 
 void ContentVerifier::ShutdownOnIO() {
@@ -501,8 +504,8 @@ void ContentVerifier::GetContentHash(
     // pointer to fix this. Also add unit test to exercise this code path
     // explicitly.
     content::GetIOThreadTaskRunner({})->PostTask(
-        FROM_HERE, base::BindOnce(base::DoNothing::Once<ContentHashCallback>(),
-                                  std::move(callback)));
+        FROM_HERE,
+        base::BindOnce([](ContentHashCallback) {}, std::move(callback)));
     return;
   }
 
@@ -592,6 +595,11 @@ void ContentVerifier::OnExtensionUnloaded(
   content::GetIOThreadTaskRunner({})->PostTask(
       FROM_HERE, base::BindOnce(&ContentVerifier::OnExtensionUnloadedOnIO, this,
                                 extension->id(), extension->version()));
+}
+
+ContentVerifierKey ContentVerifier::GetContentVerifierKey() {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  return delegate_->GetPublicKey();
 }
 
 GURL ContentVerifier::GetSignatureFetchUrlForTest(
@@ -695,7 +703,7 @@ void ContentVerifier::BindURLLoaderFactoryReceiverOnUIThread(
   if (shutdown_on_ui_)
     return;
 
-  content::BrowserContext::GetDefaultStoragePartition(context_)
+  context_->GetDefaultStoragePartition()
       ->GetURLLoaderFactoryForBrowserProcess()
       ->Clone(std::move(url_loader_factory_receiver));
 }
@@ -717,7 +725,7 @@ bool ContentVerifier::ShouldVerifyAnyPaths(
   const std::set<CanonicalRelativePath>& indexed_ruleset_paths =
       *(data->canonical_indexed_ruleset_paths);
 
-  base::Optional<std::set<std::string>> all_locale_candidates;
+  absl::optional<std::set<std::string>> all_locale_candidates;
 
   const CanonicalRelativePath manifest_file =
       content_verifier_utils::CanonicalizeRelativePath(
@@ -804,6 +812,11 @@ bool ContentVerifier::ShouldVerifyAnyPathsForTesting(
     const std::set<base::FilePath>& relative_unix_paths) {
   return ShouldVerifyAnyPaths(extension_id, extension_root,
                               relative_unix_paths);
+}
+
+void ContentVerifier::OverrideDelegateForTesting(
+    std::unique_ptr<ContentVerifierDelegate> delegate) {
+  delegate_ = std::move(delegate);
 }
 
 }  // namespace extensions

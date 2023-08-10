@@ -4,14 +4,13 @@
 
 #include "components/infobars/core/infobar_delegate.h"
 
-#include "base/no_destructor.h"
 #include "build/build_config.h"
 #include "components/infobars/core/infobar.h"
 #include "components/infobars/core/infobar_manager.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/vector_icon_types.h"
 
-#if !defined(OS_IOS) && !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_IOS) && !BUILDFLAG(IS_ANDROID)
 #include "ui/gfx/color_palette.h"
 #include "ui/gfx/paint_vector_icon.h"
 #endif
@@ -33,28 +32,27 @@ int InfoBarDelegate::GetIconId() const {
 }
 
 const gfx::VectorIcon& InfoBarDelegate::GetVectorIcon() const {
-  static base::NoDestructor<gfx::VectorIcon> empty_icon;
-  return *empty_icon;
+  static gfx::VectorIcon empty_icon;
+  return empty_icon;
 }
 
-gfx::Image InfoBarDelegate::GetIcon() const {
-#if !defined(OS_IOS) && !defined(OS_ANDROID)
+ui::ImageModel InfoBarDelegate::GetIcon() const {
+#if !BUILDFLAG(IS_IOS) && !BUILDFLAG(IS_ANDROID)
   const gfx::VectorIcon& vector_icon = GetVectorIcon();
-  if (!vector_icon.is_empty()) {
-    return gfx::Image(
-        gfx::CreateVectorIcon(vector_icon, 20, gfx::kGoogleBlue500));
-  }
+  if (!vector_icon.is_empty())
+    return ui::ImageModel::FromVectorIcon(vector_icon, ui::kColorAccent, 20);
 #endif
 
   int icon_id = GetIconId();
   return icon_id == kNoIconID
-             ? gfx::Image()
-             : ui::ResourceBundle::GetSharedInstance().GetNativeImageNamed(
-                   icon_id);
+             ? ui::ImageModel()
+             : ui::ImageModel::FromImage(
+                   ui::ResourceBundle::GetSharedInstance().GetNativeImageNamed(
+                       icon_id));
 }
 
-base::string16 InfoBarDelegate::GetLinkText() const {
-  return base::string16();
+std::u16string InfoBarDelegate::GetLinkText() const {
+  return std::u16string();
 }
 
 GURL InfoBarDelegate::GetLinkURL() const {
@@ -115,7 +113,7 @@ translate::TranslateInfoBarDelegate*
   return nullptr;
 }
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 offline_pages::OfflinePageInfoBarDelegate*
 InfoBarDelegate::AsOfflinePageInfoBarDelegate() {
   return nullptr;

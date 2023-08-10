@@ -1,19 +1,15 @@
 import { SkipTestCase } from '../../common/framework/fixture.js';
-import {
-  assert,
-  raceWithRejectOnTimeout,
-  unreachable,
-  assertReject,
-} from '../../common/framework/util/util.js';
-import { DefaultLimits } from '../constants.js';
-
-import { getGPU } from './navigator_gpu.js';
+import { getGPU } from '../../common/util/navigator_gpu.js';
+import { assert, raceWithRejectOnTimeout, assertReject } from '../../common/util/util.js';
+import { kLimitInfo, kLimits } from '../capability_info.js';
 
 export interface DeviceProvider {
   acquire(): GPUDevice;
+  expectDeviceLost(reason: GPUDeviceLostReason): void;
 }
 
 class TestFailedButDeviceReusable extends Error {}
+class FeaturesNotSupported extends Error {}
 export class TestOOMedShouldAttemptGC extends Error {}
 
 export class DevicePool {
@@ -23,16 +19,23 @@ export class DevicePool {
   private nonDefaultHolders = new DescriptorToHolderMap();
 
   /** Request a device from the pool. */
-  async reserve(descriptor?: GPUDeviceDescriptor): Promise<DeviceProvider> {
+  async reserve(descriptor?: UncanonicalizedDeviceDescriptor): Promise<DeviceProvider> {
     // Always attempt to initialize default device, to see if it succeeds.
+    let errorMessage = '';
     if (this.defaultHolder === 'uninitialized') {
       try {
         this.defaultHolder = await DeviceHolder.create(undefined);
       } catch (ex) {
         this.defaultHolder = 'failed';
+        if (ex instanceof Error) {
+          errorMessage = ` with ${ex.name} "${ex.message}"`;
+        }
       }
     }
-    assert(this.defaultHolder !== 'failed', 'WebGPU device failed to initialize; not retrying');
+    assert(
+      this.defaultHolder !== 'failed',
+      `WebGPU device failed to initialize${errorMessage}; not retrying`
+    );
 
     let holder;
     if (descriptor === undefined) {
@@ -60,11 +63,10 @@ export class DevicePool {
       // (Hopefully if the device was lost, it has been reported by the time endErrorScopes()
       // has finished (or timed out). If not, it could cause a finite number of extra test
       // failures following this one (but should recover eventually).)
-      const lostReason = holder.lostReason;
-      if (lostReason !== undefined) {
-        // Fail the current test.
-        unreachable(`Device was lost: ${lostReason}`);
-      }
+      assert(
+        holder.lostInfo === undefined,
+        `Device was unexpectedly lost. Reason: ${holder.lostInfo?.reason}, Message: ${holder.lostInfo?.message}`
+      );
     } catch (ex) {
       // Any error that isn't explicitly TestFailedButDeviceReusable forces a new device to be
       // created for the next test.
@@ -74,9 +76,21 @@ export class DevicePool {
         } else {
           this.nonDefaultHolders.deleteByDevice(holder.device);
         }
-        // TODO: device.destroy()
+        if ('destroy' in holder.device) {
+          holder.device.destroy();
+        }
       }
-      throw ex;
+      // In the try block, we may throw an error if the device is lost in order to force device
+      // reinitialization, however, if the device lost was expected we want to suppress the error
+      // The device lost is expected when `holder.expectedLostReason` is equal to
+      // `holder.lostInfo.reason`.
+      const expectedDeviceLost =
+        holder.expectedLostReason !== undefined &&
+        holder.lostInfo !== undefined &&
+        holder.expectedLostReason === holder.lostInfo.reason;
+      if (!expectedDeviceLost) {
+        throw ex;
+      }
     } finally {
       // Mark the holder as free. (This only has an effect if the pool still has the holder.)
       // This could be done at the top but is done here to guard against async-races during release.
@@ -108,7 +122,9 @@ class DescriptorToHolderMap {
    *
    * Throws SkipTestCase if devices with this descriptor are unsupported.
    */
-  async getOrCreate(uncanonicalizedDescriptor: GPUDeviceDescriptor): Promise<DeviceHolder> {
+  async getOrCreate(
+    uncanonicalizedDescriptor: UncanonicalizedDeviceDescriptor
+  ): Promise<DeviceHolder> {
     const [descriptor, key] = canonicalizeDescriptor(uncanonicalizedDescriptor);
     // Never retry unsupported configurations.
     if (this.unsupported.has(key)) {
@@ -133,10 +149,14 @@ class DescriptorToHolderMap {
     try {
       value = await DeviceHolder.create(descriptor);
     } catch (ex) {
-      this.unsupported.add(key);
-      throw new SkipTestCase(
-        `GPUDeviceDescriptor not supported: ${JSON.stringify(descriptor)}\n${ex?.message ?? ''}`
-      );
+      if (ex instanceof FeaturesNotSupported) {
+        this.unsupported.add(key);
+        throw new SkipTestCase(
+          `GPUDeviceDescriptor not supported: ${JSON.stringify(descriptor)}\n${ex?.message ?? ''}`
+        );
+      }
+
+      throw ex;
     }
     this.insertAndCleanUp(key, value);
     return value;
@@ -157,29 +177,71 @@ class DescriptorToHolderMap {
   }
 }
 
-type CanonicalDeviceDescriptor = Omit<Required<GPUDeviceDescriptor>, 'label'>;
+export type UncanonicalizedDeviceDescriptor = {
+  requiredFeatures?: Iterable<GPUFeatureName>;
+  requiredLimits?: Record<string, GPUSize32>;
+  /** @deprecated this field cannot be used */
+  nonGuaranteedFeatures?: undefined;
+  /** @deprecated this field cannot be used */
+  nonGuaranteedLimits?: undefined;
+  /** @deprecated this field cannot be used */
+  extensions?: undefined;
+  /** @deprecated this field cannot be used */
+  features?: undefined;
+};
+type CanonicalDeviceDescriptor = Omit<
+  Required<GPUDeviceDescriptor>,
+  'label' | 'nonGuaranteedFeatures' | 'nonGuaranteedLimits'
+>;
 /**
  * Make a stringified map-key from a GPUDeviceDescriptor.
  * Tries to make sure all defaults are resolved, first - but it's okay if some are missed
  * (it just means some GPUDevice objects won't get deduplicated).
  */
-function canonicalizeDescriptor(desc: GPUDeviceDescriptor): [CanonicalDeviceDescriptor, string] {
-  const extensionsCanonicalized = desc.extensions ? Array.from(desc.extensions).sort() : [];
-  const limits: GPULimits = { ...desc.limits };
+function canonicalizeDescriptor(
+  desc: UncanonicalizedDeviceDescriptor
+): [CanonicalDeviceDescriptor, string] {
+  const featuresCanonicalized = desc.requiredFeatures
+    ? Array.from(new Set(desc.requiredFeatures)).sort()
+    : [];
 
-  const limitsCanonicalized: GPULimits = { ...DefaultLimits };
-  for (const k of Object.keys(limits) as (keyof GPULimits)[]) {
-    if (limits[k] !== undefined) {
-      limitsCanonicalized[k] = limits[k];
+  /** Canonicalized version of the requested limits: in canonical order, with only values which are
+   * specified _and_ non-default. */
+  const limitsCanonicalized: Record<string, number> = {};
+  if (desc.requiredLimits) {
+    for (const limit of kLimits) {
+      const requestedValue = desc.requiredLimits[limit];
+      const defaultValue = kLimitInfo[limit].default;
+      // Skip adding a limit to limitsCanonicalized if it is the same as the default.
+      if (requestedValue !== undefined && requestedValue !== defaultValue) {
+        limitsCanonicalized[limit] = requestedValue;
+      }
     }
   }
 
   // Type ensures every field is carried through.
   const descriptorCanonicalized: CanonicalDeviceDescriptor = {
-    extensions: extensionsCanonicalized,
-    limits: limitsCanonicalized,
+    requiredFeatures: featuresCanonicalized,
+    requiredLimits: limitsCanonicalized,
   };
   return [descriptorCanonicalized, JSON.stringify(descriptorCanonicalized)];
+}
+
+function supportsFeature(
+  adapter: GPUAdapter,
+  descriptor: CanonicalDeviceDescriptor | undefined
+): boolean {
+  if (descriptor === undefined) {
+    return true;
+  }
+
+  for (const feature of descriptor.requiredFeatures) {
+    if (!adapter.features.has(feature)) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 /**
@@ -196,14 +258,20 @@ type DeviceHolderState = 'free' | 'reserved' | 'acquired';
 class DeviceHolder implements DeviceProvider {
   readonly device: GPUDevice;
   state: DeviceHolderState = 'free';
-  lostReason?: string; // initially undefined; becomes set when the device is lost
+  // initially undefined; becomes set when the device is lost
+  lostInfo?: GPUDeviceLostInfo;
+  // Set if the device is expected to be lost.
+  expectedLostReason?: GPUDeviceLostReason;
 
   // Gets a device and creates a DeviceHolder.
-  // If the device is lost, DeviceHolder.lostReason gets set.
+  // If the device is lost, DeviceHolder.lost gets set.
   static async create(descriptor: CanonicalDeviceDescriptor | undefined): Promise<DeviceHolder> {
     const gpu = getGPU();
     const adapter = await gpu.requestAdapter();
     assert(adapter !== null, 'requestAdapter returned null');
+    if (!supportsFeature(adapter, descriptor)) {
+      throw new FeaturesNotSupported('One or more features are not supported');
+    }
     const device = await adapter.requestDevice(descriptor);
     assert(device !== null, 'requestDevice returned null');
 
@@ -213,7 +281,7 @@ class DeviceHolder implements DeviceProvider {
   private constructor(device: GPUDevice) {
     this.device = device;
     this.device.lost.then(ev => {
-      this.lostReason = ev.message;
+      this.lostInfo = ev;
     });
   }
 
@@ -223,6 +291,10 @@ class DeviceHolder implements DeviceProvider {
     this.device.pushErrorScope('out-of-memory');
     this.device.pushErrorScope('validation');
     return this.device;
+  }
+
+  expectDeviceLost(reason: GPUDeviceLostReason) {
+    this.expectedLostReason = reason;
   }
 
   async ensureRelease(): Promise<void> {
@@ -250,16 +322,24 @@ class DeviceHolder implements DeviceProvider {
     let gpuValidationError: GPUValidationError | GPUOutOfMemoryError | null;
     let gpuOutOfMemoryError: GPUValidationError | GPUOutOfMemoryError | null;
 
+    // Submit to the queue to attempt to force a GPU flush.
+    this.device.queue.submit([]);
+
     try {
       // May reject if the device was lost.
       gpuValidationError = await this.device.popErrorScope();
       gpuOutOfMemoryError = await this.device.popErrorScope();
     } catch (ex) {
       assert(
-        this.lostReason !== undefined,
+        this.lostInfo !== undefined,
         'popErrorScope failed; should only happen if device has been lost'
       );
       throw ex;
+    }
+
+    // Attempt to wait for the queue to be idle.
+    if (this.device.queue.onSubmittedWorkDone) {
+      await this.device.queue.onSubmittedWorkDone();
     }
 
     await assertReject(

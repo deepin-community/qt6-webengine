@@ -20,6 +20,7 @@
 #include "extensions/browser/api/bluetooth/bluetooth_api_utils.h"
 #include "extensions/browser/api/bluetooth/bluetooth_event_router.h"
 #include "extensions/browser/event_router.h"
+#include "extensions/browser/extension_host_registry.h"
 #include "extensions/common/api/bluetooth.h"
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
@@ -62,6 +63,13 @@ BluetoothAPI::GetFactoryInstance() {
   return g_factory.Pointer();
 }
 
+template <>
+void BrowserContextKeyedAPIFactory<BluetoothAPI>::DeclareFactoryDependencies() {
+  /// The BluetoothEventRouter, which is owned by the BluetoothAPI object,
+  // depends on the ExtensionHostRegistry.
+  DependsOn(ExtensionHostRegistry::GetFactory());
+}
+
 // static
 BluetoothAPI* BluetoothAPI::Get(BrowserContext* context) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
@@ -91,7 +99,7 @@ BluetoothEventRouter* BluetoothAPI::event_router() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (!event_router_) {
     BLUETOOTH_LOG(EVENT) << "BluetoothAPI: Creating BluetoothEventRouter";
-    event_router_.reset(new BluetoothEventRouter(browser_context_));
+    event_router_ = std::make_unique<BluetoothEventRouter>(browser_context_);
   }
   return event_router_.get();
 }
@@ -130,7 +138,7 @@ BluetoothGetDevicesFunction::BluetoothGetDevicesFunction() = default;
 BluetoothGetDevicesFunction::~BluetoothGetDevicesFunction() = default;
 
 bool BluetoothGetDevicesFunction::CreateParams() {
-  params_ = GetDevices::Params::Create(*args_);
+  params_ = GetDevices::Params::Create(args());
   return params_ != nullptr;
 }
 
@@ -178,7 +186,7 @@ BluetoothGetDeviceFunction::BluetoothGetDeviceFunction() = default;
 BluetoothGetDeviceFunction::~BluetoothGetDeviceFunction() = default;
 
 bool BluetoothGetDeviceFunction::CreateParams() {
-  params_ = GetDevice::Params::Create(*args_);
+  params_ = GetDevice::Params::Create(args());
   return params_ != nullptr;
 }
 

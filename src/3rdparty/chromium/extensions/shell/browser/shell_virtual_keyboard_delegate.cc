@@ -17,7 +17,7 @@ ShellVirtualKeyboardDelegate::ShellVirtualKeyboardDelegate() {}
 void ShellVirtualKeyboardDelegate::GetKeyboardConfig(
     OnKeyboardSettingsCallback on_settings_callback) {
   std::unique_ptr<base::DictionaryValue> settings(new base::DictionaryValue());
-  settings->SetBoolean("hotrodmode", is_hotrod_keyboard_);
+  settings->GetDict().Set("hotrodmode", is_hotrod_keyboard_);
   std::move(on_settings_callback).Run(std::move(settings));
 }
 
@@ -29,7 +29,7 @@ bool ShellVirtualKeyboardDelegate::HideKeyboard() {
   return false;
 }
 
-bool ShellVirtualKeyboardDelegate::InsertText(const base::string16& text) {
+bool ShellVirtualKeyboardDelegate::InsertText(const std::u16string& text) {
   return false;
 }
 

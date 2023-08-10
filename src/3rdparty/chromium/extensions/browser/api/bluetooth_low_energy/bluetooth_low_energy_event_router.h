@@ -13,10 +13,11 @@
 #include <vector>
 
 #include "base/callback_forward.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
-#include "base/scoped_observer.h"
+#include "base/scoped_observation.h"
+#include "base/values.h"
 #include "device/bluetooth/bluetooth_adapter.h"
 #include "device/bluetooth/bluetooth_device.h"
 #include "device/bluetooth/bluetooth_gatt_characteristic.h"
@@ -29,12 +30,7 @@
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_registry_observer.h"
 #include "extensions/common/api/bluetooth_low_energy.h"
-
-namespace base {
-
-class ListValue;
-
-}  // namespace base
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace content {
 
@@ -72,18 +68,24 @@ class BluetoothLowEnergyEventRouter
                           Delegate::ErrorCallback error_callback);
     AttributeValueRequest(base::OnceClosure success_callback,
                           Delegate::ErrorCallback error_callback);
+
+    AttributeValueRequest(const AttributeValueRequest&) = delete;
+    AttributeValueRequest& operator=(const AttributeValueRequest&) = delete;
+
     ~AttributeValueRequest();
 
     RequestType type;
     Delegate::ValueCallback value_callback;
     base::OnceClosure success_callback;
     Delegate::ErrorCallback error_callback;
-
-   private:
-    DISALLOW_COPY_AND_ASSIGN(AttributeValueRequest);
   };
 
   explicit BluetoothLowEnergyEventRouter(content::BrowserContext* context);
+
+  BluetoothLowEnergyEventRouter(const BluetoothLowEnergyEventRouter&) = delete;
+  BluetoothLowEnergyEventRouter& operator=(
+      const BluetoothLowEnergyEventRouter&) = delete;
+
   ~BluetoothLowEnergyEventRouter() override;
 
   // Possible ways that an API method can fail or succeed.
@@ -129,14 +131,13 @@ class BluetoothLowEnergyEventRouter
   // Creates a GATT connection to the device with address |device_address| for
   // extension |extension|. The connection is kept alive until the extension is
   // unloaded, the device is removed, or is disconnect by the host subsystem.
-  // |error_callback| is called with an error status in case of failure. If
+  // |callback| is called with the status of the connect operation. If
   // |persistent| is true, then the allocated connection resource is persistent
   // across unloads.
   void Connect(bool persistent,
                const Extension* extension,
                const std::string& device_address,
-               base::OnceClosure callback,
-               ErrorCallback error_callback);
+               ErrorCallback callback);
 
   // Disconnects the currently open GATT connection of extension |extension| to
   // device with address |device_address|. |error_callback| is called with an
@@ -310,8 +311,7 @@ class BluetoothLowEnergyEventRouter
       const device::BluetoothDevice* device,
       const device::BluetoothLocalGattCharacteristic* characteristic,
       int offset,
-      Delegate::ValueCallback value_callback,
-      Delegate::ErrorCallback error_callback) override;
+      Delegate::ValueCallback value_callback) override;
   void OnCharacteristicWriteRequest(
       const device::BluetoothDevice* device,
       const device::BluetoothLocalGattCharacteristic* characteristic,
@@ -331,8 +331,7 @@ class BluetoothLowEnergyEventRouter
       const device::BluetoothDevice* device,
       const device::BluetoothLocalGattDescriptor* descriptor,
       int offset,
-      Delegate::ValueCallback value_callback,
-      Delegate::ErrorCallback error_callback) override;
+      Delegate::ValueCallback value_callback) override;
   void OnDescriptorWriteRequest(
       const device::BluetoothDevice* device,
       const device::BluetoothLocalGattDescriptor* descriptor,
@@ -409,12 +408,12 @@ class BluetoothLowEnergyEventRouter
       const std::string& event_name,
       const device::BluetoothUUID& uuid,
       const std::string& characteristic_id,
-      std::unique_ptr<base::ListValue> args);
+      std::vector<base::Value> args);
 
   void DispatchEventToExtension(const std::string& extension_id,
                                 events::HistogramValue histogram_value,
                                 const std::string& event_name,
-                                std::unique_ptr<base::ListValue> args);
+                                std::vector<base::Value> args);
 
   // Returns a BluetoothRemoteGattService by its instance ID |instance_id|.
   // Returns
@@ -435,22 +434,28 @@ class BluetoothLowEnergyEventRouter
 
   // Dispatches a BLUETOOTH_LOW_ENERGY_ON_CHARACTERISTIC_VALUE_CHANGED and runs
   // |callback|.
-  void OnReadRemoteCharacteristicSuccess(
+  void OnReadRemoteCharacteristic(
       const std::string& characteristic_instance_id,
       base::OnceClosure callback,
+      ErrorCallback error_callback,
+      absl::optional<device::BluetoothGattService::GattErrorCode> error_code,
       const std::vector<uint8_t>& value);
 
   // Runs |callback|.
-  void OnReadRemoteDescriptorSuccess(base::OnceClosure callback,
-                                     const std::vector<uint8_t>& value);
+  void OnReadRemoteDescriptor(
+      base::OnceClosure callback,
+      ErrorCallback error_callback,
+      absl::optional<device::BluetoothGattService::GattErrorCode> error_code,
+      const std::vector<uint8_t>& value);
 
   // Called by BluetoothDevice in response to a call to CreateGattConnection.
   void OnCreateGattConnection(
       bool persistent,
       const std::string& extension_id,
       const std::string& device_address,
-      base::OnceClosure callback,
-      std::unique_ptr<device::BluetoothGattConnection> connection);
+      ErrorCallback callback,
+      std::unique_ptr<device::BluetoothGattConnection> connection,
+      absl::optional<device::BluetoothDevice::ConnectErrorCode> error_code);
 
   // Called by BluetoothGattService in response to Register().
   void OnRegisterGattServiceSuccess(const std::string& service_id,
@@ -464,15 +469,9 @@ class BluetoothLowEnergyEventRouter
 
   // Called by BluetoothRemoteGattCharacteristic and
   // BluetoothRemoteGattDescriptor in
-  // case of an error during the read/write operations.
+  // case of an error during the write operations.
   void OnError(ErrorCallback error_callback,
-               device::BluetoothRemoteGattService::GattErrorCode error_code);
-
-  // Called by BluetoothDevice in response to a call to CreateGattConnection.
-  void OnConnectError(const std::string& extension_id,
-                      const std::string& device_address,
-                      ErrorCallback error_callback,
-                      device::BluetoothDevice::ConnectErrorCode error_code);
+               device::BluetoothGattService::GattErrorCode error_code);
 
   // Called by BluetoothRemoteGattCharacteristic in response to a call to
   // StartNotifySession.
@@ -489,7 +488,7 @@ class BluetoothLowEnergyEventRouter
       const std::string& extension_id,
       const std::string& characteristic_id,
       ErrorCallback error_callback,
-      device::BluetoothRemoteGattService::GattErrorCode error_code);
+      device::BluetoothGattService::GattErrorCode error_code);
 
   // Called by BluetoothGattNotifySession in response to a call to Stop.
   void OnStopNotifySession(const std::string& extension_id,
@@ -579,17 +578,15 @@ class BluetoothLowEnergyEventRouter
   std::map<std::string, std::vector<std::string>> app_id_to_service_ids_;
 
   // BrowserContext passed during initialization.
-  content::BrowserContext* browser_context_;
+  raw_ptr<content::BrowserContext> browser_context_;
 
   // Listen to extension unloaded notification.
-  ScopedObserver<ExtensionRegistry, ExtensionRegistryObserver>
-      extension_registry_observer_{this};
+  base::ScopedObservation<ExtensionRegistry, ExtensionRegistryObserver>
+      extension_registry_observation_{this};
 
   // Note: This should remain the last member so it'll be destroyed and
   // invalidate its weak pointers before any other members are destroyed.
   base::WeakPtrFactory<BluetoothLowEnergyEventRouter> weak_ptr_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(BluetoothLowEnergyEventRouter);
 };
 
 }  // namespace extensions

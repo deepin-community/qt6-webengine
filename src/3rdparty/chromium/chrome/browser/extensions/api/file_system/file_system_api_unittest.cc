@@ -6,6 +6,7 @@
 
 #include <stddef.h>
 
+#include <memory>
 #include <vector>
 
 #include "base/files/file_path.h"
@@ -41,22 +42,24 @@ AcceptOption BuildAcceptOption(const std::string& description,
   AcceptOption option;
 
   if (!description.empty())
-    option.description.reset(new std::string(description));
+    option.description = std::make_unique<std::string>(description);
 
   if (!mime_types.empty()) {
-    option.mime_types.reset(new std::vector<std::string>(base::SplitString(
-        mime_types, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL)));
+    option.mime_types =
+        std::make_unique<std::vector<std::string>>(base::SplitString(
+            mime_types, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL));
   }
 
   if (!extensions.empty()) {
-    option.extensions.reset(new std::vector<std::string>(base::SplitString(
-        extensions, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL)));
+    option.extensions =
+        std::make_unique<std::vector<std::string>>(base::SplitString(
+            extensions, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL));
   }
 
   return option;
 }
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 #define ToStringType base::UTF8ToWide
 #else
 #define ToStringType
@@ -154,7 +157,7 @@ TEST(FileSystemApiUnitTest, FileSystemChooseEntryFunctionFileTypeInfoTest) {
   FileSystemChooseEntryFunction::BuildFileTypeInfo(&file_type_info,
       base::FilePath::StringType(), &options, &acceptsAllTypes);
   EXPECT_EQ(file_type_info.extension_description_overrides[0],
-      base::UTF8ToUTF16("File Types 101"));
+            u"File Types 101");
 }
 
 TEST(FileSystemApiUnitTest, FileSystemChooseEntryFunctionSuggestionTest) {
@@ -177,7 +180,7 @@ TEST(FileSystemApiUnitTest, FileSystemChooseEntryFunctionSuggestionTest) {
   EXPECT_EQ(suggested_name.MaybeAsASCII(), "path");
   EXPECT_TRUE(suggested_extension.empty());
 
-#if !defined(OS_WIN)
+#if !BUILDFLAG(IS_WIN)
   // TODO(thorogood): Fix this test on Windows.
   // Filter out absolute paths with no basename.
   opt_name = std::string("/");

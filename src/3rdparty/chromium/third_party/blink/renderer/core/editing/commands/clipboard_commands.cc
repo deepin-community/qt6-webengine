@@ -42,6 +42,7 @@
 #include "third_party/blink/renderer/core/editing/editor.h"
 #include "third_party/blink/renderer/core/editing/ephemeral_range.h"
 #include "third_party/blink/renderer/core/editing/frame_selection.h"
+#include "third_party/blink/renderer/core/editing/ime/input_method_controller.h"
 #include "third_party/blink/renderer/core/editing/serializers/serialization.h"
 #include "third_party/blink/renderer/core/events/clipboard_event.h"
 #include "third_party/blink/renderer/core/events/text_event.h"
@@ -83,7 +84,8 @@ bool ClipboardCommands::CanWriteClipboard(LocalFrame& frame,
 
 bool ClipboardCommands::CanSmartReplaceInClipboard(LocalFrame& frame) {
   return frame.GetEditor().SmartInsertDeleteEnabled() &&
-         frame.GetSystemClipboard()->CanSmartReplace();
+         frame.GetSystemClipboard()->IsFormatAvailable(
+             blink::mojom::ClipboardFormat::kSmartPaste);
 }
 
 Element* ClipboardCommands::FindEventTargetForClipboardEvent(
@@ -331,7 +333,12 @@ bool ClipboardCommands::ExecuteCut(LocalFrame& frame,
     // 'beforeinput' event handler may destroy target frame.
     if (frame.GetDocument()->GetFrame() != frame)
       return true;
+
+    // No DOM mutation if EditContext is active.
+    if (frame.GetInputMethodController().GetActiveEditContext())
+      return true;
   }
+
   frame.GetEditor().DeleteSelectionWithSmartDelete(
       ConvertSmartReplaceOptionToDeleteMode(GetSmartReplaceOption(frame)),
       InputEvent::InputType::kDeleteByCut);
@@ -365,7 +372,8 @@ void ClipboardCommands::PasteAsPlainTextFromClipboard(
 ClipboardCommands::FragmentAndPlainText
 ClipboardCommands::GetFragmentFromClipboard(LocalFrame& frame) {
   DocumentFragment* fragment = nullptr;
-  if (frame.GetSystemClipboard()->IsHTMLAvailable()) {
+  if (frame.GetSystemClipboard()->IsFormatAvailable(
+          blink::mojom::ClipboardFormat::kHtml)) {
     unsigned fragment_start = 0;
     unsigned fragment_end = 0;
     KURL url;
@@ -406,7 +414,6 @@ void ClipboardCommands::PasteFromClipboard(LocalFrame& frame,
 
   if (!fragment_and_plain_text.first)
     return;
-
   PasteAsFragment(frame, fragment_and_plain_text.first,
                   CanSmartReplaceInClipboard(frame),
                   fragment_and_plain_text.second, source);
@@ -449,6 +456,10 @@ void ClipboardCommands::Paste(LocalFrame& frame, EditorCommandSource source) {
       return;
     // 'beforeinput' event handler may destroy target frame.
     if (frame.GetDocument()->GetFrame() != frame)
+      return;
+
+    // No DOM mutation if EditContext is active.
+    if (frame.GetInputMethodController().GetActiveEditContext())
       return;
   }
 
@@ -497,9 +508,27 @@ bool ClipboardCommands::ExecutePasteAndMatchStyle(LocalFrame& frame,
   // before we obtain the selection.
   frame.GetDocument()->UpdateStyleAndLayout(DocumentUpdateReason::kEditing);
 
-  if (source == EditorCommandSource::kMenuOrKeyBinding &&
-      !frame.Selection().SelectionHasFocus())
-    return false;
+  if (source == EditorCommandSource::kMenuOrKeyBinding) {
+    if (!frame.Selection().SelectionHasFocus())
+      return false;
+
+    DataTransfer* data_transfer = DataTransfer::Create(
+        DataTransfer::kCopyAndPaste, DataTransferAccessPolicy::kReadable,
+        DataObject::CreateFromClipboard(frame.GetSystemClipboard(),
+                                        PasteMode::kPlainTextOnly));
+    if (DispatchBeforeInputDataTransfer(
+            FindEventTargetForClipboardEvent(frame, source),
+            InputEvent::InputType::kInsertFromPaste,
+            data_transfer) != DispatchEventResult::kNotCanceled)
+      return true;
+    // 'beforeinput' event handler may destroy target frame.
+    if (frame.GetDocument()->GetFrame() != frame)
+      return true;
+
+    // No DOM mutation if EditContext is active.
+    if (frame.GetInputMethodController().GetActiveEditContext())
+      return true;
+  }
 
   PasteAsPlainTextFromClipboard(frame, source);
   return true;

@@ -7,12 +7,18 @@
 #include "third_party/blink/renderer/core/html/html_table_col_element.h"
 #include "third_party/blink/renderer/core/layout/ng/table/layout_ng_table.h"
 #include "third_party/blink/renderer/core/layout/ng/table/ng_table_borders.h"
+#include "third_party/blink/renderer/core/layout/ng/table/ng_table_layout_algorithm_types.h"
 
 namespace blink {
 
 LayoutNGTableColumn::LayoutNGTableColumn(Element* element)
     : LayoutBox(element) {
   UpdateFromElement();
+}
+
+void LayoutNGTableColumn::Trace(Visitor* visitor) const {
+  visitor->Trace(children_);
+  LayoutBox::Trace(visitor);
 }
 
 void LayoutNGTableColumn::StyleDidChange(StyleDifference diff,
@@ -22,17 +28,24 @@ void LayoutNGTableColumn::StyleDidChange(StyleDifference diff,
     if (LayoutNGTable* table = Table()) {
       if (old_style && diff.NeedsPaintInvalidation()) {
         // Regenerate table borders if needed
-        if (!old_style->BorderVisuallyEqual(StyleRef()) ||
-            (diff.TextDecorationOrColorChanged() &&
-             StyleRef().HasBorderColorReferencingCurrentColor())) {
+        if (!old_style->BorderVisuallyEqual(StyleRef()))
           table->GridBordersChanged();
-        }
         // Table paints column background. Tell table to repaint.
         if (StyleRef().HasBackground() || old_style->HasBackground())
           table->SetBackgroundNeedsFullPaintInvalidation();
       }
       if (diff.NeedsLayout()) {
         table->SetIntrinsicLogicalWidthsDirty();
+        if (old_style &&
+            NGTableTypes::CreateColumn(
+                *old_style,
+                /* default_inline_size */ absl::nullopt,
+                table->StyleRef().IsFixedTableLayout()) !=
+                NGTableTypes::CreateColumn(
+                    StyleRef(), /* default_inline_size */ absl::nullopt,
+                    table->StyleRef().IsFixedTableLayout())) {
+          table->GridBordersChanged();
+        }
       }
     }
   }
@@ -50,17 +63,21 @@ void LayoutNGTableColumn::ImageChanged(WrappedImagePtr, CanDeferInvalidation) {
 void LayoutNGTableColumn::InsertedIntoTree() {
   NOT_DESTROYED();
   LayoutBox::InsertedIntoTree();
-  DCHECK(Table());
+  LayoutNGTable* table = Table();
+  DCHECK(table);
   if (StyleRef().HasBackground())
-    Table()->SetBackgroundNeedsFullPaintInvalidation();
+    table->SetBackgroundNeedsFullPaintInvalidation();
+  table->TableGridStructureChanged();
 }
 
 void LayoutNGTableColumn::WillBeRemovedFromTree() {
   NOT_DESTROYED();
   LayoutBox::WillBeRemovedFromTree();
-  DCHECK(Table());
+  LayoutNGTable* table = Table();
+  DCHECK(table);
   if (StyleRef().HasBackground())
-    Table()->SetBackgroundNeedsFullPaintInvalidation();
+    table->SetBackgroundNeedsFullPaintInvalidation();
+  table->TableGridStructureChanged();
 }
 
 bool LayoutNGTableColumn::IsChildAllowed(LayoutObject* child,
@@ -107,6 +124,8 @@ void LayoutNGTableColumn::UpdateFromElement() {
   if (span_ != old_span && Style() && Parent()) {
     SetNeedsLayoutAndIntrinsicWidthsRecalcAndFullPaintInvalidation(
         layout_invalidation_reason::kAttributeChanged);
+    if (LayoutNGTable* table = Table())
+      table->GridBordersChanged();
   }
 }
 

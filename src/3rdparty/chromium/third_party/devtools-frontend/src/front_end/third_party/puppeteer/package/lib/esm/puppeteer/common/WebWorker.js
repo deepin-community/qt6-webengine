@@ -14,10 +14,9 @@
  * limitations under the License.
  */
 import { EventEmitter } from './EventEmitter.js';
-import { ExecutionContext } from './ExecutionContext.js';
 import { debugError } from './helper.js';
+import { ExecutionContext } from './ExecutionContext.js';
 import { JSHandle } from './JSHandle.js';
-
 /**
  * The WebWorker class represents a
  * {@link https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API | WebWorker}.
@@ -56,7 +55,7 @@ export class WebWorker extends EventEmitter {
             const executionContext = new ExecutionContext(client, event.context, null);
             this._executionContextCallback(executionContext);
         });
-        // This might fail if the target is closed before we recieve all execution contexts.
+        // This might fail if the target is closed before we receive all execution contexts.
         this._client.send('Runtime.enable').catch(debugError);
         this._client.on('Runtime.consoleAPICalled', (event) => consoleAPICalled(event.type, event.args.map(jsHandleFactory), event.stackTrace));
         this._client.on('Runtime.exceptionThrown', (exception) => exceptionThrown(exception.exceptionDetails));
@@ -94,7 +93,7 @@ export class WebWorker extends EventEmitter {
     /**
      * The only difference between `worker.evaluate` and `worker.evaluateHandle`
      * is that `worker.evaluateHandle` returns in-page object (JSHandle). If the
-     * function passed to the `worker.evaluateHandle` returns a [Promise], then
+     * function passed to the `worker.evaluateHandle` returns a `Promise`, then
      * `worker.evaluateHandle` would wait for the promise to resolve and return
      * its value. Shortcut for
      * `await worker.executionContext()).evaluateHandle(pageFunction, ...args)`

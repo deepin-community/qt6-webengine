@@ -16,6 +16,7 @@
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_types.h"
+#include "components/content_settings/core/common/content_settings_utils.h"
 #include "components/site_engagement/content/engagement_type.h"
 #include "components/site_engagement/content/site_engagement_metrics.h"
 #include "components/variations/variations_associated_data.h"
@@ -47,9 +48,10 @@ std::unique_ptr<base::DictionaryValue> GetSiteEngagementScoreDictForSettings(
   if (!settings)
     return std::make_unique<base::DictionaryValue>();
 
-  std::unique_ptr<base::DictionaryValue> value =
-      base::DictionaryValue::From(settings->GetWebsiteSetting(
-          origin_url, origin_url, ContentSettingsType::SITE_ENGAGEMENT, NULL));
+  std::unique_ptr<base::DictionaryValue> value = base::DictionaryValue::From(
+      content_settings::ToNullableUniquePtrValue(settings->GetWebsiteSetting(
+          origin_url, origin_url, ContentSettingsType::SITE_ENGAGEMENT,
+          nullptr)));
 
   if (value.get())
     return value;
@@ -277,7 +279,7 @@ void SiteEngagementScore::Commit() {
 
   settings_map_->SetWebsiteSettingDefaultScope(
       origin_, GURL(), ContentSettingsType::SITE_ENGAGEMENT,
-      std::move(score_dict_));
+      base::Value::FromUniquePtrValue(std::move(score_dict_)));
 }
 
 blink::mojom::EngagementLevel SiteEngagementScore::GetEngagementLevel() const {
@@ -321,17 +323,14 @@ void SiteEngagementScore::Reset(double points,
 }
 
 bool SiteEngagementScore::UpdateScoreDict(base::DictionaryValue* score_dict) {
-  double raw_score_orig = 0;
-  double points_added_today_orig = 0;
-  double last_engagement_time_internal_orig = 0;
-  double last_shortcut_launch_time_internal_orig = 0;
+  double raw_score_orig = score_dict->FindDoubleKey(kRawScoreKey).value_or(0);
+  double points_added_today_orig =
+      score_dict->FindDoubleKey(kPointsAddedTodayKey).value_or(0);
+  double last_engagement_time_internal_orig =
+      score_dict->FindDoubleKey(kLastEngagementTimeKey).value_or(0);
+  double last_shortcut_launch_time_internal_orig =
+      score_dict->FindDoubleKey(kLastShortcutLaunchTimeKey).value_or(0);
 
-  score_dict->GetDouble(kRawScoreKey, &raw_score_orig);
-  score_dict->GetDouble(kPointsAddedTodayKey, &points_added_today_orig);
-  score_dict->GetDouble(kLastEngagementTimeKey,
-                        &last_engagement_time_internal_orig);
-  score_dict->GetDouble(kLastShortcutLaunchTimeKey,
-                        &last_shortcut_launch_time_internal_orig);
   bool changed =
       DoublesConsideredDifferent(raw_score_orig, raw_score_, kScoreDelta) ||
       DoublesConsideredDifferent(points_added_today_orig, points_added_today_,
@@ -371,14 +370,21 @@ SiteEngagementScore::SiteEngagementScore(
   if (!score_dict_)
     return;
 
-  score_dict_->GetDouble(kRawScoreKey, &raw_score_);
-  score_dict_->GetDouble(kPointsAddedTodayKey, &points_added_today_);
+  raw_score_ = score_dict_->FindDoubleKey(kRawScoreKey).value_or(0);
+  points_added_today_ =
+      score_dict_->FindDoubleKey(kPointsAddedTodayKey).value_or(0);
 
-  double internal_time;
-  if (score_dict_->GetDouble(kLastEngagementTimeKey, &internal_time))
-    last_engagement_time_ = base::Time::FromInternalValue(internal_time);
-  if (score_dict_->GetDouble(kLastShortcutLaunchTimeKey, &internal_time))
-    last_shortcut_launch_time_ = base::Time::FromInternalValue(internal_time);
+  absl::optional<double> maybe_last_engagement_time =
+      score_dict_->FindDoubleKey(kLastEngagementTimeKey);
+  if (maybe_last_engagement_time.has_value())
+    last_engagement_time_ =
+        base::Time::FromInternalValue(maybe_last_engagement_time.value());
+
+  absl::optional<double> maybe_last_shortcut_launch_time =
+      score_dict_->FindDoubleKey(kLastShortcutLaunchTimeKey);
+  if (maybe_last_shortcut_launch_time.has_value())
+    last_shortcut_launch_time_ =
+        base::Time::FromInternalValue(maybe_last_shortcut_launch_time.value());
 }
 
 double SiteEngagementScore::DecayedScore() const {

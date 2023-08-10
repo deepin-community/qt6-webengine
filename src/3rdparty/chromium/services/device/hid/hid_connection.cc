@@ -16,44 +16,12 @@ namespace device {
 
 namespace {
 
-// Functor used to filter collections by report ID.
-struct CollectionHasReportId {
-  explicit CollectionHasReportId(uint8_t report_id) : report_id_(report_id) {}
-
-  bool operator()(const mojom::HidCollectionInfoPtr& info) const {
-    if (info->report_ids.size() == 0 ||
-        report_id_ == HidConnection::kNullReportId)
-      return false;
-
-    if (report_id_ == HidConnection::kAnyReportId)
-      return true;
-
-    return base::Contains(info->report_ids, report_id_);
-  }
-
- private:
-  const uint8_t report_id_;
-};
-
 // Functor returning true if collection has a protected usage.
 struct CollectionIsAlwaysProtected {
   bool operator()(const mojom::HidCollectionInfoPtr& info) const {
     return IsAlwaysProtected(*info->usage);
   }
 };
-
-const mojom::HidCollectionInfo* FindCollectionByReportId(
-    const std::vector<mojom::HidCollectionInfoPtr>& collections,
-    uint8_t report_id) {
-  auto collection_iter = std::find_if(collections.begin(), collections.end(),
-                                      CollectionHasReportId(report_id));
-  if (collection_iter != collections.end()) {
-    DCHECK(collection_iter->get());
-    return collection_iter->get();
-  }
-
-  return nullptr;
-}
 
 bool HasAlwaysProtectedCollection(
     const std::vector<mojom::HidCollectionInfoPtr>& collections) {
@@ -64,9 +32,11 @@ bool HasAlwaysProtectedCollection(
 }  // namespace
 
 HidConnection::HidConnection(scoped_refptr<HidDeviceInfo> device_info,
-                             bool allow_protected_reports)
+                             bool allow_protected_reports,
+                             bool allow_fido_reports)
     : device_info_(device_info),
       allow_protected_reports_(allow_protected_reports),
+      allow_fido_reports_(allow_fido_reports),
       closed_(false) {
   has_always_protected_collection_ =
       HasAlwaysProtectedCollection(device_info->collections());
@@ -128,7 +98,7 @@ void HidConnection::Write(scoped_refptr<base::RefCountedBytes> buffer,
     std::move(callback).Run(false);
     return;
   }
-  if (IsReportIdProtected(report_id, kOutput)) {
+  if (IsReportIdProtected(report_id, HidReportType::kOutput)) {
     HID_LOG(USER) << "Attempt to set a protected output report.";
     std::move(callback).Run(false);
     return;
@@ -149,7 +119,7 @@ void HidConnection::GetFeatureReport(uint8_t report_id, ReadCallback callback) {
     std::move(callback).Run(false, nullptr, 0);
     return;
   }
-  if (IsReportIdProtected(report_id, kFeature)) {
+  if (IsReportIdProtected(report_id, HidReportType::kFeature)) {
     HID_LOG(USER) << "Attempt to get a protected feature report.";
     std::move(callback).Run(false, nullptr, 0);
     return;
@@ -174,7 +144,7 @@ void HidConnection::SendFeatureReport(
     std::move(callback).Run(false);
     return;
   }
-  if (IsReportIdProtected(report_id, kFeature)) {
+  if (IsReportIdProtected(report_id, HidReportType::kFeature)) {
     HID_LOG(USER) << "Attempt to set a protected feature report.";
     std::move(callback).Run(false);
     return;
@@ -186,20 +156,32 @@ void HidConnection::SendFeatureReport(
 bool HidConnection::IsReportIdProtected(uint8_t report_id,
                                         HidReportType report_type) {
   if (!allow_protected_reports_) {
+    // If |allow_fido_reports_| is true, allow access to reports in collections
+    // with a usage from the FIDO usage page. FIDO reports are normally blocked
+    // by the HID blocklist.
+    if (allow_fido_reports_) {
+      auto* collection_info =
+          device_info_->FindCollectionWithReport(report_id, report_type);
+      if (collection_info &&
+          collection_info->usage->usage_page == mojom::kPageFido) {
+        return false;
+      }
+    }
+
     // Deny access to reports that match HID blocklist rules.
-    if (report_type == kInput) {
+    if (report_type == HidReportType::kInput) {
       if (device_info_->device()->protected_input_report_ids.has_value() &&
           base::Contains(*device_info_->device()->protected_input_report_ids,
                          report_id)) {
         return true;
       }
-    } else if (report_type == kOutput) {
+    } else if (report_type == HidReportType::kOutput) {
       if (device_info_->device()->protected_output_report_ids.has_value() &&
           base::Contains(*device_info_->device()->protected_output_report_ids,
                          report_id)) {
         return true;
       }
-    } else if (report_type == kFeature) {
+    } else if (report_type == HidReportType::kFeature) {
       if (device_info_->device()->protected_feature_report_ids.has_value() &&
           base::Contains(*device_info_->device()->protected_feature_report_ids,
                          report_id)) {
@@ -211,7 +193,7 @@ bool HidConnection::IsReportIdProtected(uint8_t report_id,
   // Some types of reports are always blocked regardless of
   // |allow_protected_reports_|.
   auto* collection_info =
-      FindCollectionByReportId(device_info_->collections(), report_id);
+      device_info_->FindCollectionWithReport(report_id, report_type);
   if (collection_info) {
     return IsAlwaysProtected(*collection_info->usage);
   }
@@ -226,7 +208,7 @@ void HidConnection::ProcessInputReport(
   DCHECK_GE(size, 1u);
 
   uint8_t report_id = buffer->data()[0];
-  if (IsReportIdProtected(report_id, kInput))
+  if (IsReportIdProtected(report_id, HidReportType::kInput))
     return;
 
   if (client_) {
@@ -247,9 +229,7 @@ void HidConnection::ProcessReadQueue() {
   while (pending_reads_.size() && pending_reports_.size()) {
     ReadCallback callback = std::move(pending_reads_.front());
 
-    scoped_refptr<base::RefCountedBytes> buffer;
-    size_t size;
-    std::tie(buffer, size) = std::move(pending_reports_.front());
+    auto [buffer, size] = std::move(pending_reports_.front());
 
     pending_reads_.pop();
     pending_reports_.pop();

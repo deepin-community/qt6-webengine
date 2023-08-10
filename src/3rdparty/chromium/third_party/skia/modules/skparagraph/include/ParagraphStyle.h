@@ -45,10 +45,14 @@ struct StrutStyle {
     bool getHeightOverride() const { return fHeightOverride; }
     void setHeightOverride(bool v) { fHeightOverride = v; }
 
+    void setHalfLeading(bool halfLeading) { fHalfLeading = halfLeading; }
+    bool getHalfLeading() const { return fHalfLeading; }
+
     bool operator==(const StrutStyle& rhs) const {
         return this->fEnabled == rhs.fEnabled &&
                this->fHeightOverride == rhs.fHeightOverride &&
                this->fForceHeight == rhs.fForceHeight &&
+               this->fHalfLeading == rhs.fHalfLeading &&
                nearlyEqual(this->fLeading, rhs.fLeading) &&
                nearlyEqual(this->fHeight, rhs.fHeight) &&
                nearlyEqual(this->fFontSize, rhs.fFontSize) &&
@@ -66,6 +70,9 @@ private:
     bool fForceHeight;
     bool fEnabled;
     bool fHeightOverride;
+    // true: half leading.
+    // false: scale ascent/descent with fHeight.
+    bool fHalfLeading;
 };
 
 struct ParagraphStyle {
@@ -112,8 +119,6 @@ struct ParagraphStyle {
     TextAlign effective_align() const;
     bool hintingIsOn() const { return fHintingIsOn; }
     void turnHintingOff() { fHintingIsOn = false; }
-    DrawOptions getDrawOptions() { return fDrawingOptions; }
-    void setDrawOptions(DrawOptions value) { fDrawingOptions = value; }
 
 private:
     StrutStyle fStrutStyle;
@@ -126,7 +131,6 @@ private:
     SkScalar fHeight;
     TextHeightBehavior fTextHeightBehavior;
     bool fHintingIsOn;
-    DrawOptions fDrawingOptions = DrawOptions::kDirect;
 };
 }  // namespace textlayout
 }  // namespace skia

@@ -30,6 +30,7 @@
 
 #include "third_party/blink/renderer/core/animation/pending_animations.h"
 
+#include "base/auto_reset.h"
 #include "third_party/blink/renderer/core/animation/document_timeline.h"
 #include "third_party/blink/renderer/core/animation/keyframe_effect.h"
 #include "third_party/blink/renderer/core/dom/document.h"
@@ -164,13 +165,12 @@ void PendingAnimations::NotifyCompositorAnimationStarted(
       waiting_for_compositor_animation_start_.push_back(animation);
       continue;
     }
-    if (animation->timeline() &&
-        !animation->timeline()->IsMonotonicallyIncreasing()) {
+    if (!animation->timeline()->IsMonotonicallyIncreasing()) {
       animation->NotifyReady(
           animation->timeline()->CurrentTime().value_or(AnimationTimeDelta()));
     } else {
       animation->NotifyReady(
-          AnimationTimeDelta::FromSecondsD(monotonic_animation_start_time) -
+          ANIMATION_TIME_DELTA_FROM_SECONDS(monotonic_animation_start_time) -
           animation->timeline()->ZeroTime());
     }
   }
@@ -200,9 +200,8 @@ void PendingAnimations::FlushWaitingNonCompositedAnimations() {
   for (auto& animation : animations) {
     if (animation->HasActiveAnimationsOnCompositor()) {
       waiting_for_compositor_animation_start_.push_back(animation);
-    } else {
-      DCHECK(animation->timeline()->IsActive() &&
-             animation->timeline()->CurrentTime());
+    } else if (animation->timeline() && animation->timeline()->IsActive() &&
+               animation->timeline()->CurrentTime().has_value()) {
       animation->NotifyReady(animation->timeline()->CurrentTime().value());
     }
   }

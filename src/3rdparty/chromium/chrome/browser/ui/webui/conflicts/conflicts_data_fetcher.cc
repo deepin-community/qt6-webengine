@@ -10,11 +10,12 @@
 #include "base/strings/string_util.h"
 #include "base/values.h"
 #include "base/win/windows_version.h"
+#include "build/branding_buildflags.h"
 #include "chrome/browser/win/conflicts/module_database.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 
-#if defined(GOOGLE_CHROME_BUILD)
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
 #include "base/win/win_util.h"
 #include "chrome/browser/win/conflicts/incompatible_applications_updater.h"
 #include "chrome/browser/win/conflicts/module_blocklist_cache_updater.h"
@@ -42,7 +43,7 @@ std::string GetProcessTypesString(const ModuleInfoData& module_data) {
   return result;
 }
 
-#if defined(GOOGLE_CHROME_BUILD)
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
 
 // Strings used twice.
 constexpr char kNotLoaded[] = "Not loaded";
@@ -216,7 +217,7 @@ std::string GetModuleStatusString(
 
   return status;
 }
-#endif  // defined(GOOGLE_CHROME_BUILD)
+#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
 
 enum ThirdPartyFeaturesStatus {
   // The third-party features are not available in non-Google Chrome builds.
@@ -241,9 +242,9 @@ enum ThirdPartyFeaturesStatus {
   kWarningAndBlockingInitialized,
 };
 
-#if defined(GOOGLE_CHROME_BUILD)
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
 ThirdPartyFeaturesStatus GetThirdPartyFeaturesStatus(
-    base::Optional<ThirdPartyConflictsManager::State>
+    absl::optional<ThirdPartyConflictsManager::State>
         third_party_conflicts_manager_state) {
   // The ThirdPartyConflictsManager instance exists if we have its state.
   if (third_party_conflicts_manager_state.has_value()) {
@@ -331,26 +332,26 @@ void OnConflictsDataFetched(
     base::DictionaryValue results,
     ThirdPartyFeaturesStatus third_party_features_status) {
   // Third-party conflicts status.
-  results.SetBoolean("thirdPartyFeatureEnabled",
+  results.SetBoolKey("thirdPartyFeatureEnabled",
                      IsThirdPartyFeatureEnabled(third_party_features_status));
-  results.SetString(
+  results.SetStringKey(
       "thirdPartyFeatureStatus",
       GetThirdPartyFeaturesStatusString(third_party_features_status));
 
   std::move(on_conflicts_data_fetched_callback).Run(std::move(results));
 }
 
-#if defined(GOOGLE_CHROME_BUILD)
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
 void OnModuleDataFetched(ConflictsDataFetcher::OnConflictsDataFetchedCallback
                              on_conflicts_data_fetched_callback,
                          base::DictionaryValue results,
-                         base::Optional<ThirdPartyConflictsManager::State>
+                         absl::optional<ThirdPartyConflictsManager::State>
                              third_party_conflicts_manager_state) {
   OnConflictsDataFetched(
       std::move(on_conflicts_data_fetched_callback), std::move(results),
       GetThirdPartyFeaturesStatus(third_party_conflicts_manager_state));
 }
-#endif  // defined(GOOGLE_CHROME_BUILD)
+#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
 
 }  // namespace
 
@@ -373,7 +374,7 @@ ConflictsDataFetcher::ConflictsDataFetcher(
     OnConflictsDataFetchedCallback on_conflicts_data_fetched_callback)
     : on_conflicts_data_fetched_callback_(
           std::move(on_conflicts_data_fetched_callback))
-#if defined(GOOGLE_CHROME_BUILD)
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
       ,
       weak_ptr_factory_(this)
 #endif
@@ -388,7 +389,7 @@ ConflictsDataFetcher::ConflictsDataFetcher(
 }
 
 void ConflictsDataFetcher::InitializeOnModuleDatabaseTaskRunner() {
-#if defined(GOOGLE_CHROME_BUILD)
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
   // If the ThirdPartyConflictsManager instance exists, wait until it is fully
   // initialized before retrieving the list of modules.
   auto* third_party_conflicts_manager =
@@ -404,7 +405,7 @@ void ConflictsDataFetcher::InitializeOnModuleDatabaseTaskRunner() {
   GetListOfModules();
 }
 
-#if defined(GOOGLE_CHROME_BUILD)
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
 void ConflictsDataFetcher::OnManagerInitializationComplete(
     ThirdPartyConflictsManager::State state) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -413,7 +414,7 @@ void ConflictsDataFetcher::OnManagerInitializationComplete(
 
   GetListOfModules();
 }
-#endif  // defined(GOOGLE_CHROME_BUILD)
+#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
 
 void ConflictsDataFetcher::GetListOfModules() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -423,7 +424,7 @@ void ConflictsDataFetcher::GetListOfModules() {
   module_list_ = std::make_unique<base::ListValue>();
 
   auto* module_database = ModuleDatabase::GetInstance();
-  module_database->IncreaseInspectionPriority();
+  module_database->ForceStartInspection();
   module_database->AddObserver(this);
 }
 
@@ -434,8 +435,8 @@ void ConflictsDataFetcher::OnNewModuleFound(const ModuleInfoKey& module_key,
 
   auto data = std::make_unique<base::DictionaryValue>();
 
-  data->SetString("third_party_module_status", std::string());
-#if defined(GOOGLE_CHROME_BUILD)
+  data->SetStringKey("third_party_module_status", std::string());
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
   if (ModuleDatabase::GetInstance()->third_party_conflicts_manager()) {
     auto* incompatible_applications_updater =
         ModuleDatabase::GetInstance()
@@ -446,27 +447,28 @@ void ConflictsDataFetcher::OnNewModuleFound(const ModuleInfoKey& module_key,
             ->third_party_conflicts_manager()
             ->module_blocklist_cache_updater();
 
-    data->SetString(
+    data->SetStringKey(
         "third_party_module_status",
         GetModuleStatusString(module_key, incompatible_applications_updater,
                               module_blocklist_cache_updater));
   }
-#endif  // defined(GOOGLE_CHROME_BUILD)
+#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
 
   std::string type_string;
   if (module_data.module_properties & ModuleInfoData::kPropertyShellExtension)
     type_string = "Shell extension";
-  data->SetString("type_description", type_string);
+  data->SetStringKey("type_description", type_string);
 
   const auto& inspection_result = *module_data.inspection_result;
-  data->SetString("location", inspection_result.location);
-  data->SetString("name", inspection_result.basename);
-  data->SetString("product_name", inspection_result.product_name);
-  data->SetString("description", inspection_result.description);
-  data->SetString("version", inspection_result.version);
-  data->SetString("digital_signer", inspection_result.certificate_info.subject);
-  data->SetString("code_id", GenerateCodeId(module_key));
-  data->SetString("process_types", GetProcessTypesString(module_data));
+  data->SetStringKey("location", inspection_result.location);
+  data->SetStringKey("name", inspection_result.basename);
+  data->SetStringKey("product_name", inspection_result.product_name);
+  data->SetStringKey("description", inspection_result.description);
+  data->SetStringKey("version", inspection_result.version);
+  data->SetStringKey("digital_signer",
+                     inspection_result.certificate_info.subject);
+  data->SetStringKey("code_id", GenerateCodeId(module_key));
+  data->SetStringKey("process_types", GetProcessTypesString(module_data));
 
   module_list_->Append(std::move(data));
 }
@@ -478,10 +480,11 @@ void ConflictsDataFetcher::OnModuleDatabaseIdle() {
   ModuleDatabase::GetInstance()->RemoveObserver(this);
 
   base::DictionaryValue results;
-  results.SetInteger("moduleCount", module_list_->GetSize());
+  results.GetDict().Set("moduleCount",
+                        int(module_list_->GetListDeprecated().size()));
   results.Set("moduleList", std::move(module_list_));
 
-#if defined(GOOGLE_CHROME_BUILD)
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
   // The state of third-party features must be determined on the UI thread.
   content::GetUIThreadTaskRunner({})->PostTask(
       FROM_HERE,

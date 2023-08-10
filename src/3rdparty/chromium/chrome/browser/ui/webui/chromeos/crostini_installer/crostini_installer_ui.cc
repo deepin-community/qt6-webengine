@@ -4,16 +4,16 @@
 
 #include "chrome/browser/ui/webui/chromeos/crostini_installer/crostini_installer_ui.h"
 
+#include <string>
 #include <utility>
 
 #include "ash/constants/ash_features.h"
 #include "base/bind.h"
 #include "base/callback_helpers.h"
-#include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/system/sys_info.h"
-#include "chrome/browser/chromeos/crostini/crostini_disk.h"
-#include "chrome/browser/chromeos/crostini/crostini_installer.h"
+#include "chrome/browser/ash/crostini/crostini_disk.h"
+#include "chrome/browser/ash/crostini/crostini_installer.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/webui/chromeos/crostini_installer/crostini_installer_page_handler.h"
 #include "chrome/browser/ui/webui/webui_util.h"
@@ -30,7 +30,6 @@
 #include "ui/base/webui/web_ui_util.h"
 #include "ui/chromeos/devicetype_utils.h"
 #include "ui/resources/grit/webui_generated_resources.h"
-#include "ui/resources/grit/webui_resources.h"
 #include "ui/strings/grit/ui_strings.h"
 #include "ui/web_dialogs/web_dialog_ui.h"
 #include "ui/webui/mojo_web_ui_controller.h"
@@ -42,6 +41,7 @@ void AddStringResources(content::WebUIDataSource* source) {
       {"back", IDS_CROSTINI_INSTALLER_BACK_BUTTON},
       {"install", IDS_CROSTINI_INSTALLER_INSTALL_BUTTON},
       {"retry", IDS_CROSTINI_INSTALLER_RETRY_BUTTON},
+      {"settings", IDS_CROSTINI_INSTALLER_SETTINGS_BUTTON},
       {"close", IDS_APP_CLOSE},
       {"cancel", IDS_APP_CANCEL},
       {"learnMore", IDS_LEARN_MORE},
@@ -50,16 +50,16 @@ void AddStringResources(content::WebUIDataSource* source) {
       {"installingTitle", IDS_CROSTINI_INSTALLER_INSTALLING},
       {"cancelingTitle", IDS_CROSTINI_INSTALLER_CANCELING_TITLE},
       {"errorTitle", IDS_CROSTINI_INSTALLER_ERROR_TITLE},
+      {"needUpdateTitle", IDS_CROSTINI_INSTALLER_NEED_UPDATE_TITLE},
 
       {"loadTerminaError", IDS_CROSTINI_INSTALLER_LOAD_TERMINA_ERROR},
+      {"needUpdateError", IDS_CROSTINI_INSTALLER_NEED_UPDATE_ERROR},
       {"createDiskImageError", IDS_CROSTINI_INSTALLER_CREATE_DISK_IMAGE_ERROR},
       {"startTerminaVmError", IDS_CROSTINI_INSTALLER_START_TERMINA_VM_ERROR},
       {"startLxdError", IDS_CROSTINI_INSTALLER_START_LXD_ERROR},
       {"startContainerError", IDS_CROSTINI_INSTALLER_START_CONTAINER_ERROR},
       {"configureContainerError",
        IDS_CROSTINI_INSTALLER_CONFIGURE_CONTAINER_ERROR},
-      {"fetchSshKeysError", IDS_CROSTINI_INSTALLER_FETCH_SSH_KEYS_ERROR},
-      {"mountContainerError", IDS_CROSTINI_INSTALLER_MOUNT_CONTAINER_ERROR},
       {"setupContainerError", IDS_CROSTINI_INSTALLER_SETUP_CONTAINER_ERROR},
       {"unknownError", IDS_CROSTINI_INSTALLER_UNKNOWN_ERROR},
 
@@ -73,14 +73,13 @@ void AddStringResources(content::WebUIDataSource* source) {
       {"configureContainerMessage",
        IDS_CROSTINI_INSTALLER_CONFIGURE_CONTAINER_MESSAGE},
       {"setupContainerMessage", IDS_CROSTINI_INSTALLER_SETUP_CONTAINER_MESSAGE},
-      {"fetchSshKeysMessage", IDS_CROSTINI_INSTALLER_FETCH_SSH_KEYS_MESSAGE},
-      {"mountContainerMessage", IDS_CROSTINI_INSTALLER_MOUNT_CONTAINER_MESSAGE},
       {"cancelingMessage", IDS_CROSTINI_INSTALLER_CANCELING},
 
       {"configureMessage", IDS_CROSTINI_INSTALLER_CONFIGURE_MESSAGE},
       {"diskSizeSubtitle", IDS_CROSTINI_INSTALLER_DISK_SIZE_SUBTITLE},
       {"diskSizeHint", IDS_CROSTINI_INSTALLER_DISK_SIZE_HINT},
       {"insufficientDiskError", IDS_CROSTINI_INSTALLER_INSUFFICIENT_DISK_ERROR},
+      {"usernameLabel", IDS_CROSTINI_INSTALLER_USERNAME_LABEL},
       {"usernameMessage", IDS_CROSTINI_INSTALLER_USERNAME_MESSAGE},
       {"usernameInvalidFirstCharacterError",
        IDS_CROSTINI_INSTALLER_USERNAME_INVALID_FIRST_CHARACTER_ERROR},
@@ -92,7 +91,7 @@ void AddStringResources(content::WebUIDataSource* source) {
   };
   source->AddLocalizedStrings(kStrings);
 
-  base::string16 device_name = ui::GetChromeOSDeviceName();
+  std::u16string device_name = ui::GetChromeOSDeviceName();
 
   source->AddString("promptMessage",
                     l10n_util::GetStringFUTF8(
@@ -147,7 +146,8 @@ CrostiniInstallerUI::CrostiniInstallerUI(content::WebUI* web_ui)
   source->AddString("defaultContainerUsername",
                     crostini::DefaultContainerUserNameForProfile(profile));
 
-  source->AddResourcePath("app.js", IDR_CROSTINI_INSTALLER_APP_JS);
+  source->AddResourcePath("app.rollup.js",
+                          IDR_CROSTINI_INSTALLER_APP_ROLLUP_JS);
   source->AddResourcePath("browser_proxy.js",
                           IDR_CROSTINI_INSTALLER_BROWSER_PROXY_JS);
   source->AddResourcePath("crostini_installer.mojom-lite.js",
@@ -156,6 +156,7 @@ CrostiniInstallerUI::CrostiniInstallerUI(content::WebUI* web_ui)
                           IDR_CROSTINI_INSTALLER_TYPES_MOJO_LITE_JS);
   source->AddResourcePath("images/linux_illustration.png",
                           IDR_LINUX_ILLUSTRATION);
+  source->AddResourcePath("images/crostini_icon.svg", IDR_CROSTINI_ICON);
   source->SetDefaultResource(IDR_CROSTINI_INSTALLER_INDEX_HTML);
 
   content::WebUIDataSource::Add(profile, source);
@@ -174,13 +175,12 @@ bool CrostiniInstallerUI::RequestClosePage() {
 
 void CrostiniInstallerUI::ClickInstallForTesting() {
   web_ui()->GetWebContents()->GetMainFrame()->ExecuteJavaScriptForTests(
-      base::ASCIIToUTF16(
-          "const app = document.querySelector('crostini-installer-app');"
-          // If flag CrostiniUsername or CrostiniDiskResizing is turned on,
-          // there will be a "next" button and we should click it to go to the
-          // config page before clicking "install" button.
-          "app.$$('#next:not([hidden])')?.click();"
-          "app.$.install.click();"),
+      u"const app = document.querySelector('crostini-installer-app');"
+      // If flag CrostiniUsername or CrostiniDiskResizing is turned on, there
+      // will be a "next" button and we should click it to go to the config page
+      // before clicking "install" button.
+      u"app.$$('#next:not([hidden])')?.click();"
+      u"app.$.install.click();",
       base::NullCallback());
 }
 

@@ -6,14 +6,11 @@
 #define BASE_TASK_THREAD_POOL_THREAD_POOL_IMPL_H_
 
 #include <memory>
-#include <vector>
 
 #include "base/base_export.h"
 #include "base/callback.h"
 #include "base/check_op.h"
 #include "base/memory/ptr_util.h"
-#include "base/memory/ref_counted.h"
-#include "base/optional.h"
 #include "base/sequence_checker.h"
 #include "base/strings/string_piece.h"
 #include "base/synchronization/atomic_flag.h"
@@ -30,14 +27,15 @@
 #include "base/task/thread_pool/thread_group.h"
 #include "base/task/thread_pool/thread_group_impl.h"
 #include "base/task/thread_pool/thread_pool_instance.h"
-#include "base/updateable_sequenced_task_runner.h"
+#include "base/task/updateable_sequenced_task_runner.h"
 #include "build/build_config.h"
 
-#if defined(OS_POSIX) && !defined(OS_NACL_SFI)
+#if BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_NACL)
 #include "base/task/thread_pool/task_tracker_posix.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #endif
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 #include "base/win/com_init_check_hook.h"
 #endif
 
@@ -52,7 +50,7 @@ class BASE_EXPORT ThreadPoolImpl : public ThreadPoolInstance,
                                    public PooledTaskRunnerDelegate {
  public:
   using TaskTrackerImpl =
-#if defined(OS_POSIX) && !defined(OS_NACL_SFI)
+#if BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_NACL)
       TaskTrackerPosix;
 #else
       TaskTracker;
@@ -95,11 +93,11 @@ class BASE_EXPORT ThreadPoolImpl : public ThreadPoolInstance,
   scoped_refptr<SingleThreadTaskRunner> CreateSingleThreadTaskRunner(
       const TaskTraits& traits,
       SingleThreadTaskRunnerThreadMode thread_mode) override;
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   scoped_refptr<SingleThreadTaskRunner> CreateCOMSTATaskRunner(
       const TaskTraits& traits,
       SingleThreadTaskRunnerThreadMode thread_mode) override;
-#endif  // defined(OS_WIN)
+#endif  // BUILDFLAG(IS_WIN)
   scoped_refptr<UpdateableSequencedTaskRunner>
   CreateUpdateableSequencedTaskRunner(const TaskTraits& traits);
 
@@ -115,7 +113,7 @@ class BASE_EXPORT ThreadPoolImpl : public ThreadPoolInstance,
   // immediate, nullopt if none). This is thread-safe, i.e., it's safe if tasks
   // are being posted in parallel with this call but such a situation obviously
   // results in a race as to whether this call will see the new tasks in time.
-  Optional<TimeTicks> NextScheduledRunTimeForTesting() const;
+  absl::optional<TimeTicks> NextScheduledRunTimeForTesting() const;
 
   // Forces ripe delayed tasks to be posted (e.g. when time is mocked and
   // advances faster than the real-time delay on ServiceThread).
@@ -132,11 +130,6 @@ class BASE_EXPORT ThreadPoolImpl : public ThreadPoolInstance,
   // Invoked after |num_fences_| or |num_best_effort_fences_| is updated. Sets
   // the CanRunPolicy in TaskTracker and wakes up workers as appropriate.
   void UpdateCanRunPolicy();
-
-  // Verifies that |traits| do not have properties that are banned in ThreadPool
-  // and returns |traits|, with priority set to TaskPriority::USER_BLOCKING if
-  // |all_tasks_user_blocking_| is set.
-  TaskTraits VerifyAndAjustIncomingTraits(TaskTraits traits) const;
 
   const ThreadGroup* GetThreadGroupForTraits(const TaskTraits& traits) const;
 
@@ -158,16 +151,8 @@ class BASE_EXPORT ThreadPoolImpl : public ThreadPoolInstance,
   DelayedTaskManager delayed_task_manager_;
   PooledSingleThreadTaskRunnerManager single_thread_task_runner_manager_;
 
-  // Indicates that all tasks are handled as if they had been posted with
-  // TaskPriority::USER_BLOCKING. Since this is set in Start(), it doesn't apply
-  // to tasks posted before Start() or to tasks posted to TaskRunners created
-  // before Start().
-  //
-  // TODO(fdoray): Remove after experiment. https://crbug.com/757022
-  AtomicFlag all_tasks_user_blocking_;
-
   std::unique_ptr<ThreadGroup> foreground_thread_group_;
-  std::unique_ptr<ThreadGroupImpl> background_thread_group_;
+  std::unique_ptr<ThreadGroup> background_thread_group_;
 
   bool disable_job_yield_ = false;
   bool disable_fair_scheduling_ = false;
@@ -191,7 +176,7 @@ class BASE_EXPORT ThreadPoolImpl : public ThreadPoolInstance,
   AtomicFlag join_for_testing_returned_;
 #endif
 
-#if defined(OS_WIN) && defined(COM_INIT_CHECK_HOOK_ENABLED)
+#if BUILDFLAG(IS_WIN) && defined(COM_INIT_CHECK_HOOK_ENABLED)
   // Provides COM initialization verification for supported builds.
   base::win::ComInitCheckHook com_init_check_hook_;
 #endif

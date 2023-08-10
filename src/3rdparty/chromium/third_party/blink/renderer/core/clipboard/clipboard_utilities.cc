@@ -30,7 +30,7 @@
 
 #include "third_party/blink/renderer/core/clipboard/clipboard_utilities.h"
 
-#include "base/i18n/uchar.h"
+#include "mojo/public/cpp/base/big_buffer.h"
 #include "net/base/escape.h"
 #include "third_party/blink/renderer/platform/image-encoders/image_encoder.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
@@ -76,9 +76,8 @@ static String EscapeForHTML(const String& str) {
         {reinterpret_cast<const char*>(str.Characters8()), str.length()});
     return String(result.data(), result.size());
   }
-  auto result = net::EscapeForHTML(
-      {base::i18n::ToChar16Ptr(str.Characters16()), str.length()});
-  return String(base::i18n::ToUCharPtr(result.data()), result.size());
+  auto result = net::EscapeForHTML({str.Characters16(), str.length()});
+  return String(result.data(), result.size());
 }
 
 String URLToImageMarkup(const KURL& url, const String& title) {
@@ -95,21 +94,8 @@ String URLToImageMarkup(const KURL& url, const String& title) {
   return builder.ToString();
 }
 
-String BitmapToImageMarkup(const SkBitmap& bitmap) {
-  if (bitmap.isNull())
-    return String();
-
-  // Encode bitmap to Vector<uint8_t> on the main thread.
-  SkPixmap pixmap;
-  bitmap.peekPixels(&pixmap);
-
-  // Set encoding options to favor speed over size.
-  SkPngEncoder::Options options;
-  options.fZLibLevel = 1;
-  options.fFilterFlags = SkPngEncoder::FilterFlag::kNone;
-
-  Vector<uint8_t> png_data;
-  if (!ImageEncoder::Encode(&png_data, pixmap, options))
+String PNGToImageMarkup(const mojo_base::BigBuffer& png_data) {
+  if (!png_data.size())
     return String();
 
   StringBuilder markup;

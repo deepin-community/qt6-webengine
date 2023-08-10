@@ -21,8 +21,7 @@ action_foreach("configs") {
   script = "../../tools/protoc_helper.py"
 
   deps = [
-    "../../protos/perfetto/config:merged_config",
-    "../../protos/perfetto/trace:merged_trace",
+    "../../protos/perfetto/trace:non_minimal_source_set",
     protoc_target,
   ]
 
@@ -35,11 +34,16 @@ action_foreach("configs") {
     "client_api.cfg",
     "ftrace.cfg",
     "ftrace_largebuffer.cfg",
+    "ftrace_with_filter.cfg",
+    "ftrace_with_ksyms.cfg",
     "heapprofd.cfg",
     "long_trace.cfg",
+    "mm_events.cfg",
     "scheduling.cfg",
     "summary.cfg",
     "sys_stats.cfg",
+    "thermal.cfg",
+    "traced_perf.cfg",
   ]
 
   outputs = [ "$root_out_dir/{{source_file_part}}.protobuf" ]

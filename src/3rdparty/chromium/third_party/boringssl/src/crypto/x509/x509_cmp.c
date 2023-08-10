@@ -68,6 +68,7 @@
 
 #include "../internal.h"
 #include "../x509v3/internal.h"
+#include "internal.h"
 
 
 int X509_issuer_and_serial_cmp(const X509 *a, const X509 *b)
@@ -100,7 +101,7 @@ int X509_CRL_cmp(const X509_CRL *a, const X509_CRL *b)
 
 int X509_CRL_match(const X509_CRL *a, const X509_CRL *b)
 {
-    return OPENSSL_memcmp(a->sha1_hash, b->sha1_hash, 20);
+    return OPENSSL_memcmp(a->crl_hash, b->crl_hash, SHA256_DIGEST_LENGTH);
 }
 
 X509_NAME *X509_get_issuer_name(const X509 *a)
@@ -153,7 +154,7 @@ unsigned long X509_subject_name_hash_old(X509 *x)
  */
 int X509_cmp(const X509 *a, const X509 *b)
 {
-    /* Fill in the |sha1_hash| fields.
+    /* Fill in the |cert_hash| fields.
      *
      * TODO(davidben): This may fail, in which case the the hash will be all
      * zeros. This produces a consistent comparison (failures are sticky), but
@@ -164,7 +165,7 @@ int X509_cmp(const X509 *a, const X509 *b)
     x509v3_cache_extensions((X509 *)a);
     x509v3_cache_extensions((X509 *)b);
 
-    int rv = OPENSSL_memcmp(a->sha1_hash, b->sha1_hash, SHA_DIGEST_LENGTH);
+    int rv = OPENSSL_memcmp(a->cert_hash, b->cert_hash, SHA256_DIGEST_LENGTH);
     if (rv)
         return rv;
     /* Check for match against stored encoding too */
@@ -383,7 +384,7 @@ int X509_chain_check_suiteb(int *perror_depth, X509 *x, STACK_OF(X509) *chain,
     } else
         i = 0;
 
-    if (X509_get_version(x) != 2) {
+    if (X509_get_version(x) != X509_VERSION_3) {
         rv = X509_V_ERR_SUITE_B_INVALID_VERSION;
         /* Correct error depth */
         i = 0;
@@ -401,7 +402,7 @@ int X509_chain_check_suiteb(int *perror_depth, X509 *x, STACK_OF(X509) *chain,
     for (; i < sk_X509_num(chain); i++) {
         sign_nid = X509_get_signature_nid(x);
         x = sk_X509_value(chain, i);
-        if (X509_get_version(x) != 2) {
+        if (X509_get_version(x) != X509_VERSION_3) {
             rv = X509_V_ERR_SUITE_B_INVALID_VERSION;
             goto end;
         }

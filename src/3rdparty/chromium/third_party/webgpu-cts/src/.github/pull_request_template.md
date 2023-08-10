@@ -1,16 +1,21 @@
 
 
------
 
-<!-- Reminders to the PR author:
+Issue: #<!-- Fill in the issue number here. See docs/intro/life_of.md -->
 
-* Ensure any new helpers are documented in `helpers.md`.
-* Ensure TODOs (or `.unimplemented()`) are present for any incomplete areas.
+<hr>
 
-Leave the following in the pull request description:
--->
+**Requirements for PR author:**
 
-**[Review requirements](https://github.com/gpuweb/cts/blob/main/docs/reviews.md) are satisfied for:**
+- [ ] All missing test coverage is tracked with "TODO" or `.unimplemented()`.
+- [ ] New helpers are `/** documented */` and new helper files are found in `helper_index.txt`.
+- [ ] Test behaves as expected in a WebGPU implementation. (If not passing, explain above.)
 
-- [ ] WebGPU readability
-- [ ] TypeScript readability
+**Requirements for [reviewer sign-off](https://github.com/gpuweb/cts/blob/main/docs/reviews.md):**
+
+- [ ] Tests are properly located in the test tree.
+- [ ] [Test descriptions](https://github.com/gpuweb/cts/blob/main/docs/intro/plans.md) allow a reader to "read only the test plans and evaluate coverage completeness", and accurately reflect the test code.
+- [ ] Tests provide complete coverage (including validation control cases). **Missing coverage MUST be covered by TODOs.**
+- [ ] Helpers and types promote readability and maintainability.
+
+When landing this PR, be sure to make any necessary issue status updates.

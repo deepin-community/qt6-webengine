@@ -25,6 +25,7 @@
 
 #include "perfetto/base/export.h"
 #include "perfetto/ext/base/scoped_file.h"
+#include "perfetto/ext/base/sys_types.h"
 #include "perfetto/ext/tracing/core/basic_types.h"
 #include "perfetto/ext/tracing/core/shared_memory.h"
 #include "perfetto/tracing/buffer_exhausted_policy.h"
@@ -42,7 +43,7 @@ class SharedMemoryArbiter;
 class TraceWriter;
 
 // Exposed for testing.
-extern const char* kBugreportTracePath;
+std::string GetBugreportPath();
 
 // TODO: for the moment this assumes that all the calls happen on the same
 // thread/sequence. Not sure this will be the case long term in Chrome.
@@ -60,6 +61,7 @@ class PERFETTO_EXPORT ProducerEndpoint {
   // Called by the Producer to (un)register data sources. Data sources are
   // identified by their name (i.e. DataSourceDescriptor.name)
   virtual void RegisterDataSource(const DataSourceDescriptor&) = 0;
+  virtual void UpdateDataSource(const DataSourceDescriptor&) = 0;
   virtual void UnregisterDataSource(const std::string& name) = 0;
 
   // Associate the trace writer with the given |writer_id| with
@@ -320,13 +322,15 @@ class PERFETTO_EXPORT TracingService {
   virtual std::unique_ptr<ProducerEndpoint> ConnectProducer(
       Producer*,
       uid_t uid,
+      pid_t pid,
       const std::string& name,
       size_t shared_memory_size_hint_bytes = 0,
       bool in_process = false,
       ProducerSMBScrapingMode smb_scraping_mode =
           ProducerSMBScrapingMode::kDefault,
       size_t shared_memory_page_size_hint_bytes = 0,
-      std::unique_ptr<SharedMemory> shm = nullptr) = 0;
+      std::unique_ptr<SharedMemory> shm = nullptr,
+      const std::string& sdk_version = {}) = 0;
 
   // Connects a Consumer instance and obtains a ConsumerEndpoint, which is
   // essentially a 1:1 channel between one Consumer and the Service.

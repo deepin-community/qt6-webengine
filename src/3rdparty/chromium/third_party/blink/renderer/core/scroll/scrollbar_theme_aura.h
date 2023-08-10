@@ -38,23 +38,28 @@ namespace blink {
 
 class CORE_EXPORT ScrollbarThemeAura : public ScrollbarTheme {
  public:
-  int ScrollbarThickness(float scale_from_dip) override;
+  int ScrollbarThickness(float scale_from_dip,
+                         EScrollbarWidth scrollbar_width) override;
 
  protected:
   bool NativeThemeHasButtons() override { return true; }
   bool HasThumb(const Scrollbar&) override;
 
-  IntRect BackButtonRect(const Scrollbar&) override;
-  IntRect ForwardButtonRect(const Scrollbar&) override;
-  IntRect TrackRect(const Scrollbar&) override;
+  gfx::Rect BackButtonRect(const Scrollbar&) override;
+  gfx::Rect ForwardButtonRect(const Scrollbar&) override;
+  gfx::Rect TrackRect(const Scrollbar&) override;
   int MinimumThumbLength(const Scrollbar&) override;
 
-  void PaintTrack(GraphicsContext&, const Scrollbar&, const IntRect&) override;
+  void PaintTrack(GraphicsContext&,
+                  const Scrollbar&,
+                  const gfx::Rect&) override;
   void PaintButton(GraphicsContext&,
                    const Scrollbar&,
-                   const IntRect&,
+                   const gfx::Rect&,
                    ScrollbarPart) override;
-  void PaintThumb(GraphicsContext&, const Scrollbar&, const IntRect&) override;
+  void PaintThumb(GraphicsContext&,
+                  const Scrollbar&,
+                  const gfx::Rect&) override;
 
   bool ShouldRepaintAllPartsOnInvalidation() const override;
   ScrollbarPart PartsToInvalidateOnThumbPositionChange(
@@ -77,9 +82,9 @@ class CORE_EXPORT ScrollbarThemeAura : public ScrollbarTheme {
   FRIEND_TEST_ALL_PREFIXES(ScrollbarThemeAuraTest, NoButtonsReturnsSize0);
 
   virtual bool HasScrollbarButtons(ScrollbarOrientation) const;
-  IntSize ButtonSize(const Scrollbar&);
+  gfx::Size ButtonSize(const Scrollbar&);
 };
 
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_RENDERER_CORE_SCROLL_SCROLLBAR_THEME_AURA_H_

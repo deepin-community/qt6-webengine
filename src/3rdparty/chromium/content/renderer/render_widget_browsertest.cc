@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/callback_helpers.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/viz/common/surfaces/local_surface_id.h"
 #include "components/viz/common/surfaces/parent_local_surface_id_allocator.h"
@@ -14,6 +15,7 @@
 #include "third_party/blink/public/common/widget/visual_properties.h"
 #include "third_party/blink/public/platform/web_runtime_features.h"
 #include "third_party/blink/public/web/web_frame_widget.h"
+#include "third_party/blink/public/web/web_hit_test_result.h"
 #include "third_party/blink/public/web/web_input_method_controller.h"
 #include "third_party/blink/public/web/web_local_frame.h"
 #include "third_party/blink/public/web/web_range.h"
@@ -113,7 +115,7 @@ TEST_F(RenderWidgetTest, CompositorIdHitTestAPI) {
   float scale_factors[] = {1, 1.5, 2};
 
   for (float factor : scale_factors) {
-    view_->GetWebView()->SetPageScaleFactor(factor);
+    web_view_->SetPageScaleFactor(factor);
 
     // Hit the root
     EXPECT_EQ(GetCompositorElementId(),

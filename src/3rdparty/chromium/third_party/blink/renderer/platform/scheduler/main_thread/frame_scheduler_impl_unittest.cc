@@ -11,16 +11,21 @@
 
 #include "base/bind.h"
 #include "base/callback.h"
+#include "base/callback_helpers.h"
 #include "base/location.h"
 #include "base/metrics/field_trial_param_associator.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/run_loop.h"
+#include "base/task/common/task_annotator.h"
 #include "base/task/sequence_manager/test/sequence_manager_for_test.h"
+#include "base/task/single_thread_task_runner.h"
+#include "base/task/thread_pool.h"
 #include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_command_line.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
+#include "base/time/time.h"
 #include "base/unguessable_token.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -56,7 +61,9 @@ namespace {
 
 constexpr base::TimeDelta kDefaultThrottledWakeUpInterval =
     PageSchedulerImpl::kDefaultThrottledWakeUpInterval;
-constexpr auto kShortDelay = base::TimeDelta::FromMilliseconds(10);
+constexpr base::TimeDelta kIntensiveThrottledWakeUpInterval =
+    PageSchedulerImpl::kIntensiveThrottledWakeUpInterval;
+constexpr auto kShortDelay = base::Milliseconds(10);
 
 // This is a wrapper around MainThreadSchedulerImpl::CreatePageScheduler, that
 // returns the PageScheduler as a PageSchedulerImpl.
@@ -145,10 +152,13 @@ constexpr TaskType kAllFrameTaskTypes[] = {
     TaskType::kInternalInspector,
     TaskType::kInternalNavigationAssociatedUnfreezable,
     TaskType::kInternalHighPriorityLocalFrame,
-    TaskType::kWakeLock};
+    TaskType::kInternalInputBlocking,
+    TaskType::kWakeLock,
+    TaskType::kWebGPU,
+    TaskType::kInternalPostMessageForwarding};
 
 static_assert(
-    static_cast<int>(TaskType::kCount) == 77,
+    static_cast<int>(TaskType::kMaxValue) == 79,
     "When adding a TaskType, make sure that kAllFrameTaskTypes is updated.");
 
 void AppendToVectorTestTask(Vector<String>* vector, String value) {
@@ -173,7 +183,7 @@ class FrameSchedulerDelegateForTesting : public FrameScheduler::Delegate {
     return base::UnguessableToken::Null();
   }
 
-  MOCK_METHOD1(UpdateActiveSchedulerTrackedFeatures, void(uint64_t));
+  MOCK_METHOD1(UpdateBackForwardCacheDisablingFeatures, void(uint64_t));
 
   int update_task_time_calls_ = 0;
 };
@@ -209,8 +219,7 @@ class FrameSchedulerImplTest : public testing::Test {
     scheduler_ = std::make_unique<MainThreadSchedulerImpl>(
         base::sequence_manager::SequenceManagerForTest::Create(
             nullptr, task_environment_.GetMainThreadTaskRunner(),
-            task_environment_.GetMockTickClock()),
-        base::nullopt);
+            task_environment_.GetMockTickClock()));
     agent_group_scheduler_ = scheduler_->CreateAgentGroupScheduler();
     page_scheduler_ =
         CreatePageScheduler(nullptr, scheduler_.get(), *agent_group_scheduler_);
@@ -230,10 +239,14 @@ class FrameSchedulerImplTest : public testing::Test {
   }
 
   void StorePageInBackForwardCache() {
+    page_scheduler_->SetPageVisible(false);
+    page_scheduler_->SetPageFrozen(true);
     page_scheduler_->SetPageBackForwardCached(true);
   }
 
   void RestorePageFromBackForwardCache() {
+    page_scheduler_->SetPageVisible(true);
+    page_scheduler_->SetPageFrozen(false);
     page_scheduler_->SetPageBackForwardCached(false);
   }
 
@@ -386,16 +399,46 @@ class FrameSchedulerImplTest : public testing::Test {
     return GetTaskQueue(FrameSchedulerImpl::ThrottleableTaskQueueTraits());
   }
 
-  scoped_refptr<MainThreadTaskQueue> JavaScriptTimerTaskQueue() {
+  scoped_refptr<MainThreadTaskQueue>
+  JavaScriptTimerNormalThrottleableTaskQueue() {
     return GetTaskQueue(
         FrameSchedulerImpl::ThrottleableTaskQueueTraits().SetPrioritisationType(
             PrioritisationType::kJavaScriptTimer));
+  }
+
+  scoped_refptr<MainThreadTaskQueue>
+  JavaScriptTimerIntensivelyThrottleableTaskQueue() {
+    return GetTaskQueue(
+        FrameSchedulerImpl::ThrottleableTaskQueueTraits()
+            .SetPrioritisationType(PrioritisationType::kJavaScriptTimer)
+            .SetCanBeIntensivelyThrottled(true));
   }
 
   scoped_refptr<MainThreadTaskQueue> JavaScriptTimerNonThrottleableTaskQueue() {
     return GetTaskQueue(
         FrameSchedulerImpl::DeferrableTaskQueueTraits().SetPrioritisationType(
             PrioritisationType::kJavaScriptTimer));
+  }
+
+  scoped_refptr<MainThreadTaskQueue>
+  JavaScriptTimerNormalThrottleableTaskQueueForFrame(
+      FrameSchedulerImpl* frame_scheduler) {
+    return GetTaskQueueForFrame(frame_scheduler,
+                                TaskType::kJavascriptTimerDelayedLowNesting);
+  }
+
+  scoped_refptr<MainThreadTaskQueue>
+  JavaScriptTimerIntensivelyThrottleableTaskQueueForFrame(
+      FrameSchedulerImpl* frame_scheduler) {
+    return GetTaskQueueForFrame(frame_scheduler,
+                                TaskType::kJavascriptTimerDelayedHighNesting);
+  }
+
+  scoped_refptr<MainThreadTaskQueue>
+  JavaScriptTimerNonThrottleableTaskQueueForFrame(
+      FrameSchedulerImpl* frame_scheduler) {
+    return GetTaskQueueForFrame(frame_scheduler,
+                                TaskType::kJavascriptTimerImmediate);
   }
 
   scoped_refptr<MainThreadTaskQueue> LoadingTaskQueue() {
@@ -427,8 +470,18 @@ class FrameSchedulerImplTest : public testing::Test {
     return GetTaskQueue(FrameSchedulerImpl::ForegroundOnlyTaskQueueTraits());
   }
 
+  scoped_refptr<MainThreadTaskQueue> InputBlockingTaskQueue() {
+    return GetTaskQueue(FrameSchedulerImpl::InputBlockingQueueTraits());
+  }
+
   scoped_refptr<MainThreadTaskQueue> GetTaskQueue(TaskType type) {
     return frame_scheduler_->GetTaskQueue(type);
+  }
+
+  scoped_refptr<MainThreadTaskQueue> GetTaskQueueForFrame(
+      FrameSchedulerImpl* frame_scheduler,
+      TaskType type) {
+    return frame_scheduler->GetTaskQueue(type);
   }
 
   std::unique_ptr<ResourceLoadingTaskRunnerHandleImpl>
@@ -463,6 +516,21 @@ class FrameSchedulerImplTest : public testing::Test {
         /*is_web_history_inert_commit=*/false, navigation_type);
   }
 
+  void DidCommitProvisionalLoadForFrame(
+      FrameSchedulerImpl* frame_scheduler,
+      FrameScheduler::NavigationType navigation_type) {
+    frame_scheduler->DidCommitProvisionalLoad(
+        /*is_web_history_inert_commit=*/false, navigation_type);
+  }
+
+  void OnDomContentLoadedForFrame(FrameSchedulerImpl* frame_scheduler) {
+    frame_scheduler->OnDomContentLoaded();
+  }
+
+  void OnLoadForFrame(FrameSchedulerImpl* frame_scheduler) {
+    frame_scheduler->OnLoad();
+  }
+
   base::test::ScopedFeatureList& scoped_feature_list() { return feature_list_; }
 
   base::test::ScopedFeatureList feature_list_;
@@ -486,7 +554,7 @@ class FrameSchedulerImplStopInBackgroundDisabledTest
 
 namespace {
 
-class MockLifecycleObserver final : public FrameScheduler::Observer {
+class MockLifecycleObserver {
  public:
   MockLifecycleObserver()
       : not_throttled_count_(0u),
@@ -506,7 +574,7 @@ class MockLifecycleObserver final : public FrameScheduler::Observer {
     EXPECT_EQ(stopped_count_expectation, stopped_count_) << from.ToString();
   }
 
-  void OnLifecycleStateChanged(SchedulingLifecycleState state) override {
+  void OnLifecycleStateChanged(SchedulingLifecycleState state) {
     switch (state) {
       case SchedulingLifecycleState::kNotThrottled:
         not_throttled_count_++;
@@ -522,6 +590,11 @@ class MockLifecycleObserver final : public FrameScheduler::Observer {
         break;
         // We should not have another state, and compiler checks it.
     }
+  }
+
+  FrameOrWorkerScheduler::OnLifecycleStateChangedCallback GetCallback() {
+    return base::BindRepeating(&MockLifecycleObserver::OnLifecycleStateChanged,
+                               base::Unretained(this));
   }
 
  private:
@@ -547,19 +620,9 @@ class FrameSchedulerImplTestWithIntensiveWakeUpThrottlingBase
  public:
   using Super = FrameSchedulerImplTest;
 
-  explicit FrameSchedulerImplTestWithIntensiveWakeUpThrottlingBase(
-      bool can_intensively_throttle_low_nesting_level)
-      : FrameSchedulerImplTest(
-            features::kIntensiveWakeUpThrottling,
-            // If |can_intensively_throttle_low_nesting_level| is true, set the
-            // feature param to "true". Otherwise, test the default behavior (no
-            // feature params).
-            can_intensively_throttle_low_nesting_level
-                ? base::FieldTrialParams(
-                      {{kIntensiveWakeUpThrottling_CanIntensivelyThrottleLowNestingLevel_Name,
-                        "true"}})
-                : base::FieldTrialParams(),
-            {features::kStopInBackground}) {}
+  FrameSchedulerImplTestWithIntensiveWakeUpThrottlingBase()
+      : FrameSchedulerImplTest({features::kIntensiveWakeUpThrottling},
+                               {features::kStopInBackground}) {}
 
   void SetUp() override {
     Super::SetUp();
@@ -574,17 +637,12 @@ class FrameSchedulerImplTestWithIntensiveWakeUpThrottlingBase
   const int kNumTasks = 5;
   const base::TimeDelta kGracePeriod =
       GetIntensiveWakeUpThrottlingGracePeriod();
-  const base::TimeDelta kIntensiveThrottlingDurationBetweenWakeUps =
-      GetIntensiveWakeUpThrottlingDurationBetweenWakeUps();
 };
 
 // Test param for FrameSchedulerImplTestWithIntensiveWakeUpThrottling
 struct IntensiveWakeUpThrottlingTestParam {
   // TaskType used to obtain TaskRunners from the FrameScheduler.
   TaskType task_type;
-  // Whether the feature param to allow throttling of timers with a low nesting
-  // level should be set to "true" at the beginning of the test.
-  bool can_intensively_throttle_low_nesting_level;
   // Whether it is expected that tasks will be intensively throttled.
   bool is_intensive_throttling_expected;
 };
@@ -593,28 +651,51 @@ class FrameSchedulerImplTestWithIntensiveWakeUpThrottling
     : public FrameSchedulerImplTestWithIntensiveWakeUpThrottlingBase,
       public ::testing::WithParamInterface<IntensiveWakeUpThrottlingTestParam> {
  public:
-  FrameSchedulerImplTestWithIntensiveWakeUpThrottling()
-      : FrameSchedulerImplTestWithIntensiveWakeUpThrottlingBase(
-            GetParam().can_intensively_throttle_low_nesting_level) {}
+  FrameSchedulerImplTestWithIntensiveWakeUpThrottling() = default;
 
   TaskType GetTaskType() const { return GetParam().task_type; }
   bool IsIntensiveThrottlingExpected() const {
     return GetParam().is_intensive_throttling_expected;
   }
 
+  // Get the TaskRunner from |frame_scheduler_| using the test's task type
+  // parameter.
+  scoped_refptr<base::SingleThreadTaskRunner> GetTaskRunner() {
+    return GetTaskRunner(frame_scheduler_.get());
+  }
+
+  // Get the TaskRunner from the provided |frame_scheduler| using the test's
+  // task type parameter.
+  scoped_refptr<base::SingleThreadTaskRunner> GetTaskRunner(
+      FrameSchedulerImpl* frame_scheduler) {
+    const TaskType task_type = GetTaskType();
+    if (task_type == TaskType::kWebSchedulingPostedTask) {
+      test_web_scheduling_task_queues_.push_back(
+          frame_scheduler->CreateWebSchedulingTaskQueue(
+              WebSchedulingPriority::kUserVisiblePriority));
+      return test_web_scheduling_task_queues_.back()->GetTaskRunner();
+    }
+    return frame_scheduler->GetTaskRunner(task_type);
+  }
+
   base::TimeDelta GetExpectedWakeUpInterval() const {
     if (IsIntensiveThrottlingExpected())
-      return kIntensiveThrottlingDurationBetweenWakeUps;
+      return kIntensiveThrottledWakeUpInterval;
     return kDefaultThrottledWakeUpInterval;
   }
+
+ private:
+  // Store web scheduling task queues that are created for tests so
+  // they do not get destroyed. Destroying them before their tasks finish
+  // running will break throttling.
+  Vector<std::unique_ptr<WebSchedulingTaskQueue>>
+      test_web_scheduling_task_queues_;
 };
 
 class FrameSchedulerImplTestWithIntensiveWakeUpThrottlingPolicyOverride
     : public FrameSchedulerImplTestWithIntensiveWakeUpThrottlingBase {
  public:
-  FrameSchedulerImplTestWithIntensiveWakeUpThrottlingPolicyOverride()
-      : FrameSchedulerImplTestWithIntensiveWakeUpThrottlingBase(
-            /* can_intensively_throttle_low_nesting_level=*/false) {}
+  FrameSchedulerImplTestWithIntensiveWakeUpThrottlingPolicyOverride() = default;
 
   // This should only be called once per test, and prior to the
   // PageSchedulerImpl logic actually parsing the policy switch.
@@ -640,14 +721,12 @@ class FrameSchedulerImplTestWithIntensiveWakeUpThrottlingPolicyOverride
 // We test both (ExplicitInit/LazyInit) of them.
 
 TEST_F(FrameSchedulerImplTest, PageVisible) {
-  ScopedTimerThrottlingForHiddenFramesForTest throttle_hidden_frames(true);
   EXPECT_FALSE(throttleable_task_queue());
   LazyInitThrottleableTaskQueue();
   EXPECT_FALSE(IsThrottled());
 }
 
 TEST_F(FrameSchedulerImplTest, PageHidden_ExplicitInit) {
-  ScopedTimerThrottlingForHiddenFramesForTest throttle_hidden_frames(true);
   LazyInitThrottleableTaskQueue();
   EXPECT_FALSE(IsThrottled());
   page_scheduler_->SetPageVisible(false);
@@ -655,14 +734,12 @@ TEST_F(FrameSchedulerImplTest, PageHidden_ExplicitInit) {
 }
 
 TEST_F(FrameSchedulerImplTest, PageHidden_LazyInit) {
-  ScopedTimerThrottlingForHiddenFramesForTest throttle_hidden_frames(false);
   page_scheduler_->SetPageVisible(false);
   LazyInitThrottleableTaskQueue();
   EXPECT_TRUE(IsThrottled());
 }
 
 TEST_F(FrameSchedulerImplTest, PageHiddenThenVisible_ExplicitInit) {
-  ScopedTimerThrottlingForHiddenFramesForTest throttle_hidden_frames(false);
   LazyInitThrottleableTaskQueue();
   EXPECT_FALSE(IsThrottled());
   page_scheduler_->SetPageVisible(false);
@@ -675,7 +752,6 @@ TEST_F(FrameSchedulerImplTest, PageHiddenThenVisible_ExplicitInit) {
 
 TEST_F(FrameSchedulerImplTest,
        FrameHiddenThenVisible_CrossOrigin_ExplicitInit) {
-  ScopedTimerThrottlingForHiddenFramesForTest throttle_hidden_frames(true);
   LazyInitThrottleableTaskQueue();
   EXPECT_FALSE(IsThrottled());
   frame_scheduler_->SetFrameVisible(false);
@@ -691,33 +767,13 @@ TEST_F(FrameSchedulerImplTest,
 }
 
 TEST_F(FrameSchedulerImplTest, FrameHidden_CrossOrigin_LazyInit) {
-  ScopedTimerThrottlingForHiddenFramesForTest throttle_hidden_frames(true);
   frame_scheduler_->SetFrameVisible(false);
   frame_scheduler_->SetCrossOriginToMainFrame(true);
   LazyInitThrottleableTaskQueue();
   EXPECT_TRUE(IsThrottled());
 }
 
-TEST_F(FrameSchedulerImplTest,
-       FrameHidden_CrossOrigin_NoThrottling_ExplicitInit) {
-  ScopedTimerThrottlingForHiddenFramesForTest throttle_hidden_frames(false);
-  LazyInitThrottleableTaskQueue();
-  EXPECT_FALSE(IsThrottled());
-  frame_scheduler_->SetFrameVisible(false);
-  frame_scheduler_->SetCrossOriginToMainFrame(true);
-  EXPECT_FALSE(IsThrottled());
-}
-
-TEST_F(FrameSchedulerImplTest, FrameHidden_CrossOrigin_NoThrottling_LazyInit) {
-  ScopedTimerThrottlingForHiddenFramesForTest throttle_hidden_frames(false);
-  frame_scheduler_->SetFrameVisible(false);
-  frame_scheduler_->SetCrossOriginToMainFrame(true);
-  LazyInitThrottleableTaskQueue();
-  EXPECT_FALSE(IsThrottled());
-}
-
 TEST_F(FrameSchedulerImplTest, FrameHidden_SameOrigin_ExplicitInit) {
-  ScopedTimerThrottlingForHiddenFramesForTest throttle_hidden_frames(true);
   LazyInitThrottleableTaskQueue();
   EXPECT_FALSE(IsThrottled());
   frame_scheduler_->SetFrameVisible(false);
@@ -725,14 +781,12 @@ TEST_F(FrameSchedulerImplTest, FrameHidden_SameOrigin_ExplicitInit) {
 }
 
 TEST_F(FrameSchedulerImplTest, FrameHidden_SameOrigin_LazyInit) {
-  ScopedTimerThrottlingForHiddenFramesForTest throttle_hidden_frames(true);
   frame_scheduler_->SetFrameVisible(false);
   LazyInitThrottleableTaskQueue();
   EXPECT_FALSE(IsThrottled());
 }
 
 TEST_F(FrameSchedulerImplTest, FrameVisible_CrossOrigin_ExplicitInit) {
-  ScopedTimerThrottlingForHiddenFramesForTest throttle_hidden_frames(true);
   LazyInitThrottleableTaskQueue();
   EXPECT_FALSE(IsThrottled());
   EXPECT_TRUE(throttleable_task_queue());
@@ -743,7 +797,6 @@ TEST_F(FrameSchedulerImplTest, FrameVisible_CrossOrigin_ExplicitInit) {
 }
 
 TEST_F(FrameSchedulerImplTest, FrameVisible_CrossOrigin_LazyInit) {
-  ScopedTimerThrottlingForHiddenFramesForTest throttle_hidden_frames(true);
   frame_scheduler_->SetFrameVisible(true);
   frame_scheduler_->SetCrossOriginToMainFrame(true);
   LazyInitThrottleableTaskQueue();
@@ -777,27 +830,27 @@ TEST_F(FrameSchedulerImplTest, PauseAndResume) {
 }
 
 TEST_F(FrameSchedulerImplTest, PauseAndResumeForCooperativeScheduling) {
-  EXPECT_TRUE(LoadingTaskQueue()->GetTaskQueue()->IsQueueEnabled());
-  EXPECT_TRUE(ThrottleableTaskQueue()->GetTaskQueue()->IsQueueEnabled());
-  EXPECT_TRUE(DeferrableTaskQueue()->GetTaskQueue()->IsQueueEnabled());
-  EXPECT_TRUE(PausableTaskQueue()->GetTaskQueue()->IsQueueEnabled());
-  EXPECT_TRUE(UnpausableTaskQueue()->GetTaskQueue()->IsQueueEnabled());
+  EXPECT_TRUE(LoadingTaskQueue()->IsQueueEnabled());
+  EXPECT_TRUE(ThrottleableTaskQueue()->IsQueueEnabled());
+  EXPECT_TRUE(DeferrableTaskQueue()->IsQueueEnabled());
+  EXPECT_TRUE(PausableTaskQueue()->IsQueueEnabled());
+  EXPECT_TRUE(UnpausableTaskQueue()->IsQueueEnabled());
 
   frame_scheduler_->SetPreemptedForCooperativeScheduling(
       FrameOrWorkerScheduler::Preempted(true));
-  EXPECT_FALSE(LoadingTaskQueue()->GetTaskQueue()->IsQueueEnabled());
-  EXPECT_FALSE(ThrottleableTaskQueue()->GetTaskQueue()->IsQueueEnabled());
-  EXPECT_FALSE(DeferrableTaskQueue()->GetTaskQueue()->IsQueueEnabled());
-  EXPECT_FALSE(PausableTaskQueue()->GetTaskQueue()->IsQueueEnabled());
-  EXPECT_FALSE(UnpausableTaskQueue()->GetTaskQueue()->IsQueueEnabled());
+  EXPECT_FALSE(LoadingTaskQueue()->IsQueueEnabled());
+  EXPECT_FALSE(ThrottleableTaskQueue()->IsQueueEnabled());
+  EXPECT_FALSE(DeferrableTaskQueue()->IsQueueEnabled());
+  EXPECT_FALSE(PausableTaskQueue()->IsQueueEnabled());
+  EXPECT_FALSE(UnpausableTaskQueue()->IsQueueEnabled());
 
   frame_scheduler_->SetPreemptedForCooperativeScheduling(
       FrameOrWorkerScheduler::Preempted(false));
-  EXPECT_TRUE(LoadingTaskQueue()->GetTaskQueue()->IsQueueEnabled());
-  EXPECT_TRUE(ThrottleableTaskQueue()->GetTaskQueue()->IsQueueEnabled());
-  EXPECT_TRUE(DeferrableTaskQueue()->GetTaskQueue()->IsQueueEnabled());
-  EXPECT_TRUE(PausableTaskQueue()->GetTaskQueue()->IsQueueEnabled());
-  EXPECT_TRUE(UnpausableTaskQueue()->GetTaskQueue()->IsQueueEnabled());
+  EXPECT_TRUE(LoadingTaskQueue()->IsQueueEnabled());
+  EXPECT_TRUE(ThrottleableTaskQueue()->IsQueueEnabled());
+  EXPECT_TRUE(DeferrableTaskQueue()->IsQueueEnabled());
+  EXPECT_TRUE(PausableTaskQueue()->IsQueueEnabled());
+  EXPECT_TRUE(UnpausableTaskQueue()->IsQueueEnabled());
 }
 
 namespace {
@@ -819,19 +872,14 @@ void RePostTask(scoped_refptr<base::SingleThreadTaskRunner> task_runner,
 
 }  // namespace
 
-// Verify that tasks in a throttled task queue cause 1 wake up per second, when
-// intensive wake up throttling is disabled. Disable the kStopInBackground
-// feature because it hides the effect of intensive wake up throttling.
+// Verify that tasks in a throttled task queue cause:
+// - Before intensive wake up throttling kicks in: 1 wake up per second
+// - After intensive wake up throttling kick in:
+//    - Low nesting level: 1 wake up per second
+//    - High nesting level: 1 wake up per minute
+// Disable the kStopInBackground feature because it hides the effect of
+// intensive wake up throttling.
 TEST_P(FrameSchedulerImplStopInBackgroundDisabledTest, ThrottledTaskExecution) {
-  constexpr auto kTaskPeriod = base::TimeDelta::FromSeconds(1);
-
-  // This test posts enough tasks to run past the default intensive wake up
-  // throttling grace period. This allows verifying that intensive wake up
-  // throttling is disabled by default.
-  constexpr int kNumTasks =
-      base::TimeDelta::FromSeconds(
-          kIntensiveWakeUpThrottling_GracePeriodSeconds_Default * 2)
-          .IntDiv(kTaskPeriod);
   // This TaskRunner is throttled.
   const scoped_refptr<base::SingleThreadTaskRunner> task_runner =
       frame_scheduler_->GetTaskRunner(GetParam());
@@ -840,8 +888,11 @@ TEST_P(FrameSchedulerImplStopInBackgroundDisabledTest, ThrottledTaskExecution) {
   EXPECT_TRUE(page_scheduler_->IsPageVisible());
   page_scheduler_->SetPageVisible(false);
 
-  // Post an initial task.
-  int num_remaining_tasks = kNumTasks;
+  // Schedule tasks with a short delay, during the intensive wake up throttling
+  // grace period.
+  int num_remaining_tasks =
+      base::Seconds(kIntensiveWakeUpThrottling_GracePeriodSeconds_Default)
+          .IntDiv(kDefaultThrottledWakeUpInterval);
   task_runner->PostDelayedTask(
       FROM_HERE,
       base::BindOnce(&RePostTask, task_runner, kShortDelay,
@@ -851,7 +902,29 @@ TEST_P(FrameSchedulerImplStopInBackgroundDisabledTest, ThrottledTaskExecution) {
   // A task should run every second.
   while (num_remaining_tasks > 0) {
     int previous_num_remaining_tasks = num_remaining_tasks;
-    task_environment_.FastForwardBy(kTaskPeriod);
+    task_environment_.FastForwardBy(kDefaultThrottledWakeUpInterval);
+    EXPECT_EQ(previous_num_remaining_tasks - 1, num_remaining_tasks);
+  }
+
+  // Schedule tasks with a short delay, after the intensive wake up throttling
+  // grace period.
+  num_remaining_tasks = 5;
+  task_runner->PostDelayedTask(
+      FROM_HERE,
+      base::BindOnce(&RePostTask, task_runner, kShortDelay,
+                     base::Unretained(&num_remaining_tasks)),
+      kShortDelay);
+
+  // Task run every minute if the nesting level is high, or every second
+  // otherwise.
+  const base::TimeDelta expected_period_after_grace_period =
+      (GetParam() == TaskType::kJavascriptTimerDelayedLowNesting)
+          ? kDefaultThrottledWakeUpInterval
+          : kIntensiveThrottledWakeUpInterval;
+
+  while (num_remaining_tasks > 0) {
+    int previous_num_remaining_tasks = num_remaining_tasks;
+    task_environment_.FastForwardBy(expected_period_after_grace_period);
     EXPECT_EQ(previous_num_remaining_tasks - 1, num_remaining_tasks);
   }
 }
@@ -870,13 +943,13 @@ TEST_F(FrameSchedulerImplTest, FreezeForegroundOnlyTasks) {
   ForegroundOnlyTaskQueue()->GetTaskRunnerWithDefaultTaskType()->PostTask(
       FROM_HERE, base::BindOnce(&IncrementCounter, base::Unretained(&counter)));
 
-  page_scheduler_->SetPageVisible(false);
+  frame_scheduler_->SetFrameVisible(false);
 
   EXPECT_EQ(0, counter);
   base::RunLoop().RunUntilIdle();
   EXPECT_EQ(0, counter);
 
-  page_scheduler_->SetPageVisible(true);
+  frame_scheduler_->SetFrameVisible(true);
 
   EXPECT_EQ(0, counter);
   base::RunLoop().RunUntilIdle();
@@ -947,13 +1020,13 @@ TEST_F(FrameSchedulerImplTest, PagePostsCpuTasks) {
   EXPECT_EQ(0, GetTotalUpdateTaskTimeCalls());
   UnpausableTaskQueue()->GetTaskRunnerWithDefaultTaskType()->PostTask(
       FROM_HERE, base::BindOnce(&RunTaskOfLength, &task_environment_,
-                                base::TimeDelta::FromMilliseconds(10)));
+                                base::Milliseconds(10)));
   base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(GetTaskTime().is_zero());
   EXPECT_EQ(0, GetTotalUpdateTaskTimeCalls());
   UnpausableTaskQueue()->GetTaskRunnerWithDefaultTaskType()->PostTask(
       FROM_HERE, base::BindOnce(&RunTaskOfLength, &task_environment_,
-                                base::TimeDelta::FromMilliseconds(100)));
+                                base::Milliseconds(100)));
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(GetTaskTime().is_zero());
   EXPECT_EQ(1, GetTotalUpdateTaskTimeCalls());
@@ -987,7 +1060,7 @@ TEST_F(FrameSchedulerImplTest, FramePostsCpuTasksThroughReloadRenavigate) {
     // Check the rest of the values after different types of commit.
     UnpausableTaskQueue()->GetTaskRunnerWithDefaultTaskType()->PostTask(
         FROM_HERE, base::BindOnce(&RunTaskOfLength, &task_environment_,
-                                  base::TimeDelta::FromMilliseconds(60)));
+                                  base::Milliseconds(60)));
     base::RunLoop().RunUntilIdle();
     EXPECT_FALSE(GetTaskTime().is_zero());
     EXPECT_EQ(0, GetTotalUpdateTaskTimeCalls());
@@ -996,49 +1069,11 @@ TEST_F(FrameSchedulerImplTest, FramePostsCpuTasksThroughReloadRenavigate) {
 
     UnpausableTaskQueue()->GetTaskRunnerWithDefaultTaskType()->PostTask(
         FROM_HERE, base::BindOnce(&RunTaskOfLength, &task_environment_,
-                                  base::TimeDelta::FromMilliseconds(60)));
+                                  base::Milliseconds(60)));
     base::RunLoop().RunUntilIdle();
     EXPECT_EQ(test_case.expect_task_time_zero, GetTaskTime().is_zero());
     EXPECT_EQ(test_case.expected_total_calls, GetTotalUpdateTaskTimeCalls());
   }
-}
-
-TEST_F(FrameSchedulerImplTest, PageFreezeWithKeepActive) {
-  Vector<String> tasks;
-  PostTestTasksToQueuesWithTrait(&tasks, "L1 T1 D1 P1 U1");
-
-  page_scheduler_->SetKeepActive(true);  // say we have a Service Worker
-  page_scheduler_->SetPageVisible(false);
-  page_scheduler_->SetPageFrozen(true);
-
-  EXPECT_THAT(tasks, UnorderedElementsAre());
-  base::RunLoop().RunUntilIdle();
-  // Everything runs except throttleable tasks (timers)
-  EXPECT_THAT(tasks, UnorderedElementsAre("L1", "D1", "P1", "U1"));
-
-  tasks.clear();
-  PostTestTasksToQueuesWithTrait(&tasks, "L1");
-
-  EXPECT_THAT(tasks, UnorderedElementsAre());
-  base::RunLoop().RunUntilIdle();
-  // loading task runs
-  EXPECT_THAT(tasks, UnorderedElementsAre("L1"));
-
-  tasks.clear();
-  PostTestTasksToQueuesWithTrait(&tasks, "L1");
-
-  // KeepActive is false when Service Worker stops.
-  page_scheduler_->SetKeepActive(false);
-  EXPECT_THAT(tasks, UnorderedElementsAre());
-  base::RunLoop().RunUntilIdle();
-  EXPECT_THAT(tasks, UnorderedElementsAre());  // loading task does not run
-
-  tasks.clear();
-  page_scheduler_->SetKeepActive(true);
-  EXPECT_THAT(tasks, UnorderedElementsAre());
-  base::RunLoop().RunUntilIdle();
-  // loading task runs
-  EXPECT_THAT(tasks, UnorderedElementsAre("L1"));
 }
 
 class FrameSchedulerImplTestWithUnfreezableLoading
@@ -1054,9 +1089,9 @@ class FrameSchedulerImplTestWithUnfreezableLoading
 TEST_F(FrameSchedulerImplTestWithUnfreezableLoading,
        LoadingTasksKeepRunningWhenFrozen) {
   int counter = 0;
-  UnfreezableLoadingTaskQueue()->GetTaskQueue()->task_runner()->PostTask(
+  UnfreezableLoadingTaskQueue()->GetTaskRunnerWithDefaultTaskType()->PostTask(
       FROM_HERE, base::BindOnce(&IncrementCounter, base::Unretained(&counter)));
-  LoadingTaskQueue()->GetTaskQueue()->task_runner()->PostTask(
+  LoadingTaskQueue()->GetTaskRunnerWithDefaultTaskType()->PostTask(
       FROM_HERE, base::BindOnce(&IncrementCounter, base::Unretained(&counter)));
 
   page_scheduler_->SetPageVisible(false);
@@ -1076,7 +1111,7 @@ TEST_F(FrameSchedulerImplTestWithUnfreezableLoading,
   EXPECT_EQ(2, counter);
 }
 
-// Tests if throttling observer interfaces work.
+// Tests if throttling observer callbacks work.
 TEST_F(FrameSchedulerImplTest, LifecycleObserver) {
   std::unique_ptr<MockLifecycleObserver> observer =
       std::make_unique<MockLifecycleObserver>();
@@ -1090,7 +1125,7 @@ TEST_F(FrameSchedulerImplTest, LifecycleObserver) {
                                throttled_count, stopped_count);
 
   auto observer_handle = frame_scheduler_->AddLifecycleObserver(
-      FrameScheduler::ObserverType::kLoader, observer.get());
+      FrameScheduler::ObserverType::kLoader, observer->GetCallback());
 
   // Initial state should be synchronously notified here.
   // We assume kNotThrottled is notified as an initial state, but it could
@@ -1110,7 +1145,7 @@ TEST_F(FrameSchedulerImplTest, LifecycleObserver) {
   observer->CheckObserverState(FROM_HERE, not_throttled_count, hidden_count,
                                throttled_count, stopped_count);
 
-  task_environment_.FastForwardBy(base::TimeDelta::FromSeconds(30));
+  task_environment_.FastForwardBy(base::Seconds(30));
 
   // The frame gets throttled after some time in background.
   observer->CheckObserverState(FROM_HERE, not_throttled_count, hidden_count,
@@ -1144,7 +1179,7 @@ TEST_F(FrameSchedulerImplTest, LifecycleObserver) {
   page_scheduler_->SetPageVisible(false);
 
   // Wait 100 secs virtually and run pending tasks just in case.
-  task_environment_.FastForwardBy(base::TimeDelta::FromSeconds(100));
+  task_environment_.FastForwardBy(base::Seconds(100));
   base::RunLoop().RunUntilIdle();
 
   observer->CheckObserverState(FROM_HERE, not_throttled_count, hidden_count,
@@ -1189,10 +1224,11 @@ TEST_F(FrameSchedulerImplTest, SubesourceLoadingPaused) {
 
   // Adding the observers should recieve a non-throttled response
   auto loader_observer_handle = frame_scheduler_->AddLifecycleObserver(
-      FrameScheduler::ObserverType::kLoader, loader_observer.get());
+      FrameScheduler::ObserverType::kLoader, loader_observer->GetCallback());
 
   auto worker_observer_handle = frame_scheduler_->AddLifecycleObserver(
-      FrameScheduler::ObserverType::kWorkerScheduler, worker_observer.get());
+      FrameScheduler::ObserverType::kWorkerScheduler,
+      worker_observer->GetCallback());
 
   loader_observer->CheckObserverState(
       FROM_HERE, ++loader_not_throttled_count, loader_hidden_count,
@@ -1219,7 +1255,7 @@ TEST_F(FrameSchedulerImplTest, SubesourceLoadingPaused) {
     auto loader_observer_added_after_stopped_handle =
         frame_scheduler_->AddLifecycleObserver(
             FrameScheduler::ObserverType::kLoader,
-            loader_observer_added_after_stopped.get());
+            loader_observer_added_after_stopped->GetCallback());
     // This observer should see stopped when added.
     loader_observer_added_after_stopped->CheckObserverState(FROM_HERE, 0, 0, 0,
                                                             1u);
@@ -1256,7 +1292,7 @@ TEST_F(FrameSchedulerImplTest, LogIpcsPostedToFramesInBackForwardCache) {
   StorePageInBackForwardCache();
 
   // Run the tasks so that they are recorded in the histogram
-  task_environment_.FastForwardBy(base::TimeDelta::FromHours(1));
+  task_environment_.FastForwardBy(base::Hours(1));
 
   // Post IPC tasks, accounting for delay for when tracking starts.
   {
@@ -1267,6 +1303,8 @@ TEST_F(FrameSchedulerImplTest, LogIpcsPostedToFramesInBackForwardCache) {
     base::TaskAnnotator::ScopedSetIpcHash scoped_set_ipc_hash_2(2);
     task_runner->PostTask(FROM_HERE, base::DoNothing());
   }
+  // Logging is delayed by one second, so guarantee that our IPCS are logged.
+  task_environment_.FastForwardBy(base::Seconds(2));
   task_environment_.RunUntilIdle();
 
   // Once the page is restored from the cache, IPCs should no longer be
@@ -1310,7 +1348,7 @@ TEST_F(FrameSchedulerImplTest,
   StorePageInBackForwardCache();
 
   // Run the tasks so that they are recorded in the histogram
-  task_environment_.FastForwardBy(base::TimeDelta::FromHours(1));
+  task_environment_.FastForwardBy(base::Hours(1));
 
   base::ThreadPool::PostTask(
       FROM_HERE,
@@ -1329,12 +1367,20 @@ TEST_F(FrameSchedulerImplTest,
   base::ThreadPool::PostTask(
       FROM_HERE,
       base::BindOnce(
-          [](scoped_refptr<base::SingleThreadTaskRunner> task_runner,
-             base::RepeatingClosure restore_from_cache_callback) {
+          [](scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
             {
               base::TaskAnnotator::ScopedSetIpcHash scoped_set_ipc_hash(2);
               task_runner->PostTask(FROM_HERE, base::DoNothing());
             }
+          },
+          task_runner));
+  // Logging is delayed by one second, so guarantee that our IPCS are logged.
+  task_environment_.FastForwardBy(base::Seconds(2));
+  base::ThreadPool::PostTask(
+      FROM_HERE,
+      base::BindOnce(
+          [](scoped_refptr<base::SingleThreadTaskRunner> task_runner,
+             base::RepeatingClosure restore_from_cache_callback) {
             {
               // Once the page is restored from the cache, ensure that the IPC
               // restoring the page from the cache is not recorded as well.
@@ -1377,8 +1423,35 @@ TEST_F(FrameSchedulerImplTest,
       testing::UnorderedElementsAre(base::Bucket(1, 1), base::Bucket(2, 1)));
 }
 
+class InputHighPriorityFrameSchedulerImplTest : public FrameSchedulerImplTest {
+ public:
+  InputHighPriorityFrameSchedulerImplTest()
+      : FrameSchedulerImplTest(
+            {},
+            {::blink::features::kInputTargetClientHighPriority}) {}
+};
+
 // TODO(farahcharab) Move priority testing to MainThreadTaskQueueTest after
 // landing the change that moves priority computation to MainThreadTaskQueue.
+
+TEST_F(InputHighPriorityFrameSchedulerImplTest,
+       NormalPriorityInputBlockingTaskQueue) {
+  page_scheduler_->SetPageVisible(false);
+  EXPECT_EQ(InputBlockingTaskQueue()->GetQueuePriority(),
+            TaskQueue::QueuePriority::kNormalPriority);
+  page_scheduler_->SetPageVisible(true);
+  EXPECT_EQ(InputBlockingTaskQueue()->GetQueuePriority(),
+            TaskQueue::QueuePriority::kNormalPriority);
+}
+
+TEST_F(FrameSchedulerImplTest, HighestPriorityInputBlockingTaskQueue) {
+  page_scheduler_->SetPageVisible(false);
+  EXPECT_EQ(InputBlockingTaskQueue()->GetQueuePriority(),
+            TaskQueue::QueuePriority::kHighestPriority);
+  page_scheduler_->SetPageVisible(true);
+  EXPECT_EQ(InputBlockingTaskQueue()->GetQueuePriority(),
+            TaskQueue::QueuePriority::kHighestPriority);
+}
 
 class LowPriorityBackgroundPageExperimentTest : public FrameSchedulerImplTest {
  public:
@@ -1388,46 +1461,46 @@ class LowPriorityBackgroundPageExperimentTest : public FrameSchedulerImplTest {
 
 TEST_F(LowPriorityBackgroundPageExperimentTest, FrameQueuesPriorities) {
   page_scheduler_->SetPageVisible(false);
-  EXPECT_EQ(LoadingTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(LoadingControlTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingControlTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(DeferrableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(DeferrableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(ThrottleableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(ThrottleableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(PausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(PausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(UnpausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(UnpausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
 
   page_scheduler_->AudioStateChanged(true);
-  EXPECT_EQ(LoadingTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(LoadingControlTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingControlTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kHighPriority);
-  EXPECT_EQ(DeferrableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(DeferrableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(ThrottleableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(ThrottleableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(PausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(PausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(UnpausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(UnpausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
 
   page_scheduler_->AudioStateChanged(false);
   page_scheduler_->SetPageVisible(true);
-  EXPECT_EQ(LoadingTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(LoadingControlTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingControlTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kHighPriority);
-  EXPECT_EQ(DeferrableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(DeferrableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(ThrottleableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(ThrottleableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(PausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(PausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(UnpausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(UnpausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
 }
 
@@ -1440,46 +1513,46 @@ class BestEffortPriorityBackgroundPageExperimentTest
 
 TEST_F(BestEffortPriorityBackgroundPageExperimentTest, FrameQueuesPriorities) {
   page_scheduler_->SetPageVisible(false);
-  EXPECT_EQ(LoadingTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kBestEffortPriority);
-  EXPECT_EQ(LoadingControlTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingControlTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kBestEffortPriority);
-  EXPECT_EQ(DeferrableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(DeferrableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kBestEffortPriority);
-  EXPECT_EQ(ThrottleableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(ThrottleableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kBestEffortPriority);
-  EXPECT_EQ(PausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(PausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kBestEffortPriority);
-  EXPECT_EQ(UnpausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(UnpausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kBestEffortPriority);
 
   page_scheduler_->AudioStateChanged(true);
-  EXPECT_EQ(LoadingTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(LoadingControlTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingControlTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kHighPriority);
-  EXPECT_EQ(DeferrableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(DeferrableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(ThrottleableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(ThrottleableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(PausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(PausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(UnpausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(UnpausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
 
   page_scheduler_->AudioStateChanged(false);
   page_scheduler_->SetPageVisible(true);
-  EXPECT_EQ(LoadingTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(LoadingControlTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingControlTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kHighPriority);
-  EXPECT_EQ(DeferrableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(DeferrableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(ThrottleableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(ThrottleableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(PausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(PausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(UnpausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(UnpausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
 }
 
@@ -1493,32 +1566,32 @@ class LowPriorityHiddenFrameExperimentTest : public FrameSchedulerImplTest {
 TEST_F(LowPriorityHiddenFrameExperimentTest, FrameQueuesPriorities) {
   // Hidden Frame Task Queues.
   frame_scheduler_->SetFrameVisible(false);
-  EXPECT_EQ(LoadingTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(LoadingControlTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingControlTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(DeferrableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(DeferrableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(ThrottleableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(ThrottleableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(PausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(PausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(UnpausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(UnpausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
 
   // Visible Frame Task Queues.
   frame_scheduler_->SetFrameVisible(true);
-  EXPECT_EQ(LoadingTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(LoadingControlTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingControlTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kHighPriority);
-  EXPECT_EQ(DeferrableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(DeferrableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(ThrottleableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(ThrottleableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(PausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(PausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(UnpausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(UnpausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
 }
 
@@ -1538,22 +1611,22 @@ TEST_F(LowPriorityHiddenFrameDuringLoadingExperimentTest,
       CreateFrameScheduler(page_scheduler_.get(),
                            frame_scheduler_delegate_.get(), nullptr,
                            FrameScheduler::FrameType::kMainFrame);
-  main_frame_scheduler->OnFirstContentfulPaint();
+  main_frame_scheduler->OnFirstContentfulPaintInMainFrame();
   ASSERT_EQ(scheduler_->current_use_case(), UseCase::kLoading);
 
   // Hidden Frame Task Queues.
   frame_scheduler_->SetFrameVisible(false);
-  EXPECT_EQ(LoadingTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(LoadingControlTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingControlTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(DeferrableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(DeferrableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(ThrottleableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(ThrottleableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(PausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(PausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(UnpausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(UnpausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
 
   // Main thread scheduler is no longer in loading use case.
@@ -1561,17 +1634,17 @@ TEST_F(LowPriorityHiddenFrameDuringLoadingExperimentTest,
   ASSERT_EQ(scheduler_->current_use_case(), UseCase::kNone);
   EXPECT_FALSE(page_scheduler_->IsLoading());
 
-  EXPECT_EQ(LoadingTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(LoadingControlTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingControlTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kHighPriority);
-  EXPECT_EQ(DeferrableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(DeferrableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(ThrottleableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(ThrottleableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(PausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(PausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(UnpausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(UnpausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
 }
 
@@ -1584,17 +1657,17 @@ class LowPrioritySubFrameExperimentTest : public FrameSchedulerImplTest {
 
 TEST_F(LowPrioritySubFrameExperimentTest, FrameQueuesPriorities) {
   // Sub-Frame Task Queues.
-  EXPECT_EQ(LoadingTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(LoadingControlTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingControlTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(DeferrableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(DeferrableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(ThrottleableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(ThrottleableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(PausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(PausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(UnpausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(UnpausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
 
   frame_scheduler_ =
@@ -1602,17 +1675,17 @@ TEST_F(LowPrioritySubFrameExperimentTest, FrameQueuesPriorities) {
                            FrameScheduler::FrameType::kMainFrame);
 
   // Main Frame Task Queues.
-  EXPECT_EQ(LoadingTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(LoadingControlTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingControlTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kHighPriority);
-  EXPECT_EQ(DeferrableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(DeferrableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(ThrottleableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(ThrottleableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(PausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(PausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(UnpausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(UnpausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
 }
 
@@ -1631,21 +1704,21 @@ TEST_F(LowPrioritySubFrameDuringLoadingExperimentTest, FrameQueuesPriorities) {
       CreateFrameScheduler(page_scheduler_.get(),
                            frame_scheduler_delegate_.get(), nullptr,
                            FrameScheduler::FrameType::kMainFrame);
-  main_frame_scheduler->OnFirstContentfulPaint();
+  main_frame_scheduler->OnFirstContentfulPaintInMainFrame();
   ASSERT_EQ(scheduler_->current_use_case(), UseCase::kLoading);
 
   // Sub-Frame Task Queues.
-  EXPECT_EQ(LoadingTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(LoadingControlTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingControlTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(DeferrableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(DeferrableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(ThrottleableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(ThrottleableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(PausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(PausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(UnpausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(UnpausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
 
   // Main thread scheduler is no longer in loading use case.
@@ -1654,17 +1727,17 @@ TEST_F(LowPrioritySubFrameDuringLoadingExperimentTest, FrameQueuesPriorities) {
   EXPECT_FALSE(page_scheduler_->IsLoading());
 
   // Sub-Frame Task Queues.
-  EXPECT_EQ(LoadingTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(LoadingControlTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingControlTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kHighPriority);
-  EXPECT_EQ(DeferrableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(DeferrableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(ThrottleableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(ThrottleableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(PausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(PausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(UnpausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(UnpausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
 }
 
@@ -1679,17 +1752,17 @@ class LowPrioritySubFrameThrottleableTaskExperimentTest
 TEST_F(LowPrioritySubFrameThrottleableTaskExperimentTest,
        FrameQueuesPriorities) {
   // Sub-Frame Task Queues.
-  EXPECT_EQ(LoadingTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(LoadingControlTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingControlTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kHighPriority);
-  EXPECT_EQ(DeferrableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(DeferrableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(ThrottleableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(ThrottleableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(PausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(PausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(UnpausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(UnpausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
 
   frame_scheduler_ =
@@ -1697,17 +1770,17 @@ TEST_F(LowPrioritySubFrameThrottleableTaskExperimentTest,
                            FrameScheduler::FrameType::kMainFrame);
 
   // Main Frame Task Queues.
-  EXPECT_EQ(LoadingTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(LoadingControlTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingControlTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kHighPriority);
-  EXPECT_EQ(DeferrableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(DeferrableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(ThrottleableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(ThrottleableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(PausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(PausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(UnpausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(UnpausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
 }
 
@@ -1727,21 +1800,21 @@ TEST_F(LowPrioritySubFrameThrottleableTaskDuringLoadingExperimentTest,
       CreateFrameScheduler(page_scheduler_.get(),
                            frame_scheduler_delegate_.get(), nullptr,
                            FrameScheduler::FrameType::kMainFrame);
-  main_frame_scheduler->OnFirstContentfulPaint();
+  main_frame_scheduler->OnFirstContentfulPaintInMainFrame();
   ASSERT_EQ(scheduler_->current_use_case(), UseCase::kLoading);
 
   // Sub-Frame Task Queues.
-  EXPECT_EQ(LoadingTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(LoadingControlTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingControlTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kHighPriority);
-  EXPECT_EQ(DeferrableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(DeferrableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(ThrottleableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(ThrottleableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(PausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(PausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(UnpausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(UnpausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
 
   // Main thread scheduler is no longer in loading use case.
@@ -1750,17 +1823,17 @@ TEST_F(LowPrioritySubFrameThrottleableTaskDuringLoadingExperimentTest,
   EXPECT_FALSE(page_scheduler_->IsLoading());
 
   // Sub-Frame Task Queues.
-  EXPECT_EQ(LoadingTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(LoadingControlTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingControlTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kHighPriority);
-  EXPECT_EQ(DeferrableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(DeferrableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(ThrottleableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(ThrottleableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(PausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(PausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(UnpausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(UnpausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
 }
 
@@ -1774,17 +1847,17 @@ class LowPriorityThrottleableTaskExperimentTest
 
 TEST_F(LowPriorityThrottleableTaskExperimentTest, FrameQueuesPriorities) {
   // Sub-Frame Task Queues.
-  EXPECT_EQ(LoadingTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(LoadingControlTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingControlTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kHighPriority);
-  EXPECT_EQ(DeferrableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(DeferrableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(ThrottleableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(ThrottleableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(PausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(PausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(UnpausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(UnpausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
 
   frame_scheduler_ =
@@ -1792,17 +1865,17 @@ TEST_F(LowPriorityThrottleableTaskExperimentTest, FrameQueuesPriorities) {
                            FrameScheduler::FrameType::kMainFrame);
 
   // Main Frame Task Queues.
-  EXPECT_EQ(LoadingTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(LoadingControlTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingControlTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kHighPriority);
-  EXPECT_EQ(DeferrableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(DeferrableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(ThrottleableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(ThrottleableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(PausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(PausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(UnpausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(UnpausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
 }
 
@@ -1822,20 +1895,20 @@ TEST_F(LowPriorityThrottleableTaskDuringLoadingExperimentTest,
       CreateFrameScheduler(page_scheduler_.get(),
                            frame_scheduler_delegate_.get(), nullptr,
                            FrameScheduler::FrameType::kMainFrame);
-  main_frame_scheduler->OnFirstContentfulPaint();
+  main_frame_scheduler->OnFirstContentfulPaintInMainFrame();
   ASSERT_EQ(scheduler_->current_use_case(), UseCase::kLoading);
 
-  EXPECT_EQ(LoadingTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(LoadingControlTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingControlTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kHighPriority);
-  EXPECT_EQ(DeferrableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(DeferrableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(ThrottleableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(ThrottleableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(PausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(PausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(UnpausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(UnpausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
 
   // Main thread is no longer in loading use case.
@@ -1844,23 +1917,22 @@ TEST_F(LowPriorityThrottleableTaskDuringLoadingExperimentTest,
 
   EXPECT_FALSE(page_scheduler_->IsLoading());
 
-  EXPECT_EQ(LoadingTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(LoadingControlTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingControlTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kHighPriority);
-  EXPECT_EQ(DeferrableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(DeferrableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(ThrottleableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(ThrottleableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(PausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(PausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(UnpausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(UnpausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
 }
 
 TEST_F(LowPriorityThrottleableTaskDuringLoadingExperimentTest,
        MainFrameQueuesPriorities) {
-  frame_scheduler_->OnFirstContentfulPaint();
   frame_scheduler_->OnFirstMeaningfulPaint();
 
   frame_scheduler_ =
@@ -1868,20 +1940,20 @@ TEST_F(LowPriorityThrottleableTaskDuringLoadingExperimentTest,
                            FrameScheduler::FrameType::kMainFrame);
 
   // Main thread is in the loading use case.
-  frame_scheduler_->OnFirstContentfulPaint();
+  frame_scheduler_->OnFirstContentfulPaintInMainFrame();
 
   // Main Frame Task Queues.
-  EXPECT_EQ(LoadingTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(LoadingControlTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingControlTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kHighPriority);
-  EXPECT_EQ(DeferrableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(DeferrableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(ThrottleableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(ThrottleableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(PausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(PausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(UnpausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(UnpausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
 
   // Main thread is no longer in loading use case.
@@ -1889,17 +1961,17 @@ TEST_F(LowPriorityThrottleableTaskDuringLoadingExperimentTest,
   EXPECT_FALSE(page_scheduler_->IsLoading());
 
   // Main Frame Task Queues.
-  EXPECT_EQ(LoadingTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(LoadingControlTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingControlTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kHighPriority);
-  EXPECT_EQ(DeferrableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(DeferrableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(ThrottleableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(ThrottleableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(PausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(PausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(UnpausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(UnpausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
 }
 
@@ -1913,35 +1985,52 @@ class LowPriorityAdFrameExperimentTest : public FrameSchedulerImplTest {
 TEST_F(LowPriorityAdFrameExperimentTest, FrameQueuesPriorities) {
   EXPECT_FALSE(frame_scheduler_->IsAdFrame());
 
-  EXPECT_EQ(LoadingTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(LoadingControlTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingControlTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kHighPriority);
-  EXPECT_EQ(DeferrableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(DeferrableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(ThrottleableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(ThrottleableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(PausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(PausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(UnpausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(UnpausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
 
-  frame_scheduler_->SetIsAdFrame();
+  frame_scheduler_->SetIsAdFrame(true);
 
   EXPECT_TRUE(frame_scheduler_->IsAdFrame());
 
-  EXPECT_EQ(LoadingTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(LoadingControlTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingControlTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(DeferrableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(DeferrableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(ThrottleableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(ThrottleableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(PausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(PausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(UnpausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(UnpausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
+
+  frame_scheduler_->SetIsAdFrame(false);
+
+  EXPECT_FALSE(frame_scheduler_->IsAdFrame());
+
+  EXPECT_EQ(LoadingTaskQueue()->GetQueuePriority(),
+            TaskQueue::QueuePriority::kNormalPriority);
+  EXPECT_EQ(LoadingControlTaskQueue()->GetQueuePriority(),
+            TaskQueue::QueuePriority::kHighPriority);
+  EXPECT_EQ(DeferrableTaskQueue()->GetQueuePriority(),
+            TaskQueue::QueuePriority::kNormalPriority);
+  EXPECT_EQ(ThrottleableTaskQueue()->GetQueuePriority(),
+            TaskQueue::QueuePriority::kNormalPriority);
+  EXPECT_EQ(PausableTaskQueue()->GetQueuePriority(),
+            TaskQueue::QueuePriority::kNormalPriority);
+  EXPECT_EQ(UnpausableTaskQueue()->GetQueuePriority(),
+            TaskQueue::QueuePriority::kNormalPriority);
 }
 
 class LowPriorityAdFrameDuringLoadingExperimentTest
@@ -1954,7 +2043,7 @@ class LowPriorityAdFrameDuringLoadingExperimentTest
 };
 
 TEST_F(LowPriorityAdFrameDuringLoadingExperimentTest, FrameQueuesPriorities) {
-  frame_scheduler_->SetIsAdFrame();
+  frame_scheduler_->SetIsAdFrame(true);
 
   EXPECT_TRUE(frame_scheduler_->IsAdFrame());
 
@@ -1963,20 +2052,20 @@ TEST_F(LowPriorityAdFrameDuringLoadingExperimentTest, FrameQueuesPriorities) {
       CreateFrameScheduler(page_scheduler_.get(),
                            frame_scheduler_delegate_.get(), nullptr,
                            FrameScheduler::FrameType::kMainFrame);
-  main_frame_scheduler->OnFirstContentfulPaint();
+  main_frame_scheduler->OnFirstContentfulPaintInMainFrame();
   ASSERT_EQ(scheduler_->current_use_case(), UseCase::kLoading);
 
-  EXPECT_EQ(LoadingTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(LoadingControlTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingControlTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(DeferrableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(DeferrableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(ThrottleableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(ThrottleableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(PausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(PausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(UnpausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(UnpausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
 
   // Main thread scheduler is no longer in loading use case.
@@ -1985,17 +2074,17 @@ TEST_F(LowPriorityAdFrameDuringLoadingExperimentTest, FrameQueuesPriorities) {
 
   EXPECT_FALSE(page_scheduler_->IsLoading());
 
-  EXPECT_EQ(LoadingTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(LoadingControlTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingControlTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kHighPriority);
-  EXPECT_EQ(DeferrableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(DeferrableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(ThrottleableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(ThrottleableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(PausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(PausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(UnpausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(UnpausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
 }
 
@@ -2009,35 +2098,51 @@ class BestEffortPriorityAdFrameExperimentTest : public FrameSchedulerImplTest {
 TEST_F(BestEffortPriorityAdFrameExperimentTest, FrameQueuesPriorities) {
   EXPECT_FALSE(frame_scheduler_->IsAdFrame());
 
-  EXPECT_EQ(LoadingTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(LoadingControlTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingControlTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kHighPriority);
-  EXPECT_EQ(DeferrableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(DeferrableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(ThrottleableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(ThrottleableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(PausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(PausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(UnpausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(UnpausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
 
-  frame_scheduler_->SetIsAdFrame();
+  frame_scheduler_->SetIsAdFrame(true);
 
   EXPECT_TRUE(frame_scheduler_->IsAdFrame());
 
-  EXPECT_EQ(LoadingTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kBestEffortPriority);
-  EXPECT_EQ(LoadingControlTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingControlTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kBestEffortPriority);
-  EXPECT_EQ(DeferrableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(DeferrableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kBestEffortPriority);
-  EXPECT_EQ(ThrottleableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(ThrottleableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kBestEffortPriority);
-  EXPECT_EQ(PausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(PausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kBestEffortPriority);
-  EXPECT_EQ(UnpausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(UnpausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kBestEffortPriority);
+
+  frame_scheduler_->SetIsAdFrame(false);
+  EXPECT_FALSE(frame_scheduler_->IsAdFrame());
+
+  EXPECT_EQ(LoadingTaskQueue()->GetQueuePriority(),
+            TaskQueue::QueuePriority::kNormalPriority);
+  EXPECT_EQ(LoadingControlTaskQueue()->GetQueuePriority(),
+            TaskQueue::QueuePriority::kHighPriority);
+  EXPECT_EQ(DeferrableTaskQueue()->GetQueuePriority(),
+            TaskQueue::QueuePriority::kNormalPriority);
+  EXPECT_EQ(ThrottleableTaskQueue()->GetQueuePriority(),
+            TaskQueue::QueuePriority::kNormalPriority);
+  EXPECT_EQ(PausableTaskQueue()->GetQueuePriority(),
+            TaskQueue::QueuePriority::kNormalPriority);
+  EXPECT_EQ(UnpausableTaskQueue()->GetQueuePriority(),
+            TaskQueue::QueuePriority::kNormalPriority);
 }
 
 class BestEffortPriorityAdFrameDuringLoadingExperimentTest
@@ -2051,7 +2156,7 @@ class BestEffortPriorityAdFrameDuringLoadingExperimentTest
 
 TEST_F(BestEffortPriorityAdFrameDuringLoadingExperimentTest,
        FrameQueuesPriorities) {
-  frame_scheduler_->SetIsAdFrame();
+  frame_scheduler_->SetIsAdFrame(true);
 
   EXPECT_TRUE(frame_scheduler_->IsAdFrame());
 
@@ -2060,20 +2165,20 @@ TEST_F(BestEffortPriorityAdFrameDuringLoadingExperimentTest,
       CreateFrameScheduler(page_scheduler_.get(),
                            frame_scheduler_delegate_.get(), nullptr,
                            FrameScheduler::FrameType::kMainFrame);
-  main_frame_scheduler->OnFirstContentfulPaint();
+  main_frame_scheduler->OnFirstContentfulPaintInMainFrame();
   ASSERT_EQ(scheduler_->current_use_case(), UseCase::kLoading);
 
-  EXPECT_EQ(LoadingTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kBestEffortPriority);
-  EXPECT_EQ(LoadingControlTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingControlTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kBestEffortPriority);
-  EXPECT_EQ(DeferrableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(DeferrableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kBestEffortPriority);
-  EXPECT_EQ(ThrottleableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(ThrottleableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kBestEffortPriority);
-  EXPECT_EQ(PausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(PausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kBestEffortPriority);
-  EXPECT_EQ(UnpausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(UnpausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kBestEffortPriority);
 
   // Main thread scheduler is no longer in loading use case.
@@ -2082,17 +2187,17 @@ TEST_F(BestEffortPriorityAdFrameDuringLoadingExperimentTest,
 
   EXPECT_FALSE(page_scheduler_->IsLoading());
 
-  EXPECT_EQ(LoadingTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(LoadingControlTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingControlTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kHighPriority);
-  EXPECT_EQ(DeferrableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(DeferrableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(ThrottleableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(ThrottleableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(PausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(PausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(UnpausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(UnpausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
 }
 
@@ -2117,16 +2222,15 @@ TEST_F(ResourceFetchPriorityExperimentTest, DidChangePriority) {
       GetResourceLoadingTaskRunnerHandleImpl();
   scoped_refptr<MainThreadTaskQueue> task_queue = handle->task_queue();
 
-  TaskQueue::QueuePriority priority =
-      task_queue->GetTaskQueue()->GetQueuePriority();
+  TaskQueue::QueuePriority priority = task_queue->GetQueuePriority();
   EXPECT_EQ(priority, TaskQueue::QueuePriority::kNormalPriority);
 
   DidChangeResourceLoadingPriority(task_queue, net::RequestPriority::LOWEST);
-  EXPECT_EQ(task_queue->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(task_queue->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
 
   DidChangeResourceLoadingPriority(task_queue, net::RequestPriority::HIGHEST);
-  EXPECT_EQ(task_queue->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(task_queue->GetQueuePriority(),
             TaskQueue::QueuePriority::kHighPriority);
 }
 
@@ -2157,27 +2261,27 @@ TEST_F(ResourceFetchPriorityExperimentOnlyWhenLoadingTest, DidChangePriority) {
       GetResourceLoadingTaskRunnerHandleImpl();
   scoped_refptr<MainThreadTaskQueue> task_queue = handle->task_queue();
 
-  EXPECT_EQ(task_queue->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(task_queue->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
 
   // Experiment is only enabled during the loading phase.
   DidChangeResourceLoadingPriority(task_queue, net::RequestPriority::LOWEST);
-  EXPECT_EQ(task_queue->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(task_queue->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
 
   // Main thread scheduler is in the loading use case.
-  main_frame_scheduler->OnFirstContentfulPaint();
+  main_frame_scheduler->OnFirstContentfulPaintInMainFrame();
   ASSERT_EQ(scheduler_->current_use_case(), UseCase::kLoading);
 
   handle = GetResourceLoadingTaskRunnerHandleImpl();
   task_queue = handle->task_queue();
 
   DidChangeResourceLoadingPriority(task_queue, net::RequestPriority::LOWEST);
-  EXPECT_EQ(task_queue->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(task_queue->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
 
   DidChangeResourceLoadingPriority(task_queue, net::RequestPriority::HIGHEST);
-  EXPECT_EQ(task_queue->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(task_queue->GetQueuePriority(),
             TaskQueue::QueuePriority::kHighPriority);
 }
 
@@ -2191,14 +2295,13 @@ TEST_F(
       GetResourceLoadingTaskRunnerHandleImpl();
   scoped_refptr<MainThreadTaskQueue> task_queue = handle->task_queue();
 
-  TaskQueue::QueuePriority priority =
-      task_queue->GetTaskQueue()->GetQueuePriority();
+  TaskQueue::QueuePriority priority = task_queue->GetQueuePriority();
 
   DidChangeResourceLoadingPriority(task_queue, net::RequestPriority::LOW);
-  EXPECT_EQ(task_queue->GetTaskQueue()->GetQueuePriority(), priority);
+  EXPECT_EQ(task_queue->GetQueuePriority(), priority);
 
   DidChangeResourceLoadingPriority(task_queue, net::RequestPriority::HIGHEST);
-  EXPECT_EQ(task_queue->GetTaskQueue()->GetQueuePriority(), priority);
+  EXPECT_EQ(task_queue->GetQueuePriority(), priority);
 }
 
 class LowPriorityCrossOriginTaskExperimentTest : public FrameSchedulerImplTest {
@@ -2211,33 +2314,33 @@ TEST_F(LowPriorityCrossOriginTaskExperimentTest, FrameQueuesPriorities) {
   EXPECT_FALSE(frame_scheduler_->IsCrossOriginToMainFrame());
 
   // Same Origin Task Queues.
-  EXPECT_EQ(LoadingTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(LoadingControlTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingControlTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kHighPriority);
-  EXPECT_EQ(DeferrableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(DeferrableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(ThrottleableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(ThrottleableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(PausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(PausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(UnpausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(UnpausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
 
   frame_scheduler_->SetCrossOriginToMainFrame(true);
   EXPECT_TRUE(frame_scheduler_->IsCrossOriginToMainFrame());
 
-  EXPECT_EQ(LoadingTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(LoadingControlTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingControlTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(DeferrableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(DeferrableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(ThrottleableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(ThrottleableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(PausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(PausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(UnpausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(UnpausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
 }
 
@@ -2257,36 +2360,36 @@ TEST_F(LowPriorityCrossOriginTaskDuringLoadingExperimentTest,
                            frame_scheduler_delegate_.get(), nullptr,
                            FrameScheduler::FrameType::kMainFrame);
 
-  main_frame_scheduler->OnFirstContentfulPaint();
+  main_frame_scheduler->OnFirstContentfulPaintInMainFrame();
   ASSERT_EQ(scheduler_->current_use_case(), UseCase::kLoading);
 
-  EXPECT_EQ(LoadingTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(LoadingControlTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingControlTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kHighPriority);
-  EXPECT_EQ(DeferrableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(DeferrableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(ThrottleableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(ThrottleableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(PausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(PausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(UnpausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(UnpausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
 
   frame_scheduler_->SetCrossOriginToMainFrame(true);
   EXPECT_TRUE(frame_scheduler_->IsCrossOriginToMainFrame());
 
-  EXPECT_EQ(LoadingTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(LoadingControlTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingControlTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(DeferrableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(DeferrableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(ThrottleableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(ThrottleableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(PausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(PausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
-  EXPECT_EQ(UnpausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(UnpausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kLowPriority);
 
   // Main thread is no longer in loading use case.
@@ -2294,17 +2397,17 @@ TEST_F(LowPriorityCrossOriginTaskDuringLoadingExperimentTest,
   ASSERT_EQ(scheduler_->current_use_case(), UseCase::kNone);
   EXPECT_FALSE(page_scheduler_->IsLoading());
 
-  EXPECT_EQ(LoadingTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(LoadingControlTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(LoadingControlTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kHighPriority);
-  EXPECT_EQ(DeferrableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(DeferrableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(ThrottleableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(ThrottleableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(PausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(PausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
-  EXPECT_EQ(UnpausableTaskQueue()->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(UnpausableTaskQueue()->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
 }
 
@@ -2313,11 +2416,11 @@ TEST_F(FrameSchedulerImplTest, TaskTypeToTaskQueueMapping) {
   // expected. This test will fail if these task types are moved to different
   // default queues.
   EXPECT_EQ(GetTaskQueue(TaskType::kJavascriptTimerDelayedLowNesting),
-            JavaScriptTimerTaskQueue());
+            JavaScriptTimerNormalThrottleableTaskQueue());
   EXPECT_EQ(GetTaskQueue(TaskType::kJavascriptTimerDelayedHighNesting),
-            JavaScriptTimerTaskQueue());
-    EXPECT_EQ(GetTaskQueue(TaskType::kJavascriptTimerImmediate),
-              JavaScriptTimerNonThrottleableTaskQueue());
+            JavaScriptTimerIntensivelyThrottleableTaskQueue());
+  EXPECT_EQ(GetTaskQueue(TaskType::kJavascriptTimerImmediate),
+            JavaScriptTimerNonThrottleableTaskQueue());
 
   EXPECT_EQ(GetTaskQueue(TaskType::kWebSocket), DeferrableTaskQueue());
   EXPECT_EQ(GetTaskQueue(TaskType::kDatabaseAccess), PausableTaskQueue());
@@ -2365,7 +2468,7 @@ TEST_F(FrameSchedulerImplDatabaseAccessWithoutHighPriority, QueueTraits) {
   auto da_queue = GetTaskQueue(TaskType::kDatabaseAccess);
   EXPECT_EQ(da_queue->GetQueueTraits().prioritisation_type,
             MainThreadTaskQueue::QueueTraits::PrioritisationType::kRegular);
-  EXPECT_EQ(da_queue->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(da_queue->GetQueuePriority(),
             TaskQueue::QueuePriority::kNormalPriority);
 }
 
@@ -2381,7 +2484,7 @@ TEST_F(FrameSchedulerImplDatabaseAccessWithHighPriority, QueueTraits) {
   EXPECT_EQ(da_queue->GetQueueTraits().prioritisation_type,
             MainThreadTaskQueue::QueueTraits::PrioritisationType::
                 kExperimentalDatabase);
-  EXPECT_EQ(da_queue->GetTaskQueue()->GetQueuePriority(),
+  EXPECT_EQ(da_queue->GetQueuePriority(),
             TaskQueue::QueuePriority::kHighPriority);
 }
 
@@ -2408,7 +2511,7 @@ TEST_F(FrameSchedulerImplTest, ContentCaptureHasIdleTaskQueue) {
   auto task_queue = GetTaskQueue(TaskType::kInternalContentCapture);
 
   EXPECT_EQ(TaskQueue::QueuePriority::kBestEffortPriority,
-            task_queue->GetTaskQueue()->GetQueuePriority());
+            task_queue->GetQueuePriority());
 }
 
 TEST_F(FrameSchedulerImplTest, ComputePriorityForDetachedFrame) {
@@ -2571,7 +2674,7 @@ TEST_F(FrameSchedulerImplTest, FeatureUpload) {
                 testing::Mock::VerifyAndClearExpectations(delegate);
                 EXPECT_CALL(
                     *delegate,
-                    UpdateActiveSchedulerTrackedFeatures(
+                    UpdateBackForwardCacheDisablingFeatures(
                         (1 << static_cast<size_t>(
                              SchedulingPolicy::Feature::
                                  kMainResourceHasCacheControlNoStore)) |
@@ -2605,7 +2708,7 @@ TEST_F(FrameSchedulerImplTest, FeatureUpload_FrameDestruction) {
                 // Ensure that the feature upload is delayed.
                 testing::Mock::VerifyAndClearExpectations(delegate);
                 EXPECT_CALL(*delegate,
-                            UpdateActiveSchedulerTrackedFeatures(
+                            UpdateBackForwardCacheDisablingFeatures(
                                 (1 << static_cast<size_t>(
                                      SchedulingPolicy::Feature::kWebSocket))));
               },
@@ -2625,7 +2728,7 @@ TEST_F(FrameSchedulerImplTest, FeatureUpload_FrameDestruction) {
                        testing::Mock::VerifyAndClearExpectations(delegate);
                        EXPECT_CALL(
                            *delegate,
-                           UpdateActiveSchedulerTrackedFeatures(testing::_))
+                           UpdateBackForwardCacheDisablingFeatures(testing::_))
                            .Times(0);
                      },
                      frame_scheduler_.get(), frame_scheduler_delegate_.get(),
@@ -2667,7 +2770,8 @@ class WebSchedulingTaskQueueTest : public FrameSchedulerImplTest {
   // - 'V': UserVisible
   // - 'B': Background
   void PostWebSchedulingTestTasks(Vector<String>* run_order,
-                                  const String& task_descriptor) {
+                                  const String& task_descriptor,
+                                  base::TimeDelta delay = base::TimeDelta()) {
     std::istringstream stream(task_descriptor.Utf8());
     while (!stream.eof()) {
       std::string task;
@@ -2687,9 +2791,11 @@ class WebSchedulingTaskQueueTest : public FrameSchedulerImplTest {
           EXPECT_FALSE(true);
           return;
       }
-      web_scheduling_task_runners_[static_cast<int>(priority)]->PostTask(
-          FROM_HERE, base::BindOnce(&AppendToVectorTestTask, run_order,
-                                    String::FromUTF8(task)));
+      web_scheduling_task_runners_[static_cast<int>(priority)]->PostDelayedTask(
+          FROM_HERE,
+          base::BindOnce(&AppendToVectorTestTask, run_order,
+                         String::FromUTF8(task)),
+          delay);
     }
   }
 
@@ -2721,16 +2827,29 @@ TEST_F(WebSchedulingTaskQueueTest, DynamicTaskPriorityOrder) {
               testing::ElementsAre("V1", "V2", "B1", "B2", "U1", "U2"));
 }
 
-// Verify that tasks posted with TaskType::kJavascriptTimerDelayed* run at the
-// expected time when throttled.
+TEST_F(WebSchedulingTaskQueueTest, DynamicTaskPriorityOrderDelayedTasks) {
+  Vector<String> run_order;
+
+  PostWebSchedulingTestTasks(&run_order, "U1 U2 V1 V2", base::Milliseconds(5));
+  task_queues_[static_cast<int>(WebSchedulingPriority::kUserBlockingPriority)]
+      ->SetPriority(WebSchedulingPriority::kBackgroundPriority);
+
+  task_environment_.FastForwardBy(base::Milliseconds(5));
+
+  EXPECT_THAT(run_order, testing::ElementsAre("V1", "V2", "U1", "U2"));
+}
+
+// Verify that tasks posted with TaskType::kJavascriptTimerDelayed* and
+// delayed web scheduling tasks run at the expected time when throttled.
 TEST_F(FrameSchedulerImplTest, ThrottledJSTimerTasksRunTime) {
   constexpr TaskType kJavaScriptTimerTaskTypes[] = {
       TaskType::kJavascriptTimerDelayedLowNesting,
-      TaskType::kJavascriptTimerDelayedHighNesting};
+      TaskType::kJavascriptTimerDelayedHighNesting,
+      TaskType::kWebSchedulingPostedTask};
 
   // Snap the time to a multiple of 1 second. Otherwise, the exact run time
   // of throttled tasks after hiding the page will vary.
-  FastForwardToAlignedTime(base::TimeDelta::FromSeconds(1));
+  FastForwardToAlignedTime(base::Seconds(1));
   const base::TimeTicks start = base::TimeTicks::Now();
 
   // Hide the page to start throttling JS Timers.
@@ -2738,10 +2857,20 @@ TEST_F(FrameSchedulerImplTest, ThrottledJSTimerTasksRunTime) {
 
   std::map<TaskType, std::vector<base::TimeTicks>> run_times;
 
-  // Post tasks with each Javascript Timer Task Type.
+  // Create the web scheduler task queue outside of the scope of the for loop.
+  // This is necessary because otherwise the queue is deleted before tasks run,
+  // and this breaks throttling.
+  std::unique_ptr<WebSchedulingTaskQueue> web_scheduling_task_queue =
+      frame_scheduler_->CreateWebSchedulingTaskQueue(
+          WebSchedulingPriority::kUserVisiblePriority);
+
+  // Post tasks with each Javascript Timer Task Type and with a
+  // WebSchedulingTaskQueue.
   for (TaskType task_type : kJavaScriptTimerTaskTypes) {
     const scoped_refptr<base::SingleThreadTaskRunner> task_runner =
-        frame_scheduler_->GetTaskRunner(task_type);
+        task_type == TaskType::kWebSchedulingPostedTask
+            ? web_scheduling_task_queue->GetTaskRunner()
+            : frame_scheduler_->GetTaskRunner(task_type);
 
     // Note: Taking the address of an element in |run_times| is safe because
     // inserting elements in a map does not invalidate references.
@@ -2750,36 +2879,35 @@ TEST_F(FrameSchedulerImplTest, ThrottledJSTimerTasksRunTime) {
         FROM_HERE, base::BindOnce(&RecordRunTime, &run_times[task_type]));
     task_runner->PostDelayedTask(
         FROM_HERE, base::BindOnce(&RecordRunTime, &run_times[task_type]),
-        base::TimeDelta::FromMilliseconds(1000));
+        base::Milliseconds(1000));
     task_runner->PostDelayedTask(
         FROM_HERE, base::BindOnce(&RecordRunTime, &run_times[task_type]),
-        base::TimeDelta::FromMilliseconds(1002));
+        base::Milliseconds(1002));
     task_runner->PostDelayedTask(
         FROM_HERE, base::BindOnce(&RecordRunTime, &run_times[task_type]),
-        base::TimeDelta::FromMilliseconds(1004));
+        base::Milliseconds(1004));
     task_runner->PostDelayedTask(
         FROM_HERE, base::BindOnce(&RecordRunTime, &run_times[task_type]),
-        base::TimeDelta::FromMilliseconds(2500));
+        base::Milliseconds(2500));
     task_runner->PostDelayedTask(
         FROM_HERE, base::BindOnce(&RecordRunTime, &run_times[task_type]),
-        base::TimeDelta::FromMilliseconds(6000));
+        base::Milliseconds(6000));
   }
 
   // Make posted tasks run.
-  task_environment_.FastForwardBy(base::TimeDelta::FromHours(1));
+  task_environment_.FastForwardBy(base::Hours(1));
 
   // The effective delay of a throttled task is >= the requested delay, and is
   // within [N * 1000, N * 1000 + 3] ms, where N is an integer. This is because
   // the wake up rate is 1 per second, and the duration of each wake up is 3 ms.
   for (TaskType task_type : kJavaScriptTimerTaskTypes) {
-    EXPECT_THAT(
-        run_times[task_type],
-        testing::ElementsAre(start + base::TimeDelta::FromMilliseconds(0),
-                             start + base::TimeDelta::FromMilliseconds(1000),
-                             start + base::TimeDelta::FromMilliseconds(1002),
-                             start + base::TimeDelta::FromMilliseconds(2000),
-                             start + base::TimeDelta::FromMilliseconds(3000),
-                             start + base::TimeDelta::FromMilliseconds(6000)));
+    EXPECT_THAT(run_times[task_type],
+                testing::ElementsAre(start + base::Milliseconds(0),
+                                     start + base::Milliseconds(1000),
+                                     start + base::Milliseconds(1002),
+                                     start + base::Milliseconds(2000),
+                                     start + base::Milliseconds(3000),
+                                     start + base::Milliseconds(6000)));
   }
 }
 
@@ -2792,8 +2920,7 @@ class MockMainThreadScheduler : public MainThreadSchedulerImpl {
             base::sequence_manager::SequenceManagerForTest::Create(
                 nullptr,
                 task_environment.GetMainThreadTaskRunner(),
-                task_environment.GetMockTickClock()),
-            base::nullopt) {}
+                task_environment.GetMockTickClock())) {}
 
   MOCK_METHOD(void, OnMainFramePaint, ());
 };
@@ -2813,7 +2940,7 @@ TEST_F(FrameSchedulerImplTest, ReportFMPAndFCPForMainFrames) {
   EXPECT_CALL(mock_main_thread_scheduler, OnMainFramePaint).Times(2);
 
   main_frame_scheduler->OnFirstMeaningfulPaint();
-  main_frame_scheduler->OnFirstContentfulPaint();
+  main_frame_scheduler->OnFirstContentfulPaintInMainFrame();
 
   main_frame_scheduler = nullptr;
   page_scheduler = nullptr;
@@ -2835,7 +2962,6 @@ TEST_F(FrameSchedulerImplTest, DontReportFMPAndFCPForSubframes) {
   EXPECT_CALL(mock_main_thread_scheduler, OnMainFramePaint).Times(0);
 
   subframe_scheduler->OnFirstMeaningfulPaint();
-  subframe_scheduler->OnFirstContentfulPaint();
 
   subframe_scheduler = nullptr;
   page_scheduler = nullptr;
@@ -2851,12 +2977,12 @@ TEST_P(FrameSchedulerImplTestWithIntensiveWakeUpThrottling,
 
   // Throttled TaskRunner to which tasks are posted in this test.
   const scoped_refptr<base::SingleThreadTaskRunner> task_runner =
-      frame_scheduler_->GetTaskRunner(GetTaskType());
+      GetTaskRunner();
 
   // Snap the time to a multiple of
-  // |kIntensiveThrottlingDurationBetweenWakeUps|. Otherwise, the time at which
+  // |kIntensiveThrottledWakeUpInterval|. Otherwise, the time at which
   // tasks can run after throttling is enabled will vary.
-  FastForwardToAlignedTime(kIntensiveThrottlingDurationBetweenWakeUps);
+  FastForwardToAlignedTime(kIntensiveThrottledWakeUpInterval);
   const base::TimeTicks test_start = base::TimeTicks::Now();
 
   // Hide the page. This starts the delay to throttle background wake ups.
@@ -2876,12 +3002,13 @@ TEST_P(FrameSchedulerImplTestWithIntensiveWakeUpThrottling,
     }
 
     task_environment_.FastForwardBy(kGracePeriod);
-    EXPECT_THAT(run_times, testing::ElementsAre(
-                               scope_start + base::TimeDelta::FromSeconds(1),
-                               scope_start + base::TimeDelta::FromSeconds(2),
-                               scope_start + base::TimeDelta::FromSeconds(3),
-                               scope_start + base::TimeDelta::FromSeconds(4),
-                               scope_start + base::TimeDelta::FromSeconds(5)));
+    EXPECT_THAT(run_times,
+                testing::ElementsAre(
+                    scope_start + kDefaultThrottledWakeUpInterval,
+                    scope_start + 2 * kDefaultThrottledWakeUpInterval,
+                    scope_start + 3 * kDefaultThrottledWakeUpInterval,
+                    scope_start + 4 * kDefaultThrottledWakeUpInterval,
+                    scope_start + 5 * kDefaultThrottledWakeUpInterval));
   }
 
   // After the grace period:
@@ -2889,7 +3016,7 @@ TEST_P(FrameSchedulerImplTestWithIntensiveWakeUpThrottling,
   // Test that wake ups are 1-second aligned if there is no recent wake up.
   {
     const base::TimeTicks scope_start = base::TimeTicks::Now();
-    EXPECT_EQ(scope_start, test_start + base::TimeDelta::FromMinutes(5));
+    EXPECT_EQ(scope_start, test_start + base::Minutes(5));
     std::vector<base::TimeTicks> run_times;
 
     task_runner->PostDelayedTask(FROM_HERE,
@@ -2897,8 +3024,8 @@ TEST_P(FrameSchedulerImplTestWithIntensiveWakeUpThrottling,
                                  kDefaultThrottledWakeUpInterval);
 
     task_environment_.FastForwardBy(kDefaultThrottledWakeUpInterval);
-    EXPECT_THAT(run_times, testing::ElementsAre(
-                               scope_start + base::TimeDelta::FromSeconds(1)));
+    EXPECT_THAT(run_times,
+                testing::ElementsAre(scope_start + base::Seconds(1)));
   }
 
   // Test that if there is a recent wake up:
@@ -2906,8 +3033,7 @@ TEST_P(FrameSchedulerImplTestWithIntensiveWakeUpThrottling,
   //   Otherwise:                               Wake ups are 1-second aligned
   {
     const base::TimeTicks scope_start = base::TimeTicks::Now();
-    EXPECT_EQ(scope_start, test_start + base::TimeDelta::FromMinutes(5) +
-                               base::TimeDelta::FromSeconds(1));
+    EXPECT_EQ(scope_start, test_start + base::Minutes(5) + base::Seconds(1));
     std::vector<base::TimeTicks> run_times;
 
     for (int i = 0; i < kNumTasks; ++i) {
@@ -2916,22 +3042,20 @@ TEST_P(FrameSchedulerImplTestWithIntensiveWakeUpThrottling,
           kShortDelay + i * kDefaultThrottledWakeUpInterval);
     }
 
-    FastForwardToAlignedTime(kIntensiveThrottlingDurationBetweenWakeUps);
+    FastForwardToAlignedTime(kIntensiveThrottledWakeUpInterval);
 
     if (IsIntensiveThrottlingExpected()) {
-      const base::TimeTicks aligned_time =
-          scope_start + base::TimeDelta::FromSeconds(59);
+      const base::TimeTicks aligned_time = scope_start + base::Seconds(59);
       EXPECT_THAT(run_times,
                   testing::ElementsAre(aligned_time, aligned_time, aligned_time,
                                        aligned_time, aligned_time));
     } else {
-      EXPECT_THAT(
-          run_times,
-          testing::ElementsAre(scope_start + base::TimeDelta::FromSeconds(1),
-                               scope_start + base::TimeDelta::FromSeconds(2),
-                               scope_start + base::TimeDelta::FromSeconds(3),
-                               scope_start + base::TimeDelta::FromSeconds(4),
-                               scope_start + base::TimeDelta::FromSeconds(5)));
+      EXPECT_THAT(run_times,
+                  testing::ElementsAre(scope_start + base::Seconds(1),
+                                       scope_start + base::Seconds(2),
+                                       scope_start + base::Seconds(3),
+                                       scope_start + base::Seconds(4),
+                                       scope_start + base::Seconds(5)));
     }
   }
 
@@ -2940,14 +3064,14 @@ TEST_P(FrameSchedulerImplTestWithIntensiveWakeUpThrottling,
   // otherwise.
   {
     const base::TimeTicks scope_start = base::TimeTicks::Now();
-    EXPECT_EQ(scope_start, test_start + base::TimeDelta::FromMinutes(6));
+    EXPECT_EQ(scope_start, test_start + base::Minutes(6));
     std::vector<base::TimeTicks> run_times;
 
     task_runner->PostDelayedTask(FROM_HERE,
                                  base::BindOnce(&RecordRunTime, &run_times),
                                  kDefaultThrottledWakeUpInterval);
 
-    task_environment_.FastForwardBy(kIntensiveThrottlingDurationBetweenWakeUps);
+    task_environment_.FastForwardBy(kIntensiveThrottledWakeUpInterval);
 
     EXPECT_THAT(run_times, testing::ElementsAre(scope_start +
                                                 GetExpectedWakeUpInterval()));
@@ -2959,12 +3083,11 @@ TEST_P(FrameSchedulerImplTestWithIntensiveWakeUpThrottling,
   // minute.
   {
     const base::TimeTicks scope_start = base::TimeTicks::Now();
-    EXPECT_EQ(scope_start, test_start + base::TimeDelta::FromMinutes(7));
+    EXPECT_EQ(scope_start, test_start + base::Minutes(7));
     std::vector<base::TimeTicks> run_times;
 
     const base::TimeDelta kLongDelay =
-        kIntensiveThrottlingDurationBetweenWakeUps * 5 +
-        kDefaultThrottledWakeUpInterval;
+        kIntensiveThrottledWakeUpInterval * 5 + kDefaultThrottledWakeUpInterval;
     task_runner->PostDelayedTask(
         FROM_HERE, base::BindOnce(&RecordRunTime, &run_times), kLongDelay);
 
@@ -2978,8 +3101,8 @@ TEST_P(FrameSchedulerImplTestWithIntensiveWakeUpThrottling,
   // aligned.
   {
     const base::TimeTicks scope_start = base::TimeTicks::Now();
-    EXPECT_EQ(scope_start, test_start + base::TimeDelta::FromMinutes(12) +
-                               kDefaultThrottledWakeUpInterval);
+    EXPECT_EQ(scope_start,
+              test_start + base::Minutes(12) + kDefaultThrottledWakeUpInterval);
     std::vector<base::TimeTicks> run_times;
 
     page_scheduler_->OnTitleOrFaviconUpdated();
@@ -2991,32 +3114,28 @@ TEST_P(FrameSchedulerImplTestWithIntensiveWakeUpThrottling,
                 FROM_HERE, base::BindOnce(&RecordRunTime, &run_times),
                 kDefaultThrottledWakeUpInterval * (i + 1));
           }
-          page_scheduler_->OnTitleOrFaviconUpdated();
         }),
         kDefaultThrottledWakeUpInterval);
 
     task_environment_.FastForwardUntilNoTasksRemain();
 
     if (IsIntensiveThrottlingExpected()) {
-      EXPECT_THAT(run_times, testing::ElementsAre(
-                                 scope_start + base::TimeDelta::FromSeconds(1),
-                                 scope_start + base::TimeDelta::FromSeconds(2),
-                                 scope_start + base::TimeDelta::FromSeconds(3),
-                                 scope_start - kDefaultThrottledWakeUpInterval +
-                                     base::TimeDelta::FromMinutes(1),
-                                 scope_start - kDefaultThrottledWakeUpInterval +
-                                     base::TimeDelta::FromMinutes(1),
-                                 scope_start - kDefaultThrottledWakeUpInterval +
-                                     base::TimeDelta::FromMinutes(1)));
+      EXPECT_THAT(
+          run_times,
+          testing::ElementsAre(
+              scope_start + base::Seconds(1), scope_start + base::Seconds(2),
+              scope_start + base::Seconds(3),
+              scope_start - kDefaultThrottledWakeUpInterval + base::Minutes(1),
+              scope_start - kDefaultThrottledWakeUpInterval + base::Minutes(1),
+              scope_start - kDefaultThrottledWakeUpInterval +
+                  base::Minutes(1)));
     } else {
       EXPECT_THAT(
           run_times,
-          testing::ElementsAre(scope_start + base::TimeDelta::FromSeconds(1),
-                               scope_start + base::TimeDelta::FromSeconds(2),
-                               scope_start + base::TimeDelta::FromSeconds(3),
-                               scope_start + base::TimeDelta::FromSeconds(4),
-                               scope_start + base::TimeDelta::FromSeconds(5),
-                               scope_start + base::TimeDelta::FromSeconds(6)));
+          testing::ElementsAre(
+              scope_start + base::Seconds(1), scope_start + base::Seconds(2),
+              scope_start + base::Seconds(3), scope_start + base::Seconds(4),
+              scope_start + base::Seconds(5), scope_start + base::Seconds(6)));
     }
   }
 }
@@ -3029,12 +3148,12 @@ TEST_P(FrameSchedulerImplTestWithIntensiveWakeUpThrottling,
 
   // Throttled TaskRunner to which tasks are posted in this test.
   const scoped_refptr<base::SingleThreadTaskRunner> task_runner =
-      frame_scheduler_->GetTaskRunner(GetTaskType());
+      GetTaskRunner();
 
   // Snap the time to a multiple of
-  // |kIntensiveThrottlingDurationBetweenWakeUps|. Otherwise, the time at which
+  // |kIntensiveThrottledWakeUpInterval|. Otherwise, the time at which
   // tasks can run after throttling is enabled will vary.
-  FastForwardToAlignedTime(kIntensiveThrottlingDurationBetweenWakeUps);
+  FastForwardToAlignedTime(kIntensiveThrottledWakeUpInterval);
   const base::TimeTicks test_start = base::TimeTicks::Now();
 
   // Hide the page. This starts the delay to throttle background wake ups.
@@ -3054,12 +3173,12 @@ TEST_P(FrameSchedulerImplTestWithIntensiveWakeUpThrottling,
     }
 
     task_environment_.FastForwardBy(kGracePeriod);
-    EXPECT_THAT(run_times, testing::ElementsAre(
-                               scope_start + base::TimeDelta::FromSeconds(1),
-                               scope_start + base::TimeDelta::FromSeconds(2),
-                               scope_start + base::TimeDelta::FromSeconds(3),
-                               scope_start + base::TimeDelta::FromSeconds(4),
-                               scope_start + base::TimeDelta::FromSeconds(5)));
+    EXPECT_THAT(run_times,
+                testing::ElementsAre(scope_start + base::Seconds(1),
+                                     scope_start + base::Seconds(2),
+                                     scope_start + base::Seconds(3),
+                                     scope_start + base::Seconds(4),
+                                     scope_start + base::Seconds(5)));
   }
 
   // After the grace period:
@@ -3070,14 +3189,14 @@ TEST_P(FrameSchedulerImplTestWithIntensiveWakeUpThrottling,
   // the last minute). Otherwise, it should be 1-second aligned.
   {
     const base::TimeTicks scope_start = base::TimeTicks::Now();
-    EXPECT_EQ(scope_start, test_start + base::TimeDelta::FromMinutes(5));
+    EXPECT_EQ(scope_start, test_start + base::Minutes(5));
     std::vector<base::TimeTicks> run_times;
 
     task_runner->PostDelayedTask(FROM_HERE,
                                  base::BindOnce(&RecordRunTime, &run_times),
                                  kDefaultThrottledWakeUpInterval);
 
-    task_environment_.FastForwardBy(kIntensiveThrottlingDurationBetweenWakeUps);
+    task_environment_.FastForwardBy(kIntensiveThrottledWakeUpInterval);
     EXPECT_THAT(run_times, testing::ElementsAre(scope_start +
                                                 GetExpectedWakeUpInterval()));
   }
@@ -3087,7 +3206,7 @@ TEST_P(FrameSchedulerImplTestWithIntensiveWakeUpThrottling,
   // otherwise.
   {
     const base::TimeTicks scope_start = base::TimeTicks::Now();
-    EXPECT_EQ(scope_start, test_start + base::TimeDelta::FromMinutes(6));
+    EXPECT_EQ(scope_start, test_start + base::Minutes(6));
     std::vector<base::TimeTicks> run_times;
 
     for (int i = 0; i < kNumTasks; ++i) {
@@ -3096,22 +3215,21 @@ TEST_P(FrameSchedulerImplTestWithIntensiveWakeUpThrottling,
           kShortDelay + i * kDefaultThrottledWakeUpInterval);
     }
 
-    task_environment_.FastForwardBy(kIntensiveThrottlingDurationBetweenWakeUps);
+    task_environment_.FastForwardBy(kIntensiveThrottledWakeUpInterval);
 
     if (IsIntensiveThrottlingExpected()) {
       const base::TimeTicks aligned_time =
-          scope_start + kIntensiveThrottlingDurationBetweenWakeUps;
+          scope_start + kIntensiveThrottledWakeUpInterval;
       EXPECT_THAT(run_times,
                   testing::ElementsAre(aligned_time, aligned_time, aligned_time,
                                        aligned_time, aligned_time));
     } else {
-      EXPECT_THAT(
-          run_times,
-          testing::ElementsAre(scope_start + base::TimeDelta::FromSeconds(1),
-                               scope_start + base::TimeDelta::FromSeconds(2),
-                               scope_start + base::TimeDelta::FromSeconds(3),
-                               scope_start + base::TimeDelta::FromSeconds(4),
-                               scope_start + base::TimeDelta::FromSeconds(5)));
+      EXPECT_THAT(run_times,
+                  testing::ElementsAre(scope_start + base::Seconds(1),
+                                       scope_start + base::Seconds(2),
+                                       scope_start + base::Seconds(3),
+                                       scope_start + base::Seconds(4),
+                                       scope_start + base::Seconds(5)));
     }
   }
 
@@ -3120,14 +3238,14 @@ TEST_P(FrameSchedulerImplTestWithIntensiveWakeUpThrottling,
   // otherwise.
   {
     const base::TimeTicks scope_start = base::TimeTicks::Now();
-    EXPECT_EQ(scope_start, test_start + base::TimeDelta::FromMinutes(7));
+    EXPECT_EQ(scope_start, test_start + base::Minutes(7));
     std::vector<base::TimeTicks> run_times;
 
     task_runner->PostDelayedTask(FROM_HERE,
                                  base::BindOnce(&RecordRunTime, &run_times),
                                  kDefaultThrottledWakeUpInterval);
 
-    task_environment_.FastForwardBy(kIntensiveThrottlingDurationBetweenWakeUps);
+    task_environment_.FastForwardBy(kIntensiveThrottledWakeUpInterval);
     EXPECT_THAT(run_times, testing::ElementsAre(scope_start +
                                                 GetExpectedWakeUpInterval()));
   }
@@ -3139,11 +3257,10 @@ TEST_P(FrameSchedulerImplTestWithIntensiveWakeUpThrottling,
   // should be 1-second aligned.
   {
     const base::TimeTicks scope_start = base::TimeTicks::Now();
-    EXPECT_EQ(scope_start, test_start + base::TimeDelta::FromMinutes(8));
+    EXPECT_EQ(scope_start, test_start + base::Minutes(8));
     std::vector<base::TimeTicks> run_times;
 
-    const base::TimeDelta kLongDelay =
-        kIntensiveThrottlingDurationBetweenWakeUps * 6;
+    const base::TimeDelta kLongDelay = kIntensiveThrottledWakeUpInterval * 6;
     task_runner->PostDelayedTask(FROM_HERE,
                                  base::BindOnce(&RecordRunTime, &run_times),
                                  kLongDelay - kShortDelay);
@@ -3158,7 +3275,7 @@ TEST_P(FrameSchedulerImplTestWithIntensiveWakeUpThrottling,
   // or favicon update. Otherwise, they should be 1-second aligned.
   {
     const base::TimeTicks scope_start = base::TimeTicks::Now();
-    EXPECT_EQ(scope_start, test_start + base::TimeDelta::FromMinutes(14));
+    EXPECT_EQ(scope_start, test_start + base::Minutes(14));
     std::vector<base::TimeTicks> run_times;
 
     page_scheduler_->OnTitleOrFaviconUpdated();
@@ -3179,21 +3296,17 @@ TEST_P(FrameSchedulerImplTestWithIntensiveWakeUpThrottling,
     if (IsIntensiveThrottlingExpected()) {
       EXPECT_THAT(
           run_times,
-          testing::ElementsAre(scope_start + base::TimeDelta::FromMinutes(1),
-                               scope_start + base::TimeDelta::FromMinutes(2),
-                               scope_start + base::TimeDelta::FromMinutes(2),
-                               scope_start + base::TimeDelta::FromMinutes(2),
-                               scope_start + base::TimeDelta::FromMinutes(2),
-                               scope_start + base::TimeDelta::FromMinutes(2)));
+          testing::ElementsAre(
+              scope_start + base::Minutes(1), scope_start + base::Minutes(2),
+              scope_start + base::Minutes(2), scope_start + base::Minutes(2),
+              scope_start + base::Minutes(2), scope_start + base::Minutes(2)));
     } else {
       EXPECT_THAT(
           run_times,
-          testing::ElementsAre(scope_start + base::TimeDelta::FromSeconds(1),
-                               scope_start + base::TimeDelta::FromSeconds(2),
-                               scope_start + base::TimeDelta::FromSeconds(3),
-                               scope_start + base::TimeDelta::FromSeconds(4),
-                               scope_start + base::TimeDelta::FromSeconds(5),
-                               scope_start + base::TimeDelta::FromSeconds(6)));
+          testing::ElementsAre(
+              scope_start + base::Seconds(1), scope_start + base::Seconds(2),
+              scope_start + base::Seconds(3), scope_start + base::Seconds(4),
+              scope_start + base::Seconds(5), scope_start + base::Seconds(6)));
     }
   }
 }
@@ -3204,7 +3317,7 @@ TEST_P(FrameSchedulerImplTestWithIntensiveWakeUpThrottling,
        ManySameOriginFrames) {
   ASSERT_FALSE(frame_scheduler_->IsCrossOriginToMainFrame());
   const scoped_refptr<base::SingleThreadTaskRunner> task_runner =
-      frame_scheduler_->GetTaskRunner(GetTaskType());
+      GetTaskRunner();
 
   // Create a FrameScheduler that is same-origin with the main frame, and an
   // associated throttled TaskRunner.
@@ -3214,12 +3327,12 @@ TEST_P(FrameSchedulerImplTestWithIntensiveWakeUpThrottling,
                            FrameScheduler::FrameType::kSubframe);
   ASSERT_FALSE(other_frame_scheduler->IsCrossOriginToMainFrame());
   const scoped_refptr<base::SingleThreadTaskRunner> other_task_runner =
-      other_frame_scheduler->GetTaskRunner(GetTaskType());
+      GetTaskRunner(other_frame_scheduler.get());
 
   // Snap the time to a multiple of
-  // |kIntensiveThrottlingDurationBetweenWakeUps|. Otherwise, the time at which
+  // |kIntensiveThrottledWakeUpInterval|. Otherwise, the time at which
   // tasks can run after throttling is enabled will vary.
-  FastForwardToAlignedTime(kIntensiveThrottlingDurationBetweenWakeUps);
+  FastForwardToAlignedTime(kIntensiveThrottledWakeUpInterval);
 
   // Hide the page and wait until the intensive throttling grace period has
   // elapsed.
@@ -3243,10 +3356,9 @@ TEST_P(FrameSchedulerImplTestWithIntensiveWakeUpThrottling,
   // last minute. The second task is 1-minute aligned if the TaskType supports
   // intensive throttling, or 1-second aligned otherwise.
   if (IsIntensiveThrottlingExpected()) {
-    EXPECT_THAT(run_times,
-                testing::ElementsAre(
-                    post_time + 2 * kDefaultThrottledWakeUpInterval,
-                    post_time + kIntensiveThrottlingDurationBetweenWakeUps));
+    EXPECT_THAT(run_times, testing::ElementsAre(
+                               post_time + 2 * kDefaultThrottledWakeUpInterval,
+                               post_time + kIntensiveThrottledWakeUpInterval));
   } else {
     EXPECT_THAT(
         run_times,
@@ -3261,19 +3373,19 @@ TEST_P(FrameSchedulerImplTestWithIntensiveWakeUpThrottling,
   constexpr int kNumTasks = 3;
   // |task_runner| is throttled.
   const scoped_refptr<base::SingleThreadTaskRunner> task_runner =
-      frame_scheduler_->GetTaskRunner(GetTaskType());
+      GetTaskRunner();
   // |other_task_runner| is throttled. It belongs to a different frame on the
   // same page.
   const auto other_frame_scheduler = CreateFrameScheduler(
       page_scheduler_.get(), frame_scheduler_delegate_.get(), nullptr,
       FrameScheduler::FrameType::kSubframe);
   const scoped_refptr<base::SingleThreadTaskRunner> other_task_runner =
-      frame_scheduler_->GetTaskRunner(GetTaskType());
+      GetTaskRunner(other_frame_scheduler.get());
 
   // Fast-forward the time to a multiple of
-  // |kIntensiveThrottlingDurationBetweenWakeUps|. Otherwise,
+  // |kIntensiveThrottledWakeUpInterval|. Otherwise,
   // the time at which tasks can run after throttling is enabled will vary.
-  FastForwardToAlignedTime(kIntensiveThrottlingDurationBetweenWakeUps);
+  FastForwardToAlignedTime(kIntensiveThrottledWakeUpInterval);
 
   // Hide the page and wait until the intensive throttling grace period has
   // elapsed.
@@ -3285,36 +3397,23 @@ TEST_P(FrameSchedulerImplTestWithIntensiveWakeUpThrottling,
     // Wake ups are intensively throttled, since there is no throttling opt-out.
     const base::TimeTicks scope_start = base::TimeTicks::Now();
     std::vector<base::TimeTicks> run_times;
-    for (int i = 1; i < kNumTasks + 1; ++i) {
-      task_runner->PostDelayedTask(FROM_HERE,
-                                   base::BindOnce(&RecordRunTime, &run_times),
-                                   i * kShortDelay);
-    }
-    for (int i = 1; i < kNumTasks + 1; ++i) {
-      task_runner->PostDelayedTask(
-          FROM_HERE, base::BindOnce(&RecordRunTime, &run_times),
-          kDefaultThrottledWakeUpInterval + i * kShortDelay);
-    }
+    task_runner->PostDelayedTask(
+        FROM_HERE, base::BindOnce(&RecordRunTime, &run_times), kShortDelay);
+    task_runner->PostDelayedTask(FROM_HERE,
+                                 base::BindOnce(&RecordRunTime, &run_times),
+                                 kDefaultThrottledWakeUpInterval + kShortDelay);
     task_environment_.FastForwardUntilNoTasksRemain();
     if (IsIntensiveThrottlingExpected()) {
-      // Note: Wake ups can be unaligned when there is no recent wake up.
-      EXPECT_THAT(
-          run_times,
-          testing::ElementsAre(
-              scope_start + kDefaultThrottledWakeUpInterval,
-              scope_start + kDefaultThrottledWakeUpInterval,
-              scope_start + kDefaultThrottledWakeUpInterval,
-              scope_start + kIntensiveThrottlingDurationBetweenWakeUps,
-              scope_start + kIntensiveThrottlingDurationBetweenWakeUps,
-              scope_start + kIntensiveThrottlingDurationBetweenWakeUps));
+      // Note: Intensive throttling is not applied on the 1st task since there
+      // is no recent wake up.
+      EXPECT_THAT(run_times,
+                  testing::ElementsAre(
+                      scope_start + kDefaultThrottledWakeUpInterval,
+                      scope_start + kIntensiveThrottledWakeUpInterval));
     } else {
       EXPECT_THAT(run_times,
                   testing::ElementsAre(
                       scope_start + kDefaultThrottledWakeUpInterval,
-                      scope_start + kDefaultThrottledWakeUpInterval,
-                      scope_start + kDefaultThrottledWakeUpInterval,
-                      scope_start + 2 * kDefaultThrottledWakeUpInterval,
-                      scope_start + 2 * kDefaultThrottledWakeUpInterval,
                       scope_start + 2 * kDefaultThrottledWakeUpInterval));
     }
   }
@@ -3363,44 +3462,31 @@ TEST_P(FrameSchedulerImplTestWithIntensiveWakeUpThrottling,
   }
 
   // Fast-forward so that there is no recent wake up. Then, align the time on
-  // |kIntensiveThrottlingDurationBetweenWakeUps| to simplify expectations.
-  task_environment_.FastForwardBy(kIntensiveThrottlingDurationBetweenWakeUps);
-  FastForwardToAlignedTime(kIntensiveThrottlingDurationBetweenWakeUps);
+  // |kIntensiveThrottledWakeUpInterval| to simplify expectations.
+  task_environment_.FastForwardBy(kIntensiveThrottledWakeUpInterval);
+  FastForwardToAlignedTime(kIntensiveThrottledWakeUpInterval);
 
   {
     // Wake ups are intensively throttled, since there is no throttling opt-out.
     const base::TimeTicks scope_start = base::TimeTicks::Now();
     std::vector<base::TimeTicks> run_times;
-    for (int i = 1; i < kNumTasks + 1; ++i) {
-      task_runner->PostDelayedTask(FROM_HERE,
-                                   base::BindOnce(&RecordRunTime, &run_times),
-                                   i * kShortDelay);
-    }
-    for (int i = 1; i < kNumTasks + 1; ++i) {
-      task_runner->PostDelayedTask(
-          FROM_HERE, base::BindOnce(&RecordRunTime, &run_times),
-          kDefaultThrottledWakeUpInterval + i * kShortDelay);
-    }
+    task_runner->PostDelayedTask(
+        FROM_HERE, base::BindOnce(&RecordRunTime, &run_times), kShortDelay);
+    task_runner->PostDelayedTask(FROM_HERE,
+                                 base::BindOnce(&RecordRunTime, &run_times),
+                                 kDefaultThrottledWakeUpInterval + kShortDelay);
     task_environment_.FastForwardUntilNoTasksRemain();
     if (IsIntensiveThrottlingExpected()) {
-      // Note: Wake ups can be unaligned when there is no recent wake up.
-      EXPECT_THAT(
-          run_times,
-          testing::ElementsAre(
-              scope_start + kDefaultThrottledWakeUpInterval,
-              scope_start + kDefaultThrottledWakeUpInterval,
-              scope_start + kDefaultThrottledWakeUpInterval,
-              scope_start + kIntensiveThrottlingDurationBetweenWakeUps,
-              scope_start + kIntensiveThrottlingDurationBetweenWakeUps,
-              scope_start + kIntensiveThrottlingDurationBetweenWakeUps));
+      // Note: Intensive throttling is not applied on the 1st task since there
+      // is no recent wake up.
+      EXPECT_THAT(run_times,
+                  testing::ElementsAre(
+                      scope_start + kDefaultThrottledWakeUpInterval,
+                      scope_start + kIntensiveThrottledWakeUpInterval));
     } else {
       EXPECT_THAT(run_times,
                   testing::ElementsAre(
                       scope_start + kDefaultThrottledWakeUpInterval,
-                      scope_start + kDefaultThrottledWakeUpInterval,
-                      scope_start + kDefaultThrottledWakeUpInterval,
-                      scope_start + 2 * kDefaultThrottledWakeUpInterval,
-                      scope_start + 2 * kDefaultThrottledWakeUpInterval,
                       scope_start + 2 * kDefaultThrottledWakeUpInterval));
     }
   }
@@ -3412,7 +3498,7 @@ TEST_P(FrameSchedulerImplTestWithIntensiveWakeUpThrottling,
        FrameChangesOriginType) {
   EXPECT_FALSE(frame_scheduler_->IsCrossOriginToMainFrame());
   const scoped_refptr<base::SingleThreadTaskRunner> task_runner =
-      frame_scheduler_->GetTaskRunner(GetTaskType());
+      GetTaskRunner();
 
   // Create a new FrameScheduler that remains cross-origin with the main frame
   // throughout the test.
@@ -3422,12 +3508,12 @@ TEST_P(FrameSchedulerImplTestWithIntensiveWakeUpThrottling,
                            FrameScheduler::FrameType::kSubframe);
   cross_origin_frame_scheduler->SetCrossOriginToMainFrame(true);
   const scoped_refptr<base::SingleThreadTaskRunner> cross_origin_task_runner =
-      cross_origin_frame_scheduler->GetTaskRunner(GetTaskType());
+      GetTaskRunner(cross_origin_frame_scheduler.get());
 
   // Snap the time to a multiple of
-  // |kIntensiveThrottlingDurationBetweenWakeUps|. Otherwise, the time at which
+  // |kIntensiveThrottledWakeUpInterval|. Otherwise, the time at which
   // tasks can run after throttling is enabled will vary.
-  FastForwardToAlignedTime(kIntensiveThrottlingDurationBetweenWakeUps);
+  FastForwardToAlignedTime(kIntensiveThrottledWakeUpInterval);
 
   // Hide the page and wait until the intensive throttling grace period has
   // elapsed.
@@ -3464,7 +3550,7 @@ TEST_P(FrameSchedulerImplTestWithIntensiveWakeUpThrottling,
       EXPECT_EQ(1, cross_origin_counter);
     }
 
-    FastForwardToAlignedTime(kIntensiveThrottlingDurationBetweenWakeUps);
+    FastForwardToAlignedTime(kIntensiveThrottledWakeUpInterval);
     EXPECT_EQ(1, counter);
     EXPECT_EQ(1, cross_origin_counter);
   }
@@ -3473,8 +3559,7 @@ TEST_P(FrameSchedulerImplTestWithIntensiveWakeUpThrottling,
     // Post delayed tasks with long delays that aren't aligned with the wake up
     // interval. They should run at aligned times, since they are cross-origin.
     const base::TimeDelta kLongUnalignedDelay =
-        5 * kIntensiveThrottlingDurationBetweenWakeUps +
-        kDefaultThrottledWakeUpInterval;
+        5 * kIntensiveThrottledWakeUpInterval + kDefaultThrottledWakeUpInterval;
     int counter = 0;
     task_runner->PostDelayedTask(
         FROM_HERE,
@@ -3500,7 +3585,7 @@ TEST_P(FrameSchedulerImplTestWithIntensiveWakeUpThrottling,
       EXPECT_EQ(1, cross_origin_counter);
     }
 
-    FastForwardToAlignedTime(kIntensiveThrottlingDurationBetweenWakeUps);
+    FastForwardToAlignedTime(kIntensiveThrottledWakeUpInterval);
     EXPECT_EQ(1, counter);
     EXPECT_EQ(1, cross_origin_counter);
   }
@@ -3512,22 +3597,15 @@ INSTANTIATE_TEST_SUITE_P(
     testing::Values(
         IntensiveWakeUpThrottlingTestParam{
             /* task_type=*/TaskType::kJavascriptTimerDelayedLowNesting,
-            /* can_intensively_throttle_low_nesting_level=*/false,
             /* is_intensive_throttling_expected=*/false},
         IntensiveWakeUpThrottlingTestParam{
-            /* task_type=*/TaskType::kJavascriptTimerDelayedLowNesting,
-            /* can_intensively_throttle_low_nesting_level=*/true,
+            /* task_type=*/TaskType::kJavascriptTimerDelayedHighNesting,
             /* is_intensive_throttling_expected=*/true},
         IntensiveWakeUpThrottlingTestParam{
-            /* task_type=*/TaskType::kJavascriptTimerDelayedHighNesting,
-            /* can_intensively_throttle_low_nesting_level=*/false,
+            /* task_type=*/TaskType::kWebSchedulingPostedTask,
             /* is_intensive_throttling_expected=*/true}),
     [](const testing::TestParamInfo<IntensiveWakeUpThrottlingTestParam>& info) {
-      const std::string task_type =
-          TaskTypeNames::TaskTypeToString(info.param.task_type);
-      if (info.param.can_intensively_throttle_low_nesting_level)
-        return task_type + "_can_intensively_throttle_low_nesting_level";
-      return task_type;
+      return TaskTypeNames::TaskTypeToString(info.param.task_type);
     });
 
 TEST_F(FrameSchedulerImplTestWithIntensiveWakeUpThrottlingPolicyOverride,
@@ -3536,22 +3614,470 @@ TEST_F(FrameSchedulerImplTestWithIntensiveWakeUpThrottlingPolicyOverride,
   EXPECT_TRUE(IsIntensiveWakeUpThrottlingEnabled());
 
   // The parameters should be the defaults.
-  EXPECT_EQ(base::TimeDelta::FromSeconds(
-                kIntensiveWakeUpThrottling_GracePeriodSeconds_Default),
-            GetIntensiveWakeUpThrottlingGracePeriod());
   EXPECT_EQ(
-      base::TimeDelta::FromSeconds(
-          kIntensiveWakeUpThrottling_DurationBetweenWakeUpsSeconds_Default),
-      GetIntensiveWakeUpThrottlingDurationBetweenWakeUps());
-  EXPECT_EQ(
-      kIntensiveWakeUpThrottling_CanIntensivelyThrottleLowNestingLevel_Default,
-      CanIntensivelyThrottleLowNestingLevel());
+      base::Seconds(kIntensiveWakeUpThrottling_GracePeriodSeconds_Default),
+      GetIntensiveWakeUpThrottlingGracePeriod());
 }
 
 TEST_F(FrameSchedulerImplTestWithIntensiveWakeUpThrottlingPolicyOverride,
        PolicyForceDisable) {
   SetPolicyOverride(/* enabled = */ false);
   EXPECT_FALSE(IsIntensiveWakeUpThrottlingEnabled());
+}
+
+class DeprioritizeDOMTimerTest : public FrameSchedulerImplTest {
+ public:
+  DeprioritizeDOMTimerTest(DeprioritizeDOMTimersPhase phase)
+      : FrameSchedulerImplTest(
+            blink::scheduler::kDeprioritizeDOMTimersDuringPageLoading,
+            base::FieldTrialParams(
+                {{"phase", blink::scheduler::kDeprioritizeDOMTimersPhase
+                               .GetName(phase)}}),
+            {}) {}
+
+  void SetUp() override {
+    FrameSchedulerImplTest::SetUp();
+    scheduler_of_main_frame_ = CreateFrameScheduler(
+        page_scheduler_.get(), frame_scheduler_delegate_.get(), nullptr,
+        FrameScheduler::FrameType::kMainFrame);
+  }
+
+  void TearDown() override {
+    scheduler_of_main_frame_.reset();
+    FrameSchedulerImplTest::TearDown();
+  }
+
+  void ExpectJavaScriptTimerTaskQueuePriorityToBe(
+      FrameSchedulerImpl* frame_scheduler,
+      TaskQueue::QueuePriority expected_priority) {
+    EXPECT_EQ(
+        JavaScriptTimerNormalThrottleableTaskQueueForFrame(frame_scheduler)
+            ->GetQueuePriority(),
+        expected_priority);
+    EXPECT_EQ(
+        JavaScriptTimerIntensivelyThrottleableTaskQueueForFrame(frame_scheduler)
+            ->GetQueuePriority(),
+        expected_priority);
+    EXPECT_EQ(JavaScriptTimerNonThrottleableTaskQueueForFrame(frame_scheduler)
+                  ->GetQueuePriority(),
+              expected_priority);
+  }
+
+ protected:
+  std::unique_ptr<FrameSchedulerImpl> scheduler_of_main_frame_;
+};
+
+class DeprioritizeDOMTimerUntilDOMContentLoadedTest
+    : public DeprioritizeDOMTimerTest {
+ public:
+  DeprioritizeDOMTimerUntilDOMContentLoadedTest()
+      : DeprioritizeDOMTimerTest(
+            DeprioritizeDOMTimersPhase::kOnDOMContentLoaded) {}
+};
+
+// Test whether the JavaScript timer task queues' priorities are properly
+// updated on DOMContentLoaded event for frame load and reloads.
+TEST_F(DeprioritizeDOMTimerUntilDOMContentLoadedTest,
+       MainAndNonMainFrameLoadAndReload) {
+  FrameSchedulerImpl* frame_schedulers[2] = {scheduler_of_main_frame_.get(),
+                                             frame_scheduler_.get()};
+  for (FrameSchedulerImpl* frame_scheduler : frame_schedulers) {
+    // Initial priority is low.
+    ExpectJavaScriptTimerTaskQueuePriorityToBe(
+        frame_scheduler, TaskQueue::QueuePriority::kLowPriority);
+
+    // Priority is set to normal when DOMContentLoaded triggered.
+    OnDomContentLoadedForFrame(frame_scheduler);
+    ExpectJavaScriptTimerTaskQueuePriorityToBe(
+        frame_scheduler, TaskQueue::QueuePriority::kNormalPriority);
+
+    // After reload navigation, priority is reset to low.
+    DidCommitProvisionalLoadForFrame(frame_scheduler,
+                                     FrameScheduler::NavigationType::kReload);
+    ExpectJavaScriptTimerTaskQueuePriorityToBe(
+        frame_scheduler, TaskQueue::QueuePriority::kLowPriority);
+
+    // Priority is set to normal when DOMContentLoaded triggered.
+    OnDomContentLoadedForFrame(frame_scheduler);
+    ExpectJavaScriptTimerTaskQueuePriorityToBe(
+        frame_scheduler, TaskQueue::QueuePriority::kNormalPriority);
+
+    // After other type navigation, priority is reset to low.
+    DidCommitProvisionalLoadForFrame(frame_scheduler,
+                                     FrameScheduler::NavigationType::kOther);
+    ExpectJavaScriptTimerTaskQueuePriorityToBe(
+        frame_scheduler, TaskQueue::QueuePriority::kLowPriority);
+
+    // Priority is set to normal when DOMContentLoaded triggered.
+    OnDomContentLoadedForFrame(frame_scheduler);
+    ExpectJavaScriptTimerTaskQueuePriorityToBe(
+        frame_scheduler, TaskQueue::QueuePriority::kNormalPriority);
+  }
+}
+
+class DeprioritizeDOMTimerUntilFCPTest : public DeprioritizeDOMTimerTest {
+ public:
+  DeprioritizeDOMTimerUntilFCPTest()
+      : DeprioritizeDOMTimerTest(
+            DeprioritizeDOMTimersPhase::kFirstContentfulPaint) {}
+};
+
+// Test whether the JavaScript timer task queues' priorities are properly
+// updated when FCP is triggered for frame load and reloads.
+TEST_F(DeprioritizeDOMTimerUntilFCPTest, MainAndNonMainFrameLoadAndReload) {
+  // Initial priorities are low.
+  ExpectJavaScriptTimerTaskQueuePriorityToBe(
+      scheduler_of_main_frame_.get(), TaskQueue::QueuePriority::kLowPriority);
+  ExpectJavaScriptTimerTaskQueuePriorityToBe(
+      frame_scheduler_.get(), TaskQueue::QueuePriority::kLowPriority);
+
+  // Priority is set to normal when FCP triggered.
+  scheduler_of_main_frame_->OnFirstContentfulPaintInMainFrame();
+  ExpectJavaScriptTimerTaskQueuePriorityToBe(
+      scheduler_of_main_frame_.get(),
+      TaskQueue::QueuePriority::kNormalPriority);
+  ExpectJavaScriptTimerTaskQueuePriorityToBe(
+      frame_scheduler_.get(), TaskQueue::QueuePriority::kNormalPriority);
+
+  // After reload type navigation, priority is reset to low.
+  DidCommitProvisionalLoadForFrame(scheduler_of_main_frame_.get(),
+                                   FrameScheduler::NavigationType::kReload);
+  ExpectJavaScriptTimerTaskQueuePriorityToBe(
+      scheduler_of_main_frame_.get(), TaskQueue::QueuePriority::kLowPriority);
+
+  DidCommitProvisionalLoadForFrame(frame_scheduler_.get(),
+                                   FrameScheduler::NavigationType::kReload);
+  ExpectJavaScriptTimerTaskQueuePriorityToBe(
+      frame_scheduler_.get(), TaskQueue::QueuePriority::kLowPriority);
+
+  // Priority is set to normal when FCP triggered.
+  scheduler_of_main_frame_->OnFirstContentfulPaintInMainFrame();
+  ExpectJavaScriptTimerTaskQueuePriorityToBe(
+      scheduler_of_main_frame_.get(),
+      TaskQueue::QueuePriority::kNormalPriority);
+  ExpectJavaScriptTimerTaskQueuePriorityToBe(
+      frame_scheduler_.get(), TaskQueue::QueuePriority::kNormalPriority);
+
+  // After other type navigation, priority is reset to low.
+  DidCommitProvisionalLoadForFrame(scheduler_of_main_frame_.get(),
+                                   FrameScheduler::NavigationType::kOther);
+  ExpectJavaScriptTimerTaskQueuePriorityToBe(
+      scheduler_of_main_frame_.get(), TaskQueue::QueuePriority::kLowPriority);
+
+  DidCommitProvisionalLoadForFrame(frame_scheduler_.get(),
+                                   FrameScheduler::NavigationType::kOther);
+  ExpectJavaScriptTimerTaskQueuePriorityToBe(
+      frame_scheduler_.get(), TaskQueue::QueuePriority::kLowPriority);
+
+  // Priority is set to normal when FCP triggered.
+  scheduler_of_main_frame_->OnFirstContentfulPaintInMainFrame();
+  ExpectJavaScriptTimerTaskQueuePriorityToBe(
+      scheduler_of_main_frame_.get(),
+      TaskQueue::QueuePriority::kNormalPriority);
+  ExpectJavaScriptTimerTaskQueuePriorityToBe(
+      frame_scheduler_.get(), TaskQueue::QueuePriority::kNormalPriority);
+}
+
+// Test that if FCP is not triggered, the JavaScript timer task queues'
+// priorities are updated when load is triggered.
+TEST_F(DeprioritizeDOMTimerUntilFCPTest, FCPNotTriggered) {
+  FrameSchedulerImpl* frame_schedulers[2] = {scheduler_of_main_frame_.get(),
+                                             frame_scheduler_.get()};
+  for (FrameSchedulerImpl* frame_scheduler : frame_schedulers) {
+    // Initial priority is low.
+    ExpectJavaScriptTimerTaskQueuePriorityToBe(
+        frame_scheduler, TaskQueue::QueuePriority::kLowPriority);
+
+    // Priority is set to normal on load event.
+    OnLoadForFrame(frame_scheduler);
+    ExpectJavaScriptTimerTaskQueuePriorityToBe(
+        frame_scheduler, TaskQueue::QueuePriority::kNormalPriority);
+
+    // After reload type navigation, priority is reset to low.
+    DidCommitProvisionalLoadForFrame(frame_scheduler,
+                                     FrameScheduler::NavigationType::kReload);
+    ExpectJavaScriptTimerTaskQueuePriorityToBe(
+        frame_scheduler, TaskQueue::QueuePriority::kLowPriority);
+
+    // Priority is set to normal on load event.
+    OnLoadForFrame(frame_scheduler);
+    ExpectJavaScriptTimerTaskQueuePriorityToBe(
+        frame_scheduler, TaskQueue::QueuePriority::kNormalPriority);
+
+    // After other type navigation, priority is reset to low.
+    DidCommitProvisionalLoadForFrame(frame_scheduler,
+                                     FrameScheduler::NavigationType::kOther);
+    ExpectJavaScriptTimerTaskQueuePriorityToBe(
+        frame_scheduler, TaskQueue::QueuePriority::kLowPriority);
+
+    // Priority is set to normal on load event.
+    OnLoadForFrame(frame_scheduler);
+    ExpectJavaScriptTimerTaskQueuePriorityToBe(
+        frame_scheduler, TaskQueue::QueuePriority::kNormalPriority);
+  }
+}
+
+class DeprioritizeDOMTimerUntilLoadedTest : public DeprioritizeDOMTimerTest {
+ public:
+  DeprioritizeDOMTimerUntilLoadedTest()
+      : DeprioritizeDOMTimerTest(DeprioritizeDOMTimersPhase::kOnLoad) {}
+};
+
+// Test whether the JavaScript timer task queues' priorities are properly
+// updated on load event for frame load and reloads.
+TEST_F(DeprioritizeDOMTimerUntilLoadedTest, MainAndNonMainFrameLoadAndReload) {
+  FrameSchedulerImpl* frame_schedulers[2] = {scheduler_of_main_frame_.get(),
+                                             frame_scheduler_.get()};
+  for (FrameSchedulerImpl* frame_scheduler : frame_schedulers) {
+    // Initial priority is low.
+    ExpectJavaScriptTimerTaskQueuePriorityToBe(
+        frame_scheduler, TaskQueue::QueuePriority::kLowPriority);
+
+    // Priority is set to normal on load event.
+    OnLoadForFrame(frame_scheduler);
+    ExpectJavaScriptTimerTaskQueuePriorityToBe(
+        frame_scheduler, TaskQueue::QueuePriority::kNormalPriority);
+
+    // After reload type navigation, priority is reset to low.
+    DidCommitProvisionalLoadForFrame(frame_scheduler,
+                                     FrameScheduler::NavigationType::kReload);
+    ExpectJavaScriptTimerTaskQueuePriorityToBe(
+        frame_scheduler, TaskQueue::QueuePriority::kLowPriority);
+
+    // Priority is set to normal on load event.
+    OnLoadForFrame(frame_scheduler);
+    ExpectJavaScriptTimerTaskQueuePriorityToBe(
+        frame_scheduler, TaskQueue::QueuePriority::kNormalPriority);
+
+    // After other type navigation, priority is reset to low.
+    DidCommitProvisionalLoadForFrame(frame_scheduler,
+                                     FrameScheduler::NavigationType::kOther);
+    ExpectJavaScriptTimerTaskQueuePriorityToBe(
+        frame_scheduler, TaskQueue::QueuePriority::kLowPriority);
+
+    // Priority is set to normal on load event.
+    OnLoadForFrame(frame_scheduler);
+    ExpectJavaScriptTimerTaskQueuePriorityToBe(
+        frame_scheduler, TaskQueue::QueuePriority::kNormalPriority);
+  }
+}
+
+// Verify that non-delayed kWebSchedulingPostedTask tasks are not throttled.
+TEST_F(FrameSchedulerImplTest, ImmediateWebSchedulingTasksAreNotThrottled) {
+  std::vector<base::TimeTicks> run_times;
+
+  // Make sure we are *not* aligned to a 1 second boundary by aligning to a 1
+  // second boundary and moving past it a bit. If we were throttled, even
+  // non-delayed tasks will need to wait until the next aligned interval to run.
+  FastForwardToAlignedTime(base::Seconds(1));
+  task_environment_.FastForwardBy(base::Milliseconds(1));
+
+  const base::TimeTicks start = base::TimeTicks::Now();
+
+  // Hide the page to start throttling timers.
+  page_scheduler_->SetPageVisible(false);
+
+  // Post a non-delayed task to a web scheduling task queue.
+  const scoped_refptr<base::SingleThreadTaskRunner> task_runner =
+      frame_scheduler_
+          ->CreateWebSchedulingTaskQueue(
+              WebSchedulingPriority::kUserVisiblePriority)
+          ->GetTaskRunner();
+  task_runner->PostTask(FROM_HERE, base::BindOnce(&RecordRunTime, &run_times));
+
+  // Run any ready tasks, which includes our non-delayed non-throttled web
+  // scheduling task. If we are throttled, our task will not run.
+  base::RunLoop().RunUntilIdle();
+
+  EXPECT_THAT(run_times, testing::ElementsAre(start));
+}
+
+class FrameSchedulerImplThrottleForegroundTimersEnabledTest
+    : public FrameSchedulerImplTest {
+ public:
+  FrameSchedulerImplThrottleForegroundTimersEnabledTest()
+      : FrameSchedulerImplTest({features::kThrottleForegroundTimers}, {}) {}
+};
+
+TEST_F(FrameSchedulerImplThrottleForegroundTimersEnabledTest,
+       ForegroundPageTimerThrottling) {
+  page_scheduler_->SetPageVisible(true);
+
+  // Snap the time to a multiple of 32ms.
+  FastForwardToAlignedTime(base::Milliseconds(32));
+  const base::TimeTicks start = base::TimeTicks::Now();
+
+  std::vector<base::TimeTicks> run_times;
+  const scoped_refptr<base::SingleThreadTaskRunner> task_runner =
+      frame_scheduler_->GetTaskRunner(
+          TaskType::kJavascriptTimerDelayedLowNesting);
+
+  for (int i = 0; i < 5; i++) {
+    task_runner->PostDelayedTask(FROM_HERE,
+                                 base::BindOnce(&RecordRunTime, &run_times),
+                                 base::Milliseconds(50) * i);
+  }
+
+  // Make posted tasks run.
+  task_environment_.FastForwardBy(base::Seconds(5));
+
+  EXPECT_THAT(run_times,
+              testing::ElementsAre(start, start + base::Milliseconds(64),
+                                   start + base::Milliseconds(128),
+                                   start + base::Milliseconds(160),
+                                   start + base::Milliseconds(224)));
+}
+
+// Make sure the normal throttling (1 wake up per second) is applied when the
+// page becomes non-visible
+TEST_F(FrameSchedulerImplThrottleForegroundTimersEnabledTest,
+       BackgroundPageTimerThrottling) {
+  page_scheduler_->SetPageVisible(false);
+
+  // Snap the time to a multiple of 1 second.
+  FastForwardToAlignedTime(base::Seconds(1));
+  const base::TimeTicks start = base::TimeTicks::Now();
+
+  std::vector<base::TimeTicks> run_times;
+  const scoped_refptr<base::SingleThreadTaskRunner> task_runner =
+      frame_scheduler_->GetTaskRunner(
+          TaskType::kJavascriptTimerDelayedLowNesting);
+
+  for (int i = 0; i < 5; i++) {
+    task_runner->PostDelayedTask(FROM_HERE,
+                                 base::BindOnce(&RecordRunTime, &run_times),
+                                 base::Milliseconds(50) * i);
+  }
+
+  // Make posted tasks run.
+  task_environment_.FastForwardBy(base::Seconds(5));
+
+  EXPECT_THAT(run_times,
+              testing::ElementsAre(start, start + base::Milliseconds(1000),
+                                   start + base::Milliseconds(1000),
+                                   start + base::Milliseconds(1000),
+                                   start + base::Milliseconds(1000)));
+}
+
+TEST_F(FrameSchedulerImplThrottleForegroundTimersEnabledTest,
+       HiddenAudiblePageTimerThrottling) {
+  page_scheduler_->SetPageVisible(false);
+  page_scheduler_->AudioStateChanged(/*is_audio_playing=*/true);
+
+  // Snap the time to a multiple of 32ms.
+  FastForwardToAlignedTime(base::Milliseconds(32));
+  const base::TimeTicks start = base::TimeTicks::Now();
+
+  std::vector<base::TimeTicks> run_times;
+  const scoped_refptr<base::SingleThreadTaskRunner> task_runner =
+      frame_scheduler_->GetTaskRunner(
+          TaskType::kJavascriptTimerDelayedLowNesting);
+
+  for (int i = 0; i < 5; i++) {
+    task_runner->PostDelayedTask(FROM_HERE,
+                                 base::BindOnce(&RecordRunTime, &run_times),
+                                 base::Milliseconds(50) * i);
+  }
+
+  // Make posted tasks run.
+  task_environment_.FastForwardBy(base::Seconds(5));
+
+  EXPECT_THAT(run_times,
+              testing::ElementsAre(start, start + base::Milliseconds(64),
+                                   start + base::Milliseconds(128),
+                                   start + base::Milliseconds(160),
+                                   start + base::Milliseconds(224)));
+}
+
+TEST_F(FrameSchedulerImplThrottleForegroundTimersEnabledTest,
+       VisibleCrossOriginFrameThrottling) {
+  std::unique_ptr<FrameSchedulerImpl> cross_origin_frame_scheduler =
+      CreateFrameScheduler(page_scheduler_.get(),
+                           frame_scheduler_delegate_.get(), nullptr,
+                           FrameScheduler::FrameType::kSubframe);
+  page_scheduler_->SetPageVisible(true);
+  cross_origin_frame_scheduler->SetCrossOriginToMainFrame(true);
+  const scoped_refptr<base::SingleThreadTaskRunner> cross_origin_task_runner =
+      cross_origin_frame_scheduler->GetTaskRunner(
+          TaskType::kJavascriptTimerDelayedLowNesting);
+
+  cross_origin_frame_scheduler->SetFrameVisible(true);
+  // Snap the time to a multiple of 32ms.
+  FastForwardToAlignedTime(base::Milliseconds(32));
+  const base::TimeTicks start = base::TimeTicks::Now();
+
+  std::vector<base::TimeTicks> run_times;
+  for (int i = 0; i < 5; i++) {
+    cross_origin_task_runner->PostDelayedTask(
+        FROM_HERE, base::BindOnce(&RecordRunTime, &run_times),
+        base::Milliseconds(50) * i);
+  }
+
+  // Make posted tasks run.
+  task_environment_.FastForwardBy(base::Seconds(5));
+
+  EXPECT_THAT(run_times,
+              testing::ElementsAre(start, start + base::Milliseconds(64),
+                                   start + base::Milliseconds(128),
+                                   start + base::Milliseconds(160),
+                                   start + base::Milliseconds(224)));
+}
+
+TEST_F(FrameSchedulerImplThrottleForegroundTimersEnabledTest,
+       HiddenCrossOriginFrameThrottling) {
+  std::unique_ptr<FrameSchedulerImpl> cross_origin_frame_scheduler =
+      CreateFrameScheduler(page_scheduler_.get(),
+                           frame_scheduler_delegate_.get(), nullptr,
+                           FrameScheduler::FrameType::kSubframe);
+  page_scheduler_->SetPageVisible(true);
+  cross_origin_frame_scheduler->SetCrossOriginToMainFrame(true);
+  const scoped_refptr<base::SingleThreadTaskRunner> cross_origin_task_runner =
+      cross_origin_frame_scheduler->GetTaskRunner(
+          TaskType::kJavascriptTimerDelayedLowNesting);
+
+  cross_origin_frame_scheduler->SetFrameVisible(false);
+  // Snap the time to a multiple of 1 second.
+  FastForwardToAlignedTime(base::Seconds(1));
+  const base::TimeTicks start = base::TimeTicks::Now();
+
+  std::vector<base::TimeTicks> run_times;
+  for (int i = 0; i < 5; i++) {
+    cross_origin_task_runner->PostDelayedTask(
+        FROM_HERE, base::BindOnce(&RecordRunTime, &run_times),
+        base::Milliseconds(50) * i);
+  }
+
+  // Make posted tasks run.
+  task_environment_.FastForwardBy(base::Seconds(5));
+
+  EXPECT_THAT(run_times,
+              testing::ElementsAre(start, start + base::Milliseconds(1000),
+                                   start + base::Milliseconds(1000),
+                                   start + base::Milliseconds(1000),
+                                   start + base::Milliseconds(1000)));
+}
+
+class FrameSchedulerImplDisablePrioritizedPostMessageForwarding
+    : public FrameSchedulerImplTest {
+ public:
+  FrameSchedulerImplDisablePrioritizedPostMessageForwarding()
+      : FrameSchedulerImplTest({kDisablePrioritizedPostMessageForwarding}, {}) {
+  }
+};
+
+TEST_F(FrameSchedulerImplTest, PostMessageForwardingHasControlPriority) {
+  auto task_queue = GetTaskQueue(TaskType::kInternalPostMessageForwarding);
+
+  EXPECT_EQ(TaskQueue::QueuePriority::kVeryHighPriority,
+            task_queue->GetQueuePriority());
+}
+
+TEST_F(FrameSchedulerImplDisablePrioritizedPostMessageForwarding,
+       PostMessageForwardingHasNormalPriority) {
+  auto task_queue = GetTaskQueue(TaskType::kInternalPostMessageForwarding);
+
+  EXPECT_EQ(TaskQueue::QueuePriority::kNormalPriority,
+            task_queue->GetQueuePriority());
 }
 
 }  // namespace frame_scheduler_impl_unittest

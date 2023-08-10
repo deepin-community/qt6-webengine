@@ -21,6 +21,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/referrer.h"
 #include "content/public/common/resource_request_body_android.h"
+#include "third_party/blink/public/mojom/devtools/console_message.mojom.h"
 #include "third_party/blink/public/mojom/frame/blocked_navigation_types.mojom.h"
 #include "third_party/blink/public/mojom/frame/fullscreen.mojom.h"
 #include "ui/android/view_android.h"
@@ -55,11 +56,12 @@ ScopedJavaLocalRef<jobject> WebContentsDelegateAndroid::GetJavaDelegate(
 // WebContentsDelegate methods
 // ----------------------------------------------------------------------------
 
-ColorChooser* WebContentsDelegateAndroid::OpenColorChooser(
+std::unique_ptr<content::ColorChooser>
+WebContentsDelegateAndroid::OpenColorChooser(
     WebContents* source,
     SkColor color,
     const std::vector<blink::mojom::ColorSuggestionPtr>& suggestions) {
-  return new ColorChooserAndroid(source, color, suggestions);
+  return std::make_unique<ColorChooserAndroid>(source, color, suggestions);
 }
 
 // OpenURLFromTab() will be called when we're performing a browser-intiated
@@ -136,11 +138,11 @@ void WebContentsDelegateAndroid::ActivateContents(WebContents* contents) {
 
 void WebContentsDelegateAndroid::LoadingStateChanged(
     WebContents* source,
-    bool to_different_document) {
+    bool should_show_loading_ui) {
   JNIEnv* env = AttachCurrentThread();
   ScopedJavaLocalRef<jobject> obj = GetJavaDelegate(env);
   Java_WebContentsDelegateAndroid_loadingStateChanged(env, obj,
-                                                      to_different_document);
+                                                      should_show_loading_ui);
 }
 
 void WebContentsDelegateAndroid::RendererUnresponsive(
@@ -224,9 +226,9 @@ void WebContentsDelegateAndroid::SetContentsBounds(WebContents* source,
 bool WebContentsDelegateAndroid::DidAddMessageToConsole(
     WebContents* source,
     blink::mojom::ConsoleMessageLevel log_level,
-    const base::string16& message,
+    const std::u16string& message,
     int32_t line_no,
-    const base::string16& source_id) {
+    const std::u16string& source_id) {
   JNIEnv* env = AttachCurrentThread();
   ScopedJavaLocalRef<jobject> obj = GetJavaDelegate(env);
   if (obj.is_null())
@@ -270,7 +272,7 @@ void WebContentsDelegateAndroid::UpdateTargetURL(WebContents* source,
   if (obj.is_null())
     return;
   Java_WebContentsDelegateAndroid_onUpdateUrl(
-      env, obj, url::GURLAndroid::FromNativeGURL(env, source->GetURL()));
+      env, obj, url::GURLAndroid::FromNativeGURL(env, source->GetVisibleURL()));
 }
 
 bool WebContentsDelegateAndroid::HandleKeyboardEvent(
@@ -323,7 +325,7 @@ void WebContentsDelegateAndroid::EnterFullscreenModeForTab(
   if (obj.is_null())
     return;
   Java_WebContentsDelegateAndroid_enterFullscreenModeForTab(
-      env, obj, options.prefers_navigation_bar);
+      env, obj, options.prefers_navigation_bar, options.prefers_status_bar);
 }
 
 void WebContentsDelegateAndroid::FullscreenStateChangedForTab(
@@ -334,7 +336,7 @@ void WebContentsDelegateAndroid::FullscreenStateChangedForTab(
   if (obj.is_null())
     return;
   Java_WebContentsDelegateAndroid_fullscreenStateChangedForTab(
-      env, obj, options.prefers_navigation_bar);
+      env, obj, options.prefers_navigation_bar, options.prefers_status_bar);
 }
 
 void WebContentsDelegateAndroid::ExitFullscreenModeForTab(
@@ -404,7 +406,11 @@ bool WebContentsDelegateAndroid::ShouldAnimateBrowserControlsHeightChanges() {
 
 bool WebContentsDelegateAndroid::DoBrowserControlsShrinkRendererSize(
     content::WebContents* contents) {
-  return contents->GetNativeView()->ControlsResizeView();
+  JNIEnv* env = AttachCurrentThread();
+  ScopedJavaLocalRef<jobject> obj = GetJavaDelegate(env);
+  if (obj.is_null())
+    return false;
+  return Java_WebContentsDelegateAndroid_controlsResizeView(env, obj);
 }
 
 blink::mojom::DisplayMode WebContentsDelegateAndroid::GetDisplayMode(

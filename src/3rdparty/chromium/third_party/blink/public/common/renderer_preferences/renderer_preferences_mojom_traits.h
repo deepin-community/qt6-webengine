@@ -5,7 +5,10 @@
 #ifndef THIRD_PARTY_BLINK_PUBLIC_COMMON_RENDERER_PREFERENCES_RENDERER_PREFERENCES_MOJOM_TRAITS_H_
 #define THIRD_PARTY_BLINK_PUBLIC_COMMON_RENDERER_PREFERENCES_RENDERER_PREFERENCES_MOJOM_TRAITS_H_
 
+#include <stdint.h>
+
 #include <string>
+#include <vector>
 
 #include "build/build_config.h"
 #include "mojo/public/cpp/base/time_mojom_traits.h"
@@ -16,7 +19,7 @@
 #include "third_party/blink/public/mojom/renderer_preferences.mojom-shared.h"
 #include "ui/gfx/mojom/font_render_params_mojom_traits.h"
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 #include "mojo/public/cpp/base/string16_mojom_traits.h"
 #endif
 
@@ -89,7 +92,7 @@ struct BLINK_COMMON_EXPORT
     return data.browser_handles_all_top_level_requests;
   }
 
-  static base::Optional<base::TimeDelta> caret_blink_interval(
+  static absl::optional<base::TimeDelta> caret_blink_interval(
       const ::blink::RendererPreferences& data) {
     return data.caret_blink_interval;
   }
@@ -154,22 +157,22 @@ struct BLINK_COMMON_EXPORT
     return data.accept_languages;
   }
 
-#if defined(OS_LINUX) || defined(OS_CHROMEOS)
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
   static const std::string& system_font_family_name(
       const ::blink::RendererPreferences& data) {
     return data.system_font_family_name;
   }
 #endif
 
-#if defined(USE_X11) || defined(USE_OZONE)
+#if defined(USE_OZONE)
   static const bool& selection_clipboard_buffer_available(
       const ::blink::RendererPreferences& data) {
     return data.selection_clipboard_buffer_available;
   }
 #endif
 
-#if defined(OS_WIN)
-  static const base::string16& caption_font_family_name(
+#if BUILDFLAG(IS_WIN)
+  static const std::u16string& caption_font_family_name(
       const ::blink::RendererPreferences& data) {
     return data.caption_font_family_name;
   }
@@ -177,7 +180,7 @@ struct BLINK_COMMON_EXPORT
       const ::blink::RendererPreferences& data) {
     return data.caption_font_height;
   }
-  static const base::string16& small_caption_font_family_name(
+  static const std::u16string& small_caption_font_family_name(
       const ::blink::RendererPreferences& data) {
     return data.small_caption_font_family_name;
   }
@@ -185,7 +188,7 @@ struct BLINK_COMMON_EXPORT
       const ::blink::RendererPreferences& data) {
     return data.small_caption_font_height;
   }
-  static const base::string16& menu_font_family_name(
+  static const std::u16string& menu_font_family_name(
       const ::blink::RendererPreferences& data) {
     return data.menu_font_family_name;
   }
@@ -193,7 +196,7 @@ struct BLINK_COMMON_EXPORT
       const ::blink::RendererPreferences& data) {
     return data.menu_font_height;
   }
-  static const base::string16& status_font_family_name(
+  static const std::u16string& status_font_family_name(
       const ::blink::RendererPreferences& data) {
     return data.status_font_family_name;
   }
@@ -201,7 +204,7 @@ struct BLINK_COMMON_EXPORT
       const ::blink::RendererPreferences& data) {
     return data.status_font_height;
   }
-  static const base::string16& message_font_family_name(
+  static const std::u16string& message_font_family_name(
       const ::blink::RendererPreferences& data) {
     return data.message_font_family_name;
   }
@@ -235,6 +238,11 @@ struct BLINK_COMMON_EXPORT
   static const bool& caret_browsing_enabled(
       const ::blink::RendererPreferences& data) {
     return data.caret_browsing_enabled;
+  }
+
+  static const std::vector<uint16_t>& explicitly_allowed_network_ports(
+      const ::blink::RendererPreferences& data) {
+    return data.explicitly_allowed_network_ports;
   }
 
   static bool Read(blink::mojom::RendererPreferencesDataView,

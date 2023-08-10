@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "base/test/scoped_feature_list.h"
+#include "build/build_config.h"
 #include "content/browser/renderer_host/render_frame_host_impl.h"
 #include "content/browser/service_worker/embedded_worker_instance.h"
 #include "content/browser/service_worker/embedded_worker_status.h"
@@ -15,12 +16,16 @@
 #include "content/public/common/content_features.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/content_browser_test.h"
+#include "content/public/test/mock_web_contents_observer.h"
 #include "content/public/test/test_utils.h"
 #include "content/shell/browser/shell.h"
 #include "content/test/test_content_browser_client.h"
+#include "net/cookies/site_for_cookies.h"
 #include "net/dns/mock_host_resolver.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/common/switches.h"
+#include "ui/base/ui_base_switches.h"
 
 using testing::_;
 using testing::NotNull;
@@ -38,6 +43,13 @@ class WebContentsObserverBrowserTest : public ContentBrowserTest {
     ASSERT_TRUE(embedded_test_server()->Start());
   }
 
+  // Some platforms are flaky due to relatively slow loading interacting
+  // with deferred commits.
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    ContentBrowserTest::SetUpCommandLine(command_line);
+    command_line->AppendSwitch(blink::switches::kAllowPreCommitInput);
+  }
+
   WebContentsImpl* web_contents() const {
     return static_cast<WebContentsImpl*>(shell()->web_contents());
   }
@@ -53,7 +65,7 @@ namespace {
 
 class ServiceWorkerAccessObserver : public WebContentsObserver {
  public:
-  ServiceWorkerAccessObserver(WebContentsImpl* web_contents)
+  explicit ServiceWorkerAccessObserver(WebContentsImpl* web_contents)
       : WebContentsObserver(web_contents) {}
 
   MOCK_METHOD3(OnServiceWorkerAccessed,
@@ -120,8 +132,8 @@ class ServiceWorkerAccessContentBrowserClient
 
   AllowServiceWorkerResult AllowServiceWorker(
       const GURL& scope,
-      const GURL& site_for_cookies,
-      const base::Optional<url::Origin>& top_frame_origin,
+      const net::SiteForCookies& site_for_cookies,
+      const absl::optional<url::Origin>& top_frame_origin,
       const GURL& script_url,
       BrowserContext* context) override {
     return AllowServiceWorkerResult::FromPolicy(!javascript_allowed_,
@@ -175,8 +187,8 @@ IN_PROC_BROWSER_TEST_F(WebContentsObserverBrowserTest,
                               testing::Matcher<NavigationHandle*>(NotNull()),
                               service_worker_scope,
                               AllowServiceWorkerResult::FromPolicy(
-                                  /* javascript_blocked=*/true,
-                                  /* cookies_blocked=*/false)))
+                                  /* javascript_blocked_by_policy=*/true,
+                                  /* cookies_blocked_by_policy=*/false)))
         .WillOnce([&]() { run_loop.Quit(); });
     EXPECT_TRUE(NavigateToURL(
         web_contents(),
@@ -197,8 +209,8 @@ IN_PROC_BROWSER_TEST_F(WebContentsObserverBrowserTest,
                               testing::Matcher<NavigationHandle*>(NotNull()),
                               service_worker_scope,
                               AllowServiceWorkerResult::FromPolicy(
-                                  /* javascript_blocked=*/false,
-                                  /* cookies_blocked=*/true)))
+                                  /* javascript_blocked_by_policy=*/false,
+                                  /* cookies_blocked_by_policy=*/true)))
         .WillOnce([&]() { run_loop.Quit(); });
     EXPECT_TRUE(NavigateToURL(
         web_contents(),
@@ -226,7 +238,7 @@ class CookieTracker : public WebContentsObserver {
 
     ContextType context_type;
     GlobalRoutingID frame_id;
-    int navigation_id = -1;
+    int64_t navigation_id = -1;
 
     GURL url;
     GURL first_party_url;
@@ -363,8 +375,14 @@ using CookieAccess = CookieTracker::CookieAccessDescription;
 
 }  // namespace
 
+// TODO(https://crbug.com/1288573): Flaky on Mac.
+#if BUILDFLAG(IS_MAC)
+#define MAYBE_CookieCallbacks_MainFrame DISABLED_CookieCallbacks_MainFrame
+#else
+#define MAYBE_CookieCallbacks_MainFrame CookieCallbacks_MainFrame
+#endif
 IN_PROC_BROWSER_TEST_F(WebContentsObserverBrowserTest,
-                       CookieCallbacks_MainFrame) {
+                       MAYBE_CookieCallbacks_MainFrame) {
   CookieTracker cookie_tracker(web_contents());
 
   GURL first_party_url("http://a.com/");
@@ -408,8 +426,16 @@ IN_PROC_BROWSER_TEST_F(WebContentsObserverBrowserTest,
   cookie_tracker.cookie_accesses().clear();
 }
 
+// TODO(https://crbug.com/1288573): Flaky on Mac.
+#if BUILDFLAG(IS_MAC)
+#define MAYBE_CookieCallbacks_MainFrameRedirect \
+  DISABLED_CookieCallbacks_MainFrameRedirect
+#else
+#define MAYBE_CookieCallbacks_MainFrameRedirect \
+  CookieCallbacks_MainFrameRedirect
+#endif
 IN_PROC_BROWSER_TEST_F(WebContentsObserverBrowserTest,
-                       CookieCallbacks_MainFrameRedirect) {
+                       MAYBE_CookieCallbacks_MainFrameRedirect) {
   CookieTracker cookie_tracker(web_contents());
 
   GURL first_party_url("http://a.com/");
@@ -464,8 +490,14 @@ IN_PROC_BROWSER_TEST_F(WebContentsObserverBrowserTest,
   cookie_tracker.cookie_accesses().clear();
 }
 
+// TODO(https://crbug.com/1288573): Flaky on Mac.
+#if BUILDFLAG(IS_MAC)
+#define MAYBE_CookieCallbacks_Subframe DISABLED_CookieCallbacks_Subframe
+#else
+#define MAYBE_CookieCallbacks_Subframe CookieCallbacks_Subframe
+#endif
 IN_PROC_BROWSER_TEST_F(WebContentsObserverBrowserTest,
-                       CookieCallbacks_Subframe) {
+                       MAYBE_CookieCallbacks_Subframe) {
   CookieTracker cookie_tracker(web_contents());
 
   GURL first_party_url("http://a.com/");
@@ -523,8 +555,14 @@ IN_PROC_BROWSER_TEST_F(WebContentsObserverBrowserTest,
   cookie_tracker.cookie_accesses().clear();
 }
 
+// TODO(https://crbug.com/1288573): Flaky on Mac.
+#if BUILDFLAG(IS_MAC)
+#define MAYBE_CookieCallbacks_Subresource DISABLED_CookieCallbacks_Subresource
+#else
+#define MAYBE_CookieCallbacks_Subresource CookieCallbacks_Subresource
+#endif
 IN_PROC_BROWSER_TEST_F(WebContentsObserverBrowserTest,
-                       CookieCallbacks_Subresource) {
+                       MAYBE_CookieCallbacks_Subresource) {
   CookieTracker cookie_tracker(web_contents());
 
   GURL first_party_url("http://a.com/");
@@ -636,6 +674,79 @@ IN_PROC_BROWSER_TEST_F(WebContentsObserverBrowserTest,
   SimulateMouseClickOrTapElementWithId(web_contents(), "text");
   observer.WaitForFocusChangedInPage();
   EXPECT_EQ(blink::mojom::FocusType::kMouse, observer.last_focus_type());
+}
+
+}  // namespace
+
+namespace {
+
+class ColorSchemeObserver : public WebContentsObserver {
+ public:
+  explicit ColorSchemeObserver(WebContentsImpl* web_contents)
+      : WebContentsObserver(web_contents) {}
+
+  MOCK_METHOD1(InferredColorSchemeUpdated,
+               void(absl::optional<blink::mojom::PreferredColorScheme>));
+};
+
+class WebContentsObserverColorSchemeBrowserTest
+    : public WebContentsObserverBrowserTest,
+      public testing::WithParamInterface<blink::mojom::PreferredColorScheme> {
+ public:
+  WebContentsObserverColorSchemeBrowserTest() = default;
+
+ protected:
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    WebContentsObserverBrowserTest::SetUpCommandLine(command_line);
+    // ShellContentBrowserClient::OverrideWebkitPrefs() overrides the
+    // prefers-color-scheme according to switches::kForceDarkMode
+    // command line.
+    if (GetParam() == blink::mojom::PreferredColorScheme::kDark)
+      command_line->AppendSwitch(switches::kForceDarkMode);
+  }
+};
+
+INSTANTIATE_TEST_SUITE_P(
+    /* no prefix */,
+    WebContentsObserverColorSchemeBrowserTest,
+    ::testing::Values(blink::mojom::PreferredColorScheme::kDark,
+                      blink::mojom::PreferredColorScheme::kLight));
+
+IN_PROC_BROWSER_TEST_P(WebContentsObserverColorSchemeBrowserTest,
+                       ColorSchemeInferred) {
+  ColorSchemeObserver observer(web_contents());
+
+  {
+    base::RunLoop run_loop;
+    EXPECT_CALL(observer,
+                InferredColorSchemeUpdated(
+                    absl::optional<blink::mojom::PreferredColorScheme>()));
+    EXPECT_CALL(
+        observer,
+        InferredColorSchemeUpdated(
+            absl::optional<blink::mojom::PreferredColorScheme>(GetParam())))
+        .WillOnce([&]() { run_loop.Quit(); });
+    GURL url(embedded_test_server()->GetURL("/color-scheme.html"));
+    EXPECT_TRUE(NavigateToURL(web_contents(), url));
+    run_loop.Run();
+  }
+
+  // Navigate to another URL to verify the callback invoked for each navigation
+  // even if the color scheme isn't changed.
+  {
+    base::RunLoop run_loop;
+    EXPECT_CALL(observer,
+                InferredColorSchemeUpdated(
+                    absl::optional<blink::mojom::PreferredColorScheme>()));
+    EXPECT_CALL(
+        observer,
+        InferredColorSchemeUpdated(
+            absl::optional<blink::mojom::PreferredColorScheme>(GetParam())))
+        .WillOnce([&]() { run_loop.Quit(); });
+    GURL url2(embedded_test_server()->GetURL("/color-scheme-2.html"));
+    EXPECT_TRUE(NavigateToURL(web_contents(), url2));
+    run_loop.Run();
+  }
 }
 
 }  // namespace

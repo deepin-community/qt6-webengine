@@ -13,7 +13,7 @@
 #include "ui/gl/init/gl_factory.h"
 #include "ui/gl/test/gl_surface_test_support.h"
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 #include "ui/platform_window/platform_window_delegate.h"
 #include "ui/platform_window/win/win_window.h"
 #endif
@@ -31,12 +31,12 @@ namespace {
 class GLSurfaceEGLTest : public testing::Test {
  protected:
   void SetUp() override {
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
     GLSurfaceTestSupport::InitializeOneOffImplementation(
-        GLImplementation::kGLImplementationEGLANGLE, true);
+        GLImplementationParts(kGLImplementationEGLANGLE), true);
 #else
     GLSurfaceTestSupport::InitializeOneOffImplementation(
-        GLImplementation::kGLImplementationEGLGLES2, true);
+        GLImplementationParts(kGLImplementationEGLGLES2), true);
 #endif
   }
 
@@ -56,28 +56,32 @@ TEST_F(GLSurfaceEGLTest, MAYBE_SurfaceFormatTest) {
   EXPECT_TRUE(config);
 
   EGLint attrib;
-  eglGetConfigAttrib(surface->GetDisplay(), config, EGL_DEPTH_SIZE, &attrib);
+  eglGetConfigAttrib(surface->GetGLDisplay()->GetDisplay(), config,
+                     EGL_DEPTH_SIZE, &attrib);
   EXPECT_LE(24, attrib);
 
-  eglGetConfigAttrib(surface->GetDisplay(), config, EGL_STENCIL_SIZE, &attrib);
+  eglGetConfigAttrib(surface->GetGLDisplay()->GetDisplay(), config,
+                     EGL_STENCIL_SIZE, &attrib);
   EXPECT_LE(8, attrib);
 
-  eglGetConfigAttrib(surface->GetDisplay(), config, EGL_SAMPLES, &attrib);
+  eglGetConfigAttrib(surface->GetGLDisplay()->GetDisplay(), config, EGL_SAMPLES,
+                     &attrib);
   EXPECT_EQ(0, attrib);
 }
 #endif
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 
 class TestPlatformDelegate : public ui::PlatformWindowDelegate {
  public:
   // ui::PlatformWindowDelegate implementation.
-  void OnBoundsChanged(const gfx::Rect& new_bounds) override {}
+  void OnBoundsChanged(const BoundsChange& change) override {}
   void OnDamageRect(const gfx::Rect& damaged_region) override {}
   void DispatchEvent(ui::Event* event) override {}
   void OnCloseRequest() override {}
   void OnClosed() override {}
-  void OnWindowStateChanged(ui::PlatformWindowState new_state) override {}
+  void OnWindowStateChanged(ui::PlatformWindowState old_state,
+                            ui::PlatformWindowState new_state) override {}
   void OnLostCapture() override {}
   void OnAcceleratedWidgetAvailable(gfx::AcceleratedWidget widget) override {}
   void OnWillDestroyAcceleratedWidget() override {}

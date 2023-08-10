@@ -4,6 +4,9 @@
 
 #include "media/capture/video/mock_video_capture_device_client.h"
 
+#include "base/memory/raw_ptr.h"
+#include "media/base/video_frame.h"
+
 using testing::_;
 using testing::Invoke;
 
@@ -22,7 +25,7 @@ class StubBufferHandle : public VideoCaptureBufferHandle {
 
  private:
   const size_t mapped_size_;
-  uint8_t* const data_;
+  const raw_ptr<uint8_t> data_;
 };
 
 class StubBufferHandleProvider
@@ -54,7 +57,7 @@ class StubBufferHandleProvider
 
  private:
   const size_t mapped_size_;
-  uint8_t* const data_;
+  const raw_ptr<uint8_t> data_;
 };
 
 class StubReadWritePermission
@@ -64,7 +67,7 @@ class StubReadWritePermission
   ~StubReadWritePermission() override { delete[] data_; }
 
  private:
-  uint8_t* const data_;
+  const raw_ptr<uint8_t> data_;
 };
 
 VideoCaptureDevice::Client::Buffer CreateStubBuffer(int buffer_id,
@@ -115,7 +118,9 @@ MockVideoCaptureDeviceClient::CreateMockClientWithBufferAllocator(
                     VideoCaptureDevice::Client::Buffer* buffer) {
             EXPECT_GT(dimensions.GetArea(), 0);
             const VideoCaptureFormat frame_format(dimensions, 0.0, format);
-            *buffer = CreateStubBuffer(0, frame_format.ImageAllocationSize());
+            *buffer = CreateStubBuffer(
+                0, VideoFrame::AllocationSize(frame_format.pixel_format,
+                                              frame_format.frame_size));
             return VideoCaptureDevice::Client::ReserveResult::kSucceeded;
           }));
   ON_CALL(*result, OnIncomingCapturedData(_, _, _, _, _, _, _, _, _))

@@ -2,8 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/memory/raw_ptr.h"
+#include "base/strings/stringprintf.h"
 #include "build/build_config.h"
 #include "components/blocked_content/popup_blocker_tab_helper.h"
+#include "third_party/blink/public/common/switches.h"
 #include "ui/base/page_transition_types.h"
 #include "ui/base/window_open_disposition.h"
 #include "weblayer/browser/browser_impl.h"
@@ -29,7 +32,7 @@ class PopupBlockerBrowserTest : public WebLayerBrowserTest,
   void SetUpOnMainThread() override {
     ASSERT_TRUE(embedded_test_server()->Start());
     original_tab_ = shell()->tab();
-#if !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
     // Android does this in Java.
     original_tab_->SetNewTabDelegate(this);
 #endif
@@ -40,6 +43,13 @@ class PopupBlockerBrowserTest : public WebLayerBrowserTest,
   }
   void TearDownOnMainThread() override {
     shell()->browser()->RemoveObserver(this);
+  }
+
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    WebLayerBrowserTest::SetUpCommandLine(command_line);
+    // Some bots are flaky due to slower loading interacting with
+    // deferred commits.
+    command_line->AppendSwitch(blink::switches::kAllowPreCommitInput);
   }
 
   // NewTabDelegate:
@@ -116,8 +126,8 @@ class PopupBlockerBrowserTest : public WebLayerBrowserTest,
   std::unique_ptr<base::RunLoop> new_tab_run_loop_;
   std::unique_ptr<base::RunLoop> close_tab_run_loop_;
 
-  Tab* original_tab_ = nullptr;
-  Tab* new_tab_ = nullptr;
+  raw_ptr<Tab> original_tab_ = nullptr;
+  raw_ptr<Tab> new_tab_ = nullptr;
 };
 
 IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest, BlocksPopup) {

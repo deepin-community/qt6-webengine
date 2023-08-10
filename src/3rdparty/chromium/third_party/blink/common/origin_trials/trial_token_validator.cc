@@ -12,33 +12,50 @@
 #include "net/http/http_response_headers.h"
 #include "net/url_request/url_request.h"
 #include "third_party/blink/public/common/origin_trials/origin_trial_policy.h"
+#include "third_party/blink/public/common/origin_trials/origin_trials.h"
 #include "third_party/blink/public/common/origin_trials/trial_token.h"
-
-namespace {
-
-static base::RepeatingCallback<blink::OriginTrialPolicy*()>& PolicyGetter() {
-  static base::NoDestructor<
-      base::RepeatingCallback<blink::OriginTrialPolicy*()>>
-      policy(base::BindRepeating(
-          []() -> blink::OriginTrialPolicy* { return nullptr; }));
-  return *policy;
-}
-}  // namespace
+#include "third_party/blink/public/common/origin_trials/trial_token_result.h"
 
 namespace blink {
+namespace {
 
-TrialTokenResult::TrialTokenResult() = default;
-TrialTokenResult::TrialTokenResult(OriginTrialTokenStatus status)
-    : status(status) {}
-TrialTokenResult::TrialTokenResult(OriginTrialTokenStatus status,
-                                   std::string name,
-                                   base::Time expiry,
-                                   bool is_third_party)
-    : status(status),
-      feature_name(name),
-      expiry_time(expiry),
-      is_third_party(is_third_party) {}
-TrialTokenResult::~TrialTokenResult() = default;
+static base::RepeatingCallback<OriginTrialPolicy*()>& PolicyGetter() {
+  static base::NoDestructor<base::RepeatingCallback<OriginTrialPolicy*()>>
+      policy(
+          base::BindRepeating([]() -> OriginTrialPolicy* { return nullptr; }));
+  return *policy;
+}
+
+bool IsDeprecationTrialPossible() {
+  OriginTrialPolicy* policy = PolicyGetter().Run();
+  return policy && policy->IsOriginTrialsSupported();
+}
+
+// Validates the provided trial_token. If provided, the third_party_origins is
+// only used for validating third-party tokens.
+OriginTrialTokenStatus IsTokenValid(
+    const TrialToken& trial_token,
+    const url::Origin& origin,
+    base::span<const url::Origin> third_party_origins,
+    base::Time current_time) {
+  OriginTrialTokenStatus status;
+  if (trial_token.is_third_party()) {
+    if (!third_party_origins.empty()) {
+      for (const auto& third_party_origin : third_party_origins) {
+        status = trial_token.IsValid(third_party_origin, current_time);
+        if (status == OriginTrialTokenStatus::kSuccess)
+          break;
+      }
+    } else {
+      status = OriginTrialTokenStatus::kWrongOrigin;
+    }
+  } else {
+    status = trial_token.IsValid(origin, current_time);
+  }
+  return status;
+}
+
+}  // namespace
 
 TrialTokenValidator::TrialTokenValidator() {}
 
@@ -50,71 +67,88 @@ void TrialTokenValidator::SetOriginTrialPolicyGetter(
 }
 
 void TrialTokenValidator::ResetOriginTrialPolicyGetter() {
-  SetOriginTrialPolicyGetter(base::BindRepeating(
-      []() -> blink::OriginTrialPolicy* { return nullptr; }));
+  SetOriginTrialPolicyGetter(
+      base::BindRepeating([]() -> OriginTrialPolicy* { return nullptr; }));
 }
 
 TrialTokenResult TrialTokenValidator::ValidateToken(
     base::StringPiece token,
     const url::Origin& origin,
     base::Time current_time) const {
-  return ValidateToken(token, origin, nullptr, current_time);
+  return ValidateToken(token, origin, base::span<const url::Origin>{},
+                       current_time);
 }
 
 TrialTokenResult TrialTokenValidator::ValidateToken(
     base::StringPiece token,
     const url::Origin& origin,
-    const url::Origin* third_party_origin,
+    base::span<const url::Origin> third_party_origins,
     base::Time current_time) const {
   OriginTrialPolicy* policy = PolicyGetter().Run();
 
   if (!policy || !policy->IsOriginTrialsSupported())
     return TrialTokenResult(OriginTrialTokenStatus::kNotSupported);
 
-  std::vector<base::StringPiece> public_keys = policy->GetPublicKeys();
+  std::vector<OriginTrialPublicKey> public_keys = policy->GetPublicKeys();
   if (public_keys.size() == 0)
     return TrialTokenResult(OriginTrialTokenStatus::kNotSupported);
 
   OriginTrialTokenStatus status;
   std::unique_ptr<TrialToken> trial_token;
-  for (auto& key : public_keys) {
+  for (OriginTrialPublicKey& key : public_keys) {
     trial_token = TrialToken::From(token, key, &status);
     if (status == OriginTrialTokenStatus::kSuccess)
       break;
   }
 
+  // Not attaching trial_token to result when token is unable to parse.
   if (status != OriginTrialTokenStatus::kSuccess)
     return TrialTokenResult(status);
 
-  // If the third_party flag is set on the token, we match it against third
-  // party origin if it exists. Otherwise match against document origin.
-  if (trial_token->is_third_party()) {
-    if (third_party_origin) {
-      status = trial_token->IsValid(*third_party_origin, current_time);
-    } else {
-      status = OriginTrialTokenStatus::kWrongOrigin;
+  status =
+      IsTokenValid(*trial_token, origin, third_party_origins, current_time);
+
+  if (status == OriginTrialTokenStatus::kExpired) {
+    if (origin_trials::IsTrialValid(trial_token->feature_name())) {
+      base::Time validated_time = current_time;
+      // Manual completion trials have an expiry grace period. For these trials
+      // the token expiry time is valid if:
+      // token.expiry_time + kExpiryGracePeriod > current_time
+      for (OriginTrialFeature feature :
+           origin_trials::FeaturesForTrial(trial_token->feature_name())) {
+        if (origin_trials::FeatureHasExpiryGracePeriod(feature)) {
+          validated_time = current_time - kExpiryGracePeriod;
+          status = IsTokenValid(*trial_token, origin, third_party_origins,
+                                validated_time);
+          if (status == OriginTrialTokenStatus::kSuccess) {
+            break;
+          }
+        }
+      }
     }
-  } else {
-    status = trial_token->IsValid(origin, current_time);
   }
 
   if (status != OriginTrialTokenStatus::kSuccess)
-    return TrialTokenResult(status);
+    return TrialTokenResult(status, std::move(trial_token));
 
-  if (policy->IsFeatureDisabled(trial_token->feature_name()))
-    return TrialTokenResult(OriginTrialTokenStatus::kFeatureDisabled);
+  if (policy->IsFeatureDisabled(trial_token->feature_name())) {
+    return TrialTokenResult(OriginTrialTokenStatus::kFeatureDisabled,
+                            std::move(trial_token));
+  }
 
-  if (policy->IsTokenDisabled(trial_token->signature()))
-    return TrialTokenResult(OriginTrialTokenStatus::kTokenDisabled);
+  if (policy->IsTokenDisabled(trial_token->signature())) {
+    return TrialTokenResult(OriginTrialTokenStatus::kTokenDisabled,
+                            std::move(trial_token));
+  }
 
   if (trial_token->usage_restriction() ==
           TrialToken::UsageRestriction::kSubset &&
-      policy->IsFeatureDisabledForUser(trial_token->feature_name()))
-    return TrialTokenResult(OriginTrialTokenStatus::kFeatureDisabledForUser);
+      policy->IsFeatureDisabledForUser(trial_token->feature_name())) {
+    return TrialTokenResult(OriginTrialTokenStatus::kFeatureDisabledForUser,
+                            std::move(trial_token));
+  }
 
-  return TrialTokenResult(status, trial_token->feature_name(),
-                          trial_token->expiry_time(),
-                          trial_token->is_third_party());
+  return TrialTokenResult(status, std::move(trial_token));
 }
 
 bool TrialTokenValidator::RequestEnablesFeature(const net::URLRequest* request,
@@ -131,17 +165,34 @@ bool TrialTokenValidator::RequestEnablesFeature(
     const net::HttpResponseHeaders* response_headers,
     base::StringPiece feature_name,
     base::Time current_time) const {
-  if (!IsTrialPossibleOnOrigin(request_url))
-    return false;
+  return IsTrialPossibleOnOrigin(request_url) &&
+         ResponseBearsValidTokenForFeature(request_url, *response_headers,
+                                           feature_name, current_time);
+}
 
+bool TrialTokenValidator::RequestEnablesDeprecatedFeature(
+    const GURL& request_url,
+    const net::HttpResponseHeaders* response_headers,
+    base::StringPiece feature_name,
+    base::Time current_time) const {
+  return IsDeprecationTrialPossible() &&
+         ResponseBearsValidTokenForFeature(request_url, *response_headers,
+                                           feature_name, current_time);
+}
+
+bool TrialTokenValidator::ResponseBearsValidTokenForFeature(
+    const GURL& request_url,
+    const net::HttpResponseHeaders& response_headers,
+    base::StringPiece feature_name,
+    base::Time current_time) const {
   url::Origin origin = url::Origin::Create(request_url);
   size_t iter = 0;
   std::string token;
-  while (response_headers->EnumerateHeader(&iter, "Origin-Trial", &token)) {
+  while (response_headers.EnumerateHeader(&iter, "Origin-Trial", &token)) {
     TrialTokenResult result = ValidateToken(token, origin, current_time);
     // TODO(mek): Log the validation errors to histograms?
-    if (result.status == OriginTrialTokenStatus::kSuccess)
-      if (result.feature_name == feature_name)
+    if (result.Status() == OriginTrialTokenStatus::kSuccess)
+      if (result.ParsedToken()->feature_name() == feature_name)
         return true;
   }
   return false;
@@ -164,8 +215,8 @@ TrialTokenValidator::GetValidTokensFromHeaders(
   std::string token;
   while (headers->EnumerateHeader(&iter, "Origin-Trial", &token)) {
     TrialTokenResult result = ValidateToken(token, origin, current_time);
-    if (result.status == OriginTrialTokenStatus::kSuccess) {
-      (*tokens)[result.feature_name].push_back(token);
+    if (result.Status() == OriginTrialTokenStatus::kSuccess) {
+      (*tokens)[result.ParsedToken()->feature_name()].push_back(token);
     }
   }
   return tokens;
@@ -183,8 +234,8 @@ TrialTokenValidator::GetValidTokens(const url::Origin& origin,
   for (const auto& feature : tokens) {
     for (const std::string& token : feature.second) {
       TrialTokenResult result = ValidateToken(token, origin, current_time);
-      if (result.status == OriginTrialTokenStatus::kSuccess) {
-        DCHECK_EQ(result.feature_name, feature.first);
+      if (result.Status() == OriginTrialTokenStatus::kSuccess) {
+        DCHECK_EQ(result.ParsedToken()->feature_name(), feature.first);
         (*out_tokens)[feature.first].push_back(token);
       }
     }

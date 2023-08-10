@@ -44,7 +44,7 @@ class ImageWriterPrivateApiTest : public ExtensionApiTest {
     expected1.model = "Model 1";
     expected1.capacity = image_writer::kTestFileSize;
     expected1.removable = true;
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
     expected1.storage_unit_id = test_utils_.GetDevicePath().AsUTF8Unsafe();
 #else
     expected1.storage_unit_id = test_utils_.GetDevicePath().value();
@@ -55,7 +55,7 @@ class ImageWriterPrivateApiTest : public ExtensionApiTest {
     expected2.model = "Model 2";
     expected2.capacity = image_writer::kTestFileSize << 2;
     expected2.removable = false;
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
     expected2.storage_unit_id = test_utils_.GetDevicePath().AsUTF8Unsafe();
 #else
     expected2.storage_unit_id = test_utils_.GetDevicePath().value();
@@ -71,7 +71,6 @@ class ImageWriterPrivateApiTest : public ExtensionApiTest {
     ExtensionApiTest::TearDownInProcessBrowserTestFixture();
     test_utils_.TearDown();
     RemovableStorageProvider::ClearDeviceListForTesting();
-    FileSystemChooseEntryFunction::StopSkippingPickerForTest();
   }
 
 
@@ -89,8 +88,8 @@ IN_PROC_BROWSER_TEST_F(ImageWriterPrivateApiTest, TestWriteFromFile) {
       "test_temp", test_utils_.GetTempDir());
 
   base::FilePath selected_image(test_utils_.GetImagePath());
-  FileSystemChooseEntryFunction::SkipPickerAndAlwaysSelectPathForTest(
-      &selected_image);
+  FileSystemChooseEntryFunction::SkipPickerAndAlwaysSelectPathForTest picker(
+      selected_image);
 
 #if !BUILDFLAG(IS_CHROMEOS_ASH)
   auto set_up_utility_client_callbacks = [](FakeImageWriterClient* client) {
@@ -105,7 +104,8 @@ IN_PROC_BROWSER_TEST_F(ImageWriterPrivateApiTest, TestWriteFromFile) {
       base::BindOnce(set_up_utility_client_callbacks));
 #endif
 
-  ASSERT_TRUE(RunPlatformAppTest("image_writer_private/write_from_file"))
+  ASSERT_TRUE(RunExtensionTest("image_writer_private/write_from_file",
+                               {.launch_as_platform_app = true}))
       << message_;
 }
 }  // namespace extensions

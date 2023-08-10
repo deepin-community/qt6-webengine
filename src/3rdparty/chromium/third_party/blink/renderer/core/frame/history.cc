@@ -28,35 +28,25 @@
 #include "third_party/blink/public/mojom/web_feature/web_feature.mojom-shared.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
+#include "third_party/blink/renderer/core/frame/history_util.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_client.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
 #include "third_party/blink/renderer/core/loader/document_loader.h"
 #include "third_party/blink/renderer/core/loader/history_item.h"
+#include "third_party/blink/renderer/core/navigation_api/navigation_api.h"
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
-#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/bindings/to_v8.h"
+#include "third_party/blink/renderer/platform/bindings/v8_private_property.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_view.h"
 
 namespace blink {
-
-namespace {
-
-bool EqualIgnoringPathQueryAndFragment(const KURL& a, const KURL& b) {
-  return StringView(a.GetString(), 0, a.PathStart()) ==
-         StringView(b.GetString(), 0, b.PathStart());
-}
-
-bool EqualIgnoringQueryAndFragment(const KURL& a, const KURL& b) {
-  return StringView(a.GetString(), 0, a.PathEnd()) ==
-         StringView(b.GetString(), 0, b.PathEnd());
-}
-
-}  // namespace
 
 History::History(LocalDOMWindow* window)
     : ExecutionContextClient(window), last_state_object_requested_(nullptr) {}
@@ -73,6 +63,13 @@ unsigned History::length(ExceptionState& exception_state) const {
         "fully active");
     return 0;
   }
+
+  // TODO(crbug.com/1262022): Remove this condition when Fenced Frames
+  // transition to MPArch completely.
+  if (DomWindow()->GetFrame()->IsInFencedFrameTree()) {
+    return 1;
+  }
+
   return DomWindow()->GetFrame()->Client()->BackForwardLength();
 }
 
@@ -188,19 +185,21 @@ void History::go(ScriptState* script_state,
     return;
   }
 
-  DCHECK(IsMainThread());
-  auto* active_window = LocalDOMWindow::From(script_state);
-  if (!active_window)
+  LocalDOMWindow* active_window = LocalDOMWindow::From(script_state);
+  // TODO(crbug.com/1309481): Remove this CHECK, and the `script_state`
+  // parameter altogether.
+  CHECK_EQ(DomWindow(), active_window);
+  if (!DomWindow()->GetFrame()->IsNavigationAllowed())
     return;
 
-  if (!active_window->GetFrame() ||
-      !active_window->GetFrame()->CanNavigate(*DomWindow()->GetFrame()) ||
-      !active_window->GetFrame()->IsNavigationAllowed() ||
-      !DomWindow()->GetFrame()->IsNavigationAllowed()) {
-    return;
-  }
+  DCHECK(IsMainThread());
 
   if (!DomWindow()->GetFrame()->navigation_rate_limiter().CanProceed())
+    return;
+
+  // TODO(crbug.com/1262022): Remove this condition when Fenced Frames
+  // transition to MPArch completely.
+  if (DomWindow()->GetFrame()->IsInFencedFrameTree())
     return;
 
   if (delta) {
@@ -223,14 +222,15 @@ void History::pushState(v8::Isolate* isolate,
                         const String& url,
                         ExceptionState& exception_state) {
   WebFrameLoadType load_type = WebFrameLoadType::kStandard;
-  // Navigations in portal contexts do not create back/forward entries.
-  if (DomWindow() && DomWindow()->GetFrame()->GetPage()->InsidePortal()) {
+  if (DomWindow() &&
+      DomWindow()->GetFrame()->ShouldMaintainTrivialSessionHistory()) {
     DomWindow()->AddConsoleMessage(
         MakeGarbageCollected<ConsoleMessage>(
-            mojom::ConsoleMessageSource::kJavaScript,
-            mojom::ConsoleMessageLevel::kWarning,
-            "Use of history.pushState in a portal context "
-            "is treated as history.replaceState."),
+            mojom::blink::ConsoleMessageSource::kJavaScript,
+            mojom::blink::ConsoleMessageLevel::kWarning,
+            "Use of history.pushState in a trivial session history context, "
+            "which maintains only one session history entry, is treated as "
+            "history.replaceState."),
         /* discard_duplicates */ true);
     load_type = WebFrameLoadType::kReplaceCurrentItem;
   }
@@ -243,8 +243,8 @@ void History::pushState(v8::Isolate* isolate,
   if (exception_state.HadException())
     return;
 
-  StateObjectAdded(std::move(serialized_data), title, url,
-                   ScrollRestorationInternal(), load_type, exception_state);
+  StateObjectAdded(std::move(serialized_data), title, url, load_type,
+                   exception_state);
 }
 
 void History::replaceState(v8::Isolate* isolate,
@@ -261,7 +261,6 @@ void History::replaceState(v8::Isolate* isolate,
     return;
 
   StateObjectAdded(std::move(serialized_data), title, url,
-                   ScrollRestorationInternal(),
                    WebFrameLoadType::kReplaceCurrentItem, exception_state);
 }
 
@@ -274,41 +273,11 @@ KURL History::UrlForState(const String& url_string) {
   return KURL(DomWindow()->BaseURL(), url_string);
 }
 
-bool History::CanChangeToUrl(const KURL& url,
-                             const SecurityOrigin* document_origin,
-                             const KURL& document_url) {
-  if (!url.IsValid())
-    return false;
-
-  if (document_origin->IsGrantedUniversalAccess())
-    return true;
-
-  // We allow sandboxed documents, `data:`/`file:` URLs, etc. to use
-  // 'pushState'/'replaceState' to modify the URL fragment: see
-  // https://crbug.com/528681 for the compatibility concerns.
-  if (document_origin->IsOpaque() || document_origin->IsLocal())
-    return EqualIgnoringQueryAndFragment(url, document_url);
-
-  if (!EqualIgnoringPathQueryAndFragment(url, document_url))
-    return false;
-
-  scoped_refptr<const SecurityOrigin> requested_origin =
-      SecurityOrigin::Create(url);
-  if (requested_origin->IsOpaque() ||
-      !requested_origin->IsSameOriginWith(document_origin)) {
-    return false;
-  }
-
-  return true;
-}
-
-void History::StateObjectAdded(
-    scoped_refptr<SerializedScriptValue> data,
-    const String& /* title */,
-    const String& url_string,
-    mojom::blink::ScrollRestorationType restoration_type,
-    WebFrameLoadType type,
-    ExceptionState& exception_state) {
+void History::StateObjectAdded(scoped_refptr<SerializedScriptValue> data,
+                               const String& /* title */,
+                               const String& url_string,
+                               WebFrameLoadType type,
+                               ExceptionState& exception_state) {
   if (!DomWindow()) {
     exception_state.ThrowSecurityError(
         "May not use a History object associated with a Document that is not "
@@ -317,8 +286,8 @@ void History::StateObjectAdded(
   }
 
   KURL full_url = UrlForState(url_string);
-  if (!CanChangeToUrl(full_url, DomWindow()->GetSecurityOrigin(),
-                      DomWindow()->Url())) {
+  if (!CanChangeToUrlForHistoryApi(full_url, DomWindow()->GetSecurityOrigin(),
+                                   DomWindow()->Url())) {
     // We can safely expose the URL to JavaScript, as a) no redirection takes
     // place: JavaScript already had this URL, b) JavaScript can only access a
     // same-origin History object.
@@ -341,8 +310,19 @@ void History::StateObjectAdded(
     return;
   }
 
+  if (auto* navigation_api = NavigationApi::navigation(*DomWindow())) {
+    NavigationApi::DispatchParams params(full_url,
+                                         NavigateEventType::kHistoryApi, type);
+    params.state_object = data.get();
+    if (navigation_api->DispatchNavigateEvent(params) !=
+        NavigationApi::DispatchResult::kContinue) {
+      return;
+    }
+  }
+
   DomWindow()->document()->Loader()->RunURLAndHistoryUpdateSteps(
-      full_url, std::move(data), restoration_type, type);
+      full_url, nullptr, mojom::blink::SameDocumentNavigationType::kHistoryApi,
+      std::move(data), type);
 }
 
 }  // namespace blink

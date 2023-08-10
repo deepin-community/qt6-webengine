@@ -9,9 +9,7 @@
 #include <vector>
 
 #include "base/gtest_prod_util.h"
-#include "base/optional.h"
 #include "base/process/process_handle.h"
-#include "base/time/time.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/service_process_host.h"
 #include "content/public/browser/service_process_info.h"
@@ -24,6 +22,10 @@ class CONTENT_EXPORT AudioServiceListener
     : public ServiceProcessHost::Observer {
  public:
   AudioServiceListener();
+
+  AudioServiceListener(const AudioServiceListener&) = delete;
+  AudioServiceListener& operator=(const AudioServiceListener&) = delete;
+
   ~AudioServiceListener() override;
 
   base::ProcessId GetProcessId() const;
@@ -52,8 +54,6 @@ class CONTENT_EXPORT AudioServiceListener
   base::ProcessId process_id_ = base::kNullProcessId;
   bool log_factory_is_set_ = false;
   SEQUENCE_CHECKER(owning_sequence_);
-
-  DISALLOW_COPY_AND_ASSIGN(AudioServiceListener);
 };
 
 }  // namespace content

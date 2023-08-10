@@ -4,10 +4,13 @@
 
 #include "components/webapps/browser/installable/installable_metrics.h"
 
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/notreached.h"
+#include "base/time/time.h"
 #include "build/build_config.h"
 #include "components/webapps/browser/webapps_client.h"
+#include "content/public/browser/service_worker_context.h"
 #include "content/public/browser/web_contents.h"
 
 namespace webapps {
@@ -15,28 +18,39 @@ namespace webapps {
 // static
 void InstallableMetrics::TrackInstallEvent(WebappInstallSource source) {
   DCHECK(IsReportableInstallSource(source));
-  UMA_HISTOGRAM_ENUMERATION("Webapp.Install.InstallEvent", source,
-                            WebappInstallSource::COUNT);
+  base::UmaHistogramEnumeration("Webapp.Install.InstallEvent", source,
+                                WebappInstallSource::COUNT);
 }
 
 // static
 bool InstallableMetrics::IsReportableInstallSource(WebappInstallSource source) {
-  return source == WebappInstallSource::MENU_BROWSER_TAB ||
-         source == WebappInstallSource::MENU_CUSTOM_TAB ||
-         source == WebappInstallSource::AUTOMATIC_PROMPT_BROWSER_TAB ||
-         source == WebappInstallSource::AUTOMATIC_PROMPT_CUSTOM_TAB ||
-         source == WebappInstallSource::API_BROWSER_TAB ||
-         source == WebappInstallSource::API_CUSTOM_TAB ||
-         source == WebappInstallSource::DEVTOOLS ||
-         source == WebappInstallSource::AMBIENT_BADGE_BROWSER_TAB ||
-         source == WebappInstallSource::AMBIENT_BADGE_CUSTOM_TAB ||
-         source == WebappInstallSource::ARC ||
-         source == WebappInstallSource::INTERNAL_DEFAULT ||
-         source == WebappInstallSource::EXTERNAL_DEFAULT ||
-         source == WebappInstallSource::EXTERNAL_POLICY ||
-         source == WebappInstallSource::SYSTEM_DEFAULT ||
-         source == WebappInstallSource::OMNIBOX_INSTALL_ICON ||
-         source == WebappInstallSource::MENU_CREATE_SHORTCUT;
+  switch (source) {
+    case WebappInstallSource::AMBIENT_BADGE_BROWSER_TAB:
+    case WebappInstallSource::AMBIENT_BADGE_CUSTOM_TAB:
+    case WebappInstallSource::API_BROWSER_TAB:
+    case WebappInstallSource::API_CUSTOM_TAB:
+    case WebappInstallSource::ARC:
+    case WebappInstallSource::AUTOMATIC_PROMPT_BROWSER_TAB:
+    case WebappInstallSource::AUTOMATIC_PROMPT_CUSTOM_TAB:
+    case WebappInstallSource::CHROME_SERVICE:
+    case WebappInstallSource::DEVTOOLS:
+    case WebappInstallSource::EXTERNAL_DEFAULT:
+    case WebappInstallSource::EXTERNAL_POLICY:
+    case WebappInstallSource::INTERNAL_DEFAULT:
+    case WebappInstallSource::MENU_BROWSER_TAB:
+    case WebappInstallSource::MENU_CREATE_SHORTCUT:
+    case WebappInstallSource::MENU_CUSTOM_TAB:
+    case WebappInstallSource::OMNIBOX_INSTALL_ICON:
+    case WebappInstallSource::SYSTEM_DEFAULT:
+      return true;
+    case WebappInstallSource::MANAGEMENT_API:
+    case WebappInstallSource::SUB_APP:
+    case WebappInstallSource::SYNC:
+      return false;
+    case WebappInstallSource::COUNT:
+      NOTREACHED();
+      return false;
+  }
 }
 
 // static
@@ -52,6 +66,7 @@ bool InstallableMetrics::IsUserInitiatedInstallSource(
     case WebappInstallSource::AMBIENT_BADGE_BROWSER_TAB:
     case WebappInstallSource::AMBIENT_BADGE_CUSTOM_TAB:
     case WebappInstallSource::ARC:
+    case WebappInstallSource::CHROME_SERVICE:
     case WebappInstallSource::OMNIBOX_INSTALL_ICON:
     case WebappInstallSource::MENU_CREATE_SHORTCUT:
       return true;
@@ -62,6 +77,7 @@ bool InstallableMetrics::IsUserInitiatedInstallSource(
     case WebappInstallSource::EXTERNAL_POLICY:
     case WebappInstallSource::SYSTEM_DEFAULT:
     case WebappInstallSource::SYNC:
+    case WebappInstallSource::SUB_APP:
       return false;
     case WebappInstallSource::COUNT:
       NOTREACHED();
@@ -112,6 +128,11 @@ ServiceWorkerOfflineCapability InstallableMetrics::ConvertFromOfflineCapability(
       return ServiceWorkerOfflineCapability::kServiceWorkerNoOfflineSupport;
   }
   NOTREACHED();
+}
+
+// static
+void InstallableMetrics::TrackUninstallEvent(WebappUninstallSource source) {
+  base::UmaHistogramEnumeration("Webapp.Install.UninstallEvent", source);
 }
 
 }  // namespace webapps

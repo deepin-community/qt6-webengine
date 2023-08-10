@@ -16,10 +16,10 @@
 #include <iomanip>
 #include <memory>
 
+#include "base/base_export.h"
 #include "base/files/dir_reader_posix.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_file.h"
-#include "base/no_destructor.h"
 #include "base/strings/safe_sprintf.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
@@ -98,7 +98,7 @@ constexpr int kDistroSize = 128 + 1;
 char g_linux_distro[kDistroSize] =
 #if BUILDFLAG(IS_CHROMEOS_ASH)
     "CrOS";
-#elif defined(OS_ANDROID)
+#elif BUILDFLAG(IS_ANDROID)
     "Android";
 #else
     "Unknown";
@@ -123,7 +123,7 @@ std::string GetLinuxDistro() {
 #if !BUILDFLAG(IS_CHROMEOS_ASH)
   // We do this check only once per process. If it fails, there's
   // little reason to believe it will work if we attempt to run it again.
-  static NoDestructor<DistroNameGetter> distro_name_getter;
+  static DistroNameGetter distro_name_getter;
 #endif
   return g_linux_distro;
 }

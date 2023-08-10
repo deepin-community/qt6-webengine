@@ -4,6 +4,8 @@
 
 #include "components/content_settings/core/common/pref_names.h"
 
+#include "build/build_config.h"
+
 namespace prefs {
 
 // CookieControlsMode enum value that decides when the cookie controls UI is
@@ -49,12 +51,18 @@ const char kManagedDefaultFileSystemReadGuardSetting[] =
     "profile.managed_default_content_settings.file_system_read_guard";
 const char kManagedDefaultFileSystemWriteGuardSetting[] =
     "profile.managed_default_content_settings.file_system_write_guard";
-const char kManagedDefaultLegacyCookieAccessSetting[] =
-    "profile.managed_default_content_settings.legacy_cookie_access";
 const char kManagedDefaultSerialGuardSetting[] =
     "profile.managed_default_content_settings.serial_guard";
 const char kManagedDefaultInsecurePrivateNetworkSetting[] =
     "profile.managed_default_content_settings.insecure_private_network";
+const char kManagedDefaultJavaScriptJitSetting[] =
+    "profile.managed_default_content_settings.javascript_jit";
+const char kManagedDefaultWebHidGuardSetting[] =
+    "profile.managed_default_content_settings.web_hid_guard";
+const char kManagedDefaultWindowPlacementSetting[] =
+    "profile.managed_default_content_settings.window_placement";
+const char kManagedDefaultLocalFontsSetting[] =
+    "profile.managed_default_content_settings.local_fonts";
 
 // Preferences that are exclusively used to store managed
 // content settings patterns.
@@ -66,6 +74,8 @@ const char kManagedCookiesBlockedForUrls[] =
     "profile.managed_cookies_blocked_for_urls";
 const char kManagedCookiesSessionOnlyForUrls[] =
     "profile.managed_cookies_sessiononly_for_urls";
+const char kManagedGetDisplayMediaSetSelectAllScreensAllowedForUrls[] =
+    "profile.managed_get_display_media_set_select_all_screens_allowed_for_urls";
 const char kManagedImagesAllowedForUrls[] =
     "profile.managed_images_allowed_for_urls";
 const char kManagedImagesBlockedForUrls[] =
@@ -95,6 +105,10 @@ const char kManagedWebUsbAllowDevicesForUrls[] =
 const char kManagedWebUsbAskForUrls[] = "profile.managed_web_usb_ask_for_urls";
 const char kManagedWebUsbBlockedForUrls[] =
     "profile.managed_web_usb_blocked_for_urls";
+const char kManagedFileHandlingAllowedForUrls[] =
+    "profile.managed_file_handling_allowed_for_urls";
+const char kManagedFileHandlingBlockedForUrls[] =
+    "profile.managed_file_handling_blocked_for_urls";
 const char kManagedFileSystemReadAskForUrls[] =
     "profile.managed_file_system_read_ask_for_urls";
 const char kManagedFileSystemReadBlockedForUrls[] =
@@ -110,6 +124,21 @@ const char kManagedSerialBlockedForUrls[] =
     "profile.managed_serial_blocked_for_urls";
 const char kManagedInsecurePrivateNetworkAllowedForUrls[] =
     "profile.managed_insecure_private_network_allowed_for_urls";
+const char kManagedJavaScriptJitAllowedForSites[] =
+    "profile.managed_javascript_jit_allowed_for_sites";
+const char kManagedJavaScriptJitBlockedForSites[] =
+    "profile.managed_javascript_jit_blocked_for_sites";
+const char kManagedWebHidAskForUrls[] = "profile.managed_web_hid_ask_for_urls";
+const char kManagedWebHidBlockedForUrls[] =
+    "profile.managed_web_hid_blocked_for_urls";
+const char kManagedWindowPlacementAllowedForUrls[] =
+    "profile.managed_window_placement_allowed_for_urls";
+const char kManagedWindowPlacementBlockedForUrls[] =
+    "profile.managed_window_placement_blocked_for_urls";
+const char kManagedLocalFontsAllowedForUrls[] =
+    "profile.managed_local_fonts_allowed_for_urls";
+const char kManagedLocalFontsBlockedForUrls[] =
+    "profile.managed_local_fonts_blocked_for_urls";
 
 // Boolean indicating whether the quiet UI is enabled for notification
 // permission requests.
@@ -129,7 +158,7 @@ const char kQuietNotificationPermissionUiEnablingMethod[] =
 const char kQuietNotificationPermissionUiDisabledTime[] =
     "profile.content_settings.disable_quiet_permission_ui_time.notifications";
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 // Enable vibration for web notifications.
 const char kNotificationsVibrateEnabled[] = "notifications.vibrate_enabled";
 #endif

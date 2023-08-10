@@ -8,9 +8,11 @@
 #include <memory>
 #include <utility>
 
+#include "base/containers/contains.h"
 #include "base/lazy_instance.h"
+#include "base/observer_list.h"
 #include "base/strings/utf_string_conversions.h"
-#include "build/chromeos_buildflags.h"
+#include "build/build_config.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/device_service.h"
 #include "extensions/browser/api/device_permissions_manager.h"
@@ -51,29 +53,31 @@ bool ShouldExposeDevice(const device::mojom::UsbDeviceInfo& device_info) {
     }
   }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   if (ExtensionsAPIClient::Get()->ShouldAllowDetachingUsb(
           device_info.vendor_id, device_info.product_id)) {
     return true;
   }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
   return false;
 }
 
 // Returns true if the given extension has permission to receive events
 // regarding this device.
-bool WillDispatchDeviceEvent(const device::mojom::UsbDeviceInfo& device_info,
-                             content::BrowserContext* browser_context,
-                             Feature::Context target_context,
-                             const Extension* extension,
-                             Event* event,
-                             const base::DictionaryValue* listener_filter) {
+bool MyWillDispatchDeviceEvent(
+    const device::mojom::UsbDeviceInfo& device_info,
+    content::BrowserContext* browser_context,
+    Feature::Context target_context,
+    const Extension* extension,
+    const base::DictionaryValue* listener_filter,
+    std::unique_ptr<base::Value::List>* event_args_out,
+    mojom::EventFilteringInfoPtr* event_filtering_info_out) {
   // Check install-time and optional permissions.
   std::unique_ptr<UsbDevicePermission::CheckParam> param =
       UsbDevicePermission::CheckParam::ForUsbDevice(extension, device_info);
   if (extension->permissions_data()->CheckAPIPermissionWithParam(
-          APIPermission::kUsbDevice, param.get())) {
+          mojom::APIPermissionID::kUsbDevice, param.get())) {
     return true;
   }
 
@@ -82,6 +86,15 @@ bool WillDispatchDeviceEvent(const device::mojom::UsbDeviceInfo& device_info,
       DevicePermissionsManager::Get(browser_context)
           ->GetForExtension(extension->id());
   if (device_permissions->FindUsbDeviceEntry(device_info).get()) {
+    return true;
+  }
+
+  // Check against WebUsbAllowDevicesForUrls.
+  ExtensionsBrowserClient* client = ExtensionsBrowserClient::Get();
+  DCHECK(client);
+  if (client->IsUsbDeviceAllowedByPolicy(browser_context, extension->id(),
+                                         device_info.vendor_id,
+                                         device_info.product_id)) {
     return true;
   }
 
@@ -162,11 +175,11 @@ void UsbDeviceManager::GetApiDevice(
                         device_in.device_version_minor << 4 |
                         device_in.device_version_subminor;
   device_out->product_name =
-      base::UTF16ToUTF8(device_in.product_name.value_or(base::string16()));
+      base::UTF16ToUTF8(device_in.product_name.value_or(std::u16string()));
   device_out->manufacturer_name =
-      base::UTF16ToUTF8(device_in.manufacturer_name.value_or(base::string16()));
+      base::UTF16ToUTF8(device_in.manufacturer_name.value_or(std::u16string()));
   device_out->serial_number =
-      base::UTF16ToUTF8(device_in.serial_number.value_or(base::string16()));
+      base::UTF16ToUTF8(device_in.serial_number.value_or(std::u16string()));
 }
 
 void UsbDeviceManager::GetDevices(
@@ -188,7 +201,8 @@ void UsbDeviceManager::GetDevice(
     const std::string& guid,
     mojo::PendingReceiver<device::mojom::UsbDevice> device_receiver) {
   EnsureConnectionWithDeviceManager();
-  device_manager_->GetDevice(guid, std::move(device_receiver),
+  device_manager_->GetDevice(guid, /*blocked_interface_classes=*/{},
+                             std::move(device_receiver),
                              /*device_client=*/mojo::NullRemote());
 }
 
@@ -210,14 +224,14 @@ bool UsbDeviceManager::UpdateActiveConfig(const std::string& guid,
   return true;
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 void UsbDeviceManager::CheckAccess(
     const std::string& guid,
     device::mojom::UsbDeviceManager::CheckAccessCallback callback) {
   EnsureConnectionWithDeviceManager();
   device_manager_->CheckAccess(guid, std::move(callback));
 }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 void UsbDeviceManager::EnsureConnectionWithDeviceManager() {
   if (device_manager_)
@@ -362,18 +376,18 @@ void UsbDeviceManager::DispatchEvent(
 
     std::unique_ptr<Event> event;
     if (event_name == usb::OnDeviceAdded::kEventName) {
-      event.reset(new Event(events::USB_ON_DEVICE_ADDED,
-                            usb::OnDeviceAdded::kEventName,
-                            usb::OnDeviceAdded::Create(device_obj)));
+      event = std::make_unique<Event>(events::USB_ON_DEVICE_ADDED,
+                                      usb::OnDeviceAdded::kEventName,
+                                      usb::OnDeviceAdded::Create(device_obj));
     } else {
       DCHECK(event_name == usb::OnDeviceRemoved::kEventName);
-      event.reset(new Event(events::USB_ON_DEVICE_REMOVED,
-                            usb::OnDeviceRemoved::kEventName,
-                            usb::OnDeviceRemoved::Create(device_obj)));
+      event = std::make_unique<Event>(events::USB_ON_DEVICE_REMOVED,
+                                      usb::OnDeviceRemoved::kEventName,
+                                      usb::OnDeviceRemoved::Create(device_obj));
     }
 
     event->will_dispatch_callback =
-        base::BindRepeating(&WillDispatchDeviceEvent, std::cref(device_info));
+        base::BindRepeating(&MyWillDispatchDeviceEvent, std::cref(device_info));
     event_router->BroadcastEvent(std::move(event));
   }
 }

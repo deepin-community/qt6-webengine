@@ -46,7 +46,6 @@
 #include "src/core/SkMask.h"
 #include "src/core/SkScalerContext.h"
 #include "src/core/SkTypefaceCache.h"
-#include "src/core/SkUtils.h"
 #include "src/ports/SkScalerContext_mac_ct.h"
 #include "src/ports/SkTypeface_mac_ct.h"
 #include "src/sfnt/SkOTTableTypes.h"
@@ -177,15 +176,15 @@ static void add_notrak_attr(CFMutableDictionaryRef attr) {
 }
 
 SkUniqueCFRef<CTFontRef> SkCTFontCreateExactCopy(CTFontRef baseFont, CGFloat textSize,
-                                                 OpszVariation opsz)
+                                                 OpszVariation opszVariation)
 {
     SkUniqueCFRef<CFMutableDictionaryRef> attr(
     CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
                               &kCFTypeDictionaryKeyCallBacks,
                               &kCFTypeDictionaryValueCallBacks));
 
-    if (opsz.isSet) {
-        add_opsz_attr(attr.get(), opsz.value);
+    if (opszVariation.isSet) {
+        add_opsz_attr(attr.get(), opszVariation.value);
     } else {
         // On (at least) 10.10 though 10.14 the default system font was SFNSText/SFNSDisplay.
         // The CTFont is backed by both; optical size < 20 means SFNSText else SFNSDisplay.
@@ -227,7 +226,7 @@ static bool find_by_CTFontRef(SkTypeface* cached, void* context) {
     return CFEqual(self, other);
 }
 
-/** Creates a typeface, searching the cache if isLocalStream is false. */
+/** Creates a typeface, searching the cache if providedData is nullptr. */
 sk_sp<SkTypeface> SkTypeface_Mac::Make(SkUniqueCFRef<CTFontRef> font,
                                        OpszVariation opszVariation,
                                        std::unique_ptr<SkStreamAsset> providedData) {
@@ -237,25 +236,27 @@ sk_sp<SkTypeface> SkTypeface_Mac::Make(SkUniqueCFRef<CTFontRef> font,
     SkASSERT(font);
     const bool isFromStream(providedData);
 
-    if (!isFromStream) {
-        SkAutoMutexExclusive ama(gTFCacheMutex);
-        sk_sp<SkTypeface> face = gTFCache.findByProcAndRef(find_by_CTFontRef, (void*)font.get());
-        if (face) {
-            return face;
-        }
+    auto makeTypeface = [&]() {
+        SkUniqueCFRef<CTFontDescriptorRef> desc(CTFontCopyFontDescriptor(font.get()));
+        SkFontStyle style = SkCTFontDescriptorGetSkFontStyle(desc.get(), isFromStream);
+        CTFontSymbolicTraits traits = CTFontGetSymbolicTraits(font.get());
+        bool isFixedPitch = SkToBool(traits & kCTFontMonoSpaceTrait);
+
+        return sk_sp<SkTypeface>(new SkTypeface_Mac(std::move(font), style, isFixedPitch,
+                                                    opszVariation, std::move(providedData)));
+    };
+
+    if (isFromStream) {
+        return makeTypeface();
     }
 
-    SkUniqueCFRef<CTFontDescriptorRef> desc(CTFontCopyFontDescriptor(font.get()));
-    SkFontStyle style = SkCTFontDescriptorGetSkFontStyle(desc.get(), isFromStream);
-    CTFontSymbolicTraits traits = CTFontGetSymbolicTraits(font.get());
-    bool isFixedPitch = SkToBool(traits & kCTFontMonoSpaceTrait);
-
-    sk_sp<SkTypeface> face(new SkTypeface_Mac(std::move(font), style,
-                                              isFixedPitch, opszVariation,
-                                              std::move(providedData)));
-    if (!isFromStream) {
-        SkAutoMutexExclusive ama(gTFCacheMutex);
-        gTFCache.add(face);
+    SkAutoMutexExclusive ama(gTFCacheMutex);
+    sk_sp<SkTypeface> face = gTFCache.findByProcAndRef(find_by_CTFontRef, (void*)font.get());
+    if (!face) {
+        face = makeTypeface();
+        if (face) {
+            gTFCache.add(face);
+        }
     }
     return face;
 }
@@ -565,8 +566,8 @@ std::unique_ptr<SkAdvancedTypefaceMetrics> SkTypeface_Mac::onGetAdvancedMetrics(
         }
     }
 
-    SkUniqueCFRef<CFArrayRef> ctAxes(CTFontCopyVariationAxes(ctFont.get()));
-    if (ctAxes && CFArrayGetCount(ctAxes.get()) > 0) {
+    CFArrayRef ctAxes = this->getVariationAxes();
+    if (ctAxes && CFArrayGetCount(ctAxes) > 0) {
         info->fFlags |= SkAdvancedTypefaceMetrics::kVariable_FontFlag;
     }
 
@@ -774,14 +775,33 @@ std::unique_ptr<SkStreamAsset> SkTypeface_Mac::onOpenStream(int* ttcIndex) const
     return fStream->duplicate();
 }
 
+std::unique_ptr<SkStreamAsset> SkTypeface_Mac::onOpenExistingStream(int* ttcIndex) const {
+    *ttcIndex = 0;
+    return fStream ? fStream->duplicate() : nullptr;
+}
+
+bool SkTypeface_Mac::onGlyphMaskNeedsCurrentColor() const {
+    // `CPAL` (`COLR` and `SVG`) fonts may need the current color.
+    // However, even `sbix` fonts can have glyphs which need the current color.
+    // These may be glyphs with paths but no `sbix` entries, which are impossible to distinguish.
+    return this->fHasColorGlyphs;
+}
+
+CFArrayRef SkTypeface_Mac::getVariationAxes() const {
+    fInitVariationAxes([this]{
+        fVariationAxes.reset(CTFontCopyVariationAxes(fFontRef.get()));
+    });
+    return fVariationAxes.get();
+}
+
 int SkTypeface_Mac::onGetVariationDesignPosition(
         SkFontArguments::VariationPosition::Coordinate coordinates[], int coordinateCount) const
 {
-    SkUniqueCFRef<CFArrayRef> ctAxes(CTFontCopyVariationAxes(fFontRef.get()));
+    CFArrayRef ctAxes = this->getVariationAxes();
     if (!ctAxes) {
         return -1;
     }
-    CFIndex axisCount = CFArrayGetCount(ctAxes.get());
+    CFIndex axisCount = CFArrayGetCount(ctAxes);
     if (!coordinates || coordinateCount < axisCount) {
         return axisCount;
     }
@@ -794,7 +814,7 @@ int SkTypeface_Mac::onGetVariationDesignPosition(
 
     for (int i = 0; i < axisCount; ++i) {
         CFDictionaryRef axisInfoDict;
-        if (!SkCFDynamicCast(CFArrayGetValueAtIndex(ctAxes.get(), i), &axisInfoDict, "Axis")) {
+        if (!SkCFDynamicCast(CFArrayGetValueAtIndex(ctAxes, i), &axisInfoDict, "Axis")) {
             return -1;
         }
 
@@ -859,9 +879,9 @@ int SkTypeface_Mac::onGetTableTags(SkFontTableTag tags[]) const {
     if (!cfArray) {
         return 0;
     }
-    int count = SkToInt(CFArrayGetCount(cfArray.get()));
+    CFIndex count = CFArrayGetCount(cfArray.get());
     if (tags) {
-        for (int i = 0; i < count; ++i) {
+        for (CFIndex i = 0; i < count; ++i) {
             uintptr_t fontTag = reinterpret_cast<uintptr_t>(
                 CFArrayGetValueAtIndex(cfArray.get(), i));
             tags[i] = static_cast<SkFontTableTag>(fontTag);
@@ -1092,7 +1112,7 @@ void SkTypeface_Mac::onCharsToGlyphs(const SkUnichar uni[], int count, SkGlyphID
         int extra = 0;
         for (int i = 0; i < count; ++i) {
             glyphs[i] = macGlyphs[i + extra];
-            if (SkUTF16_IsLeadingSurrogate(src[i + extra])) {
+            if (SkUTF::IsLeadingSurrogateUTF16(src[i + extra])) {
                 ++extra;
             }
         }
@@ -1106,15 +1126,15 @@ int SkTypeface_Mac::onCountGlyphs() const {
 }
 
 /** Creates a dictionary suitable for setting the axes on a CTFont. */
-CTFontVariation SkCTVariationFromSkFontArguments(CTFontRef ct, const SkFontArguments& args) {
+CTFontVariation SkCTVariationFromSkFontArguments(CTFontRef ct, CFArrayRef ctAxes,
+                                                 const SkFontArguments& args) {
     OpszVariation opsz;
     constexpr const SkFourByteTag opszTag = SkSetFourByteTag('o','p','s','z');
 
-    SkUniqueCFRef<CFArrayRef> ctAxes(CTFontCopyVariationAxes(ct));
     if (!ctAxes) {
         return CTFontVariation();
     }
-    CFIndex axisCount = CFArrayGetCount(ctAxes.get());
+    CFIndex axisCount = CFArrayGetCount(ctAxes);
 
     // On 10.12 and later, this only returns non-default variations.
     SkUniqueCFRef<CFDictionaryRef> oldCtVariation(CTFontCopyVariation(ct));
@@ -1129,7 +1149,7 @@ CTFontVariation SkCTVariationFromSkFontArguments(CTFontRef ct, const SkFontArgum
 
     for (int i = 0; i < axisCount; ++i) {
         CFDictionaryRef axisInfoDict;
-        if (!SkCFDynamicCast(CFArrayGetValueAtIndex(ctAxes.get(), i), &axisInfoDict, "Axis")) {
+        if (!SkCFDynamicCast(CFArrayGetValueAtIndex(ctAxes, i), &axisInfoDict, "Axis")) {
             return CTFontVariation();
         }
 
@@ -1211,7 +1231,9 @@ CTFontVariation SkCTVariationFromSkFontArguments(CTFontRef ct, const SkFontArgum
 }
 
 sk_sp<SkTypeface> SkTypeface_Mac::onMakeClone(const SkFontArguments& args) const {
-    CTFontVariation ctVariation = SkCTVariationFromSkFontArguments(fFontRef.get(), args);
+    CTFontVariation ctVariation = SkCTVariationFromSkFontArguments(fFontRef.get(),
+                                                                   this->getVariationAxes(),
+                                                                   args);
 
     SkUniqueCFRef<CTFontRef> ctVariant;
     if (ctVariation.variation) {
@@ -1260,11 +1282,11 @@ sk_sp<SkTypeface> SkTypeface_Mac::onMakeClone(const SkFontArguments& args) const
 int SkTypeface_Mac::onGetVariationDesignParameters(SkFontParameters::Variation::Axis parameters[],
                                                    int parameterCount) const
 {
-    SkUniqueCFRef<CFArrayRef> ctAxes(CTFontCopyVariationAxes(fFontRef.get()));
+    CFArrayRef ctAxes = this->getVariationAxes();
     if (!ctAxes) {
         return -1;
     }
-    CFIndex axisCount = CFArrayGetCount(ctAxes.get());
+    CFIndex axisCount = CFArrayGetCount(ctAxes);
 
     if (!parameters || parameterCount < axisCount) {
         return axisCount;
@@ -1276,7 +1298,7 @@ int SkTypeface_Mac::onGetVariationDesignParameters(SkFontParameters::Variation::
 
     for (int i = 0; i < axisCount; ++i) {
         CFDictionaryRef axisInfoDict;
-        if (!SkCFDynamicCast(CFArrayGetValueAtIndex(ctAxes.get(), i), &axisInfoDict, "Axis")) {
+        if (!SkCFDynamicCast(CFArrayGetValueAtIndex(ctAxes, i), &axisInfoDict, "Axis")) {
             return -1;
         }
 

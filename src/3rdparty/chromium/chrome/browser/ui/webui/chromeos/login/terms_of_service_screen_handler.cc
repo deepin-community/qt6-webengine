@@ -11,10 +11,10 @@
 #include "base/callback_helpers.h"
 #include "base/strings/string_split.h"
 #include "base/values.h"
+#include "chrome/browser/ash/base/locale_util.h"
 #include "chrome/browser/ash/login/screens/terms_of_service_screen.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/chromeos/base/locale_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/webui/chromeos/login/oobe_ui.h"
@@ -26,16 +26,15 @@
 #include "components/user_manager/user.h"
 #include "components/user_manager/user_manager.h"
 #include "content/public/browser/web_ui.h"
-#include "ui/base/ime/chromeos/input_method_manager.h"
+#include "ui/base/ime/ash/input_method_manager.h"
 
 namespace chromeos {
 
 constexpr StaticOobeScreenId TermsOfServiceScreenView::kScreenId;
 
-TermsOfServiceScreenHandler::TermsOfServiceScreenHandler(
-    JSCallsContainer* js_calls_container)
-    : BaseScreenHandler(kScreenId, js_calls_container) {
-  set_user_acted_method_path("login.TermsOfServiceScreen.userActed");
+TermsOfServiceScreenHandler::TermsOfServiceScreenHandler()
+    : BaseScreenHandler(kScreenId) {
+  set_user_acted_method_path_deprecated("login.TermsOfServiceScreen.userActed");
 }
 
 TermsOfServiceScreenHandler::~TermsOfServiceScreenHandler() {
@@ -61,25 +60,26 @@ void TermsOfServiceScreenHandler::DeclareLocalizedValues(
 }
 
 void TermsOfServiceScreenHandler::SetScreen(TermsOfServiceScreen* screen) {
-  BaseScreenHandler::SetBaseScreen(screen);
+  BaseScreenHandler::SetBaseScreenDeprecated(screen);
   screen_ = screen;
 }
 
-void TermsOfServiceScreenHandler::Show() {
-  if (!page_is_ready()) {
+void TermsOfServiceScreenHandler::Show(const std::string& manager) {
+  manager_ = manager;
+  if (!IsJavascriptAllowed()) {
     show_on_init_ = true;
     return;
   }
-  DoShow();
+  // Update the UI to show an error message or the Terms of Service.
+  UpdateTermsOfServiceInUI();
+
+  base::Value::Dict data;
+  data.Set("manager", manager_);
+
+  ShowInWebUI(std::move(data));
 }
 
-void TermsOfServiceScreenHandler::Hide() {
-}
-
-void TermsOfServiceScreenHandler::SetManager(const std::string& manager) {
-  manager_ = manager;
-  UpdateManagerInUI();
-}
+void TermsOfServiceScreenHandler::Hide() {}
 
 void TermsOfServiceScreenHandler::OnLoadError() {
   load_error_ = true;
@@ -98,49 +98,15 @@ bool TermsOfServiceScreenHandler::AreTermsLoaded() {
   return !load_error_ && !terms_of_service_.empty();
 }
 
-void TermsOfServiceScreenHandler::Initialize() {
+void TermsOfServiceScreenHandler::InitializeDeprecated() {
   if (show_on_init_) {
-    Show();
+    Show(manager_);
     show_on_init_ = false;
   }
 }
 
-void TermsOfServiceScreenHandler::DoShow() {
-  // Determine the user's most preferred input method.
-  std::vector<std::string> input_methods = base::SplitString(
-      ProfileHelper::Get()
-          ->GetProfileByUserUnsafe(
-              user_manager::UserManager::Get()->GetActiveUser())
-          ->GetPrefs()
-          ->GetString(prefs::kLanguagePreloadEngines),
-      ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
-
-  if (!input_methods.empty()) {
-    // If the user has a preferred input method, enable it and switch to it.
-    chromeos::input_method::InputMethodManager* input_method_manager =
-        chromeos::input_method::InputMethodManager::Get();
-    input_method_manager->GetActiveIMEState()->EnableInputMethod(
-        input_methods.front());
-    input_method_manager->GetActiveIMEState()->ChangeInputMethod(
-        input_methods.front(), false /* show_message */);
-  }
-
-  // Updates the manager name shown in the UI.
-  UpdateManagerInUI();
-
-  // Update the UI to show an error message or the Terms of Service.
-  UpdateTermsOfServiceInUI();
-
-  ShowScreen(kScreenId);
-}
-
-void TermsOfServiceScreenHandler::UpdateManagerInUI() {
-  if (page_is_ready())
-    CallJS("login.TermsOfServiceScreen.setManager", manager_);
-}
-
 void TermsOfServiceScreenHandler::UpdateTermsOfServiceInUI() {
-  if (!page_is_ready())
+  if (!IsJavascriptAllowed())
     return;
 
   // If either `load_error_` or `terms_of_service_` is set, the download of the

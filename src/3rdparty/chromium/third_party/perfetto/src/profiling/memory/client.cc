@@ -16,12 +16,16 @@
 
 #include "src/profiling/memory/client.h"
 
-#include <inttypes.h>
 #include <signal.h>
 #include <sys/prctl.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
 #include <unistd.h>
+
+#include <algorithm>
+#include <atomic>
+#include <cinttypes>
+#include <new>
 
 #include <unwindstack/MachineArm.h>
 #include <unwindstack/MachineArm64.h>
@@ -32,16 +36,13 @@
 #include <unwindstack/Regs.h>
 #include <unwindstack/RegsGetLocal.h>
 
-#include <algorithm>
-#include <atomic>
-#include <new>
-
 #include "perfetto/base/compiler.h"
 #include "perfetto/base/logging.h"
 #include "perfetto/base/thread_utils.h"
 #include "perfetto/base/time.h"
 #include "perfetto/ext/base/file_utils.h"
 #include "perfetto/ext/base/scoped_file.h"
+#include "perfetto/ext/base/string_utils.h"
 #include "perfetto/ext/base/unix_socket.h"
 #include "perfetto/ext/base/utils.h"
 #include "src/profiling/memory/sampler.h"
@@ -183,8 +184,6 @@ std::shared_ptr<Client> Client::CreateAndHandshake(
     prctl(PR_SET_DUMPABLE, 1);
   }
 
-  size_t num_send_fds = kHandshakeSize;
-
   base::ScopedFile maps(base::OpenFile("/proc/self/maps", O_RDONLY));
   if (!maps) {
     PERFETTO_DFATAL_OR_ELOG("Failed to open /proc/self/maps");
@@ -205,7 +204,7 @@ std::shared_ptr<Client> Client::CreateAndHandshake(
 
   // Send an empty record to transfer fds for /proc/self/maps and
   // /proc/self/mem.
-  if (sock.Send(kSingleByte, sizeof(kSingleByte), fds, num_send_fds) !=
+  if (sock.Send(kSingleByte, sizeof(kSingleByte), fds, kHandshakeSize) !=
       sizeof(kSingleByte)) {
     PERFETTO_DFATAL_OR_ELOG("Failed to send file descriptors.");
     return nullptr;
@@ -465,8 +464,7 @@ bool Client::RecordHeapInfo(uint32_t heap_id,
 
   HeapName hnr;
   hnr.heap_id = heap_id;
-  strncpy(&hnr.heap_name[0], heap_name, sizeof(hnr.heap_name));
-  hnr.heap_name[sizeof(hnr.heap_name) - 1] = '\0';
+  base::StringCopy(&hnr.heap_name[0], heap_name, sizeof(hnr.heap_name));
   hnr.sample_interval = interval;
 
   WireMessage msg = {};

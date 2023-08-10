@@ -12,6 +12,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/memory/raw_ptr.h"
 #include "base/win/scoped_bstr.h"
 #include "base/win/scoped_variant.h"
 #include "third_party/iaccessible2/ia2_api_all.h"
@@ -102,8 +103,8 @@ TEST_F(ViewAXPlatformNodeDelegateWinTest, TextfieldAccessibility) {
   View* content = widget.SetContentsView(std::make_unique<View>());
 
   Textfield* textfield = new Textfield;
-  textfield->SetAccessibleName(STRING16_LITERAL("Name"));
-  textfield->SetText(STRING16_LITERAL("Value"));
+  textfield->SetAccessibleName(u"Name");
+  textfield->SetText(u"Value");
   content->AddChildView(textfield);
 
   ComPtr<IAccessible> content_accessible(content->GetNativeViewAccessible());
@@ -137,7 +138,7 @@ TEST_F(ViewAXPlatformNodeDelegateWinTest, TextfieldAccessibility) {
   ScopedBstr new_value(L"New value");
   ASSERT_EQ(S_OK,
             textfield_accessible->put_accValue(childid_self, new_value.Get()));
-  EXPECT_EQ(STRING16_LITERAL("New value"), textfield->GetText());
+  EXPECT_EQ(u"New value", textfield->GetText());
 }
 
 TEST_F(ViewAXPlatformNodeDelegateWinTest, TextfieldAssociatedLabel) {
@@ -148,7 +149,7 @@ TEST_F(ViewAXPlatformNodeDelegateWinTest, TextfieldAssociatedLabel) {
 
   View* content = widget.SetContentsView(std::make_unique<View>());
 
-  Label* label = new Label(STRING16_LITERAL("Label"));
+  Label* label = new Label(u"Label");
   content->AddChildView(label);
   Textfield* textfield = new Textfield;
   textfield->SetAssociatedLabel(label);
@@ -394,7 +395,7 @@ TEST_F(ViewAXPlatformNodeDelegateWinTest, Overrides) {
 
   View* alert_view = new ScrollView;
   alert_view->GetViewAccessibility().OverrideRole(ax::mojom::Role::kAlert);
-  alert_view->GetViewAccessibility().OverrideName(STRING16_LITERAL("Name"));
+  alert_view->GetViewAccessibility().OverrideName(u"Name");
   alert_view->GetViewAccessibility().OverrideDescription("Description");
   alert_view->GetViewAccessibility().OverrideIsLeaf(true);
   contents_view->AddChildView(alert_view);
@@ -473,7 +474,7 @@ TEST_F(ViewAXPlatformNodeDelegateWinTest, GridRowColumnCount) {
   EXPECT_EQ(0, column_count);
   // To do still: When nothing is set, currently
   // AXPlatformNodeDelegateBase::GetTable{Row/Col}Count() returns 0 Should it
-  // return base::nullopt if the attribute is not set? Like
+  // return absl::nullopt if the attribute is not set? Like
   // GetTableAria{Row/Col}Count()
   // EXPECT_EQ(E_UNEXPECTED, grid_provider->get_RowCount(&row_count));
 
@@ -552,12 +553,15 @@ class TestTableModel : public ui::TableModel {
  public:
   TestTableModel() = default;
 
+  TestTableModel(const TestTableModel&) = delete;
+  TestTableModel& operator=(const TestTableModel&) = delete;
+
   // ui::TableModel:
   int RowCount() override { return 3; }
 
-  base::string16 GetText(int row, int column_id) override {
+  std::u16string GetText(int row, int column_id) override {
     if (row == -1)
-      return base::string16();
+      return std::u16string();
 
     const char* const cells[5][3] = {
         {"Australia", "24,584,620", "1,323,421,072,479"},
@@ -569,9 +573,6 @@ class TestTableModel : public ui::TableModel {
   }
 
   void SetObserver(ui::TableModelObserver* observer) override {}
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(TestTableModel);
 };
 }  // namespace
 
@@ -619,8 +620,8 @@ class ViewAXPlatformNodeDelegateWinTableTest
 
  protected:
   std::unique_ptr<TestTableModel> model_;
-  Widget* widget_ = nullptr;
-  TableView* table_ = nullptr;  // Owned by parent.
+  raw_ptr<Widget> widget_ = nullptr;
+  raw_ptr<TableView> table_ = nullptr;  // Owned by parent.
 };
 
 TEST_F(ViewAXPlatformNodeDelegateWinTableTest, TableCellAttributes) {

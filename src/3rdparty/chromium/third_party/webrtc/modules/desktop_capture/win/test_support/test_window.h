@@ -17,6 +17,14 @@
 
 namespace webrtc {
 
+typedef unsigned char uint8_t;
+
+// Define an arbitrary color for the test window with unique R, G, and B values
+// so consumers can verify captured content in tests.
+const uint8_t kTestWindowRValue = 191;
+const uint8_t kTestWindowGValue = 99;
+const uint8_t kTestWindowBValue = 12;
+
 struct WindowInfo {
   HWND hwnd;
   HINSTANCE window_instance;
@@ -24,14 +32,17 @@ struct WindowInfo {
 };
 
 WindowInfo CreateTestWindow(const WCHAR* window_title,
-                            const int height = 0,
-                            const int width = 0);
+                            int height = 0,
+                            int width = 0,
+                            LONG extended_styles = 0);
 
-void ResizeTestWindow(const HWND hwnd, const int width, const int height);
+void ResizeTestWindow(HWND hwnd, int width, int height);
 
-void MinimizeTestWindow(const HWND hwnd);
+void MoveTestWindow(HWND hwnd, int x, int y);
 
-void UnminimizeTestWindow(const HWND hwnd);
+void MinimizeTestWindow(HWND hwnd);
+
+void UnminimizeTestWindow(HWND hwnd);
 
 void DestroyTestWindow(WindowInfo info);
 

@@ -16,16 +16,16 @@ Polymer({
   ],
 
   properties: {
-    /** @private {!chromeos.networkConfig.mojom.ManagedProperties|undefined} */
-    managedProperties: {
-      type: Object,
-      observer: 'managedPropertiesChanged_',
-    },
-
     /** Whether or not the proxy values can be edited. */
     editable: {
       type: Boolean,
       value: false,
+    },
+
+    /** @type {!chromeos.networkConfig.mojom.ManagedProperties|undefined} */
+    managedProperties: {
+      type: Object,
+      observer: 'managedPropertiesChanged_',
     },
 
     /** Whether shared proxies are allowed. */
@@ -74,6 +74,15 @@ Polymer({
       type: Array,
       value: ['Direct', 'PAC', 'WPAD', 'Manual'],
       readOnly: true
+    },
+
+    /**
+     * The current value of the proxy exclusion input.
+     * @private
+     */
+    proxyExclusionInputValue_: {
+      type: String,
+      value: '',
     },
   },
 
@@ -251,7 +260,9 @@ Polymer({
     if (proxy.type.activeValue === 'WPAD') {
       // Set the Web Proxy Auto Discovery URL for display purposes.
       const ipv4 = this.managedProperties ?
-          OncMojo.getIPConfigForType(this.managedProperties, 'IPv4') :
+          OncMojo.getIPConfigForType(
+              this.managedProperties,
+              chromeos.networkConfig.mojom.IPConfigType.kIPv4) :
           null;
       this.wpad_ = (ipv4 && ipv4.webProxyAutoDiscoveryUrl) ||
           this.i18n('networkProxyWpadNone');
@@ -439,13 +450,11 @@ Polymer({
 
   /** @private */
   onAddProxyExclusionTap_() {
-    const value = this.$.proxyExclusion.value;
-    if (!value) {
-      return;
-    }
-    this.push('proxy_.excludeDomains.activeValue', value);
+    assert(this.proxyExclusionInputValue_);
+    this.push(
+        'proxy_.excludeDomains.activeValue', this.proxyExclusionInputValue_);
     // Clear input.
-    this.$.proxyExclusion.value = '';
+    this.proxyExclusionInputValue_ = '';
     this.proxyIsUserModified_ = true;
   },
 
@@ -459,6 +468,15 @@ Polymer({
     }
     event.stopPropagation();
     this.onAddProxyExclusionTap_();
+  },
+
+  /**
+   * @param {string} proxyExclusionInputValue
+   * @return {boolean}
+   * @private
+   */
+  shouldProxyExclusionButtonBeDisabled_(proxyExclusionInputValue) {
+    return !proxyExclusionInputValue;
   },
 
   /**

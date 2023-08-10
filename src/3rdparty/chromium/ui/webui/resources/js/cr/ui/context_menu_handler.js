@@ -26,8 +26,8 @@ cr.define('cr.ui', function() {
   class ContextMenuHandler extends cr.EventTarget {
     constructor() {
       super();
-      /** @private {!EventTracker} */
-      this.showingEvents_ = new EventTracker();
+      /** @private {!cr.EventTracker} */
+      this.showingEvents_ = new cr.EventTracker();
 
       /**
        * The menu that we are currently showing.
@@ -316,7 +316,7 @@ cr.define('cr.ui', function() {
    * The singleton context menu handler.
    * @type {!ContextMenuHandler}
    */
-  /* #export */ const contextMenuHandler = new ContextMenuHandler;
+  /* #export */ const contextMenuHandler = new ContextMenuHandler();
 
   // Export
   // #cr_define_end

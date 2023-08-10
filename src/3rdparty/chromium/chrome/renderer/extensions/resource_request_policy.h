@@ -7,9 +7,8 @@
 
 #include <set>
 
-#include "base/macros.h"
-#include "base/optional.h"
 #include "extensions/common/extension_id.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/base/page_transition_types.h"
 #include "url/origin.h"
 
@@ -27,6 +26,10 @@ class Extension;
 class ResourceRequestPolicy {
  public:
   explicit ResourceRequestPolicy(Dispatcher* dispatcher);
+
+  ResourceRequestPolicy(const ResourceRequestPolicy&) = delete;
+  ResourceRequestPolicy& operator=(const ResourceRequestPolicy&) = delete;
+
   ~ResourceRequestPolicy();
 
   void OnExtensionLoaded(const Extension& extension);
@@ -39,7 +42,7 @@ class ResourceRequestPolicy {
   bool CanRequestResource(const GURL& resource_url,
                           blink::WebLocalFrame* frame,
                           ui::PageTransition transition_type,
-                          const base::Optional<url::Origin>& initiator_origin);
+                          const absl::optional<url::Origin>& initiator_origin);
 
  private:
   Dispatcher* dispatcher_;
@@ -47,8 +50,6 @@ class ResourceRequestPolicy {
   // The set of extension IDs with any potentially web- or webview-accessible
   // resources.
   std::set<ExtensionId> web_accessible_ids_;
-
-  DISALLOW_COPY_AND_ASSIGN(ResourceRequestPolicy);
 };
 
 }  // namespace extensions

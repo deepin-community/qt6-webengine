@@ -44,7 +44,6 @@
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
 #include "third_party/blink/renderer/platform/bindings/v8_throw_exception.h"
 #include "third_party/blink/renderer/platform/instrumentation/instance_counters.h"
-#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/timer.h"
 
 #define MEDIA_KEYS_LOG_LEVEL 3
@@ -116,8 +115,11 @@ class MediaKeys::PendingAction final
 class SetCertificateResultPromise
     : public ContentDecryptionModuleResultPromise {
  public:
-  SetCertificateResultPromise(ScriptState* script_state, MediaKeys* media_keys)
+  SetCertificateResultPromise(ScriptState* script_state,
+                              const MediaKeysConfig& config,
+                              MediaKeys* media_keys)
       : ContentDecryptionModuleResultPromise(script_state,
+                                             config,
                                              EmeApiType::kSetServerCertificate),
         media_keys_(media_keys) {}
 
@@ -167,8 +169,10 @@ class GetStatusForPolicyResultPromise
     : public ContentDecryptionModuleResultPromise {
  public:
   GetStatusForPolicyResultPromise(ScriptState* script_state,
+                                  const MediaKeysConfig& config,
                                   MediaKeys* media_keys)
       : ContentDecryptionModuleResultPromise(script_state,
+                                             config,
                                              EmeApiType::kGetStatusForPolicy),
         media_keys_(media_keys) {}
 
@@ -197,10 +201,12 @@ class GetStatusForPolicyResultPromise
 MediaKeys::MediaKeys(
     ExecutionContext* context,
     const WebVector<WebEncryptedMediaSessionType>& supported_session_types,
-    std::unique_ptr<WebContentDecryptionModule> cdm)
+    std::unique_ptr<WebContentDecryptionModule> cdm,
+    const MediaKeysConfig& config)
     : ExecutionContextLifecycleObserver(context),
       supported_session_types_(supported_session_types),
       cdm_(std::move(cdm)),
+      config_(config),
       media_element_(nullptr),
       reserved_for_media_element_(false),
       timer_(context->GetTaskRunner(TaskType::kMiscPlatformAPI),
@@ -228,21 +234,6 @@ MediaKeySession* MediaKeys::createSession(ScriptState* script_state,
     return nullptr;
   }
 
-  // [RuntimeEnabled] does not work with enum values. So we have to check it
-  // here. See https://crbug.com/871867 for details.
-  if (!RuntimeEnabledFeatures::
-          EncryptedMediaPersistentUsageRecordSessionEnabled() &&
-      session_type_string == "persistent-usage-record") {
-    DVLOG(MEDIA_KEYS_LOG_LEVEL)
-        << __func__ << ": 'persistent-usage-record' support not enabled.";
-    // The message here is carefully chosen to be exactly the same as what the
-    // generated bindings would generate for invalid enum values.
-    exception_state.ThrowTypeError(
-        "The provided value 'persistent-usage-record' is not a valid enum "
-        "value of type MediaKeySessionType.");
-    return nullptr;
-  }
-
   // From http://w3c.github.io/encrypted-media/#createSession
 
   // When this method is invoked, the user agent must run the following steps:
@@ -266,8 +257,8 @@ MediaKeySession* MediaKeys::createSession(ScriptState* script_state,
   //    follows:
   //    (Initialization is performed in the constructor.)
   // 4. Return session.
-  return MakeGarbageCollected<MediaKeySession>(script_state, this,
-                                               session_type);
+  return MakeGarbageCollected<MediaKeySession>(script_state, this, session_type,
+                                               config_);
 }
 
 ScriptPromise MediaKeys::setServerCertificate(
@@ -305,7 +296,8 @@ ScriptPromise MediaKeys::setServerCertificate(
 
   // 4. Let promise be a new promise.
   SetCertificateResultPromise* result =
-      MakeGarbageCollected<SetCertificateResultPromise>(script_state, this);
+      MakeGarbageCollected<SetCertificateResultPromise>(script_state, config_,
+                                                        this);
   ScriptPromise promise = result->Promise();
 
   // 5. Run the following steps asynchronously. See SetServerCertificateTask().
@@ -363,7 +355,8 @@ ScriptPromise MediaKeys::getStatusForPolicy(
 
   // Let promise be a new promise.
   GetStatusForPolicyResultPromise* result =
-      MakeGarbageCollected<GetStatusForPolicyResultPromise>(script_state, this);
+      MakeGarbageCollected<GetStatusForPolicyResultPromise>(script_state,
+                                                            config_, this);
   ScriptPromise promise = result->Promise();
 
   // Run the following steps asynchronously. See GetStatusForPolicyTask().

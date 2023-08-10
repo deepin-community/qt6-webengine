@@ -17,9 +17,10 @@ UsbPrinterManifestHandler::~UsbPrinterManifestHandler() {
 }
 
 bool UsbPrinterManifestHandler::Parse(Extension* extension,
-                                      base::string16* error) {
-  const base::Value* usb_printers = nullptr;
-  CHECK(extension->manifest()->Get(manifest_keys::kUsbPrinters, &usb_printers));
+                                      std::u16string* error) {
+  const base::Value* usb_printers =
+      extension->manifest()->FindPath(manifest_keys::kUsbPrinters);
+  CHECK(usb_printers != nullptr);
   std::unique_ptr<UsbPrinterManifestData> data =
       UsbPrinterManifestData::FromValue(*usb_printers, error);
   if (!data) {

@@ -28,15 +28,12 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "third_party/blink/public/platform/web_crypto_algorithm.h"
-
 #include <memory>
 #include <utility>
 
 #include "base/memory/ptr_util.h"
-#include "base/stl_util.h"
+#include "third_party/blink/public/platform/web_crypto_algorithm.h"
 #include "third_party/blink/public/platform/web_crypto_algorithm_params.h"
-#include "third_party/blink/renderer/platform/wtf/assertions.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
 #include "third_party/blink/renderer/platform/wtf/thread_safe_ref_counted.h"
 
@@ -380,7 +377,7 @@ WebCryptoAlgorithm WebCryptoAlgorithm::AdoptParamsAndCreate(
 const WebCryptoAlgorithmInfo* WebCryptoAlgorithm::LookupAlgorithmInfo(
     WebCryptoAlgorithmId id) {
   const unsigned id_int = id;
-  if (id_int >= base::size(kAlgorithmIdToInfo))
+  if (id_int >= std::size(kAlgorithmIdToInfo))
     return nullptr;
   return &kAlgorithmIdToInfo[id];
 }

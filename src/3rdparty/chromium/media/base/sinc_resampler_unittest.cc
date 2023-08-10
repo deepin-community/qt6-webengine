@@ -6,7 +6,6 @@
 
 #include "base/bind.h"
 #include "base/callback_helpers.h"
-#include "base/macros.h"
 #include "base/numerics/math_constants.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/time/time.h"
@@ -148,18 +147,9 @@ TEST(SincResamplerTest, DISABLED_SetRatioBench) {
   printf("SetRatio() took %.2fms.\n", total_time_c_ms);
 }
 
-
-// Define platform independent function name for Convolve* tests.
-#if defined(ARCH_CPU_X86_FAMILY)
-#define CONVOLVE_FUNC Convolve_SSE
-#elif defined(ARCH_CPU_ARM_FAMILY) && defined(USE_NEON)
-#define CONVOLVE_FUNC Convolve_NEON
-#endif
-
 // Ensure various optimized Convolve() methods return the same value.  Only run
 // this test if other optimized methods exist, otherwise the default Convolve()
 // will be tested by the parameterized SincResampler tests below.
-#if defined(CONVOLVE_FUNC)
 static const double kKernelInterpolationFactor = 0.5;
 
 TEST(SincResamplerTest, Convolve) {
@@ -178,7 +168,7 @@ TEST(SincResamplerTest, Convolve) {
   double result = resampler.Convolve_C(
       resampler.kernel_storage_.get(), resampler.kernel_storage_.get(),
       resampler.kernel_storage_.get(), kKernelInterpolationFactor);
-  double result2 = resampler.CONVOLVE_FUNC(
+  double result2 = resampler.convolve_proc_(
       resampler.kernel_storage_.get(), resampler.kernel_storage_.get(),
       resampler.kernel_storage_.get(), kKernelInterpolationFactor);
   EXPECT_NEAR(result2, result, kEpsilon);
@@ -187,12 +177,11 @@ TEST(SincResamplerTest, Convolve) {
   result = resampler.Convolve_C(
       resampler.kernel_storage_.get() + 1, resampler.kernel_storage_.get(),
       resampler.kernel_storage_.get(), kKernelInterpolationFactor);
-  result2 = resampler.CONVOLVE_FUNC(
+  result2 = resampler.convolve_proc_(
       resampler.kernel_storage_.get() + 1, resampler.kernel_storage_.get(),
       resampler.kernel_storage_.get(), kKernelInterpolationFactor);
   EXPECT_NEAR(result2, result, kEpsilon);
 }
-#endif
 
 // Fake audio source for testing the resampler.  Generates a sinusoidal linear
 // chirp (http://en.wikipedia.org/wiki/Chirp) which can be tuned to stress the
@@ -210,6 +199,10 @@ class SinusoidalLinearChirpSource {
     double duration = static_cast<double>(total_samples_) / sample_rate_;
     k_ = (max_frequency_ - kMinFrequency) / duration;
   }
+
+  SinusoidalLinearChirpSource(const SinusoidalLinearChirpSource&) = delete;
+  SinusoidalLinearChirpSource& operator=(const SinusoidalLinearChirpSource&) =
+      delete;
 
   virtual ~SinusoidalLinearChirpSource() = default;
 
@@ -244,8 +237,6 @@ class SinusoidalLinearChirpSource {
   double max_frequency_;
   double k_;
   int current_index_;
-
-  DISALLOW_COPY_AND_ASSIGN(SinusoidalLinearChirpSource);
 };
 
 typedef std::tuple<int, int, double, double> SincResamplerTestData;

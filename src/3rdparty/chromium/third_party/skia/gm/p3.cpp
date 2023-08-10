@@ -24,6 +24,7 @@
 #include "include/core/SkTypes.h"
 #include "include/effects/SkDashPathEffect.h"
 #include "include/effects/SkGradientShader.h"
+#include "include/private/SkImageInfoPriv.h"
 #include "include/private/SkTPin.h"
 #include "src/core/SkColorSpaceXformSteps.h"
 
@@ -59,7 +60,7 @@ static void compare_pixel(const char* label,
     // but we sniff the canvas to grab its current y-translate, so that (x,y)
     // can be written in sort of chunk-relative terms.
     const SkMatrix& m = canvas->getTotalMatrix();
-    SkASSERT(m.isTranslate());
+    SkASSERT(m.isScaleTranslate());
     SkScalar dy = m.getTranslateY();
     SkASSERT(dy == (int)dy);
     y += (int)dy;

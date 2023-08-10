@@ -1062,11 +1062,6 @@ void GLES2TraceImplementation::ShallowFinishCHROMIUM() {
   gl_->ShallowFinishCHROMIUM();
 }
 
-void GLES2TraceImplementation::ShallowFlushCHROMIUM() {
-  TRACE_EVENT_BINARY_EFFICIENT0("gpu", "GLES2Trace::ShallowFlushCHROMIUM");
-  gl_->ShallowFlushCHROMIUM();
-}
-
 void GLES2TraceImplementation::OrderingBarrierCHROMIUM() {
   TRACE_EVENT_BINARY_EFFICIENT0("gpu", "GLES2Trace::OrderingBarrierCHROMIUM");
   gl_->OrderingBarrierCHROMIUM();
@@ -2290,19 +2285,6 @@ void GLES2TraceImplementation::LoseContextCHROMIUM(GLenum current,
                                                    GLenum other) {
   TRACE_EVENT_BINARY_EFFICIENT0("gpu", "GLES2Trace::LoseContextCHROMIUM");
   gl_->LoseContextCHROMIUM(current, other);
-}
-
-void GLES2TraceImplementation::UnpremultiplyAndDitherCopyCHROMIUM(
-    GLuint source_id,
-    GLuint dest_id,
-    GLint x,
-    GLint y,
-    GLsizei width,
-    GLsizei height) {
-  TRACE_EVENT_BINARY_EFFICIENT0(
-      "gpu", "GLES2Trace::UnpremultiplyAndDitherCopyCHROMIUM");
-  gl_->UnpremultiplyAndDitherCopyCHROMIUM(source_id, dest_id, x, y, width,
-                                          height);
 }
 
 void GLES2TraceImplementation::DrawBuffersEXT(GLsizei count,

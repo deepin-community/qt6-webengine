@@ -15,15 +15,16 @@
 
 #include "base/callback.h"
 #include "base/compiler_specific.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
-#include "base/scoped_observer.h"
+#include "base/scoped_multi_source_observation.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "content/public/browser/devtools_agent_host_observer.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_process_host_observer.h"
+#include "content/public/browser/service_worker_external_request_timeout_type.h"
 #include "extensions/browser/activity.h"
 #include "extensions/browser/event_page_tracker.h"
 #include "extensions/browser/extension_host_observer.h"
@@ -31,7 +32,6 @@
 #include "extensions/browser/service_worker/worker_id.h"
 #include "extensions/browser/service_worker/worker_id_set.h"
 #include "extensions/common/extension_id.h"
-#include "extensions/common/view_type.h"
 
 class GURL;
 
@@ -63,6 +63,10 @@ class ProcessManager : public KeyedService,
   using ExtensionHostSet = std::set<extensions::ExtensionHost*>;
 
   static ProcessManager* Get(content::BrowserContext* context);
+
+  ProcessManager(const ProcessManager&) = delete;
+  ProcessManager& operator=(const ProcessManager&) = delete;
+
   ~ProcessManager() override;
 
   // KeyedService support:
@@ -79,6 +83,9 @@ class ProcessManager : public KeyedService,
   void UnregisterServiceWorker(const WorkerId& worker_id);
 
   // Returns the SiteInstance that the given URL belongs to.
+  // NOTE: Usage of this method is potentially error-prone. An extension can
+  // correspond to multiple SiteInstances (e.g. consider a cross origin isolated
+  // extension with non-cross-origin-isolated contexts).
   // TODO(aa): This only returns correct results for extensions and packaged
   // apps, not hosted apps.
   virtual scoped_refptr<content::SiteInstance> GetSiteInstanceForURL(
@@ -148,12 +155,17 @@ class ProcessManager : public KeyedService,
                                    Activity::Type activity_type,
                                    const std::string& extra_data);
 
+  // Sends out notification to observers when the extension process is gone.
+  void NotifyExtensionProcessTerminated(const Extension* extension);
+
   // Methods to increment or decrement the ref-count of a specified service
   // worker with id |worker_id|.
   // The increment method returns the guid that needs to be passed to the
   // decrement method.
+  // |timeout_type| is the SW's timeout behavior.
   std::string IncrementServiceWorkerKeepaliveCount(
       const WorkerId& worker_id,
+      content::ServiceWorkerExternalRequestTimeoutType timeout_type,
       Activity::Type activity_type,
       const std::string& extra_data);
   // Decrements the ref-count of the specified worker with |worker_id| that
@@ -173,9 +185,6 @@ class ProcessManager : public KeyedService,
   // pages.
   void OnShouldSuspendAck(const std::string& extension_id,
                           uint64_t sequence_id);
-
-  // Same as above, for the Suspend message.
-  void OnSuspendAck(const std::string& extension_id);
 
   // Tracks network requests for a given RenderFrameHost, used to know
   // when network activity is idle for lazy background pages.
@@ -255,7 +264,7 @@ class ProcessManager : public KeyedService,
                  ExtensionRegistry* registry);
 
   // Not owned. Also used by IncognitoProcessManager.
-  ExtensionRegistry* extension_registry_;
+  raw_ptr<ExtensionRegistry> extension_registry_;
 
  private:
   friend class ProcessManagerFactory;
@@ -335,6 +344,10 @@ class ProcessManager : public KeyedService,
   // Clears background page data for this extension.
   void ClearBackgroundPageData(const std::string& extension_id);
 
+  // Handles a response to the SuspendExtension Mojo method, used for lazy
+  // background pages.
+  void OnSuspendAck(const std::string& extension_id);
+
   // The set of ExtensionHosts running viewless background extensions.
   ExtensionHostSet background_hosts_;
 
@@ -344,7 +357,7 @@ class ProcessManager : public KeyedService,
   scoped_refptr<content::SiteInstance> site_instance_;
 
   // The browser context associated with the |site_instance_|.
-  content::BrowserContext* browser_context_;
+  raw_ptr<content::BrowserContext> browser_context_;
 
   // Contains all active extension-related RenderFrameHost instances for all
   // extensions. We also keep a cache of the host's view type, because that
@@ -389,16 +402,15 @@ class ProcessManager : public KeyedService,
   std::map<int, ExtensionHost*> pending_network_requests_;
 
   // Observers of Service Worker RPH this ProcessManager manages.
-  ScopedObserver<content::RenderProcessHost, content::RenderProcessHostObserver>
-      process_observer_{this};
+  base::ScopedMultiSourceObservation<content::RenderProcessHost,
+                                     content::RenderProcessHostObserver>
+      process_observations_{this};
   // Maps render render_process_id -> extension_id for all Service Workers this
   // ProcessManager manages.
   std::map<int, std::set<ExtensionId>> worker_process_to_extension_ids_;
 
   // Must be last member, see doc on WeakPtrFactory.
   base::WeakPtrFactory<ProcessManager> weak_ptr_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(ProcessManager);
 };
 
 }  // namespace extensions

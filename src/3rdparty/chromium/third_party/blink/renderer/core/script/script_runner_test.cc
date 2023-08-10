@@ -7,12 +7,14 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/platform/platform.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/script/mock_script_element_base.h"
 #include "third_party/blink/renderer/core/script/pending_script.h"
 #include "third_party/blink/renderer/core/script/script.h"
 #include "third_party/blink/renderer/core/testing/dummy_page_holder.h"
 #include "third_party/blink/renderer/platform/bindings/runtime_call_stats.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/platform/heap/thread_state.h"
 #include "third_party/blink/renderer/platform/testing/testing_platform_support_with_mock_scheduler.h"
 
 using testing::InvokeWithoutArgs;
@@ -36,7 +38,7 @@ class MockPendingScript : public PendingScript {
 
   MockPendingScript(ScriptElementBase* element,
                     ScriptSchedulingType scheduling_type)
-      : PendingScript(element, TextPosition()) {
+      : PendingScript(element, TextPosition::MinimumPosition()) {
     SetSchedulingType(scheduling_type);
   }
   ~MockPendingScript() override {}
@@ -175,9 +177,7 @@ TEST_F(ScriptRunnerTest, QueueMixedScripts) {
   QueueScriptForExecution(pending_script5);
 
   NotifyScriptReady(pending_script1);
-  NotifyScriptReady(pending_script2);
   NotifyScriptReady(pending_script3);
-  NotifyScriptReady(pending_script4);
   NotifyScriptReady(pending_script5);
 
   EXPECT_CALL(*pending_script1, ExecuteScriptBlock(_))
@@ -191,10 +191,25 @@ TEST_F(ScriptRunnerTest, QueueMixedScripts) {
   EXPECT_CALL(*pending_script5, ExecuteScriptBlock(_))
       .WillOnce(InvokeWithoutArgs([this] { order_.push_back(5); }));
 
+  platform_->RunSingleTask();
+  document_->domWindow()->SetLifecycleState(
+      mojom::FrameLifecycleState::kPaused);
+  document_->domWindow()->SetLifecycleState(
+      mojom::FrameLifecycleState::kRunning);
   platform_->RunUntilIdle();
 
-  // Async tasks are expected to run first.
-  EXPECT_THAT(order_, ElementsAre(4, 5, 1, 2, 3));
+  // In-order script 3 cannot run, since in-order script 2 just scheduled before
+  // is not yet ready.
+  // Async scripts that are ready can skip the previously queued other async
+  // scripts, so 5 runs.
+  EXPECT_THAT(order_, ElementsAre(1, 5));
+
+  NotifyScriptReady(pending_script2);
+  NotifyScriptReady(pending_script4);
+  platform_->RunUntilIdle();
+
+  // In-order script 3 can now run.
+  EXPECT_THAT(order_, ElementsAre(1, 5, 2, 3, 4));
 }
 
 TEST_F(ScriptRunnerTest, QueueReentrantScript_Async) {
@@ -330,10 +345,9 @@ TEST_F(ScriptRunnerTest, ResumeAndSuspend_InOrder) {
   NotifyScriptReady(pending_script2);
   NotifyScriptReady(pending_script3);
 
-  platform_->RunSingleTask();
-  script_runner_->ContextLifecycleStateChanged(
+  document_->domWindow()->SetLifecycleState(
       mojom::FrameLifecycleState::kPaused);
-  script_runner_->ContextLifecycleStateChanged(
+  document_->domWindow()->SetLifecycleState(
       mojom::FrameLifecycleState::kRunning);
   platform_->RunUntilIdle();
 
@@ -361,67 +375,14 @@ TEST_F(ScriptRunnerTest, ResumeAndSuspend_Async) {
   EXPECT_CALL(*pending_script3, ExecuteScriptBlock(_))
       .WillOnce(InvokeWithoutArgs([this] { order_.push_back(3); }));
 
-  platform_->RunSingleTask();
-  script_runner_->ContextLifecycleStateChanged(
+  document_->domWindow()->SetLifecycleState(
       mojom::FrameLifecycleState::kPaused);
-  script_runner_->ContextLifecycleStateChanged(
+  document_->domWindow()->SetLifecycleState(
       mojom::FrameLifecycleState::kRunning);
   platform_->RunUntilIdle();
 
   // Make sure elements are correct.
   EXPECT_THAT(order_, WhenSorted(ElementsAre(1, 2, 3)));
-}
-
-TEST_F(ScriptRunnerTest, SetForceDeferredWithAddedAsyncScript) {
-  auto* pending_script1 = MockPendingScript::CreateAsync(document_);
-
-  QueueScriptForExecution(pending_script1);
-  NotifyScriptReady(pending_script1);
-  EXPECT_CALL(*pending_script1, ExecuteScriptBlock(_))
-      .WillOnce(InvokeWithoutArgs([this] { order_.push_back(1); }));
-  script_runner_->SetForceDeferredExecution(true);
-
-  // Adding new async script while deferred will cause another task to be
-  // posted for it when execution is unblocked.
-  auto* pending_script2 = MockPendingScript::CreateAsync(document_);
-  QueueScriptForExecution(pending_script2);
-  NotifyScriptReady(pending_script2);
-  EXPECT_CALL(*pending_script2, ExecuteScriptBlock(_))
-      .WillOnce(InvokeWithoutArgs([this] { order_.push_back(2); }));
-  // Unblock async scripts before the tasks posted in NotifyScriptReady() is
-  // executed, i.e. no RunUntilIdle() etc. in between.
-  script_runner_->SetForceDeferredExecution(false);
-  platform_->RunUntilIdle();
-  ASSERT_EQ(2u, order_.size());
-}
-
-TEST_F(ScriptRunnerTest, SetForceDeferredAndResumeAndSuspend) {
-  auto* pending_script1 = MockPendingScript::CreateAsync(document_);
-
-  QueueScriptForExecution(pending_script1);
-  NotifyScriptReady(pending_script1);
-
-  EXPECT_CALL(*pending_script1, ExecuteScriptBlock(_))
-      .WillOnce(InvokeWithoutArgs([this] { order_.push_back(1); }));
-
-  script_runner_->SetForceDeferredExecution(true);
-  platform_->RunSingleTask();
-  ASSERT_EQ(0u, order_.size());
-
-  script_runner_->ContextLifecycleStateChanged(
-      mojom::FrameLifecycleState::kPaused);
-  platform_->RunSingleTask();
-  ASSERT_EQ(0u, order_.size());
-
-  // Resuming will not execute script while still in ForceDeferred state.
-  script_runner_->ContextLifecycleStateChanged(
-      mojom::FrameLifecycleState::kRunning);
-  platform_->RunUntilIdle();
-  ASSERT_EQ(0u, order_.size());
-
-  script_runner_->SetForceDeferredExecution(false);
-  platform_->RunUntilIdle();
-  ASSERT_EQ(1u, order_.size());
 }
 
 TEST_F(ScriptRunnerTest, LateNotifications) {

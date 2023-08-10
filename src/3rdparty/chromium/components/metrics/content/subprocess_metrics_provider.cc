@@ -6,7 +6,6 @@
 
 #include <utility>
 
-#include "base/bind.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_base.h"
 #include "base/metrics/histogram_macros.h"
@@ -14,8 +13,6 @@
 #include "base/metrics/persistent_memory_allocator.h"
 #include "components/metrics/metrics_service.h"
 #include "content/public/browser/browser_child_process_host.h"
-#include "content/public/browser/browser_task_traits.h"
-#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/child_process_data.h"
 
 namespace metrics {
@@ -121,21 +118,25 @@ void SubprocessMetricsProvider::MergeHistogramDeltas() {
   }
 }
 
-void SubprocessMetricsProvider::BrowserChildProcessHostConnected(
+void SubprocessMetricsProvider::BrowserChildProcessLaunchedAndConnected(
     const content::ChildProcessData& data) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
-  // It's necessary to access the BrowserChildProcessHost object that is
-  // managing the child in order to extract the metrics memory from it.
-  // Unfortunately, the required lookup can only be performed on the IO
-  // thread so do the necessary dance.
-  content::GetIOThreadTaskRunner({})->PostTaskAndReplyWithResult(
-      FROM_HERE,
-      base::BindOnce(
-          &SubprocessMetricsProvider::GetSubprocessHistogramAllocatorOnIOThread,
-          data.id),
-      base::BindOnce(&SubprocessMetricsProvider::RegisterSubprocessAllocator,
-                     weak_ptr_factory_.GetWeakPtr(), data.id));
+  // See if the new process has a memory allocator and take control of it if so.
+  // This call can only be made on the browser's IO thread.
+  content::BrowserChildProcessHost* host =
+      content::BrowserChildProcessHost::FromID(data.id);
+  if (!host)
+    return;
+
+  std::unique_ptr<base::PersistentMemoryAllocator> allocator =
+      host->TakeMetricsAllocator();
+  if (!allocator)
+    return;
+
+  RegisterSubprocessAllocator(
+      data.id, std::make_unique<base::PersistentHistogramAllocator>(
+                   std::move(allocator)));
 }
 
 void SubprocessMetricsProvider::BrowserChildProcessHostDisconnected(
@@ -199,25 +200,6 @@ void SubprocessMetricsProvider::RenderProcessHostDestroyed(
 
   DeregisterSubprocessAllocator(host->GetID());
   scoped_observations_.RemoveObservation(host);
-}
-
-// static
-std::unique_ptr<base::PersistentHistogramAllocator>
-SubprocessMetricsProvider::GetSubprocessHistogramAllocatorOnIOThread(int id) {
-  // See if the new process has a memory allocator and take control of it if so.
-  // This call can only be made on the browser's IO thread.
-  content::BrowserChildProcessHost* host =
-      content::BrowserChildProcessHost::FromID(id);
-  if (!host)
-    return nullptr;
-
-  std::unique_ptr<base::PersistentMemoryAllocator> allocator =
-      host->TakeMetricsAllocator();
-  if (!allocator)
-    return nullptr;
-
-  return std::make_unique<base::PersistentHistogramAllocator>(
-      std::move(allocator));
 }
 
 }  // namespace metrics

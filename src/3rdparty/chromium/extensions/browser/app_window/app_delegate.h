@@ -5,6 +5,8 @@
 #ifndef EXTENSIONS_BROWSER_APP_WINDOW_APP_DELEGATE_H_
 #define EXTENSIONS_BROWSER_APP_WINDOW_APP_DELEGATE_H_
 
+#include <memory>
+
 #include "base/callback_forward.h"
 #include "content/public/browser/media_stream_request.h"
 #include "third_party/blink/public/common/mediastream/media_stream_request.h"
@@ -20,7 +22,6 @@ class FileChooserParams;
 namespace content {
 enum class PictureInPictureResult;
 class BrowserContext;
-class ColorChooser;
 class FileSelectListener;
 class RenderFrameHost;
 class WebContents;
@@ -30,10 +31,6 @@ struct OpenURLParams;
 namespace gfx {
 class Rect;
 class Size;
-}
-
-namespace viz {
-class SurfaceId;
 }
 
 namespace extensions {
@@ -68,9 +65,6 @@ class AppDelegate {
       bool user_gesture) = 0;
 
   // Feature support.
-  virtual content::ColorChooser* ShowColorChooser(
-      content::WebContents* web_contents,
-      SkColor initial_color) = 0;
   virtual void RunFileChooser(
       content::RenderFrameHost* render_frame_host,
       scoped_refptr<content::FileSelectListener> listener,
@@ -108,9 +102,7 @@ class AppDelegate {
   // entering Picture-in-Picture.
   // Returns the result of the enter request.
   virtual content::PictureInPictureResult EnterPictureInPicture(
-      content::WebContents* web_contents,
-      const viz::SurfaceId& surface_id,
-      const gfx::Size& natural_size) = 0;
+      content::WebContents* web_contents) = 0;
 
   // Updates the Picture-in-Picture controller with a signal that
   // Picture-in-Picture mode has ended.

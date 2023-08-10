@@ -15,7 +15,6 @@
 #include <string>
 
 #include "modules/audio_processing/agc2/agc2_common.h"
-#include "rtc_base/constructor_magic.h"
 #include "rtc_base/gtest_prod_util.h"
 #include "system_wrappers/include/metrics.h"
 
@@ -64,6 +63,9 @@ class InterpolatedGainCurve {
                         const std::string& histogram_name_prefix);
   ~InterpolatedGainCurve();
 
+  InterpolatedGainCurve(const InterpolatedGainCurve&) = delete;
+  InterpolatedGainCurve& operator=(const InterpolatedGainCurve&) = delete;
+
   Stats get_stats() const { return stats_; }
 
   // Given a non-negative input level (linear scale), a scalar factor to apply
@@ -75,7 +77,7 @@ class InterpolatedGainCurve {
  private:
   // For comparing 'approximation_params_*_' with ones computed by
   // ComputeInterpolatedGainCurve.
-  FRIEND_TEST_ALL_PREFIXES(AutomaticGainController2InterpolatedGainCurve,
+  FRIEND_TEST_ALL_PREFIXES(GainController2InterpolatedGainCurve,
                            CheckApproximationParams);
 
   struct RegionLogger {
@@ -143,8 +145,6 @@ class InterpolatedGainCurve {
 
   // Stats.
   mutable Stats stats_;
-
-  RTC_DISALLOW_COPY_AND_ASSIGN(InterpolatedGainCurve);
 };
 
 }  // namespace webrtc

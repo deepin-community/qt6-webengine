@@ -11,7 +11,6 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/no_destructor.h"
-#include "base/task/post_task.h"
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "chromecast/device/bluetooth/bluetooth_util.h"
 #include "chromecast/device/bluetooth/le/gatt_client_manager.h"
@@ -177,7 +176,7 @@ void BluetoothAdapterCast::SetAdvertisingInterval(
 
 void BluetoothAdapterCast::ConnectDevice(
     const std::string& address,
-    const base::Optional<BluetoothDevice::AddressType>& address_type,
+    const absl::optional<BluetoothDevice::AddressType>& address_type,
     ConnectDeviceCallback callback,
     ErrorCallback error_callback) {
   NOTIMPLEMENTED() << __func__ << " GATT server mode not supported";
@@ -214,23 +213,24 @@ bool BluetoothAdapterCast::SetPoweredImpl(bool powered) {
 }
 
 void BluetoothAdapterCast::StartScanWithFilter(
-    std::unique_ptr<device::BluetoothDiscoveryFilter> discovery_filter,
+    [[maybe_unused]] std::unique_ptr<device::BluetoothDiscoveryFilter>
+        discovery_filter,
     DiscoverySessionResultCallback callback) {
   // The discovery filter is unused for now, as the Cast bluetooth stack does
   // not expose scan filters yet. However, implementation of filtering would
   // save numerous UI<->IO threadhops by eliminating unnecessary calls to
   // GetDevice().
-  // TODO(bcf|slan): Wire this up once scan filters are implemented.
-  (void)discovery_filter;
+  // TODO(bcf|slan): Wire this up once scan filters are implemented and remove
+  // the [[maybe_unused]].
 
-  auto copyable_callback = base::AdaptCallbackForRepeating(std::move(callback));
+  auto split_callback = base::SplitOnceCallback(std::move(callback));
 
   // Add this request to the queue.
   pending_discovery_requests_.emplace(BluetoothAdapterCast::DiscoveryParams(
       std::move(discovery_filter),
-      base::BindOnce(copyable_callback, /*is_error=*/false,
+      base::BindOnce(std::move(split_callback.first), /*is_error=*/false,
                      UMABluetoothDiscoverySessionOutcome::SUCCESS),
-      base::BindOnce(copyable_callback, /*is_error=*/true)));
+      base::BindOnce(std::move(split_callback.second), /*is_error=*/true)));
 
   // If the queue length is greater than 1 (i.e. there was a pending request
   // when this method was called), exit early. This request will be processed

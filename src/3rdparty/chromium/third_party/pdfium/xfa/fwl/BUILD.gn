@@ -65,9 +65,11 @@ source_set("fwl") {
     "cfwl_pushbutton.h",
     "cfwl_scrollbar.cpp",
     "cfwl_scrollbar.h",
+    "cfwl_themebackground.cpp",
     "cfwl_themebackground.h",
     "cfwl_themepart.cpp",
     "cfwl_themepart.h",
+    "cfwl_themetext.cpp",
     "cfwl_themetext.h",
     "cfwl_widget.cpp",
     "cfwl_widget.h",
@@ -106,6 +108,11 @@ source_set("fwl") {
     "theme/cfwl_widgettp.cpp",
     "theme/cfwl_widgettp.h",
   ]
+  configs += [
+    "../../:pdfium_strict_config",
+    "../../:pdfium_noshorten_config",
+    "../:xfa_warnings",
+  ]
   deps = [
     "../../core/fxcrt",
     "../../core/fxge",
@@ -114,10 +121,6 @@ source_set("fwl") {
     "../fde",
     "../fgas/font",
     "../fgas/graphics",
-  ]
-  configs += [
-    "../../:pdfium_core_config",
-    "../:xfa_warnings",
   ]
   visibility = [ "../../*" ]
 }

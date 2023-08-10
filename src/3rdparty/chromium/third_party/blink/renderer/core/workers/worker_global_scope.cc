@@ -35,7 +35,6 @@
 #include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom-blink.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/platform/web_url_request.h"
-#include "third_party/blink/renderer/bindings/core/v8/script_source_code.h"
 #include "third_party/blink/renderer/bindings/core/v8/source_location.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_throw_dom_exception.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_void_function.h"
@@ -50,6 +49,7 @@
 #include "third_party/blink/renderer/core/frame/user_activation.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
 #include "third_party/blink/renderer/core/inspector/console_message_storage.h"
+#include "third_party/blink/renderer/core/inspector/inspector_audits_issue.h"
 #include "third_party/blink/renderer/core/inspector/inspector_issue_storage.h"
 #include "third_party/blink/renderer/core/inspector/worker_inspector_controller.h"
 #include "third_party/blink/renderer/core/inspector/worker_thread_debugger.h"
@@ -67,10 +67,11 @@
 #include "third_party/blink/renderer/core/workers/worker_navigator.h"
 #include "third_party/blink/renderer/core/workers/worker_reporting_proxy.h"
 #include "third_party/blink/renderer/core/workers/worker_thread.h"
+#include "third_party/blink/renderer/platform/bindings/exception_messages.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/microtask.h"
 #include "third_party/blink/renderer/platform/fonts/font_matching_metrics.h"
-#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/instrumentation/instance_counters.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_client_settings_object_snapshot.h"
 #include "third_party/blink/renderer/platform/loader/fetch/memory_cache.h"
@@ -82,7 +83,6 @@
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
 #include "third_party/blink/renderer/platform/weborigin/security_policy.h"
-#include "third_party/blink/renderer/platform/wtf/assertions.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
 
 namespace blink {
@@ -93,7 +93,8 @@ void RemoveURLFromMemoryCacheInternal(const KURL& url) {
 }
 
 scoped_refptr<SecurityOrigin> CreateSecurityOrigin(
-    GlobalScopeCreationParams* creation_params) {
+    GlobalScopeCreationParams* creation_params,
+    bool is_service_worker_global_scope) {
   // A worker environment settings object's origin must be set as follows:
   //
   // - DedicatedWorkers and SharedWorkers
@@ -118,8 +119,8 @@ scoped_refptr<SecurityOrigin> CreateSecurityOrigin(
   // https://w3c.github.io/ServiceWorker/#start-register
   // Step 3: If scriptURL’s scheme is not one of "http" and "https", reject
   // promise with a TypeError and abort these steps. [spec text]
-//  DCHECK(!execution_context->IsServiceWorkerGlobalScope() ||
-//         !KURL(creation_params->script_url).ProtocolIsData());
+  DCHECK(!is_service_worker_global_scope ||
+         !KURL(creation_params->script_url).ProtocolIsData());
 
   // TODO(https://crbug.com/1058305) Inherit |agent_cluster_id_| for dedicated
   // workers. DO NOT inherit for shared workers and service workers.
@@ -324,9 +325,6 @@ void WorkerGlobalScope::ImportScriptsInternal(const Vector<String>& urls) {
             ? SanitizeScriptErrors::kDoNotSanitize
             : SanitizeScriptErrors::kSanitize;
 
-    const KURL script_url =
-        ScriptSourceCode::UsePostRedirectURL() ? response_url : complete_url;
-
     // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-classic-worker-imported-script
     // Step 7: Let script be the result of creating a classic script given
     // source text, settings object, response's url, the default classic script
@@ -335,11 +333,10 @@ void WorkerGlobalScope::ImportScriptsInternal(const Vector<String>& urls) {
     SingleCachedMetadataHandler* handler(
         CreateWorkerScriptCachedMetadataHandler(complete_url,
                                                 std::move(cached_meta_data)));
-    ClassicScript* script = MakeGarbageCollected<ClassicScript>(
-        ScriptSourceCode(source_code, ScriptSourceLocationType::kUnknown,
-                         handler, script_url),
-        script_url /* base_url */, ScriptFetchOptions(),
-        sanitize_script_errors);
+    ClassicScript* script = ClassicScript::Create(
+        source_code, ClassicScript::StripFragmentIdentifier(complete_url),
+        response_url /* base_url */, ScriptFetchOptions(),
+        ScriptSourceLocationType::kUnknown, sanitize_script_errors, handler);
 
     // Step 5.2: "Run the classic script script, with the rethrow errors
     // argument set to true."
@@ -370,7 +367,6 @@ bool WorkerGlobalScope::FetchClassicImportedScript(
   ExecutionContext* execution_context = GetExecutionContext();
   WorkerClassicScriptLoader* classic_script_loader =
       MakeGarbageCollected<WorkerClassicScriptLoader>();
-  EnsureFetcher();
   classic_script_loader->LoadSynchronously(
       *execution_context, Fetcher(), script_url,
       mojom::blink::RequestContextType::SCRIPT,
@@ -405,6 +401,11 @@ void WorkerGlobalScope::AddInspectorIssue(
                                                              std::move(info));
 }
 
+void WorkerGlobalScope::AddInspectorIssue(AuditsIssue issue) {
+  GetThread()->GetInspectorIssueStorage()->AddInspectorIssue(this,
+                                                             std::move(issue));
+}
+
 CoreProbeSink* WorkerGlobalScope::GetProbeSink() {
   if (IsClosing())
     return nullptr;
@@ -435,15 +436,17 @@ void WorkerGlobalScope::EvaluateClassicScript(
                                               std::move(cached_meta_data));
   // Cross-origin workers are disallowed, so use
   // SanitizeScriptErrors::kDoNotSanitize.
-  Script* worker_script = MakeGarbageCollected<ClassicScript>(
-      ScriptSourceCode(source_code, handler, script_url), script_url,
-      ScriptFetchOptions(), SanitizeScriptErrors::kDoNotSanitize);
+  Script* worker_script = ClassicScript::Create(
+      source_code, script_url, script_url /* base_url */, ScriptFetchOptions(),
+      ScriptSourceLocationType::kUnknown, SanitizeScriptErrors::kDoNotSanitize,
+      handler, TextPosition::MinimumPosition(),
+      ScriptStreamer::NotStreamingReason::kWorkerTopLevelScript);
   WorkerScriptFetchFinished(*worker_script, stack_id);
 }
 
 void WorkerGlobalScope::WorkerScriptFetchFinished(
     Script& worker_script,
-    base::Optional<v8_inspector::V8StackTraceId> stack_id) {
+    absl::optional<v8_inspector::V8StackTraceId> stack_id) {
   DCHECK(IsContextThread());
 
   DCHECK_NE(ScriptEvalState::kEvaluated, script_eval_state_);
@@ -534,10 +537,13 @@ void WorkerGlobalScope::ReceiveMessage(BlinkTransferableMessage message) {
 WorkerGlobalScope::WorkerGlobalScope(
     std::unique_ptr<GlobalScopeCreationParams> creation_params,
     WorkerThread* thread,
-    base::TimeTicks time_origin)
+    base::TimeTicks time_origin,
+    bool is_service_worker_global_scope)
     : WorkerOrWorkletGlobalScope(
           thread->GetIsolate(),
-          CreateSecurityOrigin(creation_params.get()),
+          CreateSecurityOrigin(creation_params.get(),
+                               is_service_worker_global_scope),
+          creation_params->starter_secure_context,
           MakeGarbageCollected<Agent>(
               thread->GetIsolate(),
               (creation_params->agent_cluster_id.is_empty()
@@ -554,8 +560,6 @@ WorkerGlobalScope::WorkerGlobalScope(
       user_agent_(creation_params->user_agent),
       ua_metadata_(creation_params->ua_metadata),
       thread_(thread),
-      agent_group_scheduler_compositor_task_runner_(std::move(
-          creation_params->agent_group_scheduler_compositor_task_runner)),
       time_origin_(time_origin),
       font_selector_(MakeGarbageCollected<OffscreenFontSelector>(this)),
       script_eval_state_(ScriptEvalState::kPauseAfterFetch),
@@ -583,11 +587,12 @@ WorkerGlobalScope::WorkerGlobalScope(
         GetTaskRunner(TaskType::kInternalDefault));
   }
 
-  // A FeaturePolicy is created by FeaturePolicy::CreateFromParentPolicy, even
-  // if the parent policy is null.
-  DCHECK(creation_params->worker_feature_policy);
-  GetSecurityContext().SetFeaturePolicy(
-      std::move(creation_params->worker_feature_policy));
+  // A PermissionsPolicy is created by
+  // PermissionsPolicy::CreateFromParentPolicy, even if the parent policy is
+  // null.
+  DCHECK(creation_params->worker_permissions_policy);
+  GetSecurityContext().SetPermissionsPolicy(
+      std::move(creation_params->worker_permissions_policy));
 }
 
 void WorkerGlobalScope::ExceptionThrown(ErrorEvent* event) {
@@ -687,6 +692,21 @@ FontMatchingMetrics* WorkerGlobalScope::GetFontMatchingMetrics() {
         GetTaskRunner(TaskType::kInternalDefault));
   }
   return font_matching_metrics_.get();
+}
+
+CodeCacheHost* WorkerGlobalScope::GetCodeCacheHost() {
+  if (!code_cache_host_) {
+    // We may not have a valid browser interface in tests. For ex:
+    // FakeWorkerGlobalScope doesn't provide a valid interface. These tests
+    // don't rely on code caching so it's safe to return nullptr here.
+    if (!GetBrowserInterfaceBroker().is_bound())
+      return nullptr;
+    mojo::Remote<mojom::CodeCacheHost> remote;
+    GetBrowserInterfaceBroker().GetInterface(
+        remote.BindNewPipeAndPassReceiver());
+    code_cache_host_ = std::make_unique<CodeCacheHost>(std::move(remote));
+  }
+  return code_cache_host_.get();
 }
 
 }  // namespace blink

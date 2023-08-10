@@ -4,16 +4,17 @@
 
 #include "net/tools/quic/quic_simple_server.h"
 
-#include "base/stl_util.h"
+#include <memory>
+
 #include "net/quic/address_utils.h"
-#include "net/third_party/quiche/src/quic/core/crypto/quic_random.h"
-#include "net/third_party/quiche/src/quic/core/quic_crypto_stream.h"
-#include "net/third_party/quiche/src/quic/core/quic_utils.h"
-#include "net/third_party/quiche/src/quic/platform/api/quic_test.h"
-#include "net/third_party/quiche/src/quic/test_tools/crypto_test_utils.h"
-#include "net/third_party/quiche/src/quic/test_tools/mock_quic_dispatcher.h"
-#include "net/third_party/quiche/src/quic/test_tools/quic_test_utils.h"
-#include "net/third_party/quiche/src/quic/tools/quic_memory_cache_backend.h"
+#include "net/third_party/quiche/src/quiche/quic/core/crypto/quic_random.h"
+#include "net/third_party/quiche/src/quiche/quic/core/quic_crypto_stream.h"
+#include "net/third_party/quiche/src/quiche/quic/core/quic_utils.h"
+#include "net/third_party/quiche/src/quiche/quic/platform/api/quic_test.h"
+#include "net/third_party/quiche/src/quiche/quic/test_tools/crypto_test_utils.h"
+#include "net/third_party/quiche/src/quiche/quic/test_tools/mock_quic_dispatcher.h"
+#include "net/third_party/quiche/src/quiche/quic/test_tools/quic_test_utils.h"
+#include "net/third_party/quiche/src/quiche/quic/tools/quic_memory_cache_backend.h"
 #include "net/tools/quic/quic_simple_server_session_helper.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -34,13 +35,11 @@ class QuicChromeServerDispatchPacketTest : public QuicTest {
         dispatcher_(&config_,
                     &crypto_config_,
                     &version_manager_,
-                    std::unique_ptr<quic::test::MockQuicConnectionHelper>(
-                        new quic::test::MockQuicConnectionHelper),
+                    std::make_unique<quic::test::MockQuicConnectionHelper>(),
                     std::unique_ptr<quic::QuicCryptoServerStreamBase::Helper>(
                         new QuicSimpleServerSessionHelper(
                             quic::QuicRandom::GetInstance())),
-                    std::unique_ptr<quic::test::MockAlarmFactory>(
-                        new quic::test::MockAlarmFactory),
+                    std::make_unique<quic::test::MockAlarmFactory>(),
                     &memory_cache_backend_) {
     dispatcher_.InitializeWithWriter(nullptr);
   }
@@ -70,7 +69,7 @@ TEST_F(QuicChromeServerDispatchPacketTest, DispatchPacket) {
                                   // private flags
                                   0x00};
   quic::QuicReceivedPacket encrypted_valid_packet(
-      reinterpret_cast<char*>(valid_packet), base::size(valid_packet),
+      reinterpret_cast<char*>(valid_packet), std::size(valid_packet),
       quic::QuicTime::Zero(), false);
 
   EXPECT_CALL(dispatcher_, ProcessPacket(_, _, _)).Times(1);

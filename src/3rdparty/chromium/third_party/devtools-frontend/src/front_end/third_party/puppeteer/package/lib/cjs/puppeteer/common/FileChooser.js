@@ -33,6 +33,7 @@ const assert_js_1 = require("./assert.js");
  * **NOTE** In browsers, only one file chooser can be opened at a time.
  * All file choosers must be accepted or canceled. Not doing so will prevent
  * subsequent file choosers from appearing.
+ * @public
  */
 class FileChooser {
     /**
@@ -55,15 +56,15 @@ class FileChooser {
      * then they are resolved relative to the {@link https://nodejs.org/api/process.html#process_process_cwd | current working directory}.
      */
     async accept(filePaths) {
-        assert_js_1.assert(!this._handled, 'Cannot accept FileChooser which is already handled!');
+        (0, assert_js_1.assert)(!this._handled, 'Cannot accept FileChooser which is already handled!');
         this._handled = true;
         await this._element.uploadFile(...filePaths);
     }
     /**
      * Closes the file chooser without selecting any files.
      */
-    async cancel() {
-        assert_js_1.assert(!this._handled, 'Cannot cancel FileChooser which is already handled!');
+    cancel() {
+        (0, assert_js_1.assert)(!this._handled, 'Cannot cancel FileChooser which is already handled!');
         this._handled = true;
     }
 }

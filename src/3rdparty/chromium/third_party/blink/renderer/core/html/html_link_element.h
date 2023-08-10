@@ -26,11 +26,13 @@
 
 #include <memory>
 
-#include "base/single_thread_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "third_party/blink/renderer/core/core_export.h"
+#include "third_party/blink/renderer/core/css/css_style_sheet.h"
 #include "third_party/blink/renderer/core/dom/create_element_flags.h"
 #include "third_party/blink/renderer/core/dom/dom_token_list.h"
 #include "third_party/blink/renderer/core/dom/increment_load_event_delay_count.h"
+#include "third_party/blink/renderer/core/html/blocking_attribute.h"
 #include "third_party/blink/renderer/core/html/html_element.h"
 #include "third_party/blink/renderer/core/html/link_rel_attribute.h"
 #include "third_party/blink/renderer/core/html/link_resource.h"
@@ -43,7 +45,6 @@
 namespace blink {
 
 class KURL;
-class LinkImport;
 class LinkLoader;
 struct LinkLoadParameters;
 
@@ -61,7 +62,7 @@ class CORE_EXPORT HTMLLinkElement final : public HTMLElement,
   String TypeValue() const { return type_; }
   String AsValue() const { return as_; }
   String IntegrityValue() const { return integrity_; }
-  String ImportanceValue() const { return importance_; }
+  String FetchPriorityHintValue() const { return fetch_priority_hint_; }
   network::mojom::ReferrerPolicy GetReferrerPolicy() const {
     return referrer_policy_;
   }
@@ -69,6 +70,7 @@ class CORE_EXPORT HTMLLinkElement final : public HTMLElement,
   DOMTokenList& relList() const {
     return static_cast<DOMTokenList&>(*rel_list_);
   }
+  BlockingAttribute& blocking() const { return *blocking_attribute_; }
 
   const AtomicString& GetType() const;
 
@@ -82,11 +84,9 @@ class CORE_EXPORT HTMLLinkElement final : public HTMLElement,
   CSSStyleSheet* sheet() const {
     return GetLinkStyle() ? GetLinkStyle()->Sheet() : nullptr;
   }
-  Document* import() const;
 
   bool StyleSheetIsLoading() const;
 
-  bool IsImport() const { return GetLinkImport(); }
   bool IsDisabled() const {
     return GetLinkStyle() && GetLinkStyle()->IsDisabled();
   }
@@ -95,15 +95,6 @@ class CORE_EXPORT HTMLLinkElement final : public HTMLElement,
   }
 
   DOMTokenList* sizes() const;
-
-  // IDL method.
-  DOMTokenList* resources() const;
-  DOMTokenList* scopes() const;
-
-  const HashSet<KURL>& ValidResourceUrls() const {
-    return valid_resource_urls_;
-  }
-  const HashSet<KURL>& ValidScopeUrls() const { return valid_scope_urls_; }
 
   void ScheduleEvent();
 
@@ -119,14 +110,8 @@ class CORE_EXPORT HTMLLinkElement final : public HTMLElement,
                       ResourceClient*,
                       RenderBlockingBehavior render_blocking);
   bool IsAlternate() const {
-    // TODO(crbug.com/1087043): Remove this if() condition once the feature has
-    // landed and no compat issues are reported.
-    bool not_explicitly_enabled =
-        !GetLinkStyle()->IsExplicitlyEnabled() ||
-        !RuntimeEnabledFeatures::LinkDisabledNewSpecBehaviorEnabled(
-            GetExecutionContext());
     return GetLinkStyle()->IsUnset() && rel_attribute_.IsAlternate() &&
-           not_explicitly_enabled;
+           !GetLinkStyle()->IsExplicitlyEnabled();
   }
   bool ShouldProcessStyle() {
     return LinkResourceToProcess() && GetLinkStyle();
@@ -137,7 +122,6 @@ class CORE_EXPORT HTMLLinkElement final : public HTMLElement,
 
  private:
   LinkStyle* GetLinkStyle() const;
-  LinkImport* GetLinkImport() const;
   LinkResource* LinkResourceToProcess();
 
   void Process();
@@ -157,14 +141,13 @@ class CORE_EXPORT HTMLLinkElement final : public HTMLElement,
   bool SheetLoaded() override;
   void NotifyLoadedSheetAndAllCriticalSubresources(
       LoadedSheetErrorStatus) override;
-  void StartLoadingDynamicSheet() override;
+  void SetToPendingState() override;
   void FinishParsingChildren() override;
   bool HasActivationBehavior() const override;
 
   // From LinkLoaderClient
   void LinkLoaded() override;
   void LinkLoadingErrored() override;
-  scoped_refptr<base::SingleThreadTaskRunner> GetLoadingTaskRunner() override;
 
   Member<LinkResource> link_;
   Member<LinkLoader> link_loader_;
@@ -173,16 +156,14 @@ class CORE_EXPORT HTMLLinkElement final : public HTMLElement,
   String as_;
   String media_;
   String integrity_;
-  String importance_;
-  network::mojom::ReferrerPolicy referrer_policy_;
+  String fetch_priority_hint_;
+  network::mojom::ReferrerPolicy referrer_policy_ =
+      network::mojom::ReferrerPolicy::kDefault;
   Member<DOMTokenList> sizes_;
   Vector<gfx::Size> icon_sizes_;
   Member<RelList> rel_list_;
   LinkRelAttribute rel_attribute_;
-  Member<DOMTokenList> resources_;
-  HashSet<KURL> valid_resource_urls_;
-  Member<DOMTokenList> scopes_;
-  HashSet<KURL> valid_scope_urls_;
+  Member<BlockingAttribute> blocking_attribute_;
 
   bool created_by_parser_;
 };

@@ -70,7 +70,7 @@ unsigned int GetReservedVertexUniformVectors(D3D_FEATURE_LEVEL featureLevel);
 
 unsigned int GetReservedFragmentUniformVectors(D3D_FEATURE_LEVEL featureLevel);
 
-gl::Version GetMaximumClientVersion(D3D_FEATURE_LEVEL featureLevel);
+gl::Version GetMaximumClientVersion(const Renderer11DeviceCaps &caps);
 void GenerateCaps(ID3D11Device *device,
                   ID3D11DeviceContext *deviceContext,
                   const Renderer11DeviceCaps &renderer11DeviceCaps,
@@ -335,7 +335,7 @@ void InitConstantBufferDesc(D3D11_BUFFER_DESC *constantBufferDescription, size_t
 
 // Helper class for RAII patterning.
 template <typename T>
-class ScopedUnmapper final : angle::NonCopyable
+class ANGLE_NO_DISCARD ScopedUnmapper final : angle::NonCopyable
 {
   public:
     ScopedUnmapper(T *object) : mObject(object) {}

@@ -4,10 +4,11 @@
 
 #include "content/browser/cache_storage/cache_storage_quota_client.h"
 
+#include "components/services/storage/public/cpp/buckets/bucket_locator.h"
 #include "content/browser/cache_storage/cache_storage_manager.h"
 #include "storage/browser/quota/quota_client_type.h"
+#include "third_party/blink/public/common/storage_key/storage_key.h"
 #include "third_party/blink/public/mojom/quota/quota_types.mojom.h"
-#include "url/origin.h"
 
 namespace content {
 
@@ -22,52 +23,59 @@ CacheStorageQuotaClient::~CacheStorageQuotaClient() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 }
 
-void CacheStorageQuotaClient::GetOriginUsage(const url::Origin& origin,
-                                             blink::mojom::StorageType type,
-                                             GetOriginUsageCallback callback) {
+void CacheStorageQuotaClient::GetBucketUsage(
+    const storage::BucketLocator& bucket,
+    GetBucketUsageCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  DCHECK_EQ(type, blink::mojom::StorageType::kTemporary);
+  DCHECK_EQ(bucket.type, blink::mojom::StorageType::kTemporary);
 
-  if (!CacheStorageManager::IsValidQuotaOrigin(origin)) {
+  // Skip non-default buckets until Storage Buckets are supported for
+  // CacheStorage.
+  // TODO(crbug.com/1218097): Integrate CacheStorage with StorageBuckets.
+  if (!bucket.is_default) {
     std::move(callback).Run(0);
     return;
   }
 
-  cache_manager_->GetOriginUsage(origin, owner_, std::move(callback));
+  if (!CacheStorageManager::IsValidQuotaStorageKey(bucket.storage_key)) {
+    std::move(callback).Run(0);
+    return;
+  }
+
+  cache_manager_->GetStorageKeyUsage(bucket.storage_key, owner_,
+                                     std::move(callback));
 }
 
-void CacheStorageQuotaClient::GetOriginsForType(
+void CacheStorageQuotaClient::GetStorageKeysForType(
     blink::mojom::StorageType type,
-    GetOriginsForTypeCallback callback) {
+    GetStorageKeysForTypeCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK_EQ(type, blink::mojom::StorageType::kTemporary);
 
-  cache_manager_->GetOrigins(owner_, std::move(callback));
+  cache_manager_->GetStorageKeys(owner_, std::move(callback));
 }
 
-void CacheStorageQuotaClient::GetOriginsForHost(
-    blink::mojom::StorageType type,
-    const std::string& host,
-    GetOriginsForHostCallback callback) {
+void CacheStorageQuotaClient::DeleteBucketData(
+    const storage::BucketLocator& bucket,
+    DeleteBucketDataCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  DCHECK_EQ(type, blink::mojom::StorageType::kTemporary);
+  DCHECK_EQ(bucket.type, blink::mojom::StorageType::kTemporary);
 
-  cache_manager_->GetOriginsForHost(host, owner_, std::move(callback));
-}
-
-void CacheStorageQuotaClient::DeleteOriginData(
-    const url::Origin& origin,
-    blink::mojom::StorageType type,
-    DeleteOriginDataCallback callback) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  DCHECK_EQ(type, blink::mojom::StorageType::kTemporary);
-
-  if (!CacheStorageManager::IsValidQuotaOrigin(origin)) {
+  // Skip non-default buckets until Storage Buckets are supported for
+  // CacheStorage.
+  // TODO(crbug.com/1218097): Integrate CacheStorage with StorageBuckets.
+  if (!bucket.is_default) {
     std::move(callback).Run(blink::mojom::QuotaStatusCode::kOk);
     return;
   }
 
-  cache_manager_->DeleteOriginData(origin, owner_, std::move(callback));
+  if (!CacheStorageManager::IsValidQuotaStorageKey(bucket.storage_key)) {
+    std::move(callback).Run(blink::mojom::QuotaStatusCode::kOk);
+    return;
+  }
+
+  cache_manager_->DeleteStorageKeyData(bucket.storage_key, owner_,
+                                       std::move(callback));
 }
 
 void CacheStorageQuotaClient::PerformStorageCleanup(

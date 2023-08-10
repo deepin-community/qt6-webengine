@@ -5,6 +5,7 @@
 #ifndef COMPONENTS_PAGE_LOAD_METRICS_BROWSER_PAGE_LOAD_METRICS_EMBEDDER_BASE_H_
 #define COMPONENTS_PAGE_LOAD_METRICS_BROWSER_PAGE_LOAD_METRICS_EMBEDDER_BASE_H_
 
+#include "base/memory/raw_ptr.h"
 #include "components/page_load_metrics/browser/page_load_metrics_embedder_interface.h"
 
 namespace page_load_metrics {
@@ -28,10 +29,9 @@ class PageLoadMetricsEmbedderBase : public PageLoadMetricsEmbedderInterface {
  protected:
   ~PageLoadMetricsEmbedderBase() override;
   virtual void RegisterEmbedderObservers(PageLoadTracker* tracker) = 0;
-  virtual bool IsPrerendering() const = 0;
 
  private:
-  content::WebContents* const web_contents_;
+  const raw_ptr<content::WebContents> web_contents_;
 };
 
 }  // namespace page_load_metrics

@@ -9,7 +9,7 @@
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/workers/worker_global_scope.h"
 #include "third_party/blink/renderer/modules/cache_storage/cache_storage.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/supplementable.h"
 
@@ -35,8 +35,8 @@ class GlobalCacheStorageImpl final
     return *supplement;
   }
 
-  GlobalCacheStorageImpl() = default;
-  ~GlobalCacheStorageImpl() {}
+  GlobalCacheStorageImpl() : Supplement<T>(nullptr) {}
+  ~GlobalCacheStorageImpl() = default;
 
   CacheStorage* Caches(T& fetching_scope, ExceptionState& exception_state) {
     ExecutionContext* context = fetching_scope.GetExecutionContext();

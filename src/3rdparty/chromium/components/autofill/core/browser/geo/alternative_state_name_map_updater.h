@@ -5,12 +5,16 @@
 #ifndef COMPONENTS_AUTOFILL_CORE_BROWSER_GEO_ALTERNATIVE_STATE_NAME_MAP_UPDATER_H_
 #define COMPONENTS_AUTOFILL_CORE_BROWSER_GEO_ALTERNATIVE_STATE_NAME_MAP_UPDATER_H_
 
+#include <map>
 #include <memory>
+#include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/callback.h"
 #include "base/callback_helpers.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/sequence_checker.h"
 #include "components/autofill/core/browser/geo/alternative_state_name_map.h"
@@ -126,10 +130,10 @@ class AlternativeStateNameMapUpdater : public PersonalDataManagerObserver {
 
   // A pointer to an instance of PersonalDataManager used to fetch the profiles
   // data and register this class as an obsever.
-  PersonalDataManager* const personal_data_manager_ = nullptr;
+  const raw_ptr<PersonalDataManager> personal_data_manager_ = nullptr;
 
   // The browser local_state that stores the states data installation path.
-  PrefService* const local_state_ = nullptr;
+  const raw_ptr<PrefService> local_state_ = nullptr;
 
   // In case of concurrent requests to load states data, the callbacks are
   // queued in |pending_init_done_callbacks_| and triggered once the

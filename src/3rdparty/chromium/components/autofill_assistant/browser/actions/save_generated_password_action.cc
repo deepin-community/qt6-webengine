@@ -5,10 +5,13 @@
 #include "components/autofill_assistant/browser/actions/save_generated_password_action.h"
 
 #include <utility>
-#include "base/optional.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 #include "components/autofill_assistant/browser/actions/action_delegate.h"
 #include "components/autofill_assistant/browser/client_status.h"
+#include "components/password_manager/core/browser/password_change_success_tracker.h"
+
+using password_manager::PasswordChangeSuccessTracker;
 
 namespace autofill_assistant {
 
@@ -34,10 +37,10 @@ void SaveGeneratedPasswordAction::InternalProcessAction(
     return;
   }
 
-  if (!delegate_->GetUserData()->has_additional_value(
+  if (!delegate_->GetUserData()->HasAdditionalValue(
           save_password.memory_key()) ||
       delegate_->GetUserData()
-              ->additional_value(save_password.memory_key())
+              ->GetAdditionalValue(save_password.memory_key())
               ->strings()
               .values()
               .size() != 1) {
@@ -47,13 +50,18 @@ void SaveGeneratedPasswordAction::InternalProcessAction(
     return;
   }
 
-  if (!delegate_->GetWebsiteLoginManager()->ReadyToCommitGeneratedPassword()) {
+  if (!delegate_->GetWebsiteLoginManager()->ReadyToSaveGeneratedPassword()) {
     VLOG(1) << "SaveGeneratedPasswordAction: no generated password to save.";
     EndAction(ClientStatus(PRECONDITION_FAILED));
     return;
   }
 
-  delegate_->GetWebsiteLoginManager()->CommitGeneratedPassword();
+  delegate_->GetWebsiteLoginManager()->SaveGeneratedPassword();
+
+  delegate_->GetPasswordChangeSuccessTracker()->OnChangePasswordFlowCompleted(
+      delegate_->GetUserData()->selected_login_->origin,
+      delegate_->GetUserData()->selected_login_->username,
+      PasswordChangeSuccessTracker::EndEvent::kAutomatedGeneratedPasswordFlow);
 
   EndAction(ClientStatus(ACTION_APPLIED));
 }

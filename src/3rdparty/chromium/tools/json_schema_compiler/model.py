@@ -357,7 +357,7 @@ class Function(object):
     self.description = json.get('description')
     self.deprecated = json.get('deprecated')
     self.returns_async = None
-    self.optional = json.get('optional', False)
+    self.optional = _GetWithDefaultChecked(parent, json, 'optional', False)
     self.parent = parent
     self.nocompile = json.get('nocompile')
     options = json.get('options', {})
@@ -376,9 +376,15 @@ class Function(object):
 
     returns_async = json.get('returns_async', None)
     if returns_async:
-      if len(returns_async.get('parameters')) > 1:
+      returns_async_params = returns_async.get('parameters')
+      if (returns_async_params is None):
+        raise ValueError(
+            'parameters key not specified on returns_async: %s.%s in %s' %
+            (namespace.name, name, namespace.source_file))
+      if len(returns_async_params) > 1:
         raise ValueError('Only a single parameter can be specific on '
-                         'returns_async: %s.%s' % (namespace.name, name))
+                         'returns_async: %s.%s in %s' %
+                         (namespace.name, name, namespace.source_file))
       self.returns_async = ReturnsAsync(self, returns_async, namespace,
                                         Origin(from_client=True), True)
       # TODO(https://crbug.com/1143032): Returning a synchronous value is
@@ -443,7 +449,7 @@ class ReturnsAsync(object):
     self.name = json.get('name')
     self.simple_name = _StripNamespace(self.name, namespace)
     self.description = json.get('description')
-    self.optional = json.get('optional', False)
+    self.optional = _GetWithDefaultChecked(parent, json, 'optional', False)
     self.nocompile = json.get('nocompile')
     self.parent = parent
     self.can_return_promise = can_return_promise
@@ -732,6 +738,13 @@ def UnixName(name):
   if IsCPlusPlusKeyword(name):
     name = name + '_'
 
+  # Prepend an extra underscore to the |name|'s start if it doesn't start with a
+  # letter or underscore to ensure the generated unix name follows C++
+  # identifier rules.
+  assert(name)
+  if name[0].isdigit():
+    name = '_' + name
+
   unix_name = []
   for i, c in enumerate(name):
     if c.isupper() and i > 0 and name[i - 1] != '_':
@@ -847,6 +860,13 @@ def _GetManifestKeysType(self, json):
   return Type(self, 'ManifestKeys', manifest_keys_type, self,
               Origin(from_manifest_keys=True))
 
+def _GetWithDefaultChecked(self, json, key, default):
+  if json.get(key) == default:
+    raise ParseException(
+        self, 'The attribute "%s" is specified as "%s", but this is the '
+        'default value if the attribute is not included. It should be removed.'
+        % (key, default))
+  return json.get(key, default)
 
 class _PlatformInfo(_Enum):
   def __init__(self, name):
@@ -857,7 +877,7 @@ class Platforms(object):
   """Enum of the possible platforms.
   """
   CHROMEOS = _PlatformInfo("chromeos")
-  CHROMEOS_TOUCH = _PlatformInfo("chromeos_touch")
+  FUCHSIA = _PlatformInfo("fuchsia")
   LACROS = _PlatformInfo("lacros")
   LINUX = _PlatformInfo("linux")
   MAC = _PlatformInfo("mac")
@@ -872,8 +892,12 @@ def _GetPlatforms(json):
     raise ValueError('"platforms" cannot be an empty list')
   platforms = []
   for platform_name in json['platforms']:
-    for platform_enum in _Enum.GetAll(Platforms):
-      if platform_name == platform_enum.name:
-        platforms.append(platform_enum)
+    platform_enum = None
+    for platform in _Enum.GetAll(Platforms):
+      if platform_name == platform.name:
+        platform_enum = platform
         break
+    if not platform_enum:
+      raise ValueError('Invalid platform specified: ' + platform_name)
+    platforms.append(platform_enum)
   return platforms

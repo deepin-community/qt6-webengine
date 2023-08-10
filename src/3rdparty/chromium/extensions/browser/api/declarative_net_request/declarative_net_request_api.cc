@@ -10,11 +10,9 @@
 #include <vector>
 
 #include "base/bind.h"
-#include "base/optional.h"
-#include "base/stl_util.h"
-#include "base/strings/stringprintf.h"
-#include "base/task/post_task.h"
-#include "base/task_runner_util.h"
+#include "base/containers/contains.h"
+#include "base/containers/cxx20_erase.h"
+#include "base/task/task_runner_util.h"
 #include "base/time/time.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
@@ -36,6 +34,7 @@
 #include "extensions/common/api/declarative_net_request/dnr_manifest_data.h"
 #include "extensions/common/error_utils.h"
 #include "extensions/common/extension_id.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace extensions {
 
@@ -48,7 +47,7 @@ namespace dnr_api = api::declarative_net_request;
 // the API call is for all tabs.
 bool CanCallGetMatchedRules(content::BrowserContext* browser_context,
                             const Extension* extension,
-                            base::Optional<int> tab_id,
+                            absl::optional<int> tab_id,
                             std::string* error) {
   bool can_call =
       declarative_net_request::HasDNRFeedbackPermission(extension, tab_id);
@@ -69,8 +68,8 @@ ExtensionFunction::ResponseAction
 DeclarativeNetRequestUpdateDynamicRulesFunction::Run() {
   using Params = dnr_api::UpdateDynamicRules::Params;
 
-  base::string16 error;
-  std::unique_ptr<Params> params(Params::Create(*args_, &error));
+  std::u16string error;
+  std::unique_ptr<Params> params(Params::Create(args(), &error));
   EXTENSION_FUNCTION_VALIDATE(params);
   EXTENSION_FUNCTION_VALIDATE(error.empty());
 
@@ -101,7 +100,7 @@ DeclarativeNetRequestUpdateDynamicRulesFunction::Run() {
 }
 
 void DeclarativeNetRequestUpdateDynamicRulesFunction::OnDynamicRulesUpdated(
-    base::Optional<std::string> error) {
+    absl::optional<std::string> error) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
   if (error)
@@ -164,8 +163,8 @@ ExtensionFunction::ResponseAction
 DeclarativeNetRequestUpdateSessionRulesFunction::Run() {
   using Params = dnr_api::UpdateSessionRules::Params;
 
-  base::string16 error;
-  std::unique_ptr<Params> params(Params::Create(*args_, &error));
+  std::u16string error;
+  std::unique_ptr<Params> params(Params::Create(args(), &error));
   EXTENSION_FUNCTION_VALIDATE(params);
   EXTENSION_FUNCTION_VALIDATE(error.empty());
 
@@ -193,7 +192,7 @@ DeclarativeNetRequestUpdateSessionRulesFunction::Run() {
 }
 
 void DeclarativeNetRequestUpdateSessionRulesFunction::OnSessionRulesUpdated(
-    base::Optional<std::string> error) {
+    absl::optional<std::string> error) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
   if (error)
@@ -228,8 +227,8 @@ DeclarativeNetRequestUpdateEnabledRulesetsFunction::Run() {
   using RulesetID = declarative_net_request::RulesetID;
   using DNRManifestData = declarative_net_request::DNRManifestData;
 
-  base::string16 error;
-  std::unique_ptr<Params> params(Params::Create(*args_, &error));
+  std::u16string error;
+  std::unique_ptr<Params> params(Params::Create(args(), &error));
   EXTENSION_FUNCTION_VALIDATE(params);
   EXTENSION_FUNCTION_VALIDATE(error.empty());
 
@@ -289,7 +288,7 @@ DeclarativeNetRequestUpdateEnabledRulesetsFunction::Run() {
 }
 
 void DeclarativeNetRequestUpdateEnabledRulesetsFunction::
-    OnEnabledStaticRulesetsUpdated(base::Optional<std::string> error) {
+    OnEnabledStaticRulesetsUpdated(absl::optional<std::string> error) {
   if (error)
     Respond(Error(std::move(*error)));
   else
@@ -341,12 +340,12 @@ ExtensionFunction::ResponseAction
 DeclarativeNetRequestGetMatchedRulesFunction::Run() {
   using Params = dnr_api::GetMatchedRules::Params;
 
-  base::string16 error;
-  std::unique_ptr<Params> params(Params::Create(*args_, &error));
+  std::u16string error;
+  std::unique_ptr<Params> params(Params::Create(args(), &error));
   EXTENSION_FUNCTION_VALIDATE(params);
   EXTENSION_FUNCTION_VALIDATE(error.empty());
 
-  base::Optional<int> tab_id;
+  absl::optional<int> tab_id;
   base::Time min_time_stamp = base::Time::Min();
 
   if (params->filter) {
@@ -393,7 +392,7 @@ void DeclarativeNetRequestGetMatchedRulesFunction::GetQuotaLimitHeuristics(
     QuotaLimitHeuristics* heuristics) const {
   QuotaLimitHeuristic::Config limit = {
       dnr_api::MAX_GETMATCHEDRULES_CALLS_PER_INTERVAL,
-      base::TimeDelta::FromMinutes(dnr_api::GETMATCHEDRULES_QUOTA_INTERVAL)};
+      base::Minutes(dnr_api::GETMATCHEDRULES_QUOTA_INTERVAL)};
 
   heuristics->push_back(std::make_unique<QuotaService::TimedLimit>(
       limit, std::make_unique<QuotaLimitHeuristic::SingletonBucketMapper>(),
@@ -414,8 +413,8 @@ ExtensionFunction::ResponseAction
 DeclarativeNetRequestSetExtensionActionOptionsFunction::Run() {
   using Params = dnr_api::SetExtensionActionOptions::Params;
 
-  base::string16 error;
-  std::unique_ptr<Params> params(Params::Create(*args_, &error));
+  std::u16string error;
+  std::unique_ptr<Params> params(Params::Create(args(), &error));
   EXTENSION_FUNCTION_VALIDATE(params);
   EXTENSION_FUNCTION_VALIDATE(error.empty());
 
@@ -483,8 +482,8 @@ ExtensionFunction::ResponseAction
 DeclarativeNetRequestIsRegexSupportedFunction::Run() {
   using Params = dnr_api::IsRegexSupported::Params;
 
-  base::string16 error;
-  std::unique_ptr<Params> params(Params::Create(*args_, &error));
+  std::u16string error;
+  std::unique_ptr<Params> params(Params::Create(args(), &error));
   EXTENSION_FUNCTION_VALIDATE(params);
   EXTENSION_FUNCTION_VALIDATE(error.empty());
 

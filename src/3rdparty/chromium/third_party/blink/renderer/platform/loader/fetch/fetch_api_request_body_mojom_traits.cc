@@ -4,6 +4,7 @@
 
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_api_request_body_mojom_traits.h"
 
+#include "base/time/time.h"
 #include "mojo/public/cpp/base/file_mojom_traits.h"
 #include "mojo/public/cpp/base/file_path_mojom_traits.h"
 #include "mojo/public/cpp/bindings/array_traits_wtf_vector.h"
@@ -85,12 +86,14 @@ bool StructTraits<blink::mojom::FetchAPIRequestBodyDataView,
     switch (element.type()) {
       case network::DataElement::Tag::kBytes: {
         const auto& bytes = element.As<network::DataElementBytes>();
-        form_data->AppendData(bytes.bytes().data(), bytes.bytes().size());
+        form_data->AppendData(
+            bytes.bytes().data(),
+            base::checked_cast<wtf_size_t>(bytes.bytes().size()));
         break;
       }
       case network::DataElement::Tag::kFile: {
         const auto& file = element.As<network::DataElementFile>();
-        base::Optional<base::Time> expected_modification_time;
+        absl::optional<base::Time> expected_modification_time;
         if (!file.expected_modification_time().is_null()) {
           expected_modification_time = file.expected_modification_time();
         }

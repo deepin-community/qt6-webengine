@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/containers/contains.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
@@ -16,6 +17,7 @@
 #include "ui/base/clipboard/file_info.h"
 #include "ui/base/data_transfer_policy/data_transfer_endpoint.h"
 #include "ui/base/x/selection_utils.h"
+#include "ui/base/x/x11_drag_drop_client.h"
 #include "ui/base/x/x11_util.h"
 #include "ui/gfx/x/x11_atom_cache.h"
 #include "ui/gfx/x/xproto_util.h"
@@ -31,6 +33,7 @@ namespace {
 
 const char kDndSelection[] = "XdndSelection";
 const char kRendererTaint[] = "chromium/x-renderer-taint";
+const char kFromPrivileged[] = "chromium/from-privileged";
 
 const char kNetscapeURL[] = "_NETSCAPE_URL";
 
@@ -38,11 +41,13 @@ const char kNetscapeURL[] = "_NETSCAPE_URL";
 
 XOSExchangeDataProvider::XOSExchangeDataProvider(
     x11::Window x_window,
+    x11::Window source_window,
     const SelectionFormatMap& selection)
     : connection_(x11::Connection::Get()),
       x_root_window_(ui::GetX11RootWindow()),
       own_window_(false),
       x_window_(x_window),
+      source_window_(source_window),
       format_map_(selection),
       selection_owner_(connection_, x_window_, x11::GetAtom(kDndSelection)) {}
 
@@ -51,6 +56,7 @@ XOSExchangeDataProvider::XOSExchangeDataProvider()
       x_root_window_(ui::GetX11RootWindow()),
       own_window_(true),
       x_window_(x11::CreateDummyWindow("Chromium Drag & Drop Window")),
+      source_window_(x_window_),
       selection_owner_(connection_, x_window_, x11::GetAtom(kDndSelection)) {}
 
 XOSExchangeDataProvider::~XOSExchangeDataProvider() {
@@ -90,7 +96,18 @@ bool XOSExchangeDataProvider::DidOriginateFromRenderer() const {
   return format_map_.find(x11::GetAtom(kRendererTaint)) != format_map_.end();
 }
 
-void XOSExchangeDataProvider::SetString(const base::string16& text_data) {
+void XOSExchangeDataProvider::MarkAsFromPrivileged() {
+  std::string empty;
+  format_map_.Insert(x11::GetAtom(kFromPrivileged),
+                     scoped_refptr<base::RefCountedMemory>(
+                         base::RefCountedString::TakeString(&empty)));
+}
+
+bool XOSExchangeDataProvider::IsFromPrivileged() const {
+  return format_map_.find(x11::GetAtom(kFromPrivileged)) != format_map_.end();
+}
+
+void XOSExchangeDataProvider::SetString(const std::u16string& text_data) {
   if (HasString())
     return;
 
@@ -105,16 +122,16 @@ void XOSExchangeDataProvider::SetString(const base::string16& text_data) {
 }
 
 void XOSExchangeDataProvider::SetURL(const GURL& url,
-                                     const base::string16& title) {
+                                     const std::u16string& title) {
   // TODO(dcheng): The original GTK code tries very hard to avoid writing out an
   // empty title. Is this necessary?
   if (url.is_valid()) {
     // Mozilla's URL format: (UTF16: URL, newline, title)
-    base::string16 spec = base::UTF8ToUTF16(url.spec());
+    std::u16string spec = base::UTF8ToUTF16(url.spec());
 
     std::vector<unsigned char> data;
     ui::AddString16ToVector(spec, &data);
-    ui::AddString16ToVector(base::ASCIIToUTF16("\n"), &data);
+    ui::AddString16ToVector(u"\n", &data);
     ui::AddString16ToVector(title, &data);
     scoped_refptr<base::RefCountedMemory> mem(
         base::RefCountedBytes::TakeVector(&data));
@@ -179,7 +196,7 @@ void XOSExchangeDataProvider::SetPickledData(const ClipboardFormatType& format,
   format_map_.Insert(x11::GetAtom(format.GetName().c_str()), mem);
 }
 
-bool XOSExchangeDataProvider::GetString(base::string16* result) const {
+bool XOSExchangeDataProvider::GetString(std::u16string* result) const {
   if (HasFile()) {
     // Various Linux file managers both pass a list of file:// URIs and set the
     // string representation to the URI. We explicitly don't want to return use
@@ -203,7 +220,7 @@ bool XOSExchangeDataProvider::GetString(base::string16* result) const {
 
 bool XOSExchangeDataProvider::GetURLAndTitle(FilenameToURLPolicy policy,
                                              GURL* url,
-                                             base::string16* title) const {
+                                             std::u16string* title) const {
   std::vector<x11::Atom> url_atoms = ui::GetURLAtomsFrom();
   std::vector<x11::Atom> requested_types;
   GetAtomIntersection(url_atoms, GetTargets(), &requested_types);
@@ -216,17 +233,16 @@ bool XOSExchangeDataProvider::GetURLAndTitle(FilenameToURLPolicy policy,
 
     if (data.GetType() == x11::GetAtom(kMimeTypeMozillaURL)) {
       // Mozilla URLs are (UTF16: URL, newline, title).
-      base::string16 unparsed;
+      std::u16string unparsed;
       data.AssignTo(&unparsed);
 
-      std::vector<base::string16> tokens =
-          base::SplitString(unparsed, base::ASCIIToUTF16("\n"),
-                            base::KEEP_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
+      std::vector<std::u16string> tokens = base::SplitString(
+          unparsed, u"\n", base::KEEP_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
       if (tokens.size() > 0) {
         if (tokens.size() > 1)
           *title = tokens[1];
         else
-          *title = base::string16();
+          *title = std::u16string();
 
         *url = GURL(tokens[0]);
         return true;
@@ -238,7 +254,7 @@ bool XOSExchangeDataProvider::GetURLAndTitle(FilenameToURLPolicy policy,
         if (!test_url.SchemeIsFile() ||
             policy == FilenameToURLPolicy::CONVERT_FILENAMES) {
           *url = test_url;
-          *title = base::string16();
+          *title = std::u16string();
           return true;
         }
       }
@@ -391,16 +407,44 @@ void XOSExchangeDataProvider::SetFileContents(
   //   things simpler for Chrome, we always 'fail' and let the destination do
   //   the work.
   std::string failure("F");
-  InsertData(x11::GetAtom("XdndDirectSave0"),
+  InsertData(x11::GetAtom(kXdndDirectSave0),
              scoped_refptr<base::RefCountedMemory>(
                  base::RefCountedString::TakeString(&failure)));
   std::string file_contents_copy = file_contents;
-  InsertData(x11::GetAtom("application/octet-stream"),
+  InsertData(x11::GetAtom(kMimeTypeOctetStream),
              scoped_refptr<base::RefCountedMemory>(
                  base::RefCountedString::TakeString(&file_contents_copy)));
 }
 
-void XOSExchangeDataProvider::SetHtml(const base::string16& html,
+bool XOSExchangeDataProvider::GetFileContents(
+    base::FilePath* filename,
+    std::string* file_contents) const {
+  std::vector<char> str;
+  if (!GetArrayProperty(source_window_, x11::GetAtom(kXdndDirectSave0), &str))
+    return false;
+
+  *filename =
+      base::FilePath(base::FilePath::StringPieceType(str.data(), str.size()));
+
+  std::vector<x11::Atom> file_contents_atoms;
+  file_contents_atoms.push_back(x11::GetAtom(kMimeTypeOctetStream));
+  std::vector<x11::Atom> requested_types;
+  GetAtomIntersection(file_contents_atoms, GetTargets(), &requested_types);
+
+  ui::SelectionData data(format_map_.GetFirstOf(requested_types));
+  if (data.IsValid()) {
+    data.AssignTo(file_contents);
+    return true;
+  }
+  return false;
+}
+
+bool XOSExchangeDataProvider::HasFileContents() const {
+  NOTIMPLEMENTED();
+  return false;
+}
+
+void XOSExchangeDataProvider::SetHtml(const std::u16string& html,
                                       const GURL& base_url) {
   std::vector<unsigned char> bytes;
   // Manually jam a UTF16 BOM into bytes because otherwise, other programs will
@@ -414,7 +458,7 @@ void XOSExchangeDataProvider::SetHtml(const base::string16& html,
   format_map_.Insert(x11::GetAtom(kMimeTypeHTML), mem);
 }
 
-bool XOSExchangeDataProvider::GetHtml(base::string16* html,
+bool XOSExchangeDataProvider::GetHtml(std::u16string* html,
                                       GURL* base_url) const {
   std::vector<x11::Atom> url_atoms;
   url_atoms.push_back(x11::GetAtom(kMimeTypeHTML));
@@ -455,7 +499,7 @@ gfx::Vector2d XOSExchangeDataProvider::GetDragImageOffset() const {
 }
 
 bool XOSExchangeDataProvider::GetPlainTextURL(GURL* url) const {
-  base::string16 text;
+  std::u16string text;
   if (GetString(&text)) {
     GURL test_url(text);
     if (test_url.is_valid()) {

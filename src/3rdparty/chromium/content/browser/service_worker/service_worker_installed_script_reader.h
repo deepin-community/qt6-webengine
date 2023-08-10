@@ -6,11 +6,9 @@
 #define CONTENT_BROWSER_SERVICE_WORKER_SERVICE_WORKER_INSTALLED_SCRIPT_READER_H_
 
 #include <memory>
-#include <string>
 
-#include "base/containers/flat_map.h"
+#include "base/memory/raw_ptr.h"
 #include "components/services/storage/public/mojom/service_worker_storage_control.mojom.h"
-#include "content/common/content_export.h"
 #include "mojo/public/cpp/base/big_buffer.h"
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
@@ -45,7 +43,7 @@ class ServiceWorkerInstalledScriptReader
    public:
     virtual void OnStarted(
         network::mojom::URLResponseHeadPtr response_head,
-        base::Optional<mojo_base::BigBuffer> metadata,
+        absl::optional<mojo_base::BigBuffer> metadata,
         mojo::ScopedDataPipeConsumerHandle body_handle,
         mojo::ScopedDataPipeConsumerHandle meta_data_handle) = 0;
     // Called after both body and metadata have finished being written to the
@@ -68,10 +66,10 @@ class ServiceWorkerInstalledScriptReader
   void OnReadResponseHeadComplete(
       int result,
       network::mojom::URLResponseHeadPtr response_head,
-      base::Optional<mojo_base::BigBuffer> metadata);
+      absl::optional<mojo_base::BigBuffer> metadata);
   void OnReadDataStarted(
       network::mojom::URLResponseHeadPtr response_head,
-      base::Optional<mojo_base::BigBuffer> metadata,
+      absl::optional<mojo_base::BigBuffer> metadata,
       mojo::ScopedDataPipeConsumerHandle body_consumer_handle);
   void OnMetaDataSent(bool success);
   void OnReaderDisconnected();
@@ -88,7 +86,7 @@ class ServiceWorkerInstalledScriptReader
 
   mojo::Remote<storage::mojom::ServiceWorkerResourceReader> reader_;
   // |client_| must outlive this.
-  Client* client_;
+  raw_ptr<Client> client_;
 
   // For meta data.
   std::unique_ptr<MetaDataSender> meta_data_sender_;

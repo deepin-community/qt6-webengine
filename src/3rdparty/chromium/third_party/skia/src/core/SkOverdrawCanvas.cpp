@@ -50,10 +50,8 @@ public:
               fOverdrawCanvas{overdrawCanvas},
               fPainter{props, kN32_SkColorType, nullptr, SkStrikeCache::GlobalStrikeCache()} {}
 
-    void paintPaths(SkDrawableGlyphBuffer*, SkScalar, SkPoint, const SkPaint&) const override {}
-
-    void paintMasks(SkDrawableGlyphBuffer* drawables, const SkPaint& paint) const override {
-        for (auto t : drawables->drawable()) {
+    void paintMasks(SkDrawableGlyphBuffer* accepted, const SkPaint& paint) const override {
+        for (auto t : accepted->accepted()) {
             SkGlyphVariant glyph; SkPoint pos;
             std::tie(glyph, pos) = t;
             SkMask mask = glyph.glyph()->mask(pos);
@@ -61,9 +59,14 @@ public:
         }
     }
 
-protected:
-    void drawGlyphRunList(const SkGlyphRunList& glyphRunList) override {
-        fPainter.drawForBitmapDevice(glyphRunList, fOverdrawCanvas->getTotalMatrix(), this);
+    void    drawBitmap(const SkBitmap&, const SkMatrix&, const SkRect* dstOrNull,
+                       const SkSamplingOptions&, const SkPaint&) const override {}
+
+    void onDrawGlyphRunList(SkCanvas* canvas, const SkGlyphRunList& glyphRunList,
+                            const SkPaint& paint) override {
+        SkASSERT(!glyphRunList.hasRSXForm());
+        fPainter.drawForBitmapDevice(canvas, this, glyphRunList, paint,
+                                     fOverdrawCanvas->getTotalMatrix());
     }
 
 private:
@@ -72,14 +75,20 @@ private:
 };
 }  // namespace
 
-void SkOverdrawCanvas::onDrawTextBlob(const SkTextBlob* blob, SkScalar x, SkScalar y,
-                                      const SkPaint& paint) {
+void SkOverdrawCanvas::onDrawTextBlob(
+        const SkTextBlob* blob, SkScalar x, SkScalar y, const SkPaint& paint) {
     SkGlyphRunBuilder b;
+    auto glyphRunList = b.blobToGlyphRunList(*blob, {x, y});
+    this->onDrawGlyphRunList(glyphRunList, paint);
+}
+
+void SkOverdrawCanvas::onDrawGlyphRunList(
+        const SkGlyphRunList& glyphRunList, const SkPaint& paint) {
     SkSurfaceProps props{0, kUnknown_SkPixelGeometry};
     this->getProps(&props);
     TextDevice device{this, props};
 
-    b.drawTextBlob(paint, *blob, {x, y}, &device);
+    device.drawGlyphRunList(this, glyphRunList, paint);
 }
 
 void SkOverdrawCanvas::onDrawPatch(const SkPoint cubics[12], const SkColor colors[4],
@@ -176,8 +185,8 @@ void SkOverdrawCanvas::onDrawImageLattice2(const SkImage* image, const Lattice& 
     if (SkLatticeIter::Valid(image->width(), image->height(), latticePlusBounds)) {
         SkLatticeIter iter(latticePlusBounds, dst);
 
-        SkRect dummy, iterDst;
-        while (iter.next(&dummy, &iterDst)) {
+        SkRect ignored, iterDst;
+        while (iter.next(&ignored, &iterDst)) {
             fList[0]->onDrawRect(iterDst, fPaint);
         }
     } else {

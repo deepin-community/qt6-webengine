@@ -12,17 +12,35 @@
 #include <vector>
 
 #include "base/bind.h"
-#include "base/optional.h"
 #include "base/strings/string_util.h"
 #include "dbus/object_path.h"
 #include "device/bluetooth/bluetooth_device.h"
 #include "device/bluetooth/dbus/bluetooth_adapter_client.h"
+#include "device/bluetooth/dbus/bluetooth_admin_policy_client.h"
 #include "device/bluetooth/dbus/bluetooth_device_client.h"
 #include "device/bluetooth/dbus/bluez_dbus_manager.h"
 #include "device/bluetooth/public/cpp/bluetooth_address.h"
 #include "mojo/public/cpp/bindings/self_owned_receiver.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace device {
+namespace {
+
+bool GetDeviceIsBlockedByPolicy(const dbus::ObjectPath& device_path) {
+  bluez::BluetoothAdminPolicyClient::Properties* properties =
+      bluez::BluezDBusManager::Get()
+          ->GetAlternateBluetoothAdminPolicyClient()
+          ->GetProperties(device_path);
+  if (!properties)
+    return false;
+
+  if (!properties->is_blocked_by_policy.is_valid())
+    return false;
+
+  return properties->is_blocked_by_policy.value();
+}
+
+}  // namespace
 
 void BluetoothSystem::Create(
     mojo::PendingReceiver<mojom::BluetoothSystem> receiver,
@@ -64,7 +82,7 @@ void BluetoothSystem::AdapterRemoved(const dbus::ObjectPath& object_path) {
   if (active_adapter_.value() != object_path)
     return;
 
-  active_adapter_ = base::nullopt;
+  active_adapter_ = absl::nullopt;
 
   std::vector<dbus::ObjectPath> object_paths =
       GetBluetoothAdapterClient()->GetAdapters();
@@ -129,10 +147,10 @@ void BluetoothSystem::SetPowered(bool powered, SetPoweredCallback callback) {
 
   GetBluetoothAdapterClient()
       ->GetProperties(active_adapter_.value())
-      ->powered.Set(powered,
-                    base::BindOnce(&BluetoothSystem::OnSetPoweredFinished,
-                                   weak_ptr_factory_.GetWeakPtr(),
-                                   base::Passed(&callback)));
+      ->powered.Set(
+          powered,
+          base::BindOnce(&BluetoothSystem::OnSetPoweredFinished,
+                         weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
 }
 
 void BluetoothSystem::GetScanState(GetScanStateCallback callback) {
@@ -220,13 +238,14 @@ void BluetoothSystem::GetAvailableDevices(
     auto device_info = mojom::BluetoothDeviceInfo::New();
     device_info->address = std::move(parsed_address);
     device_info->name = properties->name.is_valid()
-                            ? base::make_optional(properties->name.value())
-                            : base::nullopt;
+                            ? absl::make_optional(properties->name.value())
+                            : absl::nullopt;
     device_info->connection_state =
         properties->connected.value()
             ? mojom::BluetoothDeviceInfo::ConnectionState::kConnected
             : mojom::BluetoothDeviceInfo::ConnectionState::kNotConnected;
     device_info->is_paired = properties->paired.value();
+    device_info->is_blocked_by_policy = GetDeviceIsBlockedByPolicy(device_path);
 
     // TODO(ortuno): Get the DeviceType from the device Class and Appearance.
     devices.push_back(std::move(device_info));
@@ -283,7 +302,7 @@ void BluetoothSystem::OnSetPoweredFinished(SetPoweredCallback callback,
 
 void BluetoothSystem::OnStartDiscovery(
     StartScanCallback callback,
-    const base::Optional<bluez::BluetoothAdapterClient::Error>& error) {
+    const absl::optional<bluez::BluetoothAdapterClient::Error>& error) {
   // TODO(https://crbug.com/897996): Use the name and message in |error| to
   // return more specific error codes.
   std::move(callback).Run(error ? StartScanResult::kFailedUnknownReason
@@ -292,7 +311,7 @@ void BluetoothSystem::OnStartDiscovery(
 
 void BluetoothSystem::OnStopDiscovery(
     StopScanCallback callback,
-    const base::Optional<bluez::BluetoothAdapterClient::Error>& error) {
+    const absl::optional<bluez::BluetoothAdapterClient::Error>& error) {
   // TODO(https://crbug.com/897996): Use the name and message in |error| to
   // return more specific error codes.
   std::move(callback).Run(error ? StopScanResult::kFailedUnknownReason

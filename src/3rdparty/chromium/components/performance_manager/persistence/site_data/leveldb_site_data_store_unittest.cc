@@ -15,10 +15,10 @@
 #include "base/strings/stringprintf.h"
 #include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
-#include "base/test/task_environment.h"
 #include "base/test/test_file_util.h"
 #include "build/build_config.h"
 #include "components/performance_manager/persistence/site_data/site_data.pb.h"
+#include "content/public/test/browser_task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/leveldatabase/leveldb_chrome.h"
 #include "url/gurl.h"
@@ -48,9 +48,9 @@ ScopedReadOnlyDirectory::ScopedReadOnlyDirectory(
       root_dir, FILE_PATH_LITERAL("read_only_path"), &read_only_path_));
   permission_restorer_ =
       std::make_unique<base::FilePermissionRestorer>(read_only_path_);
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   base::DenyFilePermission(read_only_path_, GENERIC_WRITE);
-#else  // defined(OS_WIN)
+#else  // BUILDFLAG(IS_WIN)
   EXPECT_TRUE(base::MakeFileUnwritable(read_only_path_));
 #endif
   EXPECT_FALSE(base::PathIsWritable(read_only_path_));
@@ -124,7 +124,7 @@ class LevelDBSiteDataStoreTest : public ::testing::Test {
     bool success = false;
     auto init_callback = base::BindOnce(
         [](SiteDataProto* receiving_proto, bool* success,
-           base::Optional<SiteDataProto> proto_opt) {
+           absl::optional<SiteDataProto> proto_opt) {
           *success = proto_opt.has_value();
           if (proto_opt)
             receiving_proto->CopyFrom(proto_opt.value());
@@ -156,7 +156,7 @@ class LevelDBSiteDataStoreTest : public ::testing::Test {
   const url::Origin kDummyOrigin = url::Origin::Create(GURL("http://foo.com"));
 
   base::FilePath db_path_;
-  base::test::TaskEnvironment task_env_;
+  content::BrowserTaskEnvironment task_env_;
   base::ScopedTempDir temp_dir_;
   std::unique_ptr<LevelDBSiteDataStore> db_;
 };
@@ -211,8 +211,8 @@ TEST_F(LevelDBSiteDataStoreTest, GetDatabaseSize) {
   std::vector<url::Origin> site_origins = AddDummyEntriesToDB(200);
 
   auto size_callback =
-      base::BindLambdaForTesting([&](base::Optional<int64_t> num_rows,
-                                     base::Optional<int64_t> on_disk_size_kb) {
+      base::BindLambdaForTesting([&](absl::optional<int64_t> num_rows,
+                                     absl::optional<int64_t> on_disk_size_kb) {
         EXPECT_TRUE(num_rows);
         // The DB contains an extra row for metadata.
         int64_t expected_rows = site_origins.size() + 1;
@@ -257,9 +257,16 @@ TEST_F(LevelDBSiteDataStoreTest, DatabaseRecoveryTest) {
   // manifest files.
 }
 
+#if BUILDFLAG(IS_FUCHSIA)
+// TODO(crbug.com/1314084): Re-enable when DatabaseOpeningFailure works on
+// Fuchsia.
+#define MAYBE_DatabaseOpeningFailure DISABLED_DatabaseOpeningFailure
+#else
+#define MAYBE_DatabaseOpeningFailure DatabaseOpeningFailure
+#endif
 // Ensure that there's no fatal failures if we try using the data store after
 // failing to open it (all the events will be ignored).
-TEST_F(LevelDBSiteDataStoreTest, DatabaseOpeningFailure) {
+TEST_F(LevelDBSiteDataStoreTest, MAYBE_DatabaseOpeningFailure) {
   db_.reset();
   ScopedReadOnlyDirectory read_only_dir(GetTempPath());
 

@@ -10,6 +10,7 @@
 
 #include "pc/rtp_transceiver.h"
 
+#include <algorithm>
 #include <iterator>
 #include <string>
 #include <utility>
@@ -24,7 +25,9 @@
 #include "pc/rtp_media_utils.h"
 #include "pc/session_description.h"
 #include "rtc_base/checks.h"
+#include "rtc_base/location.h"
 #include "rtc_base/logging.h"
+#include "rtc_base/task_utils/to_queued_task.h"
 #include "rtc_base/thread.h"
 
 namespace webrtc {
@@ -112,12 +115,16 @@ TaskQueueBase* GetCurrentTaskQueueOrThread() {
 
 }  // namespace
 
-RtpTransceiver::RtpTransceiver(cricket::MediaType media_type)
+RtpTransceiver::RtpTransceiver(
+    cricket::MediaType media_type,
+    cricket::ChannelManager* channel_manager /* = nullptr*/)
     : thread_(GetCurrentTaskQueueOrThread()),
       unified_plan_(false),
-      media_type_(media_type) {
+      media_type_(media_type),
+      channel_manager_(channel_manager) {
   RTC_DCHECK(media_type == cricket::MEDIA_TYPE_AUDIO ||
              media_type == cricket::MEDIA_TYPE_VIDEO);
+  RTC_DCHECK(channel_manager_);
 }
 
 RtpTransceiver::RtpTransceiver(
@@ -136,52 +143,104 @@ RtpTransceiver::RtpTransceiver(
   RTC_DCHECK(media_type_ == cricket::MEDIA_TYPE_AUDIO ||
              media_type_ == cricket::MEDIA_TYPE_VIDEO);
   RTC_DCHECK_EQ(sender->media_type(), receiver->media_type());
+  RTC_DCHECK(channel_manager_);
   senders_.push_back(sender);
   receivers_.push_back(receiver);
 }
 
 RtpTransceiver::~RtpTransceiver() {
-  StopInternal();
+  // TODO(tommi): On Android, when running PeerConnectionClientTest (e.g.
+  // PeerConnectionClientTest#testCameraSwitch), the instance doesn't get
+  // deleted on `thread_`. See if we can fix that.
+  if (!stopped_) {
+    RTC_DCHECK_RUN_ON(thread_);
+    StopInternal();
+  }
+
+  RTC_CHECK(!channel_) << "Missing call to SetChannel(nullptr)?";
 }
 
-void RtpTransceiver::SetChannel(cricket::ChannelInterface* channel) {
+void RtpTransceiver::SetChannel(
+    cricket::ChannelInterface* channel,
+    std::function<RtpTransportInternal*(const std::string&)> transport_lookup) {
+  RTC_DCHECK_RUN_ON(thread_);
   // Cannot set a non-null channel on a stopped transceiver.
-  if (stopped_ && channel) {
+  if ((stopped_ && channel) || channel == channel_) {
     return;
+  }
+
+  RTC_DCHECK(channel || channel_);
+  RTC_DCHECK(!channel || transport_lookup) << "lookup function not supplied";
+
+  RTC_LOG_THREAD_BLOCK_COUNT();
+
+  if (channel_) {
+    signaling_thread_safety_->SetNotAlive();
+    signaling_thread_safety_ = nullptr;
   }
 
   if (channel) {
     RTC_DCHECK_EQ(media_type(), channel->media_type());
+    signaling_thread_safety_ = PendingTaskSafetyFlag::Create();
   }
 
-  if (channel_) {
-    channel_->SignalFirstPacketReceived().disconnect(this);
-  }
+  cricket::ChannelInterface* channel_to_delete = nullptr;
 
-  channel_ = channel;
-
-  if (channel_) {
-    channel_->SignalFirstPacketReceived().connect(
-        this, &RtpTransceiver::OnFirstPacketReceived);
-  }
-
-  for (const auto& sender : senders_) {
-    sender->internal()->SetMediaChannel(channel_ ? channel_->media_channel()
-                                                 : nullptr);
-  }
-
-  for (const auto& receiver : receivers_) {
-    if (!channel_) {
-      receiver->internal()->Stop();
+  // An alternative to this, could be to require SetChannel to be called
+  // on the network thread. The channel object operates for the most part
+  // on the network thread, as part of its initialization being on the network
+  // thread is required, so setting a channel object as part of the construction
+  // (without thread hopping) might be the more efficient thing to do than
+  // how SetChannel works today.
+  // Similarly, if the channel() accessor is limited to the network thread, that
+  // helps with keeping the channel implementation requirements being met and
+  // avoids synchronization for accessing the pointer or network related state.
+  channel_manager_->network_thread()->Invoke<void>(RTC_FROM_HERE, [&]() {
+    if (channel_) {
+      channel_->SetFirstPacketReceivedCallback(nullptr);
+      channel_->SetRtpTransport(nullptr);
+      channel_to_delete = channel_;
     }
 
-    receiver->internal()->SetMediaChannel(channel_ ? channel_->media_channel()
-                                                   : nullptr);
+    channel_ = channel;
+
+    if (channel_) {
+      channel_->SetRtpTransport(transport_lookup(channel_->mid()));
+      channel_->SetFirstPacketReceivedCallback(
+          [thread = thread_, flag = signaling_thread_safety_, this]() mutable {
+            thread->PostTask(ToQueuedTask(
+                std::move(flag), [this]() { OnFirstPacketReceived(); }));
+          });
+    }
+  });
+
+  RTC_DCHECK_BLOCK_COUNT_NO_MORE_THAN(1);
+
+  if (channel_to_delete || !senders_.empty() || !receivers_.empty()) {
+    channel_manager_->worker_thread()->Invoke<void>(RTC_FROM_HERE, [&]() {
+      auto* media_channel = channel_ ? channel_->media_channel() : nullptr;
+      for (const auto& sender : senders_) {
+        sender->internal()->SetMediaChannel(media_channel);
+      }
+
+      for (const auto& receiver : receivers_) {
+        receiver->internal()->SetMediaChannel(media_channel);
+      }
+
+      // Destroy the channel, if we had one, now _after_ updating the receivers
+      // who might have had references to the previous channel.
+      if (channel_to_delete) {
+        channel_manager_->DestroyChannel(channel_to_delete);
+      }
+    });
   }
+
+  RTC_DCHECK_BLOCK_COUNT_NO_MORE_THAN(2);
 }
 
 void RtpTransceiver::AddSender(
     rtc::scoped_refptr<RtpSenderProxyWithInternal<RtpSenderInternal>> sender) {
+  RTC_DCHECK_RUN_ON(thread_);
   RTC_DCHECK(!stopped_);
   RTC_DCHECK(!unified_plan_);
   RTC_DCHECK(sender);
@@ -207,6 +266,7 @@ bool RtpTransceiver::RemoveSender(RtpSenderInterface* sender) {
 void RtpTransceiver::AddReceiver(
     rtc::scoped_refptr<RtpReceiverProxyWithInternal<RtpReceiverInternal>>
         receiver) {
+  RTC_DCHECK_RUN_ON(thread_);
   RTC_DCHECK(!stopped_);
   RTC_DCHECK(!unified_plan_);
   RTC_DCHECK(receiver);
@@ -216,6 +276,7 @@ void RtpTransceiver::AddReceiver(
 }
 
 bool RtpTransceiver::RemoveReceiver(RtpReceiverInterface* receiver) {
+  RTC_DCHECK_RUN_ON(thread_);
   RTC_DCHECK(!unified_plan_);
   if (receiver) {
     RTC_DCHECK_EQ(media_type(), receiver->media_type());
@@ -224,12 +285,13 @@ bool RtpTransceiver::RemoveReceiver(RtpReceiverInterface* receiver) {
   if (it == receivers_.end()) {
     return false;
   }
+
   (*it)->internal()->Stop();
-  // After the receiver has been removed, there's no guarantee that the
-  // contained media channel isn't deleted shortly after this. To make sure that
-  // the receiver doesn't spontaneously try to use it's (potentially stale)
-  // media channel reference, we clear it out.
-  (*it)->internal()->SetMediaChannel(nullptr);
+  channel_manager_->worker_thread()->Invoke<void>(RTC_FROM_HERE, [&]() {
+    // `Stop()` will clear the receiver's pointer to the media channel.
+    (*it)->internal()->SetMediaChannel(nullptr);
+  });
+
   receivers_.erase(it);
   return true;
 }
@@ -237,14 +299,14 @@ bool RtpTransceiver::RemoveReceiver(RtpReceiverInterface* receiver) {
 rtc::scoped_refptr<RtpSenderInternal> RtpTransceiver::sender_internal() const {
   RTC_DCHECK(unified_plan_);
   RTC_CHECK_EQ(1u, senders_.size());
-  return senders_[0]->internal();
+  return rtc::scoped_refptr<RtpSenderInternal>(senders_[0]->internal());
 }
 
 rtc::scoped_refptr<RtpReceiverInternal> RtpTransceiver::receiver_internal()
     const {
   RTC_DCHECK(unified_plan_);
   RTC_CHECK_EQ(1u, receivers_.size());
-  return receivers_[0]->internal();
+  return rtc::scoped_refptr<RtpReceiverInternal>(receivers_[0]->internal());
 }
 
 cricket::MediaType RtpTransceiver::media_type() const {
@@ -255,7 +317,7 @@ absl::optional<std::string> RtpTransceiver::mid() const {
   return mid_;
 }
 
-void RtpTransceiver::OnFirstPacketReceived(cricket::ChannelInterface*) {
+void RtpTransceiver::OnFirstPacketReceived() {
   for (const auto& receiver : receivers_) {
     receiver->internal()->NotifyFirstPacketReceived();
   }
@@ -292,6 +354,7 @@ void RtpTransceiver::set_fired_direction(RtpTransceiverDirection direction) {
 }
 
 bool RtpTransceiver::stopped() const {
+  RTC_DCHECK_RUN_ON(thread_);
   return stopped_;
 }
 
@@ -346,15 +409,22 @@ void RtpTransceiver::StopSendingAndReceiving() {
   //
   // 3. Stop sending media with sender.
   //
+  RTC_DCHECK_RUN_ON(thread_);
+
   // 4. Send an RTCP BYE for each RTP stream that was being sent by sender, as
   // specified in [RFC3550].
-  RTC_DCHECK_RUN_ON(thread_);
   for (const auto& sender : senders_)
     sender->internal()->Stop();
 
-  // 5. Stop receiving media with receiver.
+  // Signal to receiver sources that we're stopping.
   for (const auto& receiver : receivers_)
-    receiver->internal()->StopAndEndTrack();
+    receiver->internal()->Stop();
+
+  channel_manager_->worker_thread()->Invoke<void>(RTC_FROM_HERE, [&]() {
+    // 5 Stop receiving media with receiver.
+    for (const auto& receiver : receivers_)
+      receiver->internal()->SetMediaChannel(nullptr);
+  });
 
   stopping_ = true;
   direction_ = webrtc::RtpTransceiverDirection::kInactive;
@@ -392,6 +462,7 @@ RTCError RtpTransceiver::StopStandard() {
 }
 
 void RtpTransceiver::StopInternal() {
+  RTC_DCHECK_RUN_ON(thread_);
   StopTransceiverProcedure();
 }
 
@@ -463,10 +534,9 @@ RtpTransceiver::HeaderExtensionsToOffer() const {
 
 std::vector<RtpHeaderExtensionCapability>
 RtpTransceiver::HeaderExtensionsNegotiated() const {
-  if (!channel_)
-    return {};
+  RTC_DCHECK_RUN_ON(thread_);
   std::vector<RtpHeaderExtensionCapability> result;
-  for (const auto& ext : channel_->GetNegotiatedRtpHeaderExtensions()) {
+  for (const auto& ext : negotiated_header_extensions_) {
     result.emplace_back(ext.uri, ext.id, RtpTransceiverDirection::kSendRecv);
   }
   return result;
@@ -514,6 +584,15 @@ RTCError RtpTransceiver::SetOfferedRtpHeaderExtensions(
   }
 
   return RTCError::OK();
+}
+
+void RtpTransceiver::OnNegotiationUpdate(
+    SdpType sdp_type,
+    const cricket::MediaContentDescription* content) {
+  RTC_DCHECK_RUN_ON(thread_);
+  RTC_DCHECK(content);
+  if (sdp_type == SdpType::kAnswer)
+    negotiated_header_extensions_ = content->rtp_header_extensions();
 }
 
 void RtpTransceiver::SetPeerConnectionClosed() {

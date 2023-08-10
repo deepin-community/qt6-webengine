@@ -7,13 +7,14 @@
 
 #include <stdint.h>
 
-#include <list>
 #include <memory>
 #include <set>
 #include <string>
 #include <vector>
 
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
+#include "base/values.h"
 #include "components/bookmarks/browser/base_bookmark_model_observer.h"
 #include "components/bookmarks/browser/bookmark_node.h"
 #include "extensions/browser/browser_context_keyed_api_factory.h"
@@ -25,7 +26,6 @@ class Profile;
 
 namespace base {
 class FilePath;
-class ListValue;
 }
 
 namespace bookmarks {
@@ -88,11 +88,11 @@ class BookmarkEventRouter : public bookmarks::BookmarkModelObserver {
   // Helper to actually dispatch an event to extension listeners.
   void DispatchEvent(events::HistogramValue histogram_value,
                      const std::string& event_name,
-                     std::unique_ptr<base::ListValue> event_args);
+                     std::vector<base::Value> event_args);
 
-  content::BrowserContext* browser_context_;
-  bookmarks::BookmarkModel* model_;
-  bookmarks::ManagedBookmarkService* managed_;
+  raw_ptr<content::BrowserContext> browser_context_;
+  raw_ptr<bookmarks::BookmarkModel> model_;
+  raw_ptr<bookmarks::ManagedBookmarkService> managed_;
 };
 
 class BookmarksAPI : public BrowserContextKeyedAPI,
@@ -113,7 +113,7 @@ class BookmarksAPI : public BrowserContextKeyedAPI,
  private:
   friend class BrowserContextKeyedAPIFactory<BookmarksAPI>;
 
-  content::BrowserContext* browser_context_;
+  raw_ptr<content::BrowserContext> browser_context_;
 
   // BrowserContextKeyedAPI implementation.
   static const char* service_name() {

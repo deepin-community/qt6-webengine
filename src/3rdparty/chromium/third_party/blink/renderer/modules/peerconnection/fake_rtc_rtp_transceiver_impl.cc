@@ -13,13 +13,12 @@ namespace blink {
 MediaStreamComponent* CreateMediaStreamComponent(
     const std::string& id,
     scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
-  auto* source = MakeGarbageCollected<MediaStreamSource>(
-      String::FromUTF8(id), MediaStreamSource::kTypeAudio,
-      String::FromUTF8("audio_track"), false);
   auto audio_source = std::make_unique<blink::MediaStreamAudioSource>(
       std::move(task_runner), true /* is_local_source */);
   auto* audio_source_ptr = audio_source.get();
-  source->SetPlatformSource(std::move(audio_source));
+  auto* source = MakeGarbageCollected<MediaStreamSource>(
+      String::FromUTF8(id), MediaStreamSource::kTypeAudio,
+      String::FromUTF8("audio_track"), false, std::move(audio_source));
 
   auto* component =
       MakeGarbageCollected<MediaStreamComponent>(source->Id(), source);
@@ -28,7 +27,7 @@ MediaStreamComponent* CreateMediaStreamComponent(
 }
 
 FakeRTCRtpSenderImpl::FakeRTCRtpSenderImpl(
-    base::Optional<std::string> track_id,
+    absl::optional<std::string> track_id,
     std::vector<std::string> stream_ids,
     scoped_refptr<base::SingleThreadTaskRunner> task_runner)
     : track_id_(std::move(track_id)),
@@ -158,8 +157,9 @@ MediaStreamComponent* FakeRTCRtpReceiverImpl::Track() const {
 }
 
 Vector<String> FakeRTCRtpReceiverImpl::StreamIds() const {
-  Vector<String> wtf_stream_ids(stream_ids_.size());
-  for (size_t i = 0; i < stream_ids_.size(); ++i) {
+  Vector<String> wtf_stream_ids(
+      base::checked_cast<wtf_size_t>(stream_ids_.size()));
+  for (wtf_size_t i = 0; i < wtf_stream_ids.size(); ++i) {
     wtf_stream_ids[i] = String::FromUTF8(stream_ids_[i]);
   }
   return wtf_stream_ids;
@@ -183,17 +183,17 @@ std::unique_ptr<webrtc::RtpParameters> FakeRTCRtpReceiverImpl::GetParameters()
 }
 
 void FakeRTCRtpReceiverImpl::SetJitterBufferMinimumDelay(
-    base::Optional<double> delay_seconds) {
+    absl::optional<double> delay_seconds) {
   NOTIMPLEMENTED();
 }
 
 FakeRTCRtpTransceiverImpl::FakeRTCRtpTransceiverImpl(
-    base::Optional<std::string> mid,
+    absl::optional<std::string> mid,
     FakeRTCRtpSenderImpl sender,
     FakeRTCRtpReceiverImpl receiver,
     bool stopped,
     webrtc::RtpTransceiverDirection direction,
-    base::Optional<webrtc::RtpTransceiverDirection> current_direction)
+    absl::optional<webrtc::RtpTransceiverDirection> current_direction)
     : mid_(std::move(mid)),
       sender_(std::move(sender)),
       receiver_(std::move(receiver)),
@@ -241,15 +241,15 @@ webrtc::RTCError FakeRTCRtpTransceiverImpl::SetDirection(
   return webrtc::RTCError::OK();
 }
 
-base::Optional<webrtc::RtpTransceiverDirection>
+absl::optional<webrtc::RtpTransceiverDirection>
 FakeRTCRtpTransceiverImpl::CurrentDirection() const {
   return current_direction_;
 }
 
-base::Optional<webrtc::RtpTransceiverDirection>
+absl::optional<webrtc::RtpTransceiverDirection>
 FakeRTCRtpTransceiverImpl::FiredDirection() const {
   NOTIMPLEMENTED();
-  return base::nullopt;
+  return absl::nullopt;
 }
 
 webrtc::RTCError FakeRTCRtpTransceiverImpl::SetOfferedRtpHeaderExtensions(

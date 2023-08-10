@@ -5,21 +5,19 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_HANDWRITING_HANDWRITING_TYPE_CONVERTERS_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_HANDWRITING_HANDWRITING_TYPE_CONVERTERS_H_
 
-#include <string>
-
 #include "mojo/public/cpp/bindings/type_converter.h"
 #include "third_party/blink/public/mojom/handwriting/handwriting.mojom-blink-forward.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
 
 namespace blink {
 class HandwritingDrawingSegment;
-class HandwritingFeatureQuery;
-class HandwritingFeatureQueryResult;
 class HandwritingHints;
 class HandwritingPoint;
 class HandwritingPrediction;
 class HandwritingSegment;
 class HandwritingStroke;
+class HandwritingRecognizerQueryResult;
+class HandwritingModelConstraint;
 }  // namespace blink
 
 namespace mojo {
@@ -50,14 +48,6 @@ struct MODULES_EXPORT
       const blink::HandwritingHints* input);
 };
 
-template <>
-struct MODULES_EXPORT
-    TypeConverter<handwriting::mojom::blink::HandwritingFeatureQueryPtr,
-                  blink::HandwritingFeatureQuery*> {
-  static handwriting::mojom::blink::HandwritingFeatureQueryPtr Convert(
-      const blink::HandwritingFeatureQuery* input);
-};
-
 // Converters from Mojo to IDL.
 
 template <>
@@ -74,14 +64,6 @@ struct MODULES_EXPORT
                   handwriting::mojom::blink::HandwritingStrokePtr> {
   static blink::HandwritingStroke* Convert(
       const handwriting::mojom::blink::HandwritingStrokePtr& input);
-};
-
-template <>
-struct MODULES_EXPORT
-    TypeConverter<blink::HandwritingFeatureQueryResult*,
-                  handwriting::mojom::blink::HandwritingFeatureQueryResultPtr> {
-  static blink::HandwritingFeatureQueryResult* Convert(
-      const handwriting::mojom::blink::HandwritingFeatureQueryResultPtr& input);
 };
 
 template <>
@@ -106,6 +88,23 @@ struct MODULES_EXPORT
                   handwriting::mojom::blink::HandwritingPredictionPtr> {
   static blink::HandwritingPrediction* Convert(
       const handwriting::mojom::blink::HandwritingPredictionPtr& input);
+};
+
+template <>
+struct MODULES_EXPORT
+    TypeConverter<handwriting::mojom::blink::HandwritingModelConstraintPtr,
+                  blink::HandwritingModelConstraint*> {
+  static handwriting::mojom::blink::HandwritingModelConstraintPtr Convert(
+      const blink::HandwritingModelConstraint* input);
+};
+
+template <>
+struct MODULES_EXPORT TypeConverter<
+    blink::HandwritingRecognizerQueryResult*,
+    handwriting::mojom::blink::QueryHandwritingRecognizerResultPtr> {
+  static blink::HandwritingRecognizerQueryResult* Convert(
+      const handwriting::mojom::blink::QueryHandwritingRecognizerResultPtr&
+          input);
 };
 
 }  // namespace mojo

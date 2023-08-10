@@ -5,6 +5,8 @@
 #ifndef CC_LAYERS_PAINTED_SCROLLBAR_LAYER_IMPL_H_
 #define CC_LAYERS_PAINTED_SCROLLBAR_LAYER_IMPL_H_
 
+#include <memory>
+
 #include "cc/cc_export.h"
 #include "cc/input/scrollbar.h"
 #include "cc/layers/scrollbar_layer_impl_base.h"
@@ -29,14 +31,15 @@ class CC_EXPORT PaintedScrollbarLayerImpl : public ScrollbarLayerImplBase {
       delete;
 
   // LayerImpl implementation.
-  std::unique_ptr<LayerImpl> CreateLayerImpl(LayerTreeImpl* tree_impl) override;
+  std::unique_ptr<LayerImpl> CreateLayerImpl(
+      LayerTreeImpl* tree_impl) const override;
   void PushPropertiesTo(LayerImpl* layer) override;
 
   bool WillDraw(DrawMode draw_mode,
                 viz::ClientResourceProvider* resource_provider) override;
   void AppendQuads(viz::CompositorRenderPass* render_pass,
                    AppendQuadsData* append_quads_data) override;
-  gfx::Rect GetEnclosingRectInTargetSpace() const override;
+  gfx::Rect GetEnclosingVisibleRectInTargetSpace() const override;
 
   void SetJumpOnTrackClick(bool jump_on_track_click);
   void SetSupportsDragSnapBack(bool supports_drag_snap_back);

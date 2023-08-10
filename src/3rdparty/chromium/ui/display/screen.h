@@ -5,13 +5,14 @@
 #ifndef UI_DISPLAY_SCREEN_H_
 #define UI_DISPLAY_SCREEN_H_
 
+#include <memory>
 #include <set>
 #include <vector>
 
-#include "base/macros.h"
 #include "base/values.h"
 #include "ui/display/display.h"
 #include "ui/display/display_export.h"
+#include "ui/display/screen_infos.h"
 #include "ui/gfx/gpu_extra_info.h"
 #include "ui/gfx/native_widget_types.h"
 
@@ -39,6 +40,10 @@ class DisplayObserver;
 class DISPLAY_EXPORT Screen {
  public:
   Screen();
+
+  Screen(const Screen&) = delete;
+  Screen& operator=(const Screen&) = delete;
+
   virtual ~Screen();
 
   // Retrieves the single Screen object; this may be null (e.g. in some tests).
@@ -51,6 +56,9 @@ class DISPLAY_EXPORT Screen {
 
   // Returns the current absolute position of the mouse pointer.
   virtual gfx::Point GetCursorScreenPoint() = 0;
+
+  // Allows tests to override the cursor point location on the screen.
+  virtual void SetCursorScreenPointForTesting(const gfx::Point& point);
 
   // Returns true if the cursor is directly over |window|.
   virtual bool IsWindowUnderCursor(gfx::NativeWindow window) = 0;
@@ -66,12 +74,14 @@ class DISPLAY_EXPORT Screen {
       const gfx::Point& point,
       const std::set<gfx::NativeWindow>& ignore) = 0;
 
-  // Returns the number of displays.
-  // Mirrored displays are excluded; this method is intended to return the
-  // number of distinct, usable displays.
+  // Returns the number of displays.  Mirrored displays are excluded; this
+  // method is intended to return the number of distinct, usable displays.
+  // The value returned must be at least 1, as GetAllDisplays returns a fake
+  // display if there are no displays in the system.
   virtual int GetNumDisplays() const = 0;
 
   // Returns the list of displays that are currently available.
+  // Screen subclasses must return at least one Display, even if it is fake.
   virtual const std::vector<Display>& GetAllDisplays() const = 0;
 
   // Returns the display nearest the specified window.
@@ -102,8 +112,41 @@ class DISPLAY_EXPORT Screen {
   // Sets the suggested display to use when creating a new window.
   void SetDisplayForNewWindows(int64_t display_id);
 
-  // Suspends the platform-specific screensaver, if applicable.
-  virtual void SetScreenSaverSuspended(bool suspend);
+  // Returns ScreenInfos, attempting to set the current ScreenInfo to the
+  // display corresponding to `nearest_id`.  The returned result is guaranteed
+  // to be non-empty.  This function also performs fallback to ensure the result
+  // also has a valid current ScreenInfo and exactly one primary ScreenInfo
+  // (both of which may or may not be `nearest_id`).
+  display::ScreenInfos GetScreenInfosNearestDisplay(int64_t nearest_id) const;
+
+#if BUILDFLAG(IS_CHROMEOS_LACROS) || BUILDFLAG(IS_LINUX)
+  // Object which suspends the platform-specific screensaver for the duration of
+  // its existence.
+  class ScreenSaverSuspender {
+   public:
+    ScreenSaverSuspender(const Screen&) = delete;
+    ScreenSaverSuspender& operator=(const Screen&) = delete;
+
+    // Notifies |screen_| that this instance is being destructed, and causes its
+    // platform-specific screensaver to be un-suspended if this is the last such
+    // remaining instance.
+    ~ScreenSaverSuspender();
+
+   private:
+    friend class Screen;
+
+    explicit ScreenSaverSuspender(Screen* screen) : screen_(screen) {}
+
+    Screen* screen_;
+  };
+
+  // Suspends the platform-specific screensaver until the returned
+  // |ScreenSaverSuspender| is destructed. This method allows stacking multiple
+  // overlapping calls, such that the platform-specific screensaver will not be
+  // un-suspended until all returned |SreenSaverSuspender| instances have been
+  // destructed.
+  std::unique_ptr<ScreenSaverSuspender> SuspendScreenSaver();
+#endif  // BUILDFLAG(IS_CHROMEOS_LACROS) || BUILDFLAG(IS_LINUX)
 
   // Returns whether the screensaver is currently running.
   virtual bool IsScreenSaverActive() const;
@@ -144,8 +187,15 @@ class DISPLAY_EXPORT Screen {
 
   // Returns human readable description of the window manager, desktop, and
   // other system properties related to the compositing.
-  virtual base::Value GetGpuExtraInfoAsListValue(
+  virtual std::vector<base::Value> GetGpuExtraInfo(
       const gfx::GpuExtraInfo& gpu_extra_info);
+
+ protected:
+#if BUILDFLAG(IS_CHROMEOS_LACROS) || BUILDFLAG(IS_LINUX)
+  // Suspends or un-suspends the platform-specific screensaver, and returns
+  // whether the operation was successful.
+  virtual bool SetScreenSaverSuspended(bool suspend);
+#endif  // BUILDFLAG(IS_CHROMEOS_LACROS) || BUILDFLAG(IS_LINUX)
 
  private:
   friend class ScopedDisplayForNewWindows;
@@ -160,7 +210,9 @@ class DISPLAY_EXPORT Screen {
   int64_t display_id_for_new_windows_;
   int64_t scoped_display_id_for_new_windows_ = display::kInvalidDisplayId;
 
-  DISALLOW_COPY_AND_ASSIGN(Screen);
+#if BUILDFLAG(IS_CHROMEOS_LACROS) || BUILDFLAG(IS_LINUX)
+  uint32_t screen_saver_suspension_count_ = 0;
+#endif  // BUILDFLAG(IS_CHROMEOS_LACROS) || BUILDFLAG(IS_LINUX)
 };
 
 Screen* CreateNativeScreen();

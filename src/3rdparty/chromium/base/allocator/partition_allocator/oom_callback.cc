@@ -3,11 +3,10 @@
 // found in the LICENSE file.
 
 #include "base/allocator/partition_allocator/oom_callback.h"
+
 #include "base/allocator/partition_allocator/partition_alloc_check.h"
 
-#include "base/check.h"
-
-namespace base {
+namespace partition_alloc {
 
 namespace {
 PartitionAllocOomCallback g_oom_callback;
@@ -25,4 +24,4 @@ void RunPartitionAllocOomCallback() {
 }
 }  // namespace internal
 
-}  // namespace base
+}  // namespace partition_alloc

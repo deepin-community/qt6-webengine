@@ -8,10 +8,9 @@
 #include <utility>
 #include <vector>
 
-#include "base/stl_util.h"
 #include "chrome/browser/apps/app_service/app_service_proxy.h"
 #include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
-#include "chrome/browser/chromeos/arc/session/arc_session_manager.h"
+#include "chrome/browser/ash/arc/session/arc_session_manager.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/supervised_user/supervised_user_service.h"
@@ -21,9 +20,9 @@
 #include "chrome/browser/ui/webui/chromeos/add_supervision/add_supervision_handler_utils.h"
 #include "chrome/browser/ui/webui/chromeos/add_supervision/add_supervision_metrics_recorder.h"
 #include "components/services/app_service/public/cpp/app_registry_cache.h"
+#include "components/signin/public/base/consent_level.h"
 #include "components/signin/public/identity_manager/access_token_fetcher.h"
 #include "components/signin/public/identity_manager/access_token_info.h"
-#include "components/signin/public/identity_manager/consent_level.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/signin/public/identity_manager/scope_set.h"
 #include "components/user_manager/user_manager.h"
@@ -61,9 +60,6 @@ void AddSupervisionHandler::GetInstalledArcApps(
     return;
   }
 
-  apps::AppServiceProxy* proxy =
-      apps::AppServiceProxyFactory::GetForProfile(profile);
-
   if (!arc::ArcSessionManager::Get()) {
     DLOG(WARNING) << "No ArcSessionManager available";
     std::move(callback).Run({});
@@ -77,8 +73,10 @@ void AddSupervisionHandler::GetInstalledArcApps(
   }
 
   std::vector<std::string> installed_arc_apps;
-  proxy->AppRegistryCache().ForEachApp(
-      [&installed_arc_apps, profile](const apps::AppUpdate& update) {
+  apps::AppServiceProxyFactory::GetForProfile(profile)
+      ->AppRegistryCache()
+      .ForEachApp([&installed_arc_apps,
+                   profile](const apps::AppUpdate& update) {
         if (ShouldIncludeAppUpdate(update)) {
           std::string package_name =
               arc::AppIdToArcPackageName(update.AppId(), profile);
@@ -100,8 +98,7 @@ void AddSupervisionHandler::GetOAuthToken(GetOAuthTokenCallback callback) {
 
   oauth2_access_token_fetcher_ =
       identity_manager_->CreateAccessTokenFetcherForAccount(
-          identity_manager_->GetPrimaryAccountId(
-              signin::ConsentLevel::kNotRequired),
+          identity_manager_->GetPrimaryAccountId(signin::ConsentLevel::kSync),
           "add_supervision", scopes,
           base::BindOnce(&AddSupervisionHandler::OnAccessTokenFetchComplete,
                          weak_ptr_factory_.GetWeakPtr(), std::move(callback)),

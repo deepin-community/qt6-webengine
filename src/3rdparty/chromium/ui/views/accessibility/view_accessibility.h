@@ -10,10 +10,10 @@
 #include <vector>
 
 #include "base/callback_forward.h"
-#include "base/optional.h"
-#include "base/strings/string16.h"
+#include "base/memory/raw_ptr.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/accessibility/ax_enums.mojom-forward.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/accessibility/platform/ax_unique_id.h"
@@ -100,9 +100,9 @@ class VIEWS_EXPORT ViewAccessibility {
 
   void OverrideRole(const ax::mojom::Role role);
   void OverrideName(const std::string& name);
-  void OverrideName(const base::string16& name);
+  void OverrideName(const std::u16string& name);
   void OverrideDescription(const std::string& description);
-  void OverrideDescription(const base::string16& description);
+  void OverrideDescription(const std::u16string& description);
 
   // Sets whether this View hides all its descendants from the accessibility
   // tree that is exposed to platform APIs. This is similar, but not exactly
@@ -136,6 +136,7 @@ class VIEWS_EXPORT ViewAccessibility {
   virtual bool IsAccessibilityEnabled() const;
 
   void OverrideBounds(const gfx::RectF& bounds);
+  void OverrideLabelledBy(View* labelled_by_view);
   void OverrideDescribedBy(View* described_by_view);
   void OverrideHasPopup(const ax::mojom::HasPopup has_popup);
 
@@ -157,16 +158,18 @@ class VIEWS_EXPORT ViewAccessibility {
   Widget* GetNextFocus() const;
   Widget* GetPreviousFocus() const;
 
+  // Override the child tree id.
+  void OverrideChildTreeID(ui::AXTreeID tree_id);
+  ui::AXTreeID GetChildTreeID() const;
+
   // Returns the accessibility object that represents the View whose
   // accessibility is managed by this instance. This may be an AXPlatformNode or
   // it may be a native accessible object implemented by another class.
   virtual gfx::NativeViewAccessible GetNativeObject() const;
 
-  virtual void NotifyAccessibilityEvent(ax::mojom::Event event_type);
-
   // Causes the screen reader to announce |text|. If the current user is not
   // using a screen reader, has no effect.
-  virtual void AnnounceText(const base::string16& text);
+  virtual void AnnounceText(const std::u16string& text);
 
   virtual const ui::AXUniqueId& GetUniqueId() const;
 
@@ -212,6 +215,13 @@ class VIEWS_EXPORT ViewAccessibility {
   // native accessibility object associated with this view.
   gfx::NativeViewAccessible GetFocusedDescendant();
 
+  // If true, moves accessibility focus to an ancestor.
+  void set_propagate_focus_to_ancestor(bool value) {
+    propagate_focus_to_ancestor_ = value;
+  }
+
+  bool propagate_focus_to_ancestor() { return propagate_focus_to_ancestor_; }
+
   // Used for testing. Allows a test to watch accessibility events.
   const AccessibilityEventsCallback& accessibility_events_callback() const;
   void set_accessibility_events_callback(AccessibilityEventsCallback callback);
@@ -219,12 +229,17 @@ class VIEWS_EXPORT ViewAccessibility {
  protected:
   explicit ViewAccessibility(View* view);
 
+  // Used internally and by View.
+  virtual void NotifyAccessibilityEvent(ax::mojom::Event event_type);
+
   // Used for testing. Called every time an accessibility event is fired.
   AccessibilityEventsCallback accessibility_events_callback_;
 
  private:
+  friend class View;
+
   // Weak. Owns this.
-  View* const view_;
+  const raw_ptr<View> view_;
 
   // If there are any virtual children, they override any real children.
   // We own our virtual children.
@@ -233,7 +248,7 @@ class VIEWS_EXPORT ViewAccessibility {
   // The virtual child that is currently focused.
   // This is nullptr if no virtual child is focused.
   // See also OverrideFocus() and GetFocusedDescendant().
-  AXVirtualView* focused_virtual_child_;
+  raw_ptr<AXVirtualView> focused_virtual_child_;
 
   const ui::AXUniqueId unique_id_;
 
@@ -257,12 +272,18 @@ class VIEWS_EXPORT ViewAccessibility {
 
   // Used to override the View's enabled state in case we need to mark the View
   // as enabled or disabled only in the accessibility tree.
-  base::Optional<bool> is_enabled_ = base::nullopt;
+  absl::optional<bool> is_enabled_ = absl::nullopt;
 
   // Used by the Views system to help some assistive technologies, such as
   // screen readers, transition focus from one widget to another.
-  Widget* next_focus_ = nullptr;
-  Widget* previous_focus_ = nullptr;
+  base::WeakPtr<Widget> next_focus_ = nullptr;
+  base::WeakPtr<Widget> previous_focus_ = nullptr;
+
+  // This view's child tree id.
+  absl::optional<ui::AXTreeID> child_tree_id_;
+
+  // Whether to move accessibility focus to an ancestor.
+  bool propagate_focus_to_ancestor_ = false;
 
 #if defined(USE_AURA) && !BUILDFLAG(IS_CHROMEOS_ASH)
   // Each instance of ViewAccessibility that's associated with a root View

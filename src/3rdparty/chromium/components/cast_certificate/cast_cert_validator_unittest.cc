@@ -4,7 +4,10 @@
 
 #include "components/cast_certificate/cast_cert_validator.h"
 
+#include <memory>
+
 #include "base/test/task_environment.h"
+#include "base/time/time.h"
 #include "components/cast_certificate/cast_cert_reader.h"
 #include "components/cast_certificate/cast_cert_test_helpers.h"
 #include "net/cert/internal/cert_errors.h"
@@ -89,7 +92,7 @@ void RunTest(CastCertError expected_result,
       certs.pop_back();
 
       // Add it to the trust store as a trust anchor
-      trust_store.reset(new net::TrustStoreInMemory);
+      trust_store = std::make_unique<net::TrustStoreInMemory>();
 
       if (trust_store_dependency == TRUST_STORE_FROM_TEST_FILE_UNCONSTRAINED) {
         // This is a test-only mode where anchor constraints are not enforced.

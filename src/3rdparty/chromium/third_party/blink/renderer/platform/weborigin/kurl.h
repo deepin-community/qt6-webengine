@@ -227,8 +227,6 @@ class PLATFORM_EXPORT KURL {
 
   const KURL* InnerURL() const { return inner_url_.get(); }
 
-  bool IsSafeToSendToAnotherThread() const;
-
   bool PotentiallyDanglingMarkup() const {
     return parsed_.potentially_dangling_markup;
   }
@@ -239,7 +237,7 @@ class PLATFORM_EXPORT KURL {
   // TODO(crbug.com/862940): Make this conversion explicit.
   operator GURL() const;
 
-  void WriteIntoTracedValue(perfetto::TracedValue context) const;
+  void WriteIntoTrace(perfetto::TracedValue context) const;
 
  private:
   friend struct WTF::HashTraits<blink::KURL>;
@@ -254,8 +252,11 @@ class PLATFORM_EXPORT KURL {
   String ComponentString(const url::Component&) const;
   StringView StringViewForInvalidComponent() const;
 
+  // If |preserve_validity| is true, refuse to make changes that would make the
+  // KURL invalid.
   template <typename CHAR>
-  void ReplaceComponents(const url::Replacements<CHAR>&);
+  void ReplaceComponents(const url::Replacements<CHAR>&,
+                         bool preserve_validity = false);
 
   void InitInnerURL();
   void InitProtocolMetadata();

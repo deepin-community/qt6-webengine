@@ -5,18 +5,20 @@
 #ifndef MEDIA_FILTERS_DECODER_STREAM_H_
 #define MEDIA_FILTERS_DECODER_STREAM_H_
 
-#include <list>
 #include <memory>
 #include <vector>
 
 #include "base/callback.h"
 #include "base/compiler_specific.h"
 #include "base/containers/circular_deque.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
+#include "base/time/time.h"
 #include "base/types/pass_key.h"
 #include "media/base/audio_decoder.h"
 #include "media/base/audio_timestamp_helper.h"
+#include "media/base/decoder_status.h"
 #include "media/base/demuxer_stream.h"
 #include "media/base/media_export.h"
 #include "media/base/media_log.h"
@@ -54,7 +56,7 @@ class MEDIA_EXPORT DecoderStream {
   using InitCB = base::OnceCallback<void(bool success)>;
 
   // Indicates completion of a DecoderStream read.
-  using ReadResult = StatusOr<scoped_refptr<Output>>;
+  using ReadResult = DecoderStatus::Or<scoped_refptr<Output>>;
   using ReadCB = base::OnceCallback<void(ReadResult)>;
 
   DecoderStream(std::unique_ptr<DecoderStreamTraits<StreamType>> traits,
@@ -198,7 +200,7 @@ class MEDIA_EXPORT DecoderStream {
   void OnDecodeDone(int buffer_size,
                     bool end_of_stream,
                     std::unique_ptr<ScopedDecodeTrace> trace_event,
-                    media::Status status);
+                    DecoderStatus status);
 
   // Output callback passed to Decoder::Initialize().
   void OnDecodeOutputReady(scoped_refptr<Output> output);
@@ -222,10 +224,12 @@ class MEDIA_EXPORT DecoderStream {
   void OnPreparedOutputReady(scoped_refptr<Output> frame);
   void CompletePrepare(const Output* output);
 
+  void ReportEncryptionType(const scoped_refptr<DecoderBuffer>& buffer);
+
   std::unique_ptr<DecoderStreamTraits<StreamType>> traits_;
 
   scoped_refptr<base::SequencedTaskRunner> task_runner_;
-  MediaLog* media_log_;
+  raw_ptr<MediaLog> media_log_;
 
   State state_;
 
@@ -236,9 +240,9 @@ class MEDIA_EXPORT DecoderStream {
   ReadCB read_cb_;
   base::OnceClosure reset_cb_;
 
-  DemuxerStream* stream_;
+  raw_ptr<DemuxerStream> stream_;
 
-  CdmContext* cdm_context_;
+  raw_ptr<CdmContext> cdm_context_;
 
   std::unique_ptr<Decoder> decoder_;
 
@@ -294,6 +298,8 @@ class MEDIA_EXPORT DecoderStream {
 
   // Timestamp after which all outputs need to be prepared.
   base::TimeDelta skip_prepare_until_timestamp_;
+
+  bool encryption_type_reported_ = false;
 
   // NOTE: Weak pointers must be invalidated before all other member variables.
   base::WeakPtrFactory<DecoderStream<StreamType>> weak_factory_{this};

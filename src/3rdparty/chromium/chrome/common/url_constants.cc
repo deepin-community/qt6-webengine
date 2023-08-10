@@ -5,11 +5,14 @@
 #include "chrome/common/url_constants.h"
 
 #include "build/branding_buildflags.h"
+#include "build/build_config.h"
+#include "build/chromeos_buildflags.h"
 #include "chrome/common/webui_url_constants.h"
 
-#include "build/chromeos_buildflags.h"
-
 namespace chrome {
+
+const char kAccessCodeCastLearnMoreURL[] =
+    "https://support.google.com/chrome/a/?p=cast_to_class_teacher";
 
 const char kAccessibilityLabelsLearnMoreURL[] =
     "https://support.google.com/chrome/?p=image_descriptions";
@@ -20,6 +23,9 @@ const char kAutomaticSettingsResetLearnMoreURL[] =
 const char kAdvancedProtectionDownloadLearnMoreURL[] =
     "https://support.google.com/accounts/accounts?p=safe-browsing";
 
+const char kAppNotificationsBrowserSettingsURL[] =
+    "chrome://settings/content/notifications";
+
 const char kBluetoothAdapterOffHelpURL[] =
     "https://support.google.com/chrome?p=bluetooth";
 
@@ -28,9 +34,6 @@ const char kCastCloudServicesHelpURL[] =
 
 const char kCastNoDestinationFoundURL[] =
     "https://support.google.com/chromecast/?p=no_cast_destination";
-
-const char kChooserBluetoothOverviewURL[] =
-    "https://support.google.com/chrome?p=bluetooth";
 
 const char kChooserHidOverviewUrl[] =
     "https://support.google.com/chrome?p=webhid";
@@ -83,15 +86,13 @@ const char kChromeOsHelpViaWebUIURL[] =
 const char kChromeNativeScheme[] = "chrome-native";
 
 const char kChromeSearchLocalNtpHost[] = "local-ntp";
-const char kChromeSearchLocalNtpUrl[] =
-    "chrome-search://local-ntp/local-ntp.html";
 
 const char kChromeSearchMostVisitedHost[] = "most-visited";
 const char kChromeSearchMostVisitedUrl[] = "chrome-search://most-visited/";
 
-const char kChromeSearchLocalNtpBackgroundUrl[] =
-    "chrome-search://local-ntp/background.jpg";
-const char kChromeSearchLocalNtpBackgroundFilename[] = "background.jpg";
+const char kChromeUIUntrustedNewTabPageBackgroundUrl[] =
+    "chrome-untrusted://new-tab-page/background.jpg";
+const char kChromeUIUntrustedNewTabPageBackgroundFilename[] = "background.jpg";
 
 const char kChromeSearchRemoteNtpHost[] = "remote-ntp";
 
@@ -102,27 +103,11 @@ const char kChromeUIUntrustedNewTabPageUrl[] =
 
 const char kChromiumProjectURL[] = "https://www.chromium.org/";
 
-const char kCloudPrintCertificateErrorLearnMoreURL[] =
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-    "https://support.google.com/chromebook?p=cloudprint_error_troubleshoot";
-#elif defined(OS_MAC)
-    "https://support.google.com/cloudprint?p=cloudprint_error_offline_mac";
-#elif defined(OS_WIN)
-        "https://support.google.com/"
-        "cloudprint?p=cloudprint_error_offline_windows";
-#else
-        "https://support.google.com/"
-        "cloudprint?p=cloudprint_error_offline_linux";
-#endif
-
 const char kContentSettingsExceptionsLearnMoreURL[] =
     "https://support.google.com/chrome/?p=settings_manage_exceptions";
 
 const char kCookiesSettingsHelpCenterURL[] =
     "https://support.google.com/chrome?p=cpn_cookies";
-
-const char kCpuX86Sse2ObsoleteURL[] =
-    "https://support.google.com/chrome/?p=chrome_update_sse3";
 
 const char kCrashReasonURL[] =
 #if BUILDFLAG(IS_CHROMEOS_ASH)
@@ -162,10 +147,20 @@ const char kFlashDeprecationLearnMoreURL[] =
 const char kGoogleAccountActivityControlsURL[] =
     "https://myaccount.google.com/activitycontrols/search";
 
+const char kGoogleAccountActivityControlsURLInPrivacyGuide[] =
+    "https://myaccount.google.com/activitycontrols/"
+    "search&utm_source=chrome&utm_medium=privacy-guide";
+
+const char kGoogleAccountLanguagesURL[] =
+    "https://myaccount.google.com/language";
+
 const char kGoogleAccountURL[] = "https://myaccount.google.com";
 
 const char kGoogleAccountChooserURL[] =
     "https://accounts.google.com/AccountChooser";
+
+const char kGoogleAccountDeviceActivityURL[] =
+    "https://myaccount.google.com/device-activity?utm_source=chrome";
 
 const char kGooglePasswordManagerURL[] = "https://passwords.google.com";
 
@@ -185,7 +180,7 @@ const char kMixedContentDownloadBlockingLearnMoreUrl[] =
     "https://support.google.com/chrome/?p=mixed_content_downloads";
 
 const char kMyActivityUrlInClearBrowsingData[] =
-    "https://myactivity.google.com/myactivity/?utm_source=chrome_cbd";
+    "https://myactivity.google.com/myactivity?utm_source=chrome_cbd";
 
 const char kOmniboxLearnMoreURL[] =
 #if BUILDFLAG(IS_CHROMEOS_ASH)
@@ -253,6 +248,9 @@ const char kSafeBrowsingHelpCenterURL[] =
 const char kSafetyTipHelpCenterURL[] =
     "https://support.google.com/chrome/?p=safety_tip";
 
+const char kSearchHistoryUrlInClearBrowsingData[] =
+    "https://myactivity.google.com/product/search?utm_source=chrome_cbd";
+
 const char kSeeMoreSecurityTipsURL[] =
     "https://support.google.com/accounts/answer/32040";
 
@@ -273,10 +271,19 @@ const char kSyncErrorsHelpURL[] =
     "https://support.google.com/chrome/?p=settings_sync_error";
 
 const char kSyncGoogleDashboardURL[] =
-    "https://www.google.com/settings/chrome/sync/";
+    "https://www.google.com/settings/chrome/sync";
 
 const char kSyncLearnMoreURL[] =
     "https://support.google.com/chrome/?p=settings_sign_in";
+
+#if !BUILDFLAG(IS_ANDROID)
+const char kSyncTrustedVaultOptInURL[] =
+    "https://passwords.google.com/encryption/enroll?"
+    "utm_source=chrome&utm_medium=desktop&utm_campaign=encryption_enroll";
+#endif
+
+const char kSyncTrustedVaultLearnMoreURL[] =
+    "https://support.google.com/accounts?p=settings_password_ode";
 
 const char kUpgradeHelpCenterBaseURL[] =
     "https://support.google.com/installer/?product="
@@ -285,12 +292,15 @@ const char kUpgradeHelpCenterBaseURL[] =
 const char kWhoIsMyAdministratorHelpURL[] =
     "https://support.google.com/chrome?p=your_administrator";
 
-#if BUILDFLAG(IS_CHROMEOS_ASH) || defined(OS_ANDROID)
+const char kCwsEnhancedSafeBrowsingLearnMoreURL[] =
+    "https://support.google.com/chrome?p=cws_enhanced_safe_browsing";
+
+#if BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_ANDROID)
 const char kEnhancedPlaybackNotificationLearnMoreURL[] =
 #endif
 #if BUILDFLAG(IS_CHROMEOS_ASH)
     "https://support.google.com/chromebook/?p=enhanced_playback";
-#elif defined(OS_ANDROID)
+#elif BUILDFLAG(IS_ANDROID)
 // Keep in sync with chrome/browser/ui/android/strings/android_chrome_strings.grd
     "https://support.google.com/chrome/?p=mobile_protected_content";
 #endif
@@ -301,6 +311,9 @@ const char kAccountManagerLearnMoreURL[] =
 
 const char kAccountRecoveryURL[] =
     "https://accounts.google.com/signin/recovery";
+
+const char kAddNewUserURL[] =
+    "https://www.google.com/chromebook/howto/add-another-account";
 
 const char kAndroidAppsLearnMoreURL[] =
     "https://support.google.com/chromebook/?p=playapps";
@@ -314,6 +327,11 @@ const char kArcExternalStorageLearnMoreURL[] =
 const char kArcPrivacyPolicyURLPath[] = "arc/privacy_policy";
 
 const char kArcTermsURLPath[] = "arc/terms";
+
+// TODO(crbug.com/1010321): Remove 'm100' prefix from link once Bluetooth Revamp
+// has shipped.
+const char kBluetoothPairingLearnMoreUrl[] =
+    "https://support.google.com/chromebook?p=bluetooth_revamp_m100";
 
 const char kChromeAccessibilityHelpURL[] =
     "https://support.google.com/chromebook/topic/6323347";
@@ -332,8 +350,6 @@ const char kChromeOSGestureEducationHelpURL[] =
 
 const char kChromePaletteHelpURL[] =
     "https://support.google.com/chromebook?p=stylus_help";
-
-const char kCrosScheme[] = "cros";
 
 const char kCupsPrintLearnMoreURL[] =
     "https://support.google.com/chromebook?p=chromebook_printing";
@@ -359,23 +375,17 @@ const char kAutoUpdatePolicyURL[] =
 const char kGoogleNameserversLearnMoreURL[] =
     "https://developers.google.com/speed/public-dns";
 
-const char kGsuiteTermsEducationPrivacyURL[] =
-    "https://gsuite.google.com/terms/education_privacy.html";
-
 const char kInstantTetheringLearnMoreURL[] =
     "https://support.google.com/chromebook?p=instant_tethering";
 
 const char kKerberosAccountsLearnMoreURL[] =
     "https://support.google.com/chromebook/?p=kerberos_accounts";
 
-const char kMultiDeviceLearnMoreURL[] =
-    "https://support.google.com/chromebook/?p=multi_device";
-
-const char kAndroidMessagesLearnMoreURL[] =
-    "https://support.google.com/chromebook/?p=multi_device_messages";
-
 const char kLanguageSettingsLearnMoreUrl[] =
     "https://support.google.com/chromebook/answer/1059490";
+
+const char kLanguagePacksLearnMoreURL[] =
+    "https://support.google.com/chromebook?p=language_packs";
 
 const char kLearnMoreEnterpriseURL[] =
     "https://support.google.com/chromebook/?p=managed";
@@ -383,18 +393,18 @@ const char kLearnMoreEnterpriseURL[] =
 const char kLinuxAppsLearnMoreURL[] =
     "https://support.google.com/chromebook?p=chromebook_linuxapps";
 
-const char kLinuxExportImportHelpURL[] =
-    "https://support.google.com/chromebook?p=linux_backup_restore";
-
 const char kNaturalScrollHelpURL[] =
     "https://support.google.com/chromebook/?p=simple_scrolling";
 
+const char kHapticFeedbackHelpURL[] =
+    "https://support.google.com/chromebook?p=haptic_feedback_m100";
+
 const char kOemEulaURLPath[] = "oem";
 
-const char kOnlineEulaURLPath[] =
+const char kGoogleEulaOnlineURLPath[] =
     "https://policies.google.com/terms/embedded?hl=%s";
 
-const char kAdditionalToSOnlineURLPath[] =
+const char kCrosEulaOnlineURLPath[] =
     "https://www.google.com/intl/%s/chrome/terms/";
 
 const char kOsSettingsSearchHelpURL[] =
@@ -421,23 +431,29 @@ const char kTabletModeGesturesLearnMoreURL[] =
 const char kWifiSyncLearnMoreURL[] =
     "https://support.google.com/chromebook/?p=wifisync";
 
+const char kWifiHiddenNetworkURL[] =
+    "http://support.google.com/chromebook?p=hidden_networks";
+
 const char kNearbyShareLearnMoreURL[] =
     "https://support.google.com/chromebook?p=nearby_share";
 
 extern const char kNearbyShareManageContactsURL[] =
     "https://contacts.google.com";
 
+extern const char kFingerprintLearnMoreURL[] =
+    "https://support.google.com/chromebook?p=chromebook_fingerprint";
+
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
-#if defined(OS_MAC)
+#if BUILDFLAG(IS_MAC)
 const char kChromeEnterpriseSignInLearnMoreURL[] =
     "https://support.google.com/chromebook/answer/1331549";
 
-const char kMac10_10_ObsoleteURL[] =
+const char kMacOsObsoleteURL[] =
     "https://support.google.com/chrome/?p=unsupported_mac";
 #endif
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 const char kChromeCleanerLearnMoreURL[] =
     "https://support.google.com/chrome/?p=chrome_cleanup_tool";
 
@@ -453,6 +469,16 @@ const char kChromeSyncLearnMoreURL[] =
 #if BUILDFLAG(ENABLE_PLUGINS)
 const char kOutdatedPluginLearnMoreURL[] =
     "https://support.google.com/chrome/?p=ib_outdated_plugin";
+#endif
+
+// TODO (b/184137843): Use real link to phone hub notifications and apps access.
+const char kPhoneHubPermissionLearnMoreURL[] =
+    "https://support.google.com/chromebook/?p=multidevice";
+
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || \
+    BUILDFLAG(IS_FUCHSIA)
+const char kChromeAppsDeprecationLearnMoreURL[] =
+    "https://support.google.com/chrome/?p=chrome_app_deprecation";
 #endif
 
 }  // namespace chrome

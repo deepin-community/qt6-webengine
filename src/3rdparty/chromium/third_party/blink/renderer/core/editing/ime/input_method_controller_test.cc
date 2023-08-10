@@ -207,7 +207,38 @@ TEST_F(InputMethodControllerTest, AddImeTextSpansToExistingText) {
                 ->GetSuggestionType());
 }
 
-TEST_F(InputMethodControllerTest, GetImeTextSpansAroundPosition) {
+TEST_F(InputMethodControllerTest, AddGrammarCheckSpans) {
+  InsertHTMLElement("<div id='sample' contenteditable>hello world</div>",
+                    "sample");
+  Element* div = GetDocument().QuerySelector("div");
+  Node* text = div->firstChild();
+
+  GetDocument().Markers().AddSpellingMarker(
+      EphemeralRange(Position(text, 0), Position(text, 5)));
+
+  Vector<ImeTextSpan> grammar_ime_text_spans;
+  grammar_ime_text_spans.push_back(ImeTextSpan(
+      ImeTextSpan::Type::kGrammarSuggestion, 3, 6, Color(255, 0, 0),
+      ImeTextSpanThickness::kThin, ImeTextSpanUnderlineStyle::kSolid, 0, 0));
+  grammar_ime_text_spans.push_back(ImeTextSpan(
+      ImeTextSpan::Type::kGrammarSuggestion, 8, 10, Color(255, 0, 0),
+      ImeTextSpanThickness::kThin, ImeTextSpanUnderlineStyle::kSolid, 0, 0));
+
+  Controller().AddImeTextSpansToExistingText(grammar_ime_text_spans, 0, 10);
+  // The first grammar check span should not be added because it overlaps with
+  // the existing spellcheck span.
+  EXPECT_EQ(2u, GetDocument().Markers().Markers().size());
+  EXPECT_EQ(0u, GetDocument().Markers().Markers()[0]->StartOffset());
+  EXPECT_EQ(5u, GetDocument().Markers().Markers()[0]->EndOffset());
+  EXPECT_EQ(DocumentMarker::MarkerType::kSpelling,
+            GetDocument().Markers().Markers()[0]->GetType());
+  EXPECT_EQ(8u, GetDocument().Markers().Markers()[1]->StartOffset());
+  EXPECT_EQ(10u, GetDocument().Markers().Markers()[1]->EndOffset());
+  EXPECT_EQ(DocumentMarker::MarkerType::kSuggestion,
+            GetDocument().Markers().Markers()[1]->GetType());
+}
+
+TEST_F(InputMethodControllerTest, GetImeTextSpans) {
   InsertHTMLElement("<div id='sample' contenteditable>hello world</div>",
                     "sample");
   ImeTextSpan span1 = ImeTextSpan(ImeTextSpan::Type::kAutocorrect, 0, 5,
@@ -219,17 +250,29 @@ TEST_F(InputMethodControllerTest, GetImeTextSpansAroundPosition) {
   ImeTextSpan span3 = ImeTextSpan(
       ImeTextSpan::Type::kMisspellingSuggestion, 1, 3, Color(255, 0, 0),
       ImeTextSpanThickness::kThin, ImeTextSpanUnderlineStyle::kSolid, 0, 0);
+  ImeTextSpan span4 = ImeTextSpan(ImeTextSpan::Type::kGrammarSuggestion, 6, 8,
+                                  Color(255, 0, 0), ImeTextSpanThickness::kThin,
+                                  ImeTextSpanUnderlineStyle::kSolid, 0, 0, 0,
+                                  false, false, {String("fake_suggestion")});
 
-  Controller().AddImeTextSpansToExistingText({span1, span2, span3}, 0, 5);
+  Controller().AddImeTextSpansToExistingText({span1, span2, span3, span4}, 0,
+                                             10);
   Controller().SetEditableSelectionOffsets(PlainTextRange(1, 1));
 
   const WebVector<ui::ImeTextSpan>& ime_text_spans =
       Controller().TextInputInfo().ime_text_spans;
 
-  EXPECT_EQ(1u, ime_text_spans.size());
+  EXPECT_EQ(2u, ime_text_spans.size());
   EXPECT_EQ(0u, ime_text_spans[0].start_offset);
   EXPECT_EQ(5u, ime_text_spans[0].end_offset);
   EXPECT_EQ(ui::ImeTextSpan::Type::kAutocorrect, ime_text_spans[0].type);
+  EXPECT_EQ(0u, ime_text_spans[0].suggestions.size());
+
+  EXPECT_EQ(6u, ime_text_spans[1].start_offset);
+  EXPECT_EQ(8u, ime_text_spans[1].end_offset);
+  EXPECT_EQ(ui::ImeTextSpan::Type::kGrammarSuggestion, ime_text_spans[1].type);
+  EXPECT_EQ(1u, ime_text_spans[1].suggestions.size());
+  EXPECT_EQ("fake_suggestion", ime_text_spans[1].suggestions[0]);
 }
 
 TEST_F(InputMethodControllerTest, SetCompositionAfterEmoji) {

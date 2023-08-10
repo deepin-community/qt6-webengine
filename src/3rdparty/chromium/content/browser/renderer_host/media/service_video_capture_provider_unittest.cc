@@ -39,8 +39,7 @@ namespace content {
 static const std::string kStubDeviceId = "StubDevice";
 static const media::VideoCaptureParams kArbitraryParams;
 static const base::WeakPtr<media::VideoFrameReceiver> kNullReceiver;
-static const auto kIgnoreLogMessageCB =
-    base::BindRepeating([](const std::string&) {});
+static const auto kIgnoreLogMessageCB = base::DoNothing();
 
 class MockVideoCaptureDeviceLauncherCallbacks
     : public VideoCaptureDeviceLauncher::Callbacks {
@@ -62,6 +61,11 @@ class ServiceVideoCaptureProviderTest : public testing::Test {
       : source_provider_receiver_(&mock_source_provider_) {
     OverrideVideoCaptureServiceForTesting(&mock_video_capture_service_);
   }
+
+  ServiceVideoCaptureProviderTest(const ServiceVideoCaptureProviderTest&) =
+      delete;
+  ServiceVideoCaptureProviderTest& operator=(
+      const ServiceVideoCaptureProviderTest&) = delete;
 
   ~ServiceVideoCaptureProviderTest() override {
     OverrideVideoCaptureServiceForTesting(nullptr);
@@ -121,7 +125,9 @@ class ServiceVideoCaptureProviderTest : public testing::Test {
                                           std::move(subscription));
               std::move(callback).Run(
                   video_capture::mojom::CreatePushSubscriptionResultCode::
-                      kCreatedWithRequestedSettings,
+                      NewSuccessCode(video_capture::mojom::
+                                         CreatePushSubscriptionSuccessCode::
+                                             kCreatedWithRequestedSettings),
                   requested_settings);
             }));
   }
@@ -144,9 +150,6 @@ class ServiceVideoCaptureProviderTest : public testing::Test {
       video_capture::mojom::VideoSourceProvider::GetSourceInfosCallback>
       service_cb_;
   base::RunLoop wait_for_connection_to_service_;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(ServiceVideoCaptureProviderTest);
 };
 
 // Tests that if connection to the service is lost during an outstanding call
@@ -323,11 +326,9 @@ TEST_F(ServiceVideoCaptureProviderTest,
 
   // Make initial call to GetDeviceInfosAsync(). The service does not yet
   // respond.
-  provider_->GetDeviceInfosAsync(base::BindRepeating(
-      [](const std::vector<media::VideoCaptureDeviceInfo>&) {}));
+  provider_->GetDeviceInfosAsync(base::DoNothing());
   // Make an additional call to GetDeviceInfosAsync().
-  provider_->GetDeviceInfosAsync(base::BindRepeating(
-      [](const std::vector<media::VideoCaptureDeviceInfo>&) {}));
+  provider_->GetDeviceInfosAsync(base::DoNothing());
   {
     base::RunLoop give_mojo_chance_to_process;
     give_mojo_chance_to_process.RunUntilIdle();

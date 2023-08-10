@@ -25,16 +25,15 @@
 
 #include "third_party/blink/renderer/core/html/html_element.h"
 
-#include "base/stl_util.h"
 #include "third_party/blink/renderer/bindings/core/v8/js_event_handler_for_content_attribute.h"
-#include "third_party/blink/renderer/bindings/core/v8/string_or_trusted_script.h"
-#include "third_party/blink/renderer/bindings/core/v8/string_treat_null_as_empty_string_or_trusted_script.h"
-#include "third_party/blink/renderer/core/css/css_color_value.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_union_stringtreatnullasemptystring_trustedscript.h"
+#include "third_party/blink/renderer/core/css/css_color.h"
 #include "third_party/blink/renderer/core/css/css_identifier_value.h"
 #include "third_party/blink/renderer/core/css/css_markup.h"
 #include "third_party/blink/renderer/core/css/css_numeric_literal_value.h"
 #include "third_party/blink/renderer/core/css/css_property_names.h"
 #include "third_party/blink/renderer/core/css/css_property_value_set.h"
+#include "third_party/blink/renderer/core/css/css_ratio_value.h"
 #include "third_party/blink/renderer/core/css/css_value_list.h"
 #include "third_party/blink/renderer/core/css/style_change_reason.h"
 #include "third_party/blink/renderer/core/css_value_keywords.h"
@@ -49,6 +48,7 @@
 #include "third_party/blink/renderer/core/dom/node_traversal.h"
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
 #include "third_party/blink/renderer/core/dom/slot_assignment.h"
+#include "third_party/blink/renderer/core/dom/slot_assignment_engine.h"
 #include "third_party/blink/renderer/core/dom/slot_assignment_recalc_forbidden_scope.h"
 #include "third_party/blink/renderer/core/dom/text.h"
 #include "third_party/blink/renderer/core/editing/editing_utilities.h"
@@ -56,7 +56,6 @@
 #include "third_party/blink/renderer/core/editing/spellcheck/spell_checker.h"
 #include "third_party/blink/renderer/core/events/keyboard_event.h"
 #include "third_party/blink/renderer/core/frame/csp/content_security_policy.h"
-#include "third_party/blink/renderer/core/frame/deprecation.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
@@ -80,6 +79,7 @@
 #include "third_party/blink/renderer/core/layout/layout_box.h"
 #include "third_party/blink/renderer/core/layout/layout_box_model_object.h"
 #include "third_party/blink/renderer/core/layout/layout_object.h"
+#include "third_party/blink/renderer/core/mathml/mathml_element.h"
 #include "third_party/blink/renderer/core/mathml_names.h"
 #include "third_party/blink/renderer/core/page/spatial_navigation.h"
 #include "third_party/blink/renderer/core/paint/paint_layer_scrollable_area.h"
@@ -87,7 +87,7 @@
 #include "third_party/blink/renderer/core/trustedtypes/trusted_script.h"
 #include "third_party/blink/renderer/core/xml_names.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
-#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/language.h"
 #include "third_party/blink/renderer/platform/text/bidi_resolver.h"
@@ -109,48 +109,52 @@ struct AttributeTriggers {
 
 namespace {
 
-// https://w3c.github.io/editing/execCommand.html#editing-host
-bool IsEditingHost(const Node& node) {
-  auto* html_element = DynamicTo<HTMLElement>(node);
-  if (!html_element)
-    return false;
-  String normalized_value = html_element->contentEditable();
-  if (normalized_value == "true" || normalized_value == "plaintext-only")
-    return true;
-  return node.GetDocument().InDesignMode() &&
-         node.GetDocument().documentElement() == &node;
-}
-
+// https://html.spec.whatwg.org/multipage/interaction.html#editing-host
+// An editing host is either an HTML element with its contenteditable attribute
+// in the true state, or a child HTML element of a Document whose design mode
+// enabled is true.
 // https://w3c.github.io/editing/execCommand.html#editable
-bool IsEditable(const Node& node) {
-  if (IsEditingHost(node))
-    return false;
+// Something is editable if it is a node; it is not an editing host; it does not
+// have a contenteditable attribute set to the false state; its parent is an
+// editing host or editable; and either it is an HTML element, or it is an svg
+// or math element, or it is not an Element and its parent is an HTML element.
+bool IsEditableOrEditingHost(const Node& node) {
   auto* html_element = DynamicTo<HTMLElement>(node);
-  if (html_element && html_element->contentEditable() == "false")
-    return false;
+  if (html_element) {
+    ContentEditableType content_editable =
+        html_element->contentEditableNormalized();
+    if (content_editable == ContentEditableType::kContentEditable ||
+        content_editable == ContentEditableType::kPlaintextOnly)
+      return true;
+    if (html_element->GetDocument().InDesignMode() &&
+        html_element->isConnected()) {
+      return true;
+    }
+    if (content_editable == ContentEditableType::kNotContentEditable)
+      return false;
+  }
   if (!node.parentNode())
     return false;
-  if (!IsEditingHost(*node.parentNode()) && !IsEditable(*node.parentNode()))
+  if (!IsEditableOrEditingHost(*node.parentNode()))
     return false;
   if (html_element)
     return true;
   if (IsA<SVGSVGElement>(node))
     return true;
-  auto* element = DynamicTo<Element>(node);
-  if (element && element->HasTagName(mathml_names::kMathTag))
-    return true;
-  return !element && node.parentNode()->IsHTMLElement();
+  if (auto* mathml_element = DynamicTo<MathMLElement>(node))
+    return mathml_element->HasTagName(mathml_names::kMathTag);
+  return !IsA<Element>(node) && node.parentNode()->IsHTMLElement();
 }
 
 const WebFeature kNoWebFeature = static_cast<WebFeature>(0);
 
-HTMLElement* GetParentForDirectionality(HTMLElement* element,
+HTMLElement* GetParentForDirectionality(const HTMLElement& element,
                                         bool& needs_slot_assignment_recalc) {
-  if (element->IsPseudoElement())
-    return DynamicTo<HTMLElement>(element->ParentOrShadowHostNode());
+  if (element.IsPseudoElement())
+    return DynamicTo<HTMLElement>(element.ParentOrShadowHostNode());
 
-  if (element->IsChildOfShadowHost()) {
-    ShadowRoot* root = element->ShadowRootOfParent();
+  if (element.IsChildOfShadowHost()) {
+    ShadowRoot* root = element.ShadowRootOfParent();
     if (!root || !root->HasSlotAssignment())
       return nullptr;
 
@@ -160,7 +164,7 @@ HTMLElement* GetParentForDirectionality(HTMLElement* element,
     }
   }
   if (auto* parent_slot = ToHTMLSlotElementIfSupportsAssignmentOrNull(
-          element->parentElement())) {
+          element.parentElement())) {
     ShadowRoot* root = parent_slot->ContainingShadowRoot();
     if (root->NeedsSlotAssignmentRecalc()) {
       needs_slot_assignment_recalc = true;
@@ -170,8 +174,8 @@ HTMLElement* GetParentForDirectionality(HTMLElement* element,
 
   // We should take care of all cases that would trigger a slot assignment
   // recalc, and delay the check for later for a performance reason.
-  SlotAssignmentRecalcForbiddenScope forbid_slot_recalc(element->GetDocument());
-  return DynamicTo<HTMLElement>(FlatTreeTraversal::ParentElement(*element));
+  SlotAssignmentRecalcForbiddenScope forbid_slot_recalc(element.GetDocument());
+  return DynamicTo<HTMLElement>(FlatTreeTraversal::ParentElement(element));
 }
 
 }  // anonymous namespace
@@ -219,11 +223,11 @@ bool HTMLElement::ShouldSerializeEndTag() const {
 static inline CSSValueID UnicodeBidiAttributeForDirAuto(HTMLElement* element) {
   if (element->HasTagName(html_names::kPreTag) ||
       element->HasTagName(html_names::kTextareaTag))
-    return CSSValueID::kWebkitPlaintext;
+    return CSSValueID::kPlaintext;
   // FIXME: For bdo element, dir="auto" should result in "bidi-override isolate"
   // but we don't support having multiple values in unicode-bidi yet.
   // See https://bugs.webkit.org/show_bug.cgi?id=73164.
-  return CSSValueID::kWebkitIsolate;
+  return CSSValueID::kIsolate;
 }
 
 unsigned HTMLElement::ParseBorderWidthAttribute(
@@ -289,7 +293,8 @@ bool HTMLElement::IsPresentationAttribute(const QualifiedName& name) const {
       name == html_names::kContenteditableAttr ||
       name == html_names::kHiddenAttr || name == html_names::kLangAttr ||
       name.Matches(xml_names::kLangAttr) ||
-      name == html_names::kDraggableAttr || name == html_names::kDirAttr)
+      name == html_names::kDraggableAttr || name == html_names::kDirAttr ||
+      name == html_names::kInertAttr)
     return true;
   return Element::IsPresentationAttribute(name);
 }
@@ -340,8 +345,17 @@ void HTMLElement::CollectStyleForPresentationAttribute(
           style, CSSPropertyID::kWebkitUserModify, CSSValueID::kReadOnly);
     }
   } else if (name == html_names::kHiddenAttr) {
-    AddPropertyToPresentationAttributeStyle(style, CSSPropertyID::kDisplay,
-                                            CSSValueID::kNone);
+    if (RuntimeEnabledFeatures::BeforeMatchEventEnabled(
+            GetExecutionContext()) &&
+        EqualIgnoringASCIICase(value, "until-found")) {
+      AddPropertyToPresentationAttributeStyle(
+          style, CSSPropertyID::kContentVisibility, CSSValueID::kHidden);
+      UseCounter::Count(GetDocument(), WebFeature::kHiddenUntilFoundAttribute);
+    } else {
+      AddPropertyToPresentationAttributeStyle(style, CSSPropertyID::kDisplay,
+                                              CSSValueID::kNone);
+      UseCounter::Count(GetDocument(), WebFeature::kHiddenAttribute);
+    }
   } else if (name == html_names::kDraggableAttr) {
     UseCounter::Count(GetDocument(), WebFeature::kDraggableAttribute);
     if (EqualIgnoringASCIICase(value, "true")) {
@@ -391,10 +405,10 @@ AttributeTriggers* HTMLElement::TriggersForAttributeName(
   static AttributeTriggers attribute_triggers[] = {
       {html_names::kDirAttr, kNoWebFeature, kNoEvent,
        &HTMLElement::OnDirAttrChanged},
+      {html_names::kFocusgroupAttr, kNoWebFeature, kNoEvent,
+       &HTMLElement::OnFocusgroupAttrChanged},
       {html_names::kFormAttr, kNoWebFeature, kNoEvent,
        &HTMLElement::OnFormAttrChanged},
-      {html_names::kInertAttr, WebFeature::kInertAttribute, kNoEvent,
-       &HTMLElement::OnInertAttrChanged},
       {html_names::kLangAttr, kNoWebFeature, kNoEvent,
        &HTMLElement::OnLangAttrChanged},
       {html_names::kNonceAttr, kNoWebFeature, kNoEvent,
@@ -403,6 +417,8 @@ AttributeTriggers* HTMLElement::TriggersForAttributeName(
        &HTMLElement::OnTabIndexAttrChanged},
       {xml_names::kLangAttr, kNoWebFeature, kNoEvent,
        &HTMLElement::OnXMLLangAttrChanged},
+      {html_names::kPopupAttr, kNoWebFeature, kNoEvent,
+       &HTMLElement::OnPopupAttrChanged},
 
       {html_names::kOnabortAttr, kNoWebFeature, event_type_names::kAbort,
        nullptr},
@@ -434,8 +450,12 @@ AttributeTriggers* HTMLElement::TriggersForAttributeName(
        nullptr},
       {html_names::kOncloseAttr, kNoWebFeature, event_type_names::kClose,
        nullptr},
+      {html_names::kOncontextlostAttr, kNoWebFeature,
+       event_type_names::kContextlost, nullptr},
       {html_names::kOncontextmenuAttr, kNoWebFeature,
        event_type_names::kContextmenu, nullptr},
+      {html_names::kOncontextrestoredAttr, kNoWebFeature,
+       event_type_names::kContextrestored, nullptr},
       {html_names::kOncopyAttr, kNoWebFeature, event_type_names::kCopy,
        nullptr},
       {html_names::kOncuechangeAttr, kNoWebFeature,
@@ -555,10 +575,14 @@ AttributeTriggers* HTMLElement::TriggersForAttributeName(
        nullptr},
       {html_names::kOnseekingAttr, kNoWebFeature, event_type_names::kSeeking,
        nullptr},
+      {html_names::kOnsecuritypolicyviolationAttr, kNoWebFeature,
+       event_type_names::kSecuritypolicyviolation, nullptr},
       {html_names::kOnselectAttr, kNoWebFeature, event_type_names::kSelect,
        nullptr},
       {html_names::kOnselectstartAttr, kNoWebFeature,
        event_type_names::kSelectstart, nullptr},
+      {html_names::kOnslotchangeAttr, kNoWebFeature,
+       event_type_names::kSlotchange, nullptr},
       {html_names::kOnstalledAttr, kNoWebFeature, event_type_names::kStalled,
        nullptr},
       {html_names::kOnsubmitAttr, kNoWebFeature, event_type_names::kSubmit,
@@ -598,6 +622,7 @@ AttributeTriggers* HTMLElement::TriggersForAttributeName(
       {html_names::kOnwheelAttr, kNoWebFeature, event_type_names::kWheel,
        nullptr},
 
+      // Begin ARIA attributes.
       {html_names::kAriaActivedescendantAttr,
        WebFeature::kARIAActiveDescendantAttribute, kNoEvent, nullptr},
       {html_names::kAriaAtomicAttr, WebFeature::kARIAAtomicAttribute, kNoEvent,
@@ -690,6 +715,8 @@ AttributeTriggers* HTMLElement::TriggersForAttributeName(
        kNoEvent, nullptr},
       {html_names::kAriaSortAttr, WebFeature::kARIASortAttribute, kNoEvent,
        nullptr},
+      {html_names::kAriaTouchpassthroughAttr,
+       WebFeature::kARIATouchpassthroughAttribute, kNoEvent, nullptr},
       {html_names::kAriaValuemaxAttr, WebFeature::kARIAValueMaxAttribute,
        kNoEvent, nullptr},
       {html_names::kAriaValueminAttr, WebFeature::kARIAValueMinAttribute,
@@ -698,6 +725,10 @@ AttributeTriggers* HTMLElement::TriggersForAttributeName(
        kNoEvent, nullptr},
       {html_names::kAriaValuetextAttr, WebFeature::kARIAValueTextAttribute,
        kNoEvent, nullptr},
+      {html_names::kAriaVirtualcontentAttr,
+       WebFeature::kARIAVirtualcontentAttribute, kNoEvent, nullptr},
+      // End ARIA attributes.
+
       {html_names::kAutocapitalizeAttr, WebFeature::kAutocapitalizeAttribute,
        kNoEvent, nullptr},
   };
@@ -706,7 +737,7 @@ AttributeTriggers* HTMLElement::TriggersForAttributeName(
   DEFINE_STATIC_LOCAL(AttributeToTriggerIndexMap,
                       attribute_to_trigger_index_map, ());
   if (!attribute_to_trigger_index_map.size()) {
-    for (uint32_t i = 0; i < base::size(attribute_triggers); ++i)
+    for (uint32_t i = 0; i < std::size(attribute_triggers); ++i)
       attribute_to_trigger_index_map.insert(attribute_triggers[i].attribute, i);
   }
 
@@ -728,14 +759,18 @@ const AtomicString& HTMLElement::EventNameForAttributeName(
 void HTMLElement::AttributeChanged(const AttributeModificationParams& params) {
   Element::AttributeChanged(params);
   if (params.name == html_names::kDisabledAttr &&
+      IsFormAssociatedCustomElement() &&
       params.old_value.IsNull() != params.new_value.IsNull()) {
-    if (IsFormAssociatedCustomElement()) {
-      EnsureElementInternals().DisabledAttributeChanged();
-      if (params.reason == AttributeModificationReason::kDirectly &&
-          IsDisabledFormControl() &&
-          AdjustedFocusedElementInTreeScope() == this)
-        blur();
-    }
+    EnsureElementInternals().DisabledAttributeChanged();
+    if (params.reason == AttributeModificationReason::kDirectly &&
+        IsDisabledFormControl() && AdjustedFocusedElementInTreeScope() == this)
+      blur();
+    return;
+  }
+  if (params.name == html_names::kReadonlyAttr &&
+      IsFormAssociatedCustomElement() &&
+      params.old_value.IsNull() != params.new_value.IsNull()) {
+    EnsureElementInternals().ReadonlyAttributeChanged();
     return;
   }
   if (params.reason != AttributeModificationReason::kDirectly)
@@ -831,35 +866,28 @@ DocumentFragment* HTMLElement::TextToFragment(const String& text,
   return fragment;
 }
 
-void HTMLElement::setInnerText(
-    const StringOrTrustedScript& string_or_trusted_script,
+V8UnionStringTreatNullAsEmptyStringOrTrustedScript*
+HTMLElement::innerTextForBinding() {
+  return MakeGarbageCollected<
+      V8UnionStringTreatNullAsEmptyStringOrTrustedScript>(innerText());
+}
+
+void HTMLElement::setInnerTextForBinding(
+    const V8UnionStringTreatNullAsEmptyStringOrTrustedScript*
+        string_or_trusted_script,
     ExceptionState& exception_state) {
   String value;
-  if (string_or_trusted_script.IsString())
-    value = string_or_trusted_script.GetAsString();
-  else if (string_or_trusted_script.IsTrustedScript())
-    value = string_or_trusted_script.GetAsTrustedScript()->toString();
+  switch (string_or_trusted_script->GetContentType()) {
+    case V8UnionStringTreatNullAsEmptyStringOrTrustedScript::ContentType::
+        kStringTreatNullAsEmptyString:
+      value = string_or_trusted_script->GetAsStringTreatNullAsEmptyString();
+      break;
+    case V8UnionStringTreatNullAsEmptyStringOrTrustedScript::ContentType::
+        kTrustedScript:
+      value = string_or_trusted_script->GetAsTrustedScript()->toString();
+      break;
+  }
   setInnerText(value, exception_state);
-}
-
-void HTMLElement::setInnerText(
-    const StringTreatNullAsEmptyStringOrTrustedScript& string_or_trusted_script,
-    ExceptionState& exception_state) {
-  StringOrTrustedScript tmp;
-  if (string_or_trusted_script.IsString())
-    tmp.SetString(string_or_trusted_script.GetAsString());
-  else if (string_or_trusted_script.IsTrustedScript())
-    tmp.SetTrustedScript(string_or_trusted_script.GetAsTrustedScript());
-  setInnerText(tmp, exception_state);
-}
-
-void HTMLElement::innerText(
-    StringTreatNullAsEmptyStringOrTrustedScript& result) {
-  result.SetString(innerText());
-}
-
-void HTMLElement::innerText(StringOrTrustedScript& result) {
-  result.SetString(innerText());
 }
 
 String HTMLElement::innerText() {
@@ -905,11 +933,6 @@ void HTMLElement::setOuterText(const String& text,
   else
     new_child = Text::Create(GetDocument(), text);
 
-  // textToFragment might cause mutation events.
-  if (!parentNode())
-    exception_state.ThrowDOMException(DOMExceptionCode::kHierarchyRequestError,
-                                      "The element has no parent.");
-
   if (exception_state.HadException())
     return;
 
@@ -928,24 +951,41 @@ void HTMLElement::setOuterText(const String& text,
 void HTMLElement::ApplyAspectRatioToStyle(const AtomicString& width,
                                           const AtomicString& height,
                                           MutableCSSPropertyValueSet* style) {
-  HTMLDimension width_dim, height_dim;
-  if (!ParseDimensionValue(width, width_dim))
+  HTMLDimension width_dim;
+  if (!ParseDimensionValue(width, width_dim) || !width_dim.IsAbsolute())
     return;
-  if (!ParseDimensionValue(height, height_dim))
+  HTMLDimension height_dim;
+  if (!ParseDimensionValue(height, height_dim) || !height_dim.IsAbsolute())
     return;
-  if (!width_dim.IsAbsolute() || !height_dim.IsAbsolute())
+  ApplyAspectRatioToStyle(width_dim.Value(), height_dim.Value(), style);
+}
+
+void HTMLElement::ApplyIntegerAspectRatioToStyle(
+    const AtomicString& width,
+    const AtomicString& height,
+    MutableCSSPropertyValueSet* style) {
+  unsigned width_val = 0;
+  if (!ParseHTMLNonNegativeInteger(width, width_val))
     return;
-  CSSValue* width_val = CSSNumericLiteralValue::Create(
-      width_dim.Value(), CSSPrimitiveValue::UnitType::kNumber);
-  CSSValue* height_val = CSSNumericLiteralValue::Create(
-      height_dim.Value(), CSSPrimitiveValue::UnitType::kNumber);
-  CSSValueList* ratio_list = CSSValueList::CreateSlashSeparated();
-  ratio_list->Append(*width_val);
-  ratio_list->Append(*height_val);
+  unsigned height_val = 0;
+  if (!ParseHTMLNonNegativeInteger(height, height_val))
+    return;
+  ApplyAspectRatioToStyle(width_val, height_val, style);
+}
+
+void HTMLElement::ApplyAspectRatioToStyle(double width,
+                                          double height,
+                                          MutableCSSPropertyValueSet* style) {
+  auto* width_val = CSSNumericLiteralValue::Create(
+      width, CSSPrimitiveValue::UnitType::kNumber);
+  auto* height_val = CSSNumericLiteralValue::Create(
+      height, CSSPrimitiveValue::UnitType::kNumber);
+  auto* ratio_value =
+      MakeGarbageCollected<cssvalue::CSSRatioValue>(*width_val, *height_val);
 
   CSSValueList* list = CSSValueList::CreateSpaceSeparated();
   list->Append(*CSSIdentifierValue::Create(CSSValueID::kAuto));
-  list->Append(*ratio_list);
+  list->Append(*ratio_value);
 
   style->SetProperty(CSSPropertyID::kAspectRatio, *list);
 }
@@ -958,7 +998,8 @@ void HTMLElement::ApplyAlignmentAttributeToStyle(
   CSSValueID float_value = CSSValueID::kInvalid;
   CSSValueID vertical_align_value = CSSValueID::kInvalid;
 
-  if (EqualIgnoringASCIICase(alignment, "absmiddle")) {
+  if (EqualIgnoringASCIICase(alignment, "absmiddle") ||
+      EqualIgnoringASCIICase(alignment, "abscenter")) {
     vertical_align_value = CSSValueID::kMiddle;
   } else if (EqualIgnoringASCIICase(alignment, "absbottom")) {
     vertical_align_value = CSSValueID::kBottom;
@@ -995,20 +1036,33 @@ bool HTMLElement::HasCustomFocusLogic() const {
   return false;
 }
 
-String HTMLElement::contentEditable() const {
+ContentEditableType HTMLElement::contentEditableNormalized() const {
   const AtomicString& value =
       FastGetAttribute(html_names::kContenteditableAttr);
 
   if (value.IsNull())
-    return "inherit";
+    return ContentEditableType::kInherit;
   if (value.IsEmpty() || EqualIgnoringASCIICase(value, "true"))
-    return "true";
+    return ContentEditableType::kContentEditable;
   if (EqualIgnoringASCIICase(value, "false"))
-    return "false";
+    return ContentEditableType::kNotContentEditable;
   if (EqualIgnoringASCIICase(value, "plaintext-only"))
-    return "plaintext-only";
+    return ContentEditableType::kPlaintextOnly;
 
-  return "inherit";
+  return ContentEditableType::kInherit;
+}
+
+String HTMLElement::contentEditable() const {
+  switch (contentEditableNormalized()) {
+    case ContentEditableType::kInherit:
+      return "inherit";
+    case ContentEditableType::kContentEditable:
+      return "true";
+    case ContentEditableType::kNotContentEditable:
+      return "false";
+    case ContentEditableType::kPlaintextOnly:
+      return "plaintext-only";
+  }
 }
 
 void HTMLElement::setContentEditable(const String& enabled,
@@ -1026,6 +1080,62 @@ void HTMLElement::setContentEditable(const String& enabled,
                                       "The value provided ('" + enabled +
                                           "') is not one of 'true', 'false', "
                                           "'plaintext-only', or 'inherit'.");
+}
+
+V8UnionBooleanOrStringOrUnrestrictedDouble* HTMLElement::hidden() const {
+  const AtomicString& attribute = FastGetAttribute(html_names::kHiddenAttr);
+
+  if (!RuntimeEnabledFeatures::BeforeMatchEventEnabled(GetExecutionContext())) {
+    return MakeGarbageCollected<V8UnionBooleanOrStringOrUnrestrictedDouble>(
+        attribute != g_null_atom);
+  }
+
+  if (attribute == g_null_atom) {
+    return MakeGarbageCollected<V8UnionBooleanOrStringOrUnrestrictedDouble>(
+        false);
+  }
+  if (attribute == "until-found") {
+    return MakeGarbageCollected<V8UnionBooleanOrStringOrUnrestrictedDouble>(
+        String("until-found"));
+  }
+  return MakeGarbageCollected<V8UnionBooleanOrStringOrUnrestrictedDouble>(true);
+}
+
+void HTMLElement::setHidden(
+    const V8UnionBooleanOrStringOrUnrestrictedDouble* value) {
+  if (!value) {
+    removeAttribute(html_names::kHiddenAttr);
+    return;
+  }
+  switch (value->GetContentType()) {
+    case V8UnionBooleanOrStringOrUnrestrictedDouble::ContentType::kBoolean:
+      if (value->GetAsBoolean()) {
+        setAttribute(html_names::kHiddenAttr, "");
+      } else {
+        removeAttribute(html_names::kHiddenAttr);
+      }
+      break;
+    case V8UnionBooleanOrStringOrUnrestrictedDouble::ContentType::kString:
+      if (RuntimeEnabledFeatures::BeforeMatchEventEnabled(
+              GetExecutionContext()) &&
+          EqualIgnoringASCIICase(value->GetAsString(), "until-found")) {
+        setAttribute(html_names::kHiddenAttr, "until-found");
+      } else if (value->GetAsString() == "") {
+        removeAttribute(html_names::kHiddenAttr);
+      } else {
+        setAttribute(html_names::kHiddenAttr, "");
+      }
+      break;
+    case V8UnionBooleanOrStringOrUnrestrictedDouble::ContentType::
+        kUnrestrictedDouble:
+      double double_value = value->GetAsUnrestrictedDouble();
+      if (double_value && !std::isnan(double_value)) {
+        setAttribute(html_names::kHiddenAttr, "");
+      } else {
+        removeAttribute(html_names::kHiddenAttr);
+      }
+      break;
+  }
 }
 
 const AtomicString& HTMLElement::autocapitalize() const {
@@ -1055,7 +1165,7 @@ void HTMLElement::setAutocapitalize(const AtomicString& value) {
 }
 
 bool HTMLElement::isContentEditableForBinding() const {
-  return IsEditingHost(*this) || IsEditable(*this);
+  return IsEditableOrEditingHost(*this);
 }
 
 bool HTMLElement::draggable() const {
@@ -1077,6 +1187,10 @@ void HTMLElement::setSpellcheck(bool enable) {
 
 void HTMLElement::click() {
   DispatchSimulatedClick(nullptr, SimulatedClickCreationScope::kFromScript);
+  if (IsA<HTMLInputElement>(this)) {
+    UseCounter::Count(GetDocument(),
+                      WebFeature::kHTMLInputElementSimulatedClick);
+  }
 }
 
 void HTMLElement::AccessKeyAction(SimulatedClickCreationScope creation_scope) {
@@ -1166,6 +1280,11 @@ static inline bool ElementAffectsDirectionality(const Node* node) {
 void HTMLElement::ChildrenChanged(const ChildrenChange& change) {
   Element::ChildrenChanged(change);
 
+  if (HasDirectionAuto()) {
+    SetSelfOrAncestorHasDirAutoAttribute();
+    GetDocument().SetDirAttributeDirty();
+  }
+
   if (GetDocument().IsDirAttributeDirty()) {
     AdjustDirectionalityIfNeededAfterChildrenChanged(change);
 
@@ -1186,8 +1305,10 @@ bool HTMLElement::HasDirectionAuto() const {
          EqualIgnoringASCIICase(direction, "auto");
 }
 
-TextDirection HTMLElement::ResolveAutoDirectionality(bool& is_deferred,
-                                                     Node* stay_within) const {
+template <typename Traversal>
+absl::optional<TextDirection> HTMLElement::ResolveAutoDirectionality(
+    bool& is_deferred,
+    Node* stay_within) const {
   is_deferred = false;
   if (auto* input_element = DynamicTo<HTMLInputElement>(*this)) {
     bool has_strong_directionality;
@@ -1195,7 +1316,11 @@ TextDirection HTMLElement::ResolveAutoDirectionality(bool& is_deferred,
                                    &has_strong_directionality);
   }
 
-  Node* node = FlatTreeTraversal::FirstChild(*this);
+  // For <textarea>, the heuristic is applied on a per-paragraph level, and
+  // we should traverse the flat tree.
+  Node* node = (IsA<HTMLTextAreaElement>(*this) || IsA<HTMLSlotElement>(*this))
+                   ? FlatTreeTraversal::FirstChild(*this)
+                   : Traversal::FirstChild(*this);
   while (node) {
     // Skip bdi, script, style and text form controls.
     auto* element = DynamicTo<Element>(node);
@@ -1204,11 +1329,12 @@ TextDirection HTMLElement::ResolveAutoDirectionality(bool& is_deferred,
         (element && element->IsTextControl()) ||
         (element && element->ShadowPseudoId() ==
                         shadow_element_names::kPseudoInputPlaceholder)) {
-      node = FlatTreeTraversal::NextSkippingChildren(*node, stay_within);
+      node = Traversal::NextSkippingChildren(*node, stay_within);
       continue;
     }
 
-    if (auto* slot = ToHTMLSlotElementIfSupportsAssignmentOrNull(node)) {
+    auto* slot = ToHTMLSlotElementIfSupportsAssignmentOrNull(node);
+    if (slot) {
       ShadowRoot* root = slot->ContainingShadowRoot();
       // Defer to adjust the directionality to avoid recalcuating slot
       // assignment in FlatTreeTraversal when updating slot.
@@ -1225,7 +1351,7 @@ TextDirection HTMLElement::ResolveAutoDirectionality(bool& is_deferred,
       AtomicString dir_attribute_value =
           element_node->FastGetAttribute(html_names::kDirAttr);
       if (IsValidDirAttribute(dir_attribute_value)) {
-        node = FlatTreeTraversal::NextSkippingChildren(*node, stay_within);
+        node = Traversal::NextSkippingChildren(*node, stay_within);
         continue;
       }
     }
@@ -1237,16 +1363,27 @@ TextDirection HTMLElement::ResolveAutoDirectionality(bool& is_deferred,
       if (has_strong_directionality)
         return text_direction;
     }
-    node = FlatTreeTraversal::Next(*node, stay_within);
+
+    if (slot) {
+      absl::optional<TextDirection> text_direction =
+          slot->ResolveAutoDirectionality<FlatTreeTraversal>(is_deferred,
+                                                             stay_within);
+      if (text_direction.has_value())
+        return text_direction;
+    }
+
+    node = Traversal::Next(*node, stay_within);
   }
-  return TextDirection::kLtr;
+  return absl::nullopt;
 }
 
 void HTMLElement::AdjustDirectionalityIfNeededAfterChildAttributeChanged(
     Element* child) {
   DCHECK(SelfOrAncestorHasDirAutoAttribute());
   bool is_deferred;
-  TextDirection text_direction = ResolveAutoDirectionality(is_deferred, this);
+  TextDirection text_direction =
+      ResolveAutoDirectionality<NodeTraversal>(is_deferred, this)
+          .value_or(TextDirection::kLtr);
   if (CachedDirectionality() != text_direction && !is_deferred) {
     SetCachedDirectionality(text_direction);
 
@@ -1272,7 +1409,8 @@ void HTMLElement::AdjustDirectionalityIfNeededAfterChildAttributeChanged(
 bool HTMLElement::CalculateAndAdjustAutoDirectionality(Node* stay_within) {
   bool is_deferred = false;
   TextDirection text_direction =
-      ResolveAutoDirectionality(is_deferred, stay_within);
+      ResolveAutoDirectionality<NodeTraversal>(is_deferred, stay_within)
+          .value_or(TextDirection::kLtr);
   if (CachedDirectionality() != text_direction && !is_deferred) {
     UpdateDirectionalityAndDescendant(text_direction);
 
@@ -1337,26 +1475,49 @@ void HTMLElement::AdjustDirectionalityIfNeededAfterChildrenChanged(
   }
 }
 
+void HTMLElement::AdjustDirectionalityIfNeededAfterShadowRootChanged() {
+  DCHECK(IsShadowHost(this));
+  if (SelfOrAncestorHasDirAutoAttribute()) {
+    for (auto* element_to_adjust = this; element_to_adjust;
+         element_to_adjust = DynamicTo<HTMLElement>(
+             FlatTreeTraversal::ParentElement(*element_to_adjust))) {
+      if (ElementAffectsDirectionality(element_to_adjust)) {
+        element_to_adjust->CalculateAndAdjustAutoDirectionality(
+            element_to_adjust);
+        return;
+      }
+    }
+  } else if (!NeedsInheritDirectionalityFromParent()) {
+    UpdateDescendantDirectionality(CachedDirectionality());
+  }
+}
+
 void HTMLElement::AdjustCandidateDirectionalityForSlot(
-    HeapHashSet<Member<HTMLElement>> candidate_set) {
+    HeapHashSet<Member<Node>> candidate_set) {
   HeapHashSet<Member<HTMLElement>> directionality_set;
   // Transfer a candidate directionality set to |directionality_set| to avoid
   // the tree walk to the duplicated parent node for the directionality.
-  for (auto& element : candidate_set) {
-    if (!element->SelfOrAncestorHasDirAutoAttribute()) {
-      auto* parent =
-          DynamicTo<HTMLElement>(FlatTreeTraversal::ParentElement(*element));
-      if (parent && !parent->NeedsInheritDirectionalityFromParent() &&
-          element->NeedsInheritDirectionalityFromParent()) {
-        element->UpdateDirectionalityAndDescendant(
-            parent->CachedDirectionality());
+  for (auto& node : candidate_set) {
+    Node* node_to_adjust = node.Get();
+    if (!node->SelfOrAncestorHasDirAutoAttribute()) {
+      if (ElementAffectsDirectionality(node))
+        continue;
+      auto* slot = node->AssignedSlot();
+      if (slot && slot->SelfOrAncestorHasDirAutoAttribute()) {
+        node_to_adjust = slot;
+      } else {
+        if (slot && !slot->NeedsInheritDirectionalityFromParent()) {
+          node->SetCachedDirectionality(slot->CachedDirectionality());
+        }
+        continue;
       }
-      continue;
     }
 
-    for (auto* element_to_adjust = element.Get(); element_to_adjust;
-         element_to_adjust = DynamicTo<HTMLElement>(
-             FlatTreeTraversal::ParentElement(*element_to_adjust))) {
+    bool needs_slot_assignment_recalc = false;
+    for (auto* element_to_adjust = DynamicTo<HTMLElement>(node_to_adjust);
+         element_to_adjust;
+         element_to_adjust = GetParentForDirectionality(
+             *element_to_adjust, needs_slot_assignment_recalc)) {
       if (ElementAffectsDirectionality(element_to_adjust)) {
         directionality_set.insert(element_to_adjust);
         continue;
@@ -1372,14 +1533,6 @@ void HTMLElement::AdjustCandidateDirectionalityForSlot(
                                        style_change_reason::kPseudoClass));
     }
   }
-}
-
-void HTMLElement::AddCandidateDirectionalityForSlot() {
-  ShadowRoot* root = ShadowRootOfParent();
-  if (!root || !root->HasSlotAssignment())
-    return;
-
-  root->GetSlotAssignment().GetCandidateDirectionality().insert(this);
 }
 
 Node::InsertionNotificationRequest HTMLElement::InsertedInto(
@@ -1543,7 +1696,7 @@ void HTMLElement::AddHTMLColorToStyle(MutableCSSPropertyValueSet* style,
     return;
 
   style->SetProperty(property_id,
-                     *cssvalue::CSSColorValue::Create(parsed_color.Rgb()));
+                     *cssvalue::CSSColor::Create(parsed_color.Rgb()));
 }
 
 LabelsNodeList* HTMLElement::labels() {
@@ -1603,20 +1756,11 @@ bool HTMLElement::MatchesReadOnlyPseudoClass() const {
   return !MatchesReadWritePseudoClass();
 }
 
+// https://html.spec.whatwg.org/multipage/semantics-other.html#selector-read-write
+// The :read-write pseudo-class must match ... elements that are editing hosts
+// or editable and are neither input elements nor textarea elements
 bool HTMLElement::MatchesReadWritePseudoClass() const {
-  if (FastHasAttribute(html_names::kContenteditableAttr)) {
-    const AtomicString& value =
-        FastGetAttribute(html_names::kContenteditableAttr);
-
-    if (value.IsEmpty() || EqualIgnoringASCIICase(value, "true") ||
-        EqualIgnoringASCIICase(value, "plaintext-only"))
-      return true;
-    if (EqualIgnoringASCIICase(value, "false"))
-      return false;
-    // All other values should be treated as "inherit".
-  }
-
-  return parentElement() && HasEditableStyle(*parentElement());
+  return IsEditableOrEditingHost(*this);
 }
 
 void HTMLElement::HandleKeypressEvent(KeyboardEvent& event) {
@@ -1641,38 +1785,35 @@ void HTMLElement::HandleKeypressEvent(KeyboardEvent& event) {
 int HTMLElement::offsetLeftForBinding() {
   GetDocument().EnsurePaintLocationDataValidForNode(
       this, DocumentUpdateReason::kJavaScript);
-  Element* offset_parent = unclosedOffsetParent();
-  if (LayoutBoxModelObject* layout_object = GetLayoutBoxModelObject())
+  if (const auto* layout_object = GetLayoutBoxModelObject()) {
     return AdjustForAbsoluteZoom::AdjustLayoutUnit(
-               LayoutUnit(layout_object->PixelSnappedOffsetLeft(offset_parent)),
+               layout_object->OffsetLeft(unclosedOffsetParent()),
                layout_object->StyleRef())
         .Round();
+  }
   return 0;
 }
 
 int HTMLElement::offsetTopForBinding() {
   GetDocument().EnsurePaintLocationDataValidForNode(
       this, DocumentUpdateReason::kJavaScript);
-  Element* offset_parent = unclosedOffsetParent();
-  if (LayoutBoxModelObject* layout_object = GetLayoutBoxModelObject())
+  if (const auto* layout_object = GetLayoutBoxModelObject()) {
     return AdjustForAbsoluteZoom::AdjustLayoutUnit(
-               LayoutUnit(layout_object->PixelSnappedOffsetTop(offset_parent)),
+               layout_object->OffsetTop(unclosedOffsetParent()),
                layout_object->StyleRef())
         .Round();
+  }
   return 0;
 }
 
 int HTMLElement::offsetWidthForBinding() {
   GetDocument().EnsurePaintLocationDataValidForNode(
       this, DocumentUpdateReason::kJavaScript);
-  Element* offset_parent = unclosedOffsetParent();
   int result = 0;
-  if (LayoutBoxModelObject* layout_object = GetLayoutBoxModelObject()) {
-    result =
-        AdjustForAbsoluteZoom::AdjustLayoutUnit(
-            LayoutUnit(layout_object->PixelSnappedOffsetWidth(offset_parent)),
-            layout_object->StyleRef())
-            .Round();
+  if (const auto* layout_object = GetLayoutBoxModelObject()) {
+    result = AdjustForAbsoluteZoom::AdjustLayoutUnit(
+                 layout_object->OffsetWidth(), layout_object->StyleRef())
+                 .Round();
     RecordScrollbarSizeForStudy(result, /* isWidth= */ true,
                                 /* is_offset= */ true);
   }
@@ -1683,14 +1824,11 @@ DISABLE_CFI_PERF
 int HTMLElement::offsetHeightForBinding() {
   GetDocument().EnsurePaintLocationDataValidForNode(
       this, DocumentUpdateReason::kJavaScript);
-  Element* offset_parent = unclosedOffsetParent();
   int result = 0;
-  if (LayoutBoxModelObject* layout_object = GetLayoutBoxModelObject()) {
-    result =
-        AdjustForAbsoluteZoom::AdjustLayoutUnit(
-            LayoutUnit(layout_object->PixelSnappedOffsetHeight(offset_parent)),
-            layout_object->StyleRef())
-            .Round();
+  if (const auto* layout_object = GetLayoutBoxModelObject()) {
+    result = AdjustForAbsoluteZoom::AdjustLayoutUnit(
+                 layout_object->OffsetHeight(), layout_object->StyleRef())
+                 .Round();
     RecordScrollbarSizeForStudy(result, /* is_width= */ false,
                                 /* is_offset= */ true);
   }
@@ -1763,7 +1901,17 @@ void HTMLElement::UpdateDescendantDirectionality(TextDirection direction) {
         node = FlatTreeTraversal::NextSkippingChildren(*node, this);
         continue;
       }
+
       node->SetCachedDirectionality(direction);
+      if (auto* slot = ToHTMLSlotElementIfSupportsAssignmentOrNull(node)) {
+        ShadowRoot* root = slot->ContainingShadowRoot();
+        // Defer to update the directionality of slot's descendant to avoid
+        // recalcuating slot assignment in FlatTreeTraversal when updating slot.
+        if (root->NeedsSlotAssignmentRecalc()) {
+          node = FlatTreeTraversal::NextSkippingChildren(*node, this);
+          continue;
+        }
+      }
     }
     node = FlatTreeTraversal::Next(*node, this);
   }
@@ -1781,7 +1929,8 @@ void HTMLElement::OnDirAttrChanged(const AttributeModificationParams& params) {
   bool is_old_auto = SelfOrAncestorHasDirAutoAttribute();
   bool is_new_auto = HasDirectionAuto();
   bool needs_slot_assignment_recalc = false;
-  auto* parent = GetParentForDirectionality(this, needs_slot_assignment_recalc);
+  auto* parent =
+      GetParentForDirectionality(*this, needs_slot_assignment_recalc);
   if (!is_old_auto || !is_new_auto) {
     if (parent && parent->SelfOrAncestorHasDirAutoAttribute()) {
       parent->AdjustDirectionalityIfNeededAfterChildAttributeChanged(this);
@@ -1799,7 +1948,7 @@ void HTMLElement::OnDirAttrChanged(const AttributeModificationParams& params) {
   if (is_new_auto) {
     CalculateAndAdjustAutoDirectionality(this);
   } else {
-    base::Optional<TextDirection> text_direction;
+    absl::optional<TextDirection> text_direction;
     if (EqualIgnoringASCIICase(params.new_value, "ltr")) {
       text_direction = TextDirection::kLtr;
     } else if (EqualIgnoringASCIICase(params.new_value, "rtl")) {
@@ -1829,18 +1978,14 @@ void HTMLElement::OnDirAttrChanged(const AttributeModificationParams& params) {
   }
 }
 
+void HTMLElement::OnFocusgroupAttrChanged(
+    const AttributeModificationParams& params) {
+  Element::ParseAttribute(params);
+}
+
 void HTMLElement::OnFormAttrChanged(const AttributeModificationParams& params) {
   if (IsFormAssociatedCustomElement())
     EnsureElementInternals().FormAttributeChanged();
-}
-
-void HTMLElement::OnInertAttrChanged(
-    const AttributeModificationParams& params) {
-  UpdateDistributionForUnknownReasons();
-  if (GetDocument().GetFrame()) {
-    GetDocument().GetFrame()->SetIsInert(GetDocument().LocalOwner() &&
-                                         GetDocument().LocalOwner()->IsInert());
-  }
 }
 
 void HTMLElement::OnLangAttrChanged(const AttributeModificationParams& params) {
@@ -1859,6 +2004,11 @@ void HTMLElement::OnTabIndexAttrChanged(
 }
 
 void HTMLElement::OnXMLLangAttrChanged(
+    const AttributeModificationParams& params) {
+  Element::ParseAttribute(params);
+}
+
+void HTMLElement::OnPopupAttrChanged(
     const AttributeModificationParams& params) {
   Element::ParseAttribute(params);
 }
@@ -1976,18 +2126,15 @@ void HTMLElement::FinishParsingChildren() {
 void HTMLElement::BeginParsingChildren() {
   Element::BeginParsingChildren();
 
-  if (GetDocument().IsDirAttributeDirty()) {
-    if (HasDirectionAuto()) {
-      SetSelfOrAncestorHasDirAutoAttribute();
-    } else if (!ElementAffectsDirectionality(this)) {
-      bool needs_slot_assignment_recalc = false;
-      auto* parent =
-          GetParentForDirectionality(this, needs_slot_assignment_recalc);
-      if (needs_slot_assignment_recalc)
-        SetNeedsInheritDirectionalityFromParent();
-      else if (parent)
-        SetCachedDirectionality(parent->CachedDirectionality());
-    }
+  if (GetDocument().IsDirAttributeDirty() && !HasDirectionAuto() &&
+      !ElementAffectsDirectionality(this)) {
+    bool needs_slot_assignment_recalc = false;
+    auto* parent =
+        GetParentForDirectionality(*this, needs_slot_assignment_recalc);
+    if (needs_slot_assignment_recalc)
+      SetNeedsInheritDirectionalityFromParent();
+    else if (parent)
+      SetCachedDirectionality(parent->CachedDirectionality());
   }
 }
 
@@ -2001,4 +2148,5 @@ void dumpInnerHTML(blink::HTMLElement*);
 void dumpInnerHTML(blink::HTMLElement* element) {
   printf("%s\n", element->innerHTML().Ascii().c_str());
 }
+
 #endif

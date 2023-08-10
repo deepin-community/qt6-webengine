@@ -11,15 +11,14 @@
 #include <algorithm>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "base/callback.h"
 #include "base/check_op.h"
-#include "base/compiler_specific.h"
 #include "base/gtest_prod_util.h"
-#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
@@ -35,7 +34,7 @@
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
 #include "base/cancelable_callback.h"
-#include "base/optional.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/display/manager/display_configurator.h"
 #include "ui/display/manager/touch_device_manager.h"
 #endif
@@ -110,6 +109,10 @@ class DISPLAY_MANAGER_EXPORT DisplayManager
 
   explicit DisplayManager(std::unique_ptr<Screen> screen);
 #if BUILDFLAG(IS_CHROMEOS_ASH)
+
+  DisplayManager(const DisplayManager&) = delete;
+  DisplayManager& operator=(const DisplayManager&) = delete;
+
   ~DisplayManager() override;
 #else
   ~DisplayManager();
@@ -167,8 +170,15 @@ class DISPLAY_MANAGER_EXPORT DisplayManager
   // Returns the actual display layout after it has been resolved and applied.
   const DisplayLayout& GetCurrentResolvedDisplayLayout() const;
 
-  // Returns the current display list.
-  DisplayIdList GetCurrentDisplayIdList() const;
+  // Returns the currently connected display list.
+  DisplayIdList GetConnectedDisplayIdList() const;
+
+  // Generates the connected display list that is the combination of currently
+  // connected but not considered as active display list, and the passed
+  // `display_id_list`. This is used during the display configuration where
+  // `active_display_list_` can be stale.
+  DisplayIdList GenerateConnectedDisplayIdListUsingDisplayIdList(
+      const DisplayIdList& display_id_list) const;
 
   // Sets the layout for the current display pair. The |layout| specifies the
   // locaion of the displays relative to their parents.
@@ -265,10 +275,6 @@ class DISPLAY_MANAGER_EXPORT DisplayManager
   void OnNativeDisplaysChanged(
       const std::vector<ManagedDisplayInfo>& display_info_list);
 
-  // Updates the internal display data and notifies observers about the changes.
-  void UpdateDisplaysWith(
-      const std::vector<ManagedDisplayInfo>& display_info_list);
-
   // Updates current displays using current |display_info_|.
   void UpdateDisplays();
 
@@ -350,7 +356,7 @@ class DISPLAY_MANAGER_EXPORT DisplayManager
     should_restore_mirror_mode_from_display_prefs_ = value;
   }
 
-  const base::Optional<MixedMirrorModeParams>& mixed_mirror_mode_params()
+  const absl::optional<MixedMirrorModeParams>& mixed_mirror_mode_params()
       const {
     return mixed_mirror_mode_params_;
   }
@@ -359,7 +365,7 @@ class DISPLAY_MANAGER_EXPORT DisplayManager
   // mixed mirror mode in the next display configuration. (Use SetMirrorMode()
   // to immediately switch to mixed mirror mode.)
   void set_mixed_mirror_mode_params(
-      const base::Optional<MixedMirrorModeParams> mixed_params) {
+      const absl::optional<MixedMirrorModeParams> mixed_params) {
     mixed_mirror_mode_params_ = mixed_params;
   }
 
@@ -427,7 +433,7 @@ class DISPLAY_MANAGER_EXPORT DisplayManager
   // the specified destination displays and all other connected displays will be
   // extended.
   void SetMirrorMode(MirrorMode mode,
-                     const base::Optional<MixedMirrorModeParams>& mixed_params);
+                     const absl::optional<MixedMirrorModeParams>& mixed_params);
 
   // Used to emulate display change when run in a desktop environment instead
   // of on a device.
@@ -452,7 +458,7 @@ class DISPLAY_MANAGER_EXPORT DisplayManager
       const ui::TouchscreenDevice& touchdevice);
   void ClearTouchCalibrationData(
       int64_t display_id,
-      base::Optional<ui::TouchscreenDevice> touchdevice);
+      absl::optional<ui::TouchscreenDevice> touchdevice);
   void UpdateZoomFactor(int64_t display_id, float zoom_factor);
   bool HasUnassociatedDisplay() const;
 #endif
@@ -502,22 +508,30 @@ class DISPLAY_MANAGER_EXPORT DisplayManager
 
  private:
   friend class test::DisplayManagerTestApi;
+  friend class DisplayLayoutStore;
 
   // See description above |notify_depth_| for details.
   class BeginEndNotifier {
    public:
     explicit BeginEndNotifier(DisplayManager* display_manager);
+
+    BeginEndNotifier(const BeginEndNotifier&) = delete;
+    BeginEndNotifier& operator=(const BeginEndNotifier&) = delete;
+
     ~BeginEndNotifier();
 
    private:
     DisplayManager* display_manager_;
-
-    DISALLOW_COPY_AND_ASSIGN(BeginEndNotifier);
   };
 
   void set_change_display_upon_host_resize(bool value) {
     change_display_upon_host_resize_ = value;
   }
+
+  // Updates the internal display data using `updated_display_info_list` and
+  // notifies observers about the changes.
+  void UpdateDisplaysWith(
+      const std::vector<ManagedDisplayInfo>& updated_display_info_list);
 
   // Creates software mirroring display related information. The display used to
   // mirror the content is removed from the |display_info_list|.
@@ -573,6 +587,8 @@ class DISPLAY_MANAGER_EXPORT DisplayManager
   void UpdateInfoForRestoringMirrorMode();
 
   void UpdatePrimaryDisplayIdIfNecessary();
+
+  void UpdateLayoutForMixedMode();
 
   Delegate* delegate_ = nullptr;  // not owned.
 
@@ -647,6 +663,7 @@ class DISPLAY_MANAGER_EXPORT DisplayManager
   DisplayIdList hardware_mirroring_display_id_list_;
 
   // Stores external displays that were in mirror mode before.
+  // These are display ids without output index.
   std::set<int64_t> external_display_mirror_info_;
 
   // This is set to true when the display prefs have been loaded from local
@@ -683,7 +700,7 @@ class DISPLAY_MANAGER_EXPORT DisplayManager
   // Not empty if mixed mirror mode should be turned on (the specified source
   // display is mirrored to the specified destination displays). Empty if mixed
   // mirror mode is disabled.
-  base::Optional<MixedMirrorModeParams> mixed_mirror_mode_params_;
+  absl::optional<MixedMirrorModeParams> mixed_mirror_mode_params_;
 
   // This is incremented whenever a BeginEndNotifier is created and decremented
   // when destroyed. BeginEndNotifier uses this to track when it should call
@@ -704,8 +721,6 @@ class DISPLAY_MANAGER_EXPORT DisplayManager
 #endif
 
   base::WeakPtrFactory<DisplayManager> weak_ptr_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(DisplayManager);
 };
 
 }  // namespace display

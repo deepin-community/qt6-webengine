@@ -10,8 +10,7 @@
 #include <memory>
 
 #include "base/component_export.h"
-#include "base/macros.h"
-#include "base/optional.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace base {
 class UnguessableToken;
@@ -30,7 +29,10 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) ScopedThrottlingToken {
   // ThrottlingNetworkTransaction::Start() will be called.
   static std::unique_ptr<ScopedThrottlingToken> MaybeCreate(
       uint32_t net_log_source_id,
-      const base::Optional<base::UnguessableToken>& throttling_profile_id);
+      const absl::optional<base::UnguessableToken>& throttling_profile_id);
+
+  ScopedThrottlingToken(const ScopedThrottlingToken&) = delete;
+  ScopedThrottlingToken& operator=(const ScopedThrottlingToken&) = delete;
 
   ~ScopedThrottlingToken();
 
@@ -39,8 +41,6 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) ScopedThrottlingToken {
                         const base::UnguessableToken& throttling_profile_id);
 
   const uint32_t net_log_source_id_;
-
-  DISALLOW_COPY_AND_ASSIGN(ScopedThrottlingToken);
 };
 
 }  // namespace network

@@ -138,10 +138,10 @@ TEST_F(SpeechRecognitionEngineTest, SingleDefinitiveResult) {
   results.push_back(blink::mojom::SpeechRecognitionResult::New());
   blink::mojom::SpeechRecognitionResultPtr& result = results.back();
   result->is_provisional = false;
-  result->hypotheses.push_back(blink::mojom::SpeechRecognitionHypothesis::New(
-      base::UTF8ToUTF16("hypothesis 1"), 0.1F));
-  result->hypotheses.push_back(blink::mojom::SpeechRecognitionHypothesis::New(
-      base::UTF8ToUTF16("hypothesis 2"), 0.2F));
+  result->hypotheses.push_back(
+      blink::mojom::SpeechRecognitionHypothesis::New(u"hypothesis 1", 0.1F));
+  result->hypotheses.push_back(
+      blink::mojom::SpeechRecognitionHypothesis::New(u"hypothesis 2", 0.2F));
 
   ProvideMockResultDownstream(result);
   ExpectResultsReceived(results);
@@ -170,7 +170,7 @@ TEST_F(SpeechRecognitionEngineTest, SeveralStreamingResults) {
     result->is_provisional = (i % 2 == 0);  // Alternate result types.
     float confidence = result->is_provisional ? 0.0F : (i * 0.1F);
     result->hypotheses.push_back(blink::mojom::SpeechRecognitionHypothesis::New(
-        base::UTF8ToUTF16("hypothesis"), confidence));
+        u"hypothesis", confidence));
 
     ProvideMockResultDownstream(result);
     ExpectResultsReceived(results);
@@ -188,7 +188,7 @@ TEST_F(SpeechRecognitionEngineTest, SeveralStreamingResults) {
   blink::mojom::SpeechRecognitionResultPtr& result = results.back();
   result->is_provisional = false;
   result->hypotheses.push_back(blink::mojom::SpeechRecognitionHypothesis::New(
-      base::UTF8ToUTF16("The final result"), 1.0F));
+      u"The final result", 1.0F));
   ProvideMockResultDownstream(result);
   ExpectResultsReceived(results);
   ASSERT_TRUE(engine_under_test_->IsRecognitionPending());
@@ -214,8 +214,8 @@ TEST_F(SpeechRecognitionEngineTest, NoFinalResultAfterAudioChunksEnded) {
   std::vector<blink::mojom::SpeechRecognitionResultPtr> results;
   results.push_back(blink::mojom::SpeechRecognitionResult::New());
   blink::mojom::SpeechRecognitionResultPtr& result = results.back();
-  result->hypotheses.push_back(blink::mojom::SpeechRecognitionHypothesis::New(
-      base::UTF8ToUTF16("hypothesis"), 1.0F));
+  result->hypotheses.push_back(
+      blink::mojom::SpeechRecognitionHypothesis::New(u"hypothesis", 1.0F));
   ProvideMockResultDownstream(result);
   ExpectResultsReceived(results);
   ASSERT_TRUE(engine_under_test_->IsRecognitionPending());
@@ -260,8 +260,8 @@ TEST_F(SpeechRecognitionEngineTest, ReRequestData) {
   std::vector<blink::mojom::SpeechRecognitionResultPtr> results;
   results.push_back(blink::mojom::SpeechRecognitionResult::New());
   blink::mojom::SpeechRecognitionResultPtr& result = results.back();
-  result->hypotheses.push_back(blink::mojom::SpeechRecognitionHypothesis::New(
-      base::UTF8ToUTF16("hypothesis"), 1.0F));
+  result->hypotheses.push_back(
+      blink::mojom::SpeechRecognitionHypothesis::New(u"hypothesis", 1.0F));
   ProvideMockResultDownstream(result);
   ExpectResultsReceived(results);
   ASSERT_TRUE(engine_under_test_->IsRecognitionPending());
@@ -312,7 +312,7 @@ TEST_F(SpeechRecognitionEngineTest, NoMatchError) {
   blink::mojom::SpeechRecognitionResultPtr& result = results.back();
   result->is_provisional = true;
   result->hypotheses.push_back(blink::mojom::SpeechRecognitionHypothesis::New(
-      base::UTF8ToUTF16("The final result"), 0.0F));
+      u"The final result", 0.0F));
   ProvideMockResultDownstream(result);
   ExpectResultsReceived(results);
   ASSERT_TRUE(engine_under_test_->IsRecognitionPending());
@@ -390,8 +390,8 @@ TEST_F(SpeechRecognitionEngineTest, Stability) {
   results.push_back(blink::mojom::SpeechRecognitionResult::New());
   blink::mojom::SpeechRecognitionResultPtr& result = results.back();
   result->is_provisional = true;
-  result->hypotheses.push_back(blink::mojom::SpeechRecognitionHypothesis::New(
-      base::UTF8ToUTF16("foo"), 0.5));
+  result->hypotheses.push_back(
+      blink::mojom::SpeechRecognitionHypothesis::New(u"foo", 0.5));
 
   // Check that the protobuf generated the expected result.
   ExpectResultsReceived(results);
@@ -471,8 +471,8 @@ TEST_F(SpeechRecognitionEngineTest, SendPreamble) {
   results.push_back(blink::mojom::SpeechRecognitionResult::New());
   blink::mojom::SpeechRecognitionResultPtr& result = results.back();
   result->is_provisional = false;
-  result->hypotheses.push_back(blink::mojom::SpeechRecognitionHypothesis::New(
-      base::UTF8ToUTF16("hypothesis 1"), 0.1F));
+  result->hypotheses.push_back(
+      blink::mojom::SpeechRecognitionHypothesis::New(u"hypothesis 1", 0.1F));
 
   ProvideMockResultDownstream(result);
   ExpectResultsReceived(results);
@@ -487,10 +487,10 @@ TEST_F(SpeechRecognitionEngineTest, SendPreamble) {
 }
 
 void SpeechRecognitionEngineTest::SetUp() {
-  engine_under_test_.reset(new SpeechRecognitionEngine(
+  engine_under_test_ = std::make_unique<SpeechRecognitionEngine>(
       base::MakeRefCounted<network::WeakWrapperSharedURLLoaderFactory>(
           &url_loader_factory_),
-      "" /* accept_language */));
+      "" /* accept_language */);
   engine_under_test_->set_delegate(this);
 }
 
@@ -565,7 +565,8 @@ void SpeechRecognitionEngineTest::ProvideMockResponseStartDownstreamIfNeeded() {
   std::string headers("HTTP/1.1 200 OK\n\n");
   head->headers = base::MakeRefCounted<net::HttpResponseHeaders>(
       net::HttpUtil::AssembleRawHeaders(headers));
-  downstream_request->client->OnReceiveResponse(std::move(head));
+  downstream_request->client->OnReceiveResponse(
+      std::move(head), mojo::ScopedDataPipeConsumerHandle());
 
   mojo::ScopedDataPipeProducerHandle producer_handle;
   mojo::ScopedDataPipeConsumerHandle consumer_handle;
@@ -588,14 +589,14 @@ void SpeechRecognitionEngineTest::ProvideMockProtoResultDownstream(
   uint32_t written = 0;
   while (written < response_string.size()) {
     uint32_t write_bytes = response_string.size() - written;
-    MojoResult result = downstream_data_pipe_->WriteData(
+    MojoResult mojo_result = downstream_data_pipe_->WriteData(
         response_string.data() + written, &write_bytes,
         MOJO_WRITE_DATA_FLAG_NONE);
-    if (result == MOJO_RESULT_OK) {
+    if (mojo_result == MOJO_RESULT_OK) {
       written += write_bytes;
       continue;
     }
-    if (result == MOJO_RESULT_SHOULD_WAIT) {
+    if (mojo_result == MOJO_RESULT_SHOULD_WAIT) {
       base::RunLoop().RunUntilIdle();
       continue;
     }
@@ -637,7 +638,8 @@ void SpeechRecognitionEngineTest::CloseMockDownstream(
     std::string headers("HTTP/1.1 500 Server Sad\n\n");
     head->headers = base::MakeRefCounted<net::HttpResponseHeaders>(
         net::HttpUtil::AssembleRawHeaders(headers));
-    downstream_request->client->OnReceiveResponse(std::move(head));
+    downstream_request->client->OnReceiveResponse(
+        std::move(head), mojo::ScopedDataPipeConsumerHandle());
     // Wait for the response to be handled.
     base::RunLoop().RunUntilIdle();
     return;
@@ -696,9 +698,9 @@ bool SpeechRecognitionEngineTest::ResultsAreEqual(
 void SpeechRecognitionEngineTest::ExpectFramedChunk(
     const std::string& chunk, uint32_t type) {
   uint32_t value;
-  base::ReadBigEndian(&chunk[0], &value);
+  base::ReadBigEndian(reinterpret_cast<const uint8_t*>(&chunk[0]), &value);
   EXPECT_EQ(chunk.size() - 8, value);
-  base::ReadBigEndian(&chunk[4], &value);
+  base::ReadBigEndian(reinterpret_cast<const uint8_t*>(&chunk[4]), &value);
   EXPECT_EQ(type, value);
 }
 
@@ -738,14 +740,14 @@ std::string SpeechRecognitionEngineTest::ConsumeChunkedUploadData() {
 
     const void* data;
     uint32_t num_bytes;
-    MojoResult result = upstream_data_pipe_->BeginReadData(
+    MojoResult mojo_result = upstream_data_pipe_->BeginReadData(
         &data, &num_bytes, MOJO_READ_DATA_FLAG_NONE);
-    if (result == MOJO_RESULT_OK) {
+    if (mojo_result == MOJO_RESULT_OK) {
       out.append(static_cast<const char*>(data), num_bytes);
       upstream_data_pipe_->EndReadData(num_bytes);
       continue;
     }
-    if (result == MOJO_RESULT_SHOULD_WAIT)
+    if (mojo_result == MOJO_RESULT_SHOULD_WAIT)
       break;
 
     ADD_FAILURE() << "Mojo pipe unexpectedly closed";

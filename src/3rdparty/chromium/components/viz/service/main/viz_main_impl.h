@@ -6,19 +6,18 @@
 #define COMPONENTS_VIZ_SERVICE_MAIN_VIZ_MAIN_IMPL_H_
 
 #include <memory>
-#include <string>
-#include <vector>
 
-#include "base/single_thread_task_runner.h"
+#include "base/memory/raw_ptr.h"
+#include "base/process/process_handle.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/threading/thread.h"
 #include "build/build_config.h"
 #include "components/discardable_memory/client/client_discardable_shared_memory_manager.h"
+#include "components/viz/common/buildflags.h"
 #include "components/viz/service/gl/gpu_service_impl.h"
 #include "components/viz/service/main/viz_compositor_thread_runner_impl.h"
 #include "gpu/ipc/gpu_in_process_thread_service.h"
 #include "gpu/ipc/in_process_command_buffer.h"
-#include "mojo/public/cpp/bindings/associated_receiver_set.h"
-#include "mojo/public/cpp/bindings/pending_associated_receiver.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/receiver.h"
@@ -26,13 +25,14 @@
 #include "services/viz/privileged/mojom/viz_main.mojom.h"
 #include "ui/gfx/font_render_params.h"
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 #include "components/viz/service/gl/info_collection_gpu_service_impl.h"
 #include "services/viz/privileged/mojom/gl/info_collection_gpu_service.mojom.h"
 #endif
 
 namespace base {
 class PowerMonitorSource;
+class WaitableEvent;
 }
 
 namespace gpu {
@@ -46,7 +46,7 @@ class MojoUkmRecorder;
 }
 
 namespace viz {
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 class InfoCollectionGpuServiceImpl;
 #endif
 
@@ -68,6 +68,10 @@ class VizMainImpl : public mojom::VizMain,
    public:
     ExternalDependencies();
     ExternalDependencies(ExternalDependencies&& other);
+
+    ExternalDependencies(const ExternalDependencies&) = delete;
+    ExternalDependencies& operator=(const ExternalDependencies&) = delete;
+
     ~ExternalDependencies();
 
     ExternalDependencies& operator=(ExternalDependencies&& other);
@@ -89,25 +93,25 @@ class VizMainImpl : public mojom::VizMain,
     // We use a |PowerMonitorSource| here instead of a boolean flag so that
     // tests can use mocks and fakes for testing.
     mutable std::unique_ptr<base::PowerMonitorSource> power_monitor_source;
-    gpu::SyncPointManager* sync_point_manager = nullptr;
-    gpu::SharedImageManager* shared_image_manager = nullptr;
-    base::WaitableEvent* shutdown_event = nullptr;
+    raw_ptr<gpu::SyncPointManager> sync_point_manager = nullptr;
+    raw_ptr<gpu::SharedImageManager> shared_image_manager = nullptr;
+    raw_ptr<base::WaitableEvent> shutdown_event = nullptr;
     scoped_refptr<base::SingleThreadTaskRunner> io_thread_task_runner;
     std::unique_ptr<ukm::MojoUkmRecorder> ukm_recorder;
-    VizCompositorThreadRunner* viz_compositor_thread_runner = nullptr;
-
-   private:
-    DISALLOW_COPY_AND_ASSIGN(ExternalDependencies);
+    raw_ptr<VizCompositorThreadRunner> viz_compositor_thread_runner = nullptr;
   };
 
   VizMainImpl(Delegate* delegate,
               ExternalDependencies dependencies,
               std::unique_ptr<gpu::GpuInit> gpu_init);
+
+  VizMainImpl(const VizMainImpl&) = delete;
+  VizMainImpl& operator=(const VizMainImpl&) = delete;
+
   // Destruction must happen on the GPU thread.
   ~VizMainImpl() override;
 
-  void BindAssociated(
-      mojo::PendingAssociatedReceiver<mojom::VizMain> pending_receiver);
+  void Bind(mojo::PendingReceiver<mojom::VizMain> receiver);
 
   // mojom::VizMain implementation:
   void CreateGpuService(
@@ -118,13 +122,21 @@ class VizMainImpl : public mojom::VizMain,
           discardable_memory_manager,
       mojo::ScopedSharedBufferHandle activity_flags,
       gfx::FontRenderParams::SubpixelRendering subpixel_rendering) override;
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   void CreateInfoCollectionGpuService(
       mojo::PendingReceiver<mojom::InfoCollectionGpuService> pending_receiver)
       override;
 #endif
+#if BUILDFLAG(IS_ANDROID)
+  void SetHostProcessId(int32_t pid) override;
+#endif
   void CreateFrameSinkManager(mojom::FrameSinkManagerParamsPtr params) override;
-  void CreateVizDevTools(mojom::VizDevToolsParamsPtr params) override;
+#if BUILDFLAG(USE_VIZ_DEBUGGER)
+  void FilterDebugStream(base::Value filter_data) override;
+  void StartDebugStream(
+      mojo::PendingRemote<mojom::VizDebugOutput> debug_output) override;
+  void StopDebugStream() override;
+#endif
 
   // gpu::GpuInProcessThreadServiceDelegate implementation:
   scoped_refptr<gpu::SharedContextState> GetSharedContextState() override;
@@ -140,14 +152,9 @@ class VizMainImpl : public mojom::VizMain,
     return discardable_shared_memory_manager_.get();
   }
 
-  // Cleanly exits the process. If |immediate_exit_code| is base::nullopt, the
-  // process exits by shutting down the GPU main thread. Otherwise, the process
-  // is terminated immediately with the specified exit code.
-  void ExitProcess(base::Optional<ExitCode> immediate_exit_code);
-
-  VizCompositorThreadRunner* viz_compositor_thread_runner() {
-    return viz_compositor_thread_runner_;
-  }
+  // If it's in browser process, shut down the GPU main thread. Otherwise, the
+  // GPU process is terminated immediately with the specified exit code.
+  void ExitProcess(ExitCode immediate_exit_code);
 
  private:
   void CreateFrameSinkManagerInternal(mojom::FrameSinkManagerParamsPtr params);
@@ -157,7 +164,7 @@ class VizMainImpl : public mojom::VizMain,
                       : dependencies_.io_thread_task_runner;
   }
 
-  Delegate* const delegate_;
+  const raw_ptr<Delegate> delegate_;
 
   const ExternalDependencies dependencies_;
 
@@ -168,7 +175,7 @@ class VizMainImpl : public mojom::VizMain,
 
   std::unique_ptr<gpu::GpuInit> gpu_init_;
   std::unique_ptr<GpuServiceImpl> gpu_service_;
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   std::unique_ptr<InfoCollectionGpuServiceImpl> info_collection_gpu_service_;
 #endif
 
@@ -188,16 +195,14 @@ class VizMainImpl : public mojom::VizMain,
   // and owned by this, Viz does not interact with other objects in this class,
   // such as GpuServiceImpl or CommandBufferTaskExecutor. Code should take care
   // to avoid introducing such assumptions.
-  VizCompositorThreadRunner* viz_compositor_thread_runner_ = nullptr;
+  raw_ptr<VizCompositorThreadRunner> viz_compositor_thread_runner_ = nullptr;
 
   const scoped_refptr<base::SingleThreadTaskRunner> gpu_thread_task_runner_;
 
-  mojo::AssociatedReceiver<mojom::VizMain> receiver_{this};
+  mojo::Receiver<mojom::VizMain> receiver_{this};
 
   scoped_refptr<discardable_memory::ClientDiscardableSharedMemoryManager>
       discardable_shared_memory_manager_;
-
-  DISALLOW_COPY_AND_ASSIGN(VizMainImpl);
 };
 
 }  // namespace viz

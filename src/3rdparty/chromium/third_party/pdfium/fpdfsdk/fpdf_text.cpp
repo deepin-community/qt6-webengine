@@ -18,10 +18,10 @@
 #include "core/fpdftext/cpdf_linkextract.h"
 #include "core/fpdftext/cpdf_textpage.h"
 #include "core/fpdftext/cpdf_textpagefind.h"
+#include "core/fxcrt/stl_util.h"
 #include "fpdfsdk/cpdfsdk_helpers.h"
-#include "third_party/base/check.h"
+#include "third_party/base/check_op.h"
 #include "third_party/base/numerics/safe_conversions.h"
-#include "third_party/base/stl_util.h"
 
 namespace {
 
@@ -99,7 +99,8 @@ FPDFText_GetFontInfo(FPDF_TEXTPAGE text_page,
     *flags = font->GetFontFlags();
 
   ByteString basefont = font->GetBaseFontName();
-  unsigned long length = basefont.GetLength() + 1;
+  const unsigned long length =
+      pdfium::base::checked_cast<unsigned long>(basefont.GetLength() + 1);
   if (buffer && buflen >= length)
     memcpy(buffer, basefont.c_str(), length);
 
@@ -197,7 +198,7 @@ FPDF_EXPORT float FPDF_CALLCONV FPDFText_GetCharAngle(FPDF_TEXTPAGE text_page,
   // Calculate the angle of the vector
   float angle = atan2f(charinfo.m_Matrix.c, charinfo.m_Matrix.a);
   if (angle < 0)
-    angle = 2 * FX_PI + angle;
+    angle = 2 * FXSYS_PI + angle;
 
   return angle;
 }
@@ -310,11 +311,13 @@ FPDF_EXPORT int FPDF_CALLCONV FPDFText_GetText(FPDF_TEXTPAGE page,
   // the number of items to stay the same.
   ByteString byte_str = str.ToUTF16LE();
   size_t byte_str_len = byte_str.GetLength();
-  int ret_count = byte_str_len / kBytesPerCharacter;
+  size_t ret_count = byte_str_len / kBytesPerCharacter;
 
-  DCHECK(ret_count <= char_count + 1);  // +1 to account for the NUL terminator.
+  // +1 to account for the NUL terminator.
+  DCHECK_LE(ret_count, static_cast<size_t>(char_count) + 1);
+
   memcpy(result, byte_str.c_str(), byte_str_len);
-  return ret_count;
+  return pdfium::base::checked_cast<int>(ret_count);
 }
 
 FPDF_EXPORT int FPDF_CALLCONV FPDFText_CountRects(FPDF_TEXTPAGE text_page,
@@ -359,14 +362,14 @@ FPDF_EXPORT int FPDF_CALLCONV FPDFText_GetBoundedText(FPDF_TEXTPAGE text_page,
   WideString str = textpage->GetTextByRect(rect);
 
   if (buflen <= 0 || !buffer)
-    return str.GetLength();
+    return pdfium::base::checked_cast<int>(str.GetLength());
 
   ByteString cbUTF16Str = str.ToUTF16LE();
-  int len = cbUTF16Str.GetLength() / sizeof(unsigned short);
+  int len = pdfium::base::checked_cast<int>(cbUTF16Str.GetLength()) /
+            sizeof(unsigned short);
   int size = buflen > len ? len : buflen;
   memcpy(buffer, cbUTF16Str.c_str(), size * sizeof(unsigned short));
   cbUTF16Str.ReleaseBuffer(size * sizeof(unsigned short));
-
   return size;
 }
 
@@ -385,7 +388,7 @@ FPDFText_FindStart(FPDF_TEXTPAGE text_page,
   options.bConsecutive = !!(flags & FPDF_CONSECUTIVE);
   auto find = CPDF_TextPageFind::Create(
       textpage, WideStringFromFPDFWideString(findwhat), options,
-      start_index >= 0 ? Optional<size_t>(start_index) : pdfium::nullopt);
+      start_index >= 0 ? absl::optional<size_t>(start_index) : absl::nullopt);
 
   // Caller takes ownership.
   return FPDFSchHandleFromCPDFTextPageFind(find.release());
@@ -465,7 +468,8 @@ FPDF_EXPORT int FPDF_CALLCONV FPDFLink_GetURL(FPDF_PAGELINK link_page,
     wsUrl = pageLink->GetURL(link_index);
   }
   ByteString cbUTF16URL = wsUrl.ToUTF16LE();
-  int required = cbUTF16URL.GetLength() / sizeof(unsigned short);
+  int required = pdfium::base::checked_cast<int>(cbUTF16URL.GetLength() /
+                                                 sizeof(unsigned short));
   if (!buffer || buflen <= 0)
     return required;
 
@@ -483,7 +487,7 @@ FPDF_EXPORT int FPDF_CALLCONV FPDFLink_CountRects(FPDF_PAGELINK link_page,
     return 0;
 
   CPDF_LinkExtract* pageLink = CPDFLinkExtractFromFPDFPageLink(link_page);
-  return pdfium::CollectionSize<int>(pageLink->GetRects(link_index));
+  return fxcrt::CollectionSize<int>(pageLink->GetRects(link_index));
 }
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV FPDFLink_GetRect(FPDF_PAGELINK link_page,
@@ -498,7 +502,7 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV FPDFLink_GetRect(FPDF_PAGELINK link_page,
 
   CPDF_LinkExtract* pageLink = CPDFLinkExtractFromFPDFPageLink(link_page);
   std::vector<CFX_FloatRect> rectArray = pageLink->GetRects(link_index);
-  if (rect_index >= pdfium::CollectionSize<int>(rectArray))
+  if (rect_index >= fxcrt::CollectionSize<int>(rectArray))
     return false;
 
   *left = rectArray[rect_index].left;
@@ -517,7 +521,14 @@ FPDFLink_GetTextRange(FPDF_PAGELINK link_page,
     return false;
 
   CPDF_LinkExtract* page_link = CPDFLinkExtractFromFPDFPageLink(link_page);
-  return page_link->GetTextRange(link_index, start_char_index, char_count);
+  auto maybe_range = page_link->GetTextRange(link_index);
+  if (!maybe_range.has_value())
+    return false;
+
+  *start_char_index =
+      pdfium::base::checked_cast<int>(maybe_range.value().m_Start);
+  *char_count = pdfium::base::checked_cast<int>(maybe_range.value().m_Count);
+  return true;
 }
 
 FPDF_EXPORT void FPDF_CALLCONV FPDFLink_CloseWebLinks(FPDF_PAGELINK link_page) {

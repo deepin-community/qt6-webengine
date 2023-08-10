@@ -5,6 +5,7 @@
 #include "third_party/blink/renderer/core/editing/suggestion/text_suggestion_controller.h"
 
 #include "third_party/blink/public/common/browser_interface_broker_proxy.h"
+#include "third_party/blink/renderer/core/clipboard/data_transfer.h"
 #include "third_party/blink/renderer/core/clipboard/data_transfer_access_policy.h"
 #include "third_party/blink/renderer/core/editing/editing_utilities.h"
 #include "third_party/blink/renderer/core/editing/editor.h"
@@ -443,12 +444,13 @@ void TextSuggestionController::ShowSpellCheckMenu(
     suggestion_ptrs.push_back(std::move(info_ptr));
   }
 
-  const IntRect& absolute_bounds = GetFrame().Selection().AbsoluteCaretBounds();
-  const IntRect& viewport_bounds =
+  const gfx::Rect& absolute_bounds =
+      GetFrame().Selection().AbsoluteCaretBounds();
+  const gfx::Rect& viewport_bounds =
       GetFrame().View()->FrameToViewport(absolute_bounds);
 
   text_suggestion_host_->ShowSpellCheckSuggestionMenu(
-      viewport_bounds.X(), viewport_bounds.MaxY(), std::move(misspelled_word),
+      viewport_bounds.x(), viewport_bounds.bottom(), std::move(misspelled_word),
       std::move(suggestion_ptrs));
 }
 
@@ -523,12 +525,13 @@ void TextSuggestionController::CallMojoShowTextSuggestionMenu(
     suggestion_info_ptrs.push_back(std::move(info_ptr));
   }
 
-  const IntRect& absolute_bounds = GetFrame().Selection().AbsoluteCaretBounds();
-  const IntRect& viewport_bounds =
+  const gfx::Rect& absolute_bounds =
+      GetFrame().Selection().AbsoluteCaretBounds();
+  const gfx::Rect& viewport_bounds =
       GetFrame().View()->FrameToViewport(absolute_bounds);
 
   text_suggestion_host_->ShowTextSuggestionMenu(
-      viewport_bounds.X(), viewport_bounds.MaxY(), misspelled_word,
+      viewport_bounds.x(), viewport_bounds.bottom(), misspelled_word,
       std::move(suggestion_info_ptrs));
 }
 

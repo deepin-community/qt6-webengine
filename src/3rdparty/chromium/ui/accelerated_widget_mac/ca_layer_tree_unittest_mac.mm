@@ -58,10 +58,10 @@ scoped_refptr<gl::GLImageIOSurface> CreateGLImage(const gfx::Size& size,
     base::ScopedCFTypeRef<CVPixelBufferRef> cv_pixel_buffer;
     CVPixelBufferCreateWithIOSurface(nullptr, io_surface, nullptr,
                                      cv_pixel_buffer.InitializeInto());
-    gl_image->InitializeWithCVPixelBuffer(cv_pixel_buffer,
+    gl_image->InitializeWithCVPixelBuffer(cv_pixel_buffer, 0,
                                           gfx::GenericSharedMemoryId(), format);
   } else {
-    gl_image->Initialize(io_surface, gfx::GenericSharedMemoryId(), format);
+    gl_image->Initialize(io_surface, 0, gfx::GenericSharedMemoryId(), format);
   }
   return gl_image;
 }
@@ -73,7 +73,8 @@ bool ScheduleCALayer(ui::CARendererLayerTree* tree,
       properties->rounded_corner_bounds, properties->sorting_context_id,
       properties->transform, properties->gl_image.get(),
       properties->contents_rect, properties->rect, properties->background_color,
-      properties->edge_aa_mask, properties->opacity, properties->filter));
+      properties->edge_aa_mask, properties->opacity, properties->filter,
+      gfx::ProtectedVideoType::kClear));
 }
 
 void UpdateCALayerTree(std::unique_ptr<ui::CARendererLayerTree>& ca_layer_tree,
@@ -176,9 +177,9 @@ class CALayerTreePropertyUpdatesTest : public CALayerTreeTest {
                 [clip_and_sorting_layer sublayerTransform].m42);
 
       // Validate the transform layer.
-      EXPECT_EQ(properties.transform.matrix().get(3, 0),
+      EXPECT_EQ(properties.transform.matrix().rc(3, 0),
                 [transform_layer sublayerTransform].m41);
-      EXPECT_EQ(properties.transform.matrix().get(3, 1),
+      EXPECT_EQ(properties.transform.matrix().rc(3, 1),
                 [transform_layer sublayerTransform].m42);
 
       // Validate the content layer.
@@ -264,9 +265,9 @@ class CALayerTreePropertyUpdatesTest : public CALayerTreeTest {
       EXPECT_EQ(transform_layer, [rounded_rect_layer sublayers][0]);
 
       // Validate the transform layer.
-      EXPECT_EQ(properties.transform.matrix().get(3, 0),
+      EXPECT_EQ(properties.transform.matrix().rc(3, 0),
                 [transform_layer sublayerTransform].m41);
-      EXPECT_EQ(properties.transform.matrix().get(3, 1),
+      EXPECT_EQ(properties.transform.matrix().rc(3, 1),
                 [transform_layer sublayerTransform].m42);
     }
 
@@ -472,10 +473,10 @@ class CALayerTreePropertyUpdatesTest : public CALayerTreeTest {
 
       // Validate the transform layer.
       EXPECT_EQ(
-          properties.transform.matrix().get(3, 0) / properties.scale_factor,
+          properties.transform.matrix().rc(3, 0) / properties.scale_factor,
           [transform_layer sublayerTransform].m41);
       EXPECT_EQ(
-          properties.transform.matrix().get(3, 1) / properties.scale_factor,
+          properties.transform.matrix().rc(3, 1) / properties.scale_factor,
           [transform_layer sublayerTransform].m42);
 
       // Validate the content layer.

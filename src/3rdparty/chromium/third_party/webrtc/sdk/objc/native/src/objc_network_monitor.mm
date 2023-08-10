@@ -9,18 +9,28 @@
  */
 
 #include "sdk/objc/native/src/objc_network_monitor.h"
+#include "absl/strings/string_view.h"
+
+#include "rtc_base/task_utils/to_queued_task.h"
 
 #include <algorithm>
 
 #include "rtc_base/logging.h"
+#include "rtc_base/string_utils.h"
 
 namespace webrtc {
 
-rtc::NetworkMonitorInterface* ObjCNetworkMonitorFactory::CreateNetworkMonitor() {
+rtc::NetworkMonitorInterface* ObjCNetworkMonitorFactory::CreateNetworkMonitor(
+    const FieldTrialsView& field_trials) {
   return new ObjCNetworkMonitor();
 }
 
+ObjCNetworkMonitor::ObjCNetworkMonitor() {
+  safety_flag_ = PendingTaskSafetyFlag::Create();
+}
+
 ObjCNetworkMonitor::~ObjCNetworkMonitor() {
+  [network_monitor_ stop];
   network_monitor_ = nil;
 }
 
@@ -30,6 +40,7 @@ void ObjCNetworkMonitor::Start() {
   }
   thread_ = rtc::Thread::Current();
   RTC_DCHECK_RUN_ON(thread_);
+  safety_flag_->SetAlive();
   network_monitor_ = [[RTCNetworkMonitor alloc] initWithObserver:this];
   if (network_monitor_ == nil) {
     RTC_LOG(LS_WARNING) << "Failed to create RTCNetworkMonitor; not available on this OS?";
@@ -42,28 +53,30 @@ void ObjCNetworkMonitor::Stop() {
   if (!started_) {
     return;
   }
+  safety_flag_->SetNotAlive();
+  [network_monitor_ stop];
   network_monitor_ = nil;
   started_ = false;
 }
 
-rtc::AdapterType ObjCNetworkMonitor::GetAdapterType(const std::string& interface_name) {
+rtc::AdapterType ObjCNetworkMonitor::GetAdapterType(absl::string_view interface_name) {
   RTC_DCHECK_RUN_ON(thread_);
-  if (adapter_type_by_name_.find(interface_name) == adapter_type_by_name_.end()) {
+  auto iter = adapter_type_by_name_.find(interface_name);
+  if (iter == adapter_type_by_name_.end()) {
     return rtc::ADAPTER_TYPE_UNKNOWN;
   }
-  return adapter_type_by_name_.at(interface_name);
+  return iter->second;
 }
 
-rtc::AdapterType ObjCNetworkMonitor::GetVpnUnderlyingAdapterType(
-    const std::string& interface_name) {
+rtc::AdapterType ObjCNetworkMonitor::GetVpnUnderlyingAdapterType(absl::string_view interface_name) {
   return rtc::ADAPTER_TYPE_UNKNOWN;
 }
 
-rtc::NetworkPreference ObjCNetworkMonitor::GetNetworkPreference(const std::string& interface_name) {
+rtc::NetworkPreference ObjCNetworkMonitor::GetNetworkPreference(absl::string_view interface_name) {
   return rtc::NetworkPreference::NEUTRAL;
 }
 
-bool ObjCNetworkMonitor::IsAdapterAvailable(const std::string& interface_name) {
+bool ObjCNetworkMonitor::IsAdapterAvailable(absl::string_view interface_name) {
   RTC_DCHECK_RUN_ON(thread_);
   if (adapter_type_by_name_.empty()) {
     // If we have no path update, assume everything's available, because it's
@@ -74,13 +87,13 @@ bool ObjCNetworkMonitor::IsAdapterAvailable(const std::string& interface_name) {
 }
 
 void ObjCNetworkMonitor::OnPathUpdate(
-    std::map<std::string, rtc::AdapterType> adapter_type_by_name) {
+    std::map<std::string, rtc::AdapterType, rtc::AbslStringViewCmp> adapter_type_by_name) {
   RTC_DCHECK(network_monitor_ != nil);
-  invoker_.AsyncInvoke<void>(RTC_FROM_HERE, thread_, [this, adapter_type_by_name] {
+  thread_->PostTask(ToQueuedTask(safety_flag_, [this, adapter_type_by_name] {
     RTC_DCHECK_RUN_ON(thread_);
     adapter_type_by_name_ = adapter_type_by_name;
-    SignalNetworksChanged();
-  });
+    InvokeNetworksChangedCallback();
+  }));
 }
 
 }  // namespace webrtc

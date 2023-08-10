@@ -7,14 +7,14 @@
 
 #include <stdint.h>
 
-#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/optional.h"
 #include "content/browser/renderer_host/policy_container_host.h"
 #include "content/browser/site_instance_impl.h"
+#include "content/common/content_export.h"
 #include "content/public/common/referrer.h"
 #include "services/network/public/cpp/resource_request_body.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/common/page_state/page_state.h"
 #include "url/gurl.h"
 #include "url/origin.h"
@@ -22,18 +22,19 @@
 namespace content {
 
 class WebBundleNavigationInfo;
+class SubresourceWebBundleNavigationInfo;
 
 // Represents a session history item for a particular frame.  It is matched with
 // corresponding FrameTreeNodes using unique name (or by the root position).
-//
-// This class is refcounted and can be shared across multiple NavigationEntries.
-// For now, it is owned by a single NavigationEntry and only tracks the main
+// There is a tree of FrameNavigationEntries in each NavigationEntry, one per
 // frame.
 //
-// If SiteIsolationPolicy::UseSubframeNavigationEntries is true, there will be a
-// tree of FrameNavigationEntries in each NavigationEntry, one per frame.
-// TODO(creis): Share these FrameNavigationEntries across NavigationEntries if
-// the frame hasn't changed.
+// This class is refcounted and can be shared across multiple NavigationEntries.
+// Each RenderFrameHost also keeps a scoped_refptr to its last committed
+// FrameNavigationEntry, to accurately track its current state in cases when the
+// last committed NavigationEntry may not match (e.g., when missing the
+// relevant FrameNavigationEntry or during a history navigation targeting
+// multiple frames while only some have committed.)
 class CONTENT_EXPORT FrameNavigationEntry
     : public base::RefCounted<FrameNavigationEntry> {
  public:
@@ -45,19 +46,26 @@ class CONTENT_EXPORT FrameNavigationEntry
       const std::string& frame_unique_name,
       int64_t item_sequence_number,
       int64_t document_sequence_number,
+      const std::string& navigation_api_key,
       scoped_refptr<SiteInstanceImpl> site_instance,
       scoped_refptr<SiteInstanceImpl> source_site_instance,
       const GURL& url,
-      const url::Origin* origin,
+      const absl::optional<url::Origin>& origin,
       const Referrer& referrer,
-      const base::Optional<url::Origin>& initiator_origin,
+      const absl::optional<url::Origin>& initiator_origin,
       const std::vector<GURL>& redirect_chain,
       const blink::PageState& page_state,
       const std::string& method,
       int64_t post_id,
       scoped_refptr<network::SharedURLLoaderFactory> blob_url_loader_factory,
       std::unique_ptr<WebBundleNavigationInfo> web_bundle_navigation_info,
-      std::unique_ptr<PolicyContainerPolicies> policy_container_policies);
+      std::unique_ptr<SubresourceWebBundleNavigationInfo>
+          subresource_web_bundle_navigation_info,
+      std::unique_ptr<PolicyContainerPolicies> policy_container_policies,
+      bool protect_url_in_navigation_api);
+
+  FrameNavigationEntry(const FrameNavigationEntry&) = delete;
+  FrameNavigationEntry& operator=(const FrameNavigationEntry&) = delete;
 
   // Creates a copy of this FrameNavigationEntry that can be modified
   // independently from the original.
@@ -68,19 +76,23 @@ class CONTENT_EXPORT FrameNavigationEntry
       const std::string& frame_unique_name,
       int64_t item_sequence_number,
       int64_t document_sequence_number,
+      const std::string& navigation_api_key,
       SiteInstanceImpl* site_instance,
       scoped_refptr<SiteInstanceImpl> source_site_instance,
       const GURL& url,
-      const base::Optional<url::Origin>& origin,
+      const absl::optional<url::Origin>& origin,
       const Referrer& referrer,
-      const base::Optional<url::Origin>& initiator_origin,
+      const absl::optional<url::Origin>& initiator_origin,
       const std::vector<GURL>& redirect_chain,
       const blink::PageState& page_state,
       const std::string& method,
       int64_t post_id,
       scoped_refptr<network::SharedURLLoaderFactory> blob_url_loader_factory,
       std::unique_ptr<WebBundleNavigationInfo> web_bundle_navigation_info,
-      std::unique_ptr<PolicyContainerPolicies> policy_container_policies);
+      std::unique_ptr<SubresourceWebBundleNavigationInfo>
+          subresource_web_bundle_navigation_info,
+      std::unique_ptr<PolicyContainerPolicies> policy_container_policies,
+      bool protect_url_in_navigation_api);
 
   // The unique name of the frame this entry is for.  This is a stable name for
   // the frame based on its position in the tree and relation to other named
@@ -104,6 +116,11 @@ class CONTENT_EXPORT FrameNavigationEntry
   int64_t item_sequence_number() const { return item_sequence_number_; }
   void set_document_sequence_number(int64_t document_sequence_number);
   int64_t document_sequence_number() const { return document_sequence_number_; }
+
+  // Identifies a "slot" in the frame's session history for the
+  // window.navigation API.
+  void set_navigation_api_key(const std::string& navigation_api_key);
+  const std::string& navigation_api_key() const { return navigation_api_key_; }
 
   // The SiteInstance, as assigned at commit time, responsible for rendering
   // this frame.  All frames sharing a SiteInstance must live in the same
@@ -139,10 +156,10 @@ class CONTENT_EXPORT FrameNavigationEntry
   void set_referrer(const Referrer& referrer) { referrer_ = referrer; }
   const Referrer& referrer() const { return referrer_; }
 
-  // The origin that initiated the original navigation.  base::nullopt means
+  // The origin that initiated the original navigation.  absl::nullopt means
   // that the original navigation was browser-initiated (e.g. initiated from a
   // trusted surface like the omnibox or the bookmarks bar).
-  const base::Optional<url::Origin>& initiator_origin() const {
+  const absl::optional<url::Origin>& initiator_origin() const {
     return initiator_origin_;
   }
 
@@ -152,7 +169,7 @@ class CONTENT_EXPORT FrameNavigationEntry
   void set_committed_origin(const url::Origin& origin) {
     committed_origin_ = origin;
   }
-  const base::Optional<url::Origin>& committed_origin() const {
+  const absl::optional<url::Origin>& committed_origin() const {
     return committed_origin_;
   }
 
@@ -215,6 +232,16 @@ class CONTENT_EXPORT FrameNavigationEntry
       std::unique_ptr<WebBundleNavigationInfo> web_bundle_navigation_info);
   WebBundleNavigationInfo* web_bundle_navigation_info() const;
 
+  SubresourceWebBundleNavigationInfo* subresource_web_bundle_navigation_info()
+      const;
+
+  bool protect_url_in_navigation_api() {
+    return protect_url_in_navigation_api_;
+  }
+  void set_protect_url_in_navigation_api(bool protect) {
+    protect_url_in_navigation_api_ = protect;
+  }
+
  private:
   friend class base::RefCounted<FrameNavigationEntry>;
   virtual ~FrameNavigationEntry();
@@ -227,8 +254,14 @@ class CONTENT_EXPORT FrameNavigationEntry
 
   // See the accessors above for descriptions.
   std::string frame_unique_name_;
+
+  // sequence numbers and the navigation API key are also stored in
+  // |page_state_|. When SetPageState() is called as part of a restore, it also
+  // initializes these.
   int64_t item_sequence_number_;
   int64_t document_sequence_number_;
+  std::string navigation_api_key_;
+
   scoped_refptr<SiteInstanceImpl> site_instance_;
   // This member is cleared at commit time and is not persisted.
   scoped_refptr<SiteInstanceImpl> source_site_instance_;
@@ -236,9 +269,9 @@ class CONTENT_EXPORT FrameNavigationEntry
   // For a committed navigation, holds the origin of the resulting document.
   // TODO(nasko): This should be possible to calculate at ReadyToCommit time
   // and verified when receiving the DidCommit IPC.
-  base::Optional<url::Origin> committed_origin_;
+  absl::optional<url::Origin> committed_origin_;
   Referrer referrer_;
-  base::Optional<url::Origin> initiator_origin_;
+  absl::optional<url::Origin> initiator_origin_;
   // This is used when transferring a pending entry from one process to another.
   // We also send the main frame's redirect chain through session sync for
   // offline analysis.
@@ -258,11 +291,18 @@ class CONTENT_EXPORT FrameNavigationEntry
   // switch is set.
   // TODO(995177): Support Session/Tab restore.
   std::unique_ptr<WebBundleNavigationInfo> web_bundle_navigation_info_;
+  // Used when |this| is for a subframe navigation to a resource from the parent
+  // frame's subresource web bundle.
+  std::unique_ptr<SubresourceWebBundleNavigationInfo>
+      subresource_web_bundle_navigation_info_;
 
   // TODO(https://crbug.com/1140393): Persist these policies.
   std::unique_ptr<PolicyContainerPolicies> policy_container_policies_;
 
-  DISALLOW_COPY_AND_ASSIGN(FrameNavigationEntry);
+  // If the document represented by this FNE hid its full url from appearing
+  // in a referrer via a "no-referrer" or "origin" referrer policy, this URL
+  // will be hidden from navigation API history entries as well.
+  bool protect_url_in_navigation_api_;
 };
 
 }  // namespace content

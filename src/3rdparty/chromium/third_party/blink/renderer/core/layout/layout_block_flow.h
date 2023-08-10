@@ -36,7 +36,7 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_LAYOUT_BLOCK_FLOW_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_LAYOUT_BLOCK_FLOW_H_
 
-#include <memory>
+#include "base/dcheck_is_on.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/layout/api/line_layout_item.h"
 #include "third_party/blink/renderer/core/layout/floating_objects.h"
@@ -59,7 +59,7 @@ class LayoutMultiColumnSpannerPlaceholder;
 class LayoutRubyRun;
 class MarginInfo;
 class NGOffsetMapping;
-class NGPhysicalContainerFragment;
+class NGPhysicalFragment;
 
 struct NGInlineNodeData;
 
@@ -97,6 +97,7 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
  public:
   explicit LayoutBlockFlow(ContainerNode*);
   ~LayoutBlockFlow() override;
+  void Trace(Visitor*) const override;
 
   static LayoutBlockFlow* CreateAnonymous(Document*,
                                           scoped_refptr<ComputedStyle>,
@@ -263,6 +264,8 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
                 LayoutObject* before_child = nullptr) override;
   void RemoveChild(LayoutObject*) override;
 
+  bool CreatesAnonymousWrapper() const override;
+
   void MoveAllChildrenIncludingFloatsTo(LayoutBlock* to_block,
                                         bool full_remove_insert);
 
@@ -354,6 +357,17 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
       rare_data_->multi_column_flow_thread_ = nullptr;
   }
 
+  // Return true if this block establishes a fragmentation context root (e.g. a
+  // multicol container).
+  //
+  // Implementation detail: At some point in the future there should be no flow
+  // threads. Callers that only want to know if this is a fragmentation context
+  // root (and don't depend on flow threads) should call this method.
+  bool IsFragmentationContextRoot() const override {
+    NOT_DESTROYED();
+    return MultiColumnFlowThread();
+  }
+
   void AddVisualOverflowFromInlineChildren();
 
   void AddLayoutOverflowFromInlineChildren();
@@ -362,6 +376,9 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
   // dirty bits and LayoutTextCombine.
   void ComputeInlinePreferredLogicalWidths(LayoutUnit& min_logical_width,
                                            LayoutUnit& max_logical_width);
+
+  // Return true if this object is allowed to establish a multicol container.
+  bool AllowsColumns() const;
 
   bool AllowsPaginationStrut() const;
   // Pagination strut caused by the first line or child block inside this
@@ -411,7 +428,7 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
   LayoutUnit XPositionForFloatIncludingMargin(
       const FloatingObject& child) const {
     NOT_DESTROYED();
-    LayoutUnit scrollbar_adjustment(OriginAdjustmentForScrollbars().Width());
+    LayoutUnit scrollbar_adjustment(OriginAdjustmentForScrollbars().x());
     if (IsHorizontalWritingMode()) {
       return child.X() + child.GetLayoutObject()->MarginLeft() +
              scrollbar_adjustment;
@@ -468,7 +485,7 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
 
   FloatingObject* LastFloatFromPreviousLine() const {
     NOT_DESTROYED();
-    return ContainsFloats() ? floating_objects_->Set().back().get() : nullptr;
+    return ContainsFloats() ? floating_objects_->Set().back().Get() : nullptr;
   }
 
   void SetShouldDoFullPaintInvalidationForFirstLine();
@@ -503,7 +520,7 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
   // These functions are only public so we can call it from NGBlockNode while
   // we're still working on LayoutNG.
   void AddVisualOverflowFromFloats();
-  void AddVisualOverflowFromFloats(const NGPhysicalContainerFragment& fragment);
+  void AddVisualOverflowFromFloats(const NGPhysicalFragment& fragment);
   void AddLayoutOverflowFromFloats();
 
   virtual NGInlineNodeData* TakeNGInlineNodeData() {
@@ -521,6 +538,8 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
     return false;
   }
   virtual void WillCollectInlines() { NOT_DESTROYED(); }
+
+  void StopDeferringShaping() const;
 
 #if DCHECK_IS_ON()
   void ShowLineTreeAndMark(const InlineBox* = nullptr,
@@ -544,11 +563,11 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
 
   void UpdateBlockChildDirtyBitsBeforeLayout(bool relayout_children,
                                              LayoutBox&);
-  void AbsoluteQuads(Vector<FloatQuad>&,
+  void AbsoluteQuads(Vector<gfx::QuadF>&,
                      MapCoordinatesFlags mode = 0) const override;
-  void AbsoluteQuadsForSelf(Vector<FloatQuad>& quads,
+  void LocalQuadsForSelf(Vector<gfx::QuadF>& quads) const override;
+  void AbsoluteQuadsForSelf(Vector<gfx::QuadF>& quads,
                             MapCoordinatesFlags mode = 0) const override;
-  LayoutObject* HoverAncestor() const final;
 
   LayoutUnit LogicalRightOffsetForLine(
       LayoutUnit logical_top,
@@ -582,6 +601,7 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
   void DetermineLogicalLeftPositionForChild(LayoutBox& child);
 
   void AddOutlineRects(Vector<PhysicalRect>&,
+                       OutlineInfo*,
                        const PhysicalOffset& additional_offset,
                        NGOutlineType) const override;
 
@@ -596,6 +616,10 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
   PhysicalOffset AccumulateRelativePositionOffsets() const override;
 
  private:
+  void QuadsForSelfInternal(Vector<gfx::QuadF>& quads,
+                            MapCoordinatesFlags mode,
+                            bool map_to_absolute) const;
+
   void ResetLayout();
   void LayoutChildren(bool relayout_children, SubtreeLayoutScope&);
   void AddOverhangingFloatsFromChildren(LayoutUnit unconstrained_height);
@@ -744,12 +768,14 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
  public:
   struct FloatWithRect {
     DISALLOW_NEW();
-    FloatWithRect(LayoutBox* f)
+    explicit FloatWithRect(LayoutBox* f)
         : object(f), rect(f->FrameRect()), ever_had_layout(f->EverHadLayout()) {
       rect.Expand(f->MarginBoxOutsets());
     }
 
-    LayoutBox* object;
+    void Trace(Visitor* visitor) const { visitor->Trace(object); }
+
+    Member<LayoutBox> object;
     LayoutRect rect;
     bool ever_had_layout;
   };
@@ -827,20 +853,20 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
       return (-block->MarginAfter()).ClampNegativeToZero();
     }
 
-    void Trace(Visitor*) const {}
+    void Trace(Visitor*) const;
 
     MarginValues margins_;
     LayoutUnit pagination_strut_propagated_from_child_;
 
     LayoutUnit first_forced_break_offset_;
 
-    LayoutMultiColumnFlowThread* multi_column_flow_thread_ = nullptr;
+    Member<LayoutMultiColumnFlowThread> multi_column_flow_thread_;
 
     // |offset_mapping_| is used only for legacy layout tree for caching offset
     // mapping for |NGInlineNode::GetOffsetMapping()|.
     // TODO(yosin): Once we have no legacy support, we should get rid of
     // |offset_mapping_| here.
-    std::unique_ptr<NGOffsetMapping> offset_mapping_;
+    Member<NGOffsetMapping> offset_mapping_;
 
     // Name of the start page for this object, if propagated from a descendant;
     // see https://drafts.csswg.org/css-page-3/#start-page-value
@@ -858,15 +884,12 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
 
   void ClearOffsetMappingIfNeeded();
   const NGOffsetMapping* GetOffsetMapping() const;
-  void SetOffsetMapping(std::unique_ptr<NGOffsetMapping>);
+  void SetOffsetMapping(NGOffsetMapping*);
 
   const FloatingObjects* GetFloatingObjects() const {
     NOT_DESTROYED();
-    return floating_objects_.get();
+    return floating_objects_;
   }
-
-  static void UpdateAncestorShouldPaintFloatingObject(
-      const LayoutBox& float_box);
 
   bool ShouldTruncateOverflowingText() const;
 
@@ -949,7 +972,7 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
   void SetCollapsedBottomMargin(const MarginInfo&);
 
   static void RecalcFloatingDescendantsVisualOverflow(
-      const NGPhysicalContainerFragment& fragment);
+      const NGPhysicalFragment& fragment);
 
   // Apply any forced fragmentainer break that's set on the current class A
   // break point.
@@ -995,8 +1018,8 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
   bool CheckIfIsSelfCollapsingBlock() const;
 
  protected:
-  Persistent<LayoutBlockFlowRareData> rare_data_;
-  std::unique_ptr<FloatingObjects> floating_objects_;
+  Member<LayoutBlockFlowRareData> rare_data_;
+  Member<FloatingObjects> floating_objects_;
 
   friend class MarginInfo;
   friend class LineWidth;  // needs to know FloatingObject
@@ -1064,7 +1087,7 @@ class CORE_EXPORT LayoutBlockFlow : public LayoutBlock {
                                   const InlineIterator& clean_line_start,
                                   const BidiStatus& clean_line_bidi_status);
   void LinkToEndLineIfNeeded(LineLayoutState&);
-  void MarkDirtyFloatsForPaintInvalidation(Vector<FloatWithRect>& floats);
+  void MarkDirtyFloatsForPaintInvalidation(HeapVector<FloatWithRect>& floats);
   RootInlineBox* DetermineStartPosition(LineLayoutState&, InlineBidiResolver&);
   void DetermineEndPosition(LineLayoutState&,
                             RootInlineBox* start_box,
@@ -1100,5 +1123,8 @@ struct DowncastTraits<LayoutBlockFlow> {
 };
 
 }  // namespace blink
+
+WTF_ALLOW_CLEAR_UNUSED_SLOTS_WITH_MEM_FUNCTIONS(
+    blink::LayoutBlockFlow::FloatWithRect)
 
 #endif  // THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_LAYOUT_BLOCK_FLOW_H_

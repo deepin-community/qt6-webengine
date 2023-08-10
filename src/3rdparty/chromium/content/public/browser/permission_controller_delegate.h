@@ -5,7 +5,7 @@
 #ifndef CONTENT_PUBLIC_BROWSER_PERMISSION_CONTROLLER_DELEGATE_H_
 #define CONTENT_PUBLIC_BROWSER_PERMISSION_CONTROLLER_DELEGATE_H_
 
-#include "base/util/type_safety/id_type.h"
+#include "base/types/id_type.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/devtools_permission_overrides.h"
 #include "third_party/blink/public/mojom/permissions/permission_status.mojom.h"
@@ -15,13 +15,14 @@ class GURL;
 namespace content {
 enum class PermissionType;
 class RenderFrameHost;
+class RenderProcessHost;
 
 class CONTENT_EXPORT PermissionControllerDelegate {
  public:
   using PermissionOverrides = DevToolsPermissionOverrides::PermissionOverrides;
 
   // Identifier for an active subscription.
-  using SubscriptionId = util::IdType64<PermissionControllerDelegate>;
+  using SubscriptionId = base::IdType64<PermissionControllerDelegate>;
 
   virtual ~PermissionControllerDelegate() = default;
 
@@ -29,11 +30,7 @@ class CONTENT_EXPORT PermissionControllerDelegate {
   // render_frame_host.
   // When the permission request is handled, whether it failed, timed out or
   // succeeded, the |callback| will be run.
-  // Returns a request id which can be used to cancel the permission (see
-  // CancelPermissionRequest). This can be kNoPendingOperation if
-  // there is no further need to cancel the permission in which case |callback|
-  // was invoked.
-  virtual int RequestPermission(
+  virtual void RequestPermission(
       PermissionType permission,
       RenderFrameHost* render_frame_host,
       const GURL& requesting_origin,
@@ -46,11 +43,7 @@ class CONTENT_EXPORT PermissionControllerDelegate {
   // succeeded, the |callback| will be run. The order of statuses in the
   // returned vector will correspond to the order of requested permission
   // types.
-  // Returns a request id which can be used to cancel the request (see
-  // CancelPermissionRequest). This can be kNoPendingOperation if
-  // there is no further need to cancel the permission in which case |callback|
-  // was invoked.
-  virtual int RequestPermissions(
+  virtual void RequestPermissions(
       const std::vector<PermissionType>& permission,
       RenderFrameHost* render_frame_host,
       const GURL& requesting_origin,
@@ -72,10 +65,29 @@ class CONTENT_EXPORT PermissionControllerDelegate {
   // TODO(raymes): Currently we still pass the |requesting_origin| as a separate
   // parameter because we can't yet guarantee that it matches the last committed
   // origin of the RenderFrameHost. See https://crbug.com/698985.
+  // Deprecated. Use `GetPermissionStatusForCurrentDocument` instead.
   virtual blink::mojom::PermissionStatus GetPermissionStatusForFrame(
       PermissionType permission,
       RenderFrameHost* render_frame_host,
       const GURL& requesting_origin) = 0;
+
+  // Returns the permission status for the current document in the given
+  // RenderFrameHost. Use this over `GetPermissionStatusForFrame` and
+  // `GetPermissionStatus` whenever possible as this API takes into account the
+  // lifecycle state of a given document (i.e. whether it's in back-forward
+  // cache or being prerendered) in addition to its origin.
+  virtual blink::mojom::PermissionStatus GetPermissionStatusForCurrentDocument(
+      PermissionType permission,
+      RenderFrameHost* render_frame_host) = 0;
+
+  // Returns the status of the given `permission` for a worker on
+  // `worker_origin` running in `render_process_host`, also performing
+  // additional checks such as Permission Policy.  Use this over
+  // GetPermissionStatus whenever possible.
+  virtual blink::mojom::PermissionStatus GetPermissionStatusForWorker(
+      PermissionType permission,
+      RenderProcessHost* render_process_host,
+      const GURL& worker_origin) = 0;
 
   // Sets the permission back to its default for the requesting_origin/
   // embedding_origin tuple.
@@ -84,11 +96,14 @@ class CONTENT_EXPORT PermissionControllerDelegate {
                                const GURL& embedding_origin) = 0;
 
   // Runs the given |callback| whenever the |permission| associated with the
-  // given RenderFrameHost changes. A nullptr should be passed if the request
-  // is from a worker. Returns the ID to be used to unsubscribe, which can be
-  // `is_null()` if the subscribe was not successful.
+  // given |render_frame_host| changes. |render_process_host| should be passed
+  // instead if the request is from a worker. Returns the ID to be used to
+  // unsubscribe, which can be `is_null()` if the subscribe was not successful.
+  // Exactly one of |render_process_host| and |render_frame_host| should be
+  // set, RenderProcessHost will be inferred from |render_frame_host|.
   virtual SubscriptionId SubscribePermissionStatusChange(
       content::PermissionType permission,
+      content::RenderProcessHost* render_process_host,
       content::RenderFrameHost* render_frame_host,
       const GURL& requesting_origin,
       base::RepeatingCallback<void(blink::mojom::PermissionStatus)>
@@ -105,7 +120,7 @@ class CONTENT_EXPORT PermissionControllerDelegate {
   // are tracked by the delegate. This method should only be called by the
   // PermissionController owning the delegate.
   virtual void SetPermissionOverridesForDevTools(
-      const base::Optional<url::Origin>& origin,
+      const absl::optional<url::Origin>& origin,
       const PermissionOverrides& overrides) {}
 
   // Removes overrides that have been set, if any, for all origins. If delegate
@@ -116,7 +131,7 @@ class CONTENT_EXPORT PermissionControllerDelegate {
   // DevToolsPermissionOverrides.
   virtual bool IsPermissionOverridableByDevTools(
       PermissionType permission,
-      const base::Optional<url::Origin>& origin);
+      const absl::optional<url::Origin>& origin);
 };
 
 }  // namespace content

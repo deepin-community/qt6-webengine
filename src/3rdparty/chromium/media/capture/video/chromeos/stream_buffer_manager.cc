@@ -11,13 +11,13 @@
 #include "base/callback_helpers.h"
 #include "base/posix/safe_strerror.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/stringprintf.h"
 #include "base/trace_event/trace_event.h"
 #include "gpu/ipc/common/gpu_memory_buffer_support.h"
 #include "media/capture/video/chromeos/camera_buffer_factory.h"
 #include "media/capture/video/chromeos/camera_metadata_utils.h"
 #include "media/capture/video/chromeos/pixel_format_utils.h"
 #include "media/capture/video/chromeos/request_builder.h"
-#include "media/capture/video/chromeos/video_capture_features_chromeos.h"
 #include "mojo/public/cpp/platform/platform_handle.h"
 #include "mojo/public/cpp/system/platform_handle.h"
 #include "third_party/libyuv/include/libyuv.h"
@@ -41,9 +41,7 @@ StreamBufferManager::~StreamBufferManager() {
 }
 
 void StreamBufferManager::ReserveBuffer(StreamType stream_type) {
-  // The YUV output buffer for reprocessing is not passed to client, so can be
-  // allocated by the local buffer factory without zero-copy concerns.
-  if (video_capture_use_gmb_ && stream_type != StreamType::kYUVOutput) {
+  if (CanReserveBufferFromPool(stream_type)) {
     ReserveBufferFromPool(stream_type);
   } else {
     ReserveBufferFromFactory(stream_type);
@@ -63,7 +61,7 @@ gfx::GpuMemoryBuffer* StreamBufferManager::GetGpuMemoryBufferById(
   return it->second.gmb.get();
 }
 
-base::Optional<StreamBufferManager::Buffer>
+absl::optional<StreamBufferManager::Buffer>
 StreamBufferManager::AcquireBufferForClientById(StreamType stream_type,
                                                 uint64_t buffer_ipc_id,
                                                 VideoCaptureFormat* format) {
@@ -73,7 +71,7 @@ StreamBufferManager::AcquireBufferForClientById(StreamType stream_type,
   if (it == stream_context->buffers.end()) {
     LOG(ERROR) << "Invalid buffer: " << buffer_ipc_id
                << " for stream: " << stream_type;
-    return base::nullopt;
+    return absl::nullopt;
   }
   auto buffer_pair = std::move(it->second);
   stream_context->buffers.erase(it);
@@ -82,16 +80,8 @@ StreamBufferManager::AcquireBufferForClientById(StreamType stream_type,
   DCHECK_EQ(format->pixel_format, PIXEL_FORMAT_NV12);
 
   int rotation = device_context_->GetCameraFrameRotation();
-  if (base::FeatureList::IsEnabled(
-          features::kDisableCameraFrameRotationAtSource)) {
-    // For a device that don't have the camera sensor installed to match the
-    // device's natural orientation, we have to fix the sensor orientation here.
-    // Otherwise the recorded video in Chrome camera app would have wrong
-    // orientation because we no longer rotate the frames for the video encoder.
-    rotation = device_context_->GetRotationFromSensorOrientation();
-  }
-
-  if (rotation == 0) {
+  if (rotation == 0 ||
+      !device_context_->IsCameraFrameRotationEnabledAtSource()) {
     return std::move(buffer_pair.vcd_buffer);
   }
 
@@ -100,7 +90,7 @@ StreamBufferManager::AcquireBufferForClientById(StreamType stream_type,
         gfx::Size(format->frame_size.height(), format->frame_size.width());
   }
 
-  base::Optional<gfx::BufferFormat> gfx_format =
+  absl::optional<gfx::BufferFormat> gfx_format =
       PixFormatVideoToGfx(format->pixel_format);
   DCHECK(gfx_format);
   const auto& original_gmb = buffer_pair.gmb;
@@ -162,7 +152,7 @@ StreamBufferManager::AcquireBufferForClientById(StreamType stream_type,
       return std::move(buffer_pair.vcd_buffer);
     }
 
-    base::Optional<gfx::BufferFormat> gfx_format =
+    absl::optional<gfx::BufferFormat> gfx_format =
         PixFormatVideoToGfx(format->pixel_format);
     DCHECK(gfx_format);
     auto rotated_gmb = gmb_support_->CreateGpuMemoryBufferImplFromHandle(
@@ -301,10 +291,22 @@ void StreamBufferManager::SetUpStreamsAndBuffers(
          ++j) {
       ReserveBuffer(stream_type);
     }
-    CHECK_EQ(stream_context_[stream_type]->free_buffers.size(),
-             stream_context_[stream_type]->stream->max_buffers);
     DVLOG(2) << "Allocated "
              << stream_context_[stream_type]->stream->max_buffers << " buffers";
+
+    if (stream_context_[stream_type]->free_buffers.size() !=
+        stream_context_[stream_type]->stream->max_buffers) {
+      device_context_->SetErrorState(
+          media::VideoCaptureError::
+              kCrosHalV3BufferManagerFailedToReserveBuffers,
+          FROM_HERE,
+          StreamTypeToString(stream_type) +
+              base::StringPrintf(
+                  " needs %d buffers but only allocated %zd",
+                  stream_context_[stream_type]->stream->max_buffers,
+                  stream_context_[stream_type]->free_buffers.size()));
+      return;
+    }
   }
 }
 
@@ -316,9 +318,9 @@ cros::mojom::Camera3StreamPtr StreamBufferManager::GetStreamConfiguration(
   return stream_context_[stream_type]->stream.Clone();
 }
 
-base::Optional<BufferInfo> StreamBufferManager::RequestBufferForCaptureRequest(
+absl::optional<BufferInfo> StreamBufferManager::RequestBufferForCaptureRequest(
     StreamType stream_type,
-    base::Optional<uint64_t> buffer_ipc_id) {
+    absl::optional<uint64_t> buffer_ipc_id) {
   VideoPixelFormat buffer_format =
       stream_context_[stream_type]->capture_format.pixel_format;
   uint32_t drm_format = PixFormatVideoToDrm(buffer_format);
@@ -385,6 +387,18 @@ bool StreamBufferManager::IsRecordingSupported() {
          stream_context_.end();
 }
 
+std::unique_ptr<gpu::GpuMemoryBufferImpl>
+StreamBufferManager::CreateGpuMemoryBuffer(gfx::GpuMemoryBufferHandle handle,
+                                           const VideoCaptureFormat& format,
+                                           gfx::BufferUsage buffer_usage) {
+  absl::optional<gfx::BufferFormat> gfx_format =
+      PixFormatVideoToGfx(format.pixel_format);
+  DCHECK(gfx_format);
+  return gmb_support_->CreateGpuMemoryBufferImplFromHandle(
+      std::move(handle), format.frame_size, *gfx_format, buffer_usage,
+      base::NullCallback());
+}
+
 // static
 uint64_t StreamBufferManager::GetBufferIpcId(StreamType stream_type, int key) {
   uint64_t id = 0;
@@ -399,9 +413,15 @@ int StreamBufferManager::GetBufferKey(uint64_t buffer_ipc_id) {
   return buffer_ipc_id & 0xFFFFFFFF;
 }
 
+bool StreamBufferManager::CanReserveBufferFromPool(StreamType stream_type) {
+  // The YUV output buffer for reprocessing is not passed to client, so can be
+  // allocated by the local buffer factory without zero-copy concerns.
+  return video_capture_use_gmb_ && stream_type != StreamType::kYUVOutput;
+}
+
 void StreamBufferManager::ReserveBufferFromFactory(StreamType stream_type) {
   auto& stream_context = stream_context_[stream_type];
-  base::Optional<gfx::BufferFormat> gfx_format =
+  absl::optional<gfx::BufferFormat> gfx_format =
       PixFormatVideoToGfx(stream_context->capture_format.pixel_format);
   if (!gfx_format) {
     device_context_->SetErrorState(
@@ -433,12 +453,12 @@ void StreamBufferManager::ReserveBufferFromFactory(StreamType stream_type) {
   int key = stream_context->buffers.size() + 1;
   stream_context->free_buffers.push(key);
   stream_context->buffers.insert(
-      std::make_pair(key, BufferPair(std::move(gmb), base::nullopt)));
+      std::make_pair(key, BufferPair(std::move(gmb), absl::nullopt)));
 }
 
 void StreamBufferManager::ReserveBufferFromPool(StreamType stream_type) {
   auto& stream_context = stream_context_[stream_type];
-  base::Optional<gfx::BufferFormat> gfx_format =
+  absl::optional<gfx::BufferFormat> gfx_format =
       PixFormatVideoToGfx(stream_context->capture_format.pixel_format);
   if (!gfx_format) {
     device_context_->SetErrorState(
@@ -468,7 +488,7 @@ void StreamBufferManager::ReserveBufferFromPool(StreamType stream_type) {
 void StreamBufferManager::DestroyCurrentStreamsAndBuffers() {
   for (const auto& iter : stream_context_) {
     if (iter.second) {
-      if (!video_capture_use_gmb_) {
+      if (!CanReserveBufferFromPool(iter.first)) {
         // The GMB is mapped by default only when it's allocated locally.
         for (auto& buf : iter.second->buffers) {
           auto& buf_pair = buf.second;
@@ -485,7 +505,7 @@ void StreamBufferManager::DestroyCurrentStreamsAndBuffers() {
 
 StreamBufferManager::BufferPair::BufferPair(
     std::unique_ptr<gfx::GpuMemoryBuffer> input_gmb,
-    base::Optional<Buffer> input_vcd_buffer)
+    absl::optional<Buffer> input_vcd_buffer)
     : gmb(std::move(input_gmb)), vcd_buffer(std::move(input_vcd_buffer)) {}
 
 StreamBufferManager::BufferPair::BufferPair(

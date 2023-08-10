@@ -6,12 +6,11 @@
 #define CC_MOJOM_RENDER_FRAME_METADATA_MOJOM_TRAITS_H_
 
 #include "base/component_export.h"
-#include "base/optional.h"
-#include "base/time/time.h"
 #include "build/build_config.h"
 #include "cc/mojom/render_frame_metadata.mojom-shared.h"
 #include "cc/trees/render_frame_metadata.h"
 #include "services/viz/public/cpp/compositing/local_surface_id_mojom_traits.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace mojo {
 
@@ -37,7 +36,7 @@ struct COMPONENT_EXPORT(CC_SHARED_MOJOM_TRAITS)
     return metadata.root_background_color;
   }
 
-  static base::Optional<gfx::Vector2dF> root_scroll_offset(
+  static const absl::optional<gfx::PointF>& root_scroll_offset(
       const cc::RenderFrameMetadata& metadata) {
     return metadata.root_scroll_offset;
   }
@@ -55,8 +54,8 @@ struct COMPONENT_EXPORT(CC_SHARED_MOJOM_TRAITS)
     return metadata.is_mobile_optimized;
   }
 
-  static base::Optional<cc::DelegatedInkBrowserMetadata> delegated_ink_metadata(
-      const cc::RenderFrameMetadata& metadata) {
+  static const absl::optional<cc::DelegatedInkBrowserMetadata>&
+  delegated_ink_metadata(const cc::RenderFrameMetadata& metadata) {
     return metadata.delegated_ink_metadata;
   }
 
@@ -69,7 +68,7 @@ struct COMPONENT_EXPORT(CC_SHARED_MOJOM_TRAITS)
     return metadata.viewport_size_in_pixels;
   }
 
-  static const base::Optional<viz::LocalSurfaceId>& local_surface_id(
+  static const absl::optional<viz::LocalSurfaceId>& local_surface_id(
       const cc::RenderFrameMetadata& metadata) {
     return metadata.local_surface_id;
   }
@@ -97,7 +96,7 @@ struct COMPONENT_EXPORT(CC_SHARED_MOJOM_TRAITS)
     return metadata.new_vertical_scroll_direction;
   }
 
-#if defined(OS_ANDROID) || defined(TOOLKIT_QT)
+#if BUILDFLAG(IS_ANDROID) || defined(TOOLKIT_QT)
   static float bottom_controls_height(const cc::RenderFrameMetadata& metadata) {
     return metadata.bottom_controls_height;
   }

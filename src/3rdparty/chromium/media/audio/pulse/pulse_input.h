@@ -9,7 +9,6 @@
 #include <stddef.h>
 #include <string>
 
-#include "base/macros.h"
 #include "base/threading/thread_checker.h"
 #include "media/audio/agc_audio_stream.h"
 #include "media/audio/audio_device_name.h"
@@ -31,10 +30,13 @@ class PulseAudioInputStream : public AgcAudioStream<AudioInputStream> {
                         pa_context* context,
                         AudioManager::LogCallback log_callback);
 
+  PulseAudioInputStream(const PulseAudioInputStream&) = delete;
+  PulseAudioInputStream& operator=(const PulseAudioInputStream&) = delete;
+
   ~PulseAudioInputStream() override;
 
   // Implementation of AudioInputStream.
-  bool Open() override;
+  AudioInputStream::OpenOutcome Open() override;
   void Start(AudioInputCallback* callback) override;
   void Stop() override;
   void Close() override;
@@ -90,8 +92,6 @@ class PulseAudioInputStream : public AgcAudioStream<AudioInputStream> {
   pa_stream* handle_;
 
   base::ThreadChecker thread_checker_;
-
-  DISALLOW_COPY_AND_ASSIGN(PulseAudioInputStream);
 };
 
 }  // namespace media

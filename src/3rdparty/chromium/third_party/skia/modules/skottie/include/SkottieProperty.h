@@ -9,6 +9,7 @@
 #define SkottieProperty_DEFINED
 
 #include "include/core/SkColor.h"
+#include "include/core/SkPaint.h"
 #include "include/core/SkPoint.h"
 #include "include/core/SkRefCnt.h"
 #include "include/core/SkTypeface.h"
@@ -39,22 +40,27 @@ enum class TextPaintOrder : uint8_t {
 struct TextPropertyValue {
     sk_sp<SkTypeface>       fTypeface;
     SkString                fText;
-    float                   fTextSize    = 0,
-                            fStrokeWidth = 0,
-                            fLineHeight  = 0,
-                            fLineShift   = 0,
-                            fAscent      = 0;
-    SkTextUtils::Align      fHAlign      = SkTextUtils::kLeft_Align;
-    Shaper::VAlign          fVAlign      = Shaper::VAlign::kTop;
-    Shaper::ResizePolicy    fResize      = Shaper::ResizePolicy::kNone;
-    Shaper::LinebreakPolicy fLineBreak   = Shaper::LinebreakPolicy::kExplicit;
-    Shaper::Direction       fDirection   = Shaper::Direction::kLTR;
-    SkRect                  fBox         = SkRect::MakeEmpty();
-    SkColor                 fFillColor   = SK_ColorTRANSPARENT,
-                            fStrokeColor = SK_ColorTRANSPARENT;
-    TextPaintOrder          fPaintOrder  = TextPaintOrder::kFillStroke;
-    bool                    fHasFill     = false,
-                            fHasStroke   = false;
+    float                   fTextSize       = 0,
+                            fMinTextSize    = 0,                                 // when auto-sizing
+                            fMaxTextSize    = std::numeric_limits<float>::max(), // when auto-sizing
+                            fStrokeWidth    = 0,
+                            fLineHeight     = 0,
+                            fLineShift      = 0,
+                            fAscent         = 0;
+    size_t                  fMaxLines       = 0;                                 // when auto-sizing
+    SkTextUtils::Align      fHAlign         = SkTextUtils::kLeft_Align;
+    Shaper::VAlign          fVAlign         = Shaper::VAlign::kTop;
+    Shaper::ResizePolicy    fResize         = Shaper::ResizePolicy::kNone;
+    Shaper::LinebreakPolicy fLineBreak      = Shaper::LinebreakPolicy::kExplicit;
+    Shaper::Direction       fDirection      = Shaper::Direction::kLTR;
+    Shaper::Capitalization  fCapitalization = Shaper::Capitalization::kNone;
+    SkRect                  fBox            = SkRect::MakeEmpty();
+    SkColor                 fFillColor      = SK_ColorTRANSPARENT,
+                            fStrokeColor    = SK_ColorTRANSPARENT;
+    TextPaintOrder          fPaintOrder     = TextPaintOrder::kFillStroke;
+    SkPaint::Join           fStrokeJoin     = SkPaint::Join::kMiter_Join;
+    bool                    fHasFill        = false,
+                            fHasStroke      = false;
 
     bool operator==(const TextPropertyValue& other) const;
     bool operator!=(const TextPropertyValue& other) const;
@@ -117,6 +123,8 @@ using TransformPropertyHandle = PropertyHandle<TransformPropertyValue,
  */
 class SK_API PropertyObserver : public SkRefCnt {
 public:
+    enum class NodeType {COMPOSITION, LAYER, EFFECT, OTHER};
+
     template <typename T>
     using LazyHandle = std::function<std::unique_ptr<T>()>;
 
@@ -128,8 +136,8 @@ public:
                                      const LazyHandle<TextPropertyHandle>&);
     virtual void onTransformProperty(const char node_name[],
                                      const LazyHandle<TransformPropertyHandle>&);
-    virtual void onEnterNode(const char node_name[]);
-    virtual void onLeavingNode(const char node_name[]);
+    virtual void onEnterNode(const char node_name[], NodeType node_type);
+    virtual void onLeavingNode(const char node_name[], NodeType node_type);
 };
 
 } // namespace skottie

@@ -1,6 +1,6 @@
-# SymbolsHelper-Confirmed: 6.2.2 amd64
+# SymbolsHelper-Confirmed: 6.4.0 amd64
 libQt6PdfWidgets.so.6 libqt6pdfwidgets6 #MINVER#
-| libqt6pdfwidgets6 #MINVER#, qt6-webengine-abi (= 6.2.4)
+| libqt6pdfwidgets6 #MINVER#, qt6-webengine-abi (= 6.4.2)
 * Build-Depends-Package: qt6-webengine-dev
  _ZN8QPdfView10paintEventEP11QPaintEvent@Base 6.2.2
  _ZN8QPdfView11qt_metacallEN11QMetaObject4CallEiPPv@Base 6.2.2
@@ -28,7 +28,7 @@ libQt6PdfWidgets.so.6 libqt6pdfwidgets6 #MINVER#
  _ZNK8QPdfView10metaObjectEv@Base 6.2.2
  _ZNK8QPdfView10zoomFactorEv@Base 6.2.2
  _ZNK8QPdfView11pageSpacingEv@Base 6.2.2
- _ZNK8QPdfView14pageNavigationEv@Base 6.2.2
+ _ZNK8QPdfView13pageNavigatorEv@Base 6.4.0
  _ZNK8QPdfView15documentMarginsEv@Base 6.2.2
  _ZNK8QPdfView8documentEv@Base 6.2.2
  _ZNK8QPdfView8pageModeEv@Base 6.2.2
@@ -36,10 +36,4 @@ libQt6PdfWidgets.so.6 libqt6pdfwidgets6 #MINVER#
  _ZTI8QPdfView@Base 6.2.2
  _ZTS8QPdfView@Base 6.2.2
  _ZTV8QPdfView@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeIdE10getCopyCtrEvENUlPKNS_18QMetaTypeInterfaceEPvPKvE_4_FUNES4_S5_S7_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeIdE10getMoveCtrEvENUlPKNS_18QMetaTypeInterfaceEPvS5_E_4_FUNES4_S5_S5_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeIdE13getDefaultCtrEvENUlPKNS_18QMetaTypeInterfaceEPvE_4_FUNES4_S5_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeIiE10getCopyCtrEvENUlPKNS_18QMetaTypeInterfaceEPvPKvE_4_FUNES4_S5_S7_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeIiE10getMoveCtrEvENUlPKNS_18QMetaTypeInterfaceEPvS5_E_4_FUNES4_S5_S5_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeIiE13getDefaultCtrEvENUlPKNS_18QMetaTypeInterfaceEPvE_4_FUNES4_S5_@Base 6.2.2
  (c++)"non-virtual thunk to QPdfView::~QPdfView()@Base" 6.2.2

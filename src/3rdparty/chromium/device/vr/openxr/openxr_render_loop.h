@@ -9,11 +9,9 @@
 #include <memory>
 
 #include "base/callback.h"
-#include "base/macros.h"
 #include "components/viz/common/gpu/context_lost_observer.h"
 #include "device/vr/openxr/context_provider_callbacks.h"
 #include "device/vr/openxr/openxr_anchor_manager.h"
-#include "device/vr/openxr/openxr_anchor_request.h"
 #include "device/vr/openxr/openxr_util.h"
 #include "device/vr/windows/compositor_base.h"
 #include "gpu/command_buffer/client/gles2_interface.h"
@@ -45,6 +43,10 @@ class OpenXrRenderLoop : public XRCompositorCommon,
       VizContextProviderFactoryAsync context_provider_factory_async,
       XrInstance instance,
       const OpenXrExtensionHelper& extension_helper_);
+
+  OpenXrRenderLoop(const OpenXrRenderLoop&) = delete;
+  OpenXrRenderLoop& operator=(const OpenXrRenderLoop&) = delete;
+
   ~OpenXrRenderLoop() override;
 
  private:
@@ -75,21 +77,21 @@ class OpenXrRenderLoop : public XRCompositorCommon,
   // viz::ContextLostObserver Implementation
   void OnContextLost() override;
 
-  void InitializeDisplayInfo();
-  bool UpdateEyeParameters();
-  bool UpdateEye(const XrView& view_head,
-                 const gfx::Size& view_size,
-                 mojom::VREyeParametersPtr* eye) const;
+  void SendInitialDisplayInfo();
+  void OnOpenXrSessionStarted(StartRuntimeCallback start_runtime_callback,
+                              XrResult result);
+  bool UpdateViews();
+  bool UpdateView(const XrView& view_head,
+                  int width,
+                  int height,
+                  mojom::XRViewPtr* view) const;
   void UpdateStageParameters();
-
-  void DisposeActiveAnchorCallbacks();
 
   // XREnvironmentIntegrationProvider
   void GetEnvironmentIntegrationProvider(
       mojo::PendingAssociatedReceiver<
           device::mojom::XREnvironmentIntegrationProvider> environment_provider)
       override;
-
   void SubscribeToHitTest(
       mojom::XRNativeOriginInformationPtr native_origin_information,
       const std::vector<mojom::EntityTypeForHitTest>& entity_types,
@@ -118,20 +120,6 @@ class OpenXrRenderLoop : public XRCompositorCommon,
       OpenXrAnchorManager* anchor_manager,
       const std::vector<mojom::XRInputSourceStatePtr>& input_state);
 
-  // An XrPosef with the space it is relative to
-  struct XrLocation {
-    XrPosef pose;
-    XrSpace space;
-  };
-  base::Optional<XrLocation> GetXrLocationFromNativeOriginInformation(
-      const OpenXrAnchorManager* anchor_manager,
-      const mojom::XRNativeOriginInformation& native_origin_information,
-      const gfx::Transform& native_origin_from_anchor,
-      const std::vector<mojom::XRInputSourceStatePtr>& input_state) const;
-  base::Optional<XrLocation> GetXrLocationFromReferenceSpace(
-      const mojom::XRNativeOriginInformation& native_origin_information,
-      const gfx::Transform& native_origin_from_anchor) const;
-
   void StartContextProviderIfNeeded(
       StartRuntimeCallback start_runtime_callback);
   void OnContextProviderCreated(
@@ -144,17 +132,16 @@ class OpenXrRenderLoop : public XRCompositorCommon,
                             GLuint id,
                             std::unique_ptr<gfx::GpuFence> gpu_fence);
 
+  bool IsFeatureEnabled(device::mojom::XRSessionFeature feature) const;
+
   // Owned by OpenXrStatics
   XrInstance instance_;
   const OpenXrExtensionHelper& extension_helper_;
 
   std::unique_ptr<OpenXrApiWrapper> openxr_;
 
-  std::vector<CreateAnchorRequest> create_anchor_requests_;
-
   base::RepeatingCallback<void(mojom::VRDisplayInfoPtr)>
       on_display_info_changed_;
-  mojom::VRDisplayInfoPtr current_display_info_;
 
   mojo::AssociatedReceiver<mojom::XREnvironmentIntegrationProvider>
       environment_receiver_{this};
@@ -164,8 +151,6 @@ class OpenXrRenderLoop : public XRCompositorCommon,
 
   // This must be the last member
   base::WeakPtrFactory<OpenXrRenderLoop> weak_ptr_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(OpenXrRenderLoop);
 };
 
 }  // namespace device

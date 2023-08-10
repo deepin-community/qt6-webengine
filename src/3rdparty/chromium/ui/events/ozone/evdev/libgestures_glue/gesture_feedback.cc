@@ -7,6 +7,8 @@
 #include <stddef.h>
 #include <time.h>
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/location.h"
@@ -15,7 +17,6 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
-#include "base/task/post_task.h"
 #include "base/task/thread_pool.h"
 #include "build/chromeos_buildflags.h"
 #include "ui/events/ozone/evdev/libgestures_glue/gesture_property_provider.h"
@@ -47,19 +48,14 @@ std::string DumpGesturePropertyValue(GesturesProp* property) {
   switch (property->type()) {
     case GesturePropertyProvider::PT_INT:
       return DumpArrayProperty(property->GetIntValue(), "%d");
-      break;
     case GesturePropertyProvider::PT_SHORT:
       return DumpArrayProperty(property->GetShortValue(), "%d");
-      break;
     case GesturePropertyProvider::PT_BOOL:
       return DumpArrayProperty(property->GetBoolValue(), "%d");
-      break;
     case GesturePropertyProvider::PT_STRING:
       return "\"" + property->GetStringValue() + "\"";
-      break;
     case GesturePropertyProvider::PT_REAL:
       return DumpArrayProperty(property->GetDoubleValue(), "%lf");
-      break;
     default:
       NOTREACHED();
       break;
@@ -243,8 +239,7 @@ void DumpTouchEventLog(
       FROM_HERE,
       {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
        base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
-      base::BindOnce(&CompressDumpedLog,
-                     base::Passed(&log_paths_to_be_compressed)),
+      base::BindOnce(&CompressDumpedLog, std::move(log_paths_to_be_compressed)),
       base::BindOnce(std::move(reply), log_paths));
 }
 

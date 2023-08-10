@@ -58,7 +58,7 @@ FileHandlersParser::~FileHandlersParser() {
 bool LoadFileHandler(const std::string& handler_id,
                      const base::Value& handler_info,
                      FileHandlersInfo* file_handlers,
-                     base::string16* error,
+                     std::u16string* error,
                      std::vector<InstallWarning>* install_warnings) {
   DCHECK(error);
   apps::FileHandlerInfo handler;
@@ -106,8 +106,8 @@ bool LoadFileHandler(const std::string& handler_id,
     }
   }
 
-  if ((!mime_types || mime_types->GetList().empty()) &&
-      (!file_extensions || file_extensions->GetList().empty()) &&
+  if ((!mime_types || mime_types->GetListDeprecated().empty()) &&
+      (!file_extensions || file_extensions->GetListDeprecated().empty()) &&
       !handler.include_directories) {
     *error = ErrorUtils::FormatErrorMessageUTF16(
         errors::kInvalidFileHandlerNoTypeOrExtension,
@@ -116,7 +116,7 @@ bool LoadFileHandler(const std::string& handler_id,
   }
 
   if (mime_types) {
-    base::Value::ConstListView list_storage = mime_types->GetList();
+    base::Value::ConstListView list_storage = mime_types->GetListDeprecated();
     for (size_t i = 0; i < list_storage.size(); ++i) {
       if (!list_storage[i].is_string()) {
         *error = ErrorUtils::FormatErrorMessageUTF16(
@@ -129,7 +129,8 @@ bool LoadFileHandler(const std::string& handler_id,
   }
 
   if (file_extensions) {
-    base::Value::ConstListView list_storage = file_extensions->GetList();
+    base::Value::ConstListView list_storage =
+        file_extensions->GetListDeprecated();
     for (size_t i = 0; i < list_storage.size(); ++i) {
       if (!list_storage[i].is_string()) {
         *error = ErrorUtils::FormatErrorMessageUTF16(
@@ -144,7 +145,7 @@ bool LoadFileHandler(const std::string& handler_id,
   file_handlers->push_back(handler);
 
   // Check for unknown keys.
-  for (const auto& entry : handler_info.DictItems()) {
+  for (auto entry : handler_info.DictItems()) {
     if (entry.first != keys::kFileHandlerExtensions &&
         entry.first != keys::kFileHandlerTypes &&
         entry.first != keys::kFileHandlerIncludeDirectories &&
@@ -158,30 +159,19 @@ bool LoadFileHandler(const std::string& handler_id,
   return true;
 }
 
-bool FileHandlersParser::Parse(Extension* extension, base::string16* error) {
-  // Don't load file handlers for hosted_apps unless they're also bookmark apps.
-  // This check can be removed when bookmark apps are migrated off hosted apps,
-  // and hosted_apps should be removed from the list of valid extension types
-  // for "file_handling" in extensions/common/api/_manifest_features.json.
-  if (extension->is_hosted_app() && !extension->from_bookmark()) {
-    extension->AddInstallWarning(
-        InstallWarning(errors::kInvalidFileHandlersHostedAppsNotSupported,
-                       keys::kFileHandlers));
-    return true;
-  }
-
+bool FileHandlersParser::Parse(Extension* extension, std::u16string* error) {
   std::unique_ptr<FileHandlers> info(new FileHandlers);
   const base::Value* all_handlers = nullptr;
   if (!extension->manifest()->GetDictionary(keys::kFileHandlers,
                                             &all_handlers)) {
-    *error = base::ASCIIToUTF16(errors::kInvalidFileHandlers);
+    *error = errors::kInvalidFileHandlers;
     return false;
   }
 
   std::vector<InstallWarning> install_warnings;
-  for (const auto& entry : all_handlers->DictItems()) {
+  for (auto entry : all_handlers->DictItems()) {
     if (!entry.second.is_dict()) {
-      *error = base::ASCIIToUTF16(errors::kInvalidFileHandlers);
+      *error = errors::kInvalidFileHandlers;
       return false;
     }
     if (!LoadFileHandler(entry.first, entry.second, &info->file_handlers, error,
@@ -199,8 +189,7 @@ bool FileHandlersParser::Parse(Extension* extension, base::string16* error) {
   }
 
   if (filter_count > kMaxTypeAndExtensionHandlers) {
-    *error = base::ASCIIToUTF16(
-        errors::kInvalidFileHandlersTooManyTypesAndExtensions);
+    *error = errors::kInvalidFileHandlersTooManyTypesAndExtensions;
     return false;
   }
 

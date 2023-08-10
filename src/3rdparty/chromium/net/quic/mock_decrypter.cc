@@ -6,8 +6,8 @@
 
 #include <limits>
 
-#include "net/third_party/quiche/src/quic/core/quic_utils.h"
-#include "net/third_party/quiche/src/quic/platform/api/quic_bug_tracker.h"
+#include "net/third_party/quiche/src/quiche/quic/core/quic_utils.h"
+#include "net/third_party/quiche/src/quiche/quic/platform/api/quic_bug_tracker.h"
 
 using quic::DiversificationNonce;
 using quic::Perspective;
@@ -52,12 +52,12 @@ size_t MockDecrypter::GetNoncePrefixSize() const {
 }
 
 bool MockDecrypter::SetPreliminaryKey(absl::string_view key) {
-  QUIC_BUG << "Should not be called";
+  LOG(DFATAL) << "Should not be called";
   return false;
 }
 
 bool MockDecrypter::SetDiversificationNonce(const DiversificationNonce& nonce) {
-  QUIC_BUG << "Should not be called";
+  LOG(DFATAL) << "Should not be called";
   return true;
 }
 

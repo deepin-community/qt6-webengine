@@ -19,6 +19,7 @@
 #include "mojo/public/cpp/system/file_data_source.h"
 #include "mojo/public/cpp/system/platform_handle.h"
 #include "net/base/url_util.h"
+#include "services/network/public/cpp/resource_request.h"
 #include "third_party/blink/public/common/web_package/web_package_request_matcher.h"
 
 namespace content {
@@ -94,6 +95,9 @@ class WebBundleReader::SharedFileDataSource final
     }
   }
 
+  SharedFileDataSource(const SharedFileDataSource&) = delete;
+  SharedFileDataSource& operator=(const SharedFileDataSource&) = delete;
+
  private:
   // Implements mojo::DataPipeProducer::DataSource. Following methods are called
   // on a blockable sequenced task runner.
@@ -129,8 +133,6 @@ class WebBundleReader::SharedFileDataSource final
   MojoResult error_;
   const uint64_t offset_;
   const uint64_t length_;
-
-  DISALLOW_COPY_AND_ASSIGN(SharedFileDataSource);
 };
 
 WebBundleReader::WebBundleReader(std::unique_ptr<WebBundleSource> source)
@@ -180,13 +182,12 @@ void WebBundleReader::ReadMetadata(MetadataCallback callback) {
 
 void WebBundleReader::ReadResponse(
     const network::ResourceRequest& resource_request,
-    const std::string& accept_langs,
     ResponseCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK_NE(state_, State::kInitial);
 
   auto it = entries_.find(net::SimplifyUrlForRequest(resource_request.url));
-  if (it == entries_.end() || it->second->response_locations.empty()) {
+  if (it == entries_.end()) {
     base::ThreadPool::PostTask(
         FROM_HERE,
         base::BindOnce(
@@ -196,28 +197,7 @@ void WebBundleReader::ReadResponse(
                 "Not found in Web Bundle file.")));
     return;
   }
-  const web_package::mojom::BundleIndexValuePtr& entry = it->second;
-
-  size_t response_index = 0;
-  if (!entry->variants_value.empty()) {
-    // Select the best variant for the request.
-    blink::WebPackageRequestMatcher matcher(resource_request.headers,
-                                            accept_langs);
-    auto found = matcher.FindBestMatchingIndex(entry->variants_value);
-    if (!found || *found >= entry->response_locations.size()) {
-      base::ThreadPool::PostTask(
-          FROM_HERE,
-          base::BindOnce(
-              std::move(callback), nullptr,
-              web_package::mojom::BundleResponseParseError::New(
-                  web_package::mojom::BundleParseErrorType::
-                      kParserInternalError,
-                  "Cannot find a response that matches request headers.")));
-      return;
-    }
-    response_index = *found;
-  }
-  auto response_location = entry->response_locations[response_index].Clone();
+  auto response_location = it->second.Clone();
 
   if (state_ == State::kDisconnected) {
     // Try reconnecting, if not attempted yet.
@@ -258,12 +238,12 @@ void WebBundleReader::Reconnect() {
 
   GetUIThreadTaskRunner({})->PostTask(
       FROM_HERE, base::BindOnce(&WebBundleReader::DidReconnect, this,
-                                base::nullopt /* error */));
+                                absl::nullopt /* error */));
 }
 
 void WebBundleReader::ReconnectForFile(base::File file) {
   base::File::Error file_error = parser_->OpenFile(std::move(file));
-  base::Optional<std::string> error;
+  absl::optional<std::string> error;
   if (file_error != base::File::FILE_OK)
     error = base::File::ErrorToString(file_error);
   GetUIThreadTaskRunner({})->PostTask(
@@ -271,7 +251,7 @@ void WebBundleReader::ReconnectForFile(base::File file) {
       base::BindOnce(&WebBundleReader::DidReconnect, this, std::move(error)));
 }
 
-void WebBundleReader::DidReconnect(base::Optional<std::string> error) {
+void WebBundleReader::DidReconnect(absl::optional<std::string> error) {
   DCHECK_EQ(state_, State::kDisconnected);
   DCHECK(parser_);
   auto read_tasks = std::move(pending_read_responses_);
@@ -357,7 +337,7 @@ void WebBundleReader::ReadMetadataInternal(MetadataCallback callback,
             std::move(callback),
             web_package::mojom::BundleMetadataParseError::New(
                 web_package::mojom::BundleParseErrorType::kParserInternalError,
-                GURL() /* fallback_url */, base::File::ErrorToString(error))));
+                base::File::ErrorToString(error))));
   } else {
     parser_->ParseMetadata(base::BindOnce(&WebBundleReader::OnMetadataParsed,
                                           base::Unretained(this),

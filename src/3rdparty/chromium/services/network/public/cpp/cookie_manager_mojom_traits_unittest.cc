@@ -10,8 +10,11 @@
 #include "mojo/public/cpp/base/time_mojom_traits.h"
 #include "mojo/public/cpp/test_support/test_utils.h"
 #include "net/cookies/cookie_constants.h"
+#include "net/cookies/same_party_context.h"
 #include "services/network/public/cpp/cookie_manager_mojom_traits.h"
+#include "services/network/public/mojom/cookie_manager.mojom-shared.h"
 #include "services/network/public/mojom/cookie_manager.mojom.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/third_party/mozilla/url_parse.h"
 
@@ -22,7 +25,7 @@ TEST(CookieManagerTraitsTest, Roundtrips_CanonicalCookie) {
   auto original = net::CanonicalCookie::CreateUnsafeCookieForTesting(
       "A", "B", "x.y", "/path", base::Time(), base::Time(), base::Time(), false,
       false, net::CookieSameSite::NO_RESTRICTION, net::COOKIE_PRIORITY_LOW,
-      false, net::CookieSourceScheme::kSecure, 8433);
+      false, absl::nullopt, net::CookieSourceScheme::kSecure, 8433);
 
   net::CanonicalCookie copied;
 
@@ -41,6 +44,7 @@ TEST(CookieManagerTraitsTest, Roundtrips_CanonicalCookie) {
   EXPECT_EQ(original->SameSite(), copied.SameSite());
   EXPECT_EQ(original->Priority(), copied.Priority());
   EXPECT_EQ(original->IsSameParty(), copied.IsSameParty());
+  EXPECT_EQ(absl::nullopt, copied.PartitionKey());
   EXPECT_EQ(original->SourceScheme(), copied.SourceScheme());
   EXPECT_EQ(original->SourcePort(), copied.SourcePort());
 
@@ -49,8 +53,8 @@ TEST(CookieManagerTraitsTest, Roundtrips_CanonicalCookie) {
       net::CanonicalCookie::CreateUnsafeCookieForTesting(
           "A", "B", "x.y", "/path", base::Time(), base::Time(), base::Time(),
           false, false, net::CookieSameSite::NO_RESTRICTION,
-          net::COOKIE_PRIORITY_LOW, false, net::CookieSourceScheme::kSecure,
-          url::PORT_UNSPECIFIED);
+          net::COOKIE_PRIORITY_LOW, false, absl::nullopt,
+          net::CookieSourceScheme::kSecure, url::PORT_UNSPECIFIED);
   net::CanonicalCookie copied_unspecified;
 
   EXPECT_TRUE(mojo::test::SerializeAndDeserialize<mojom::CanonicalCookie>(
@@ -63,7 +67,8 @@ TEST(CookieManagerTraitsTest, Roundtrips_CanonicalCookie) {
   auto original_invalid = net::CanonicalCookie::CreateUnsafeCookieForTesting(
       "A", "B", "x.y", "/path", base::Time(), base::Time(), base::Time(), false,
       false, net::CookieSameSite::NO_RESTRICTION, net::COOKIE_PRIORITY_LOW,
-      false, net::CookieSourceScheme::kSecure, url::PORT_INVALID);
+      false, absl::nullopt, net::CookieSourceScheme::kSecure,
+      url::PORT_INVALID);
   net::CanonicalCookie copied_invalid;
 
   EXPECT_TRUE(mojo::test::SerializeAndDeserialize<mojom::CanonicalCookie>(
@@ -81,42 +86,6 @@ TEST(CookieManagerTraitsTest, Roundtrips_CanonicalCookie) {
 
   EXPECT_FALSE(mojo::test::SerializeAndDeserialize<mojom::CanonicalCookie>(
       *original, copied));
-}
-
-TEST(CookieManagerTraitsTest, Roundtrips_CookieInclusionStatus) {
-  // This status + warning combo doesn't really make sense. It's just an
-  // arbitrary selection of values to test the serialization/deserialization.
-  net::CookieInclusionStatus original =
-      net::CookieInclusionStatus::MakeFromReasonsForTesting(
-          {net::CookieInclusionStatus::EXCLUDE_SAMESITE_LAX,
-           net::CookieInclusionStatus::EXCLUDE_INVALID_PREFIX,
-           net::CookieInclusionStatus::EXCLUDE_SECURE_ONLY},
-          {net::CookieInclusionStatus::
-               WARN_SAMESITE_UNSPECIFIED_CROSS_SITE_CONTEXT,
-           net::CookieInclusionStatus::WARN_SAMESITE_NONE_INSECURE,
-           net::CookieInclusionStatus::
-               WARN_SAMESITE_UNSPECIFIED_LAX_ALLOW_UNSAFE});
-
-  net::CookieInclusionStatus copied;
-
-  EXPECT_TRUE(mojo::test::SerializeAndDeserialize<mojom::CookieInclusionStatus>(
-      original, copied));
-  EXPECT_TRUE(copied.HasExactlyExclusionReasonsForTesting(
-      {net::CookieInclusionStatus::EXCLUDE_SAMESITE_LAX,
-       net::CookieInclusionStatus::EXCLUDE_INVALID_PREFIX,
-       net::CookieInclusionStatus::EXCLUDE_SECURE_ONLY}));
-  EXPECT_TRUE(copied.HasExactlyWarningReasonsForTesting(
-      {net::CookieInclusionStatus::WARN_SAMESITE_UNSPECIFIED_CROSS_SITE_CONTEXT,
-       net::CookieInclusionStatus::WARN_SAMESITE_NONE_INSECURE,
-       net::CookieInclusionStatus::
-           WARN_SAMESITE_UNSPECIFIED_LAX_ALLOW_UNSAFE}));
-
-  net::CookieInclusionStatus invalid;
-  invalid.set_exclusion_reasons(~0u);
-
-  EXPECT_FALSE(
-      mojo::test::SerializeAndDeserialize<mojom::CookieInclusionStatus>(
-          invalid, copied));
 }
 
 TEST(CookieManagerTraitsTest, Roundtrips_CookieAccessResult) {
@@ -282,34 +251,116 @@ TEST(CookieManagerTraitsTest, Roundtrips_CookieChangeCause) {
   }
 }
 
+TEST(CookieManagerTraitsTest,
+     Roundtrips_CookieSameSiteContextMetadataDowngradeType) {
+  for (auto type : {net::CookieOptions::SameSiteCookieContext::ContextMetadata::
+                        ContextDowngradeType::kNoDowngrade,
+                    net::CookieOptions::SameSiteCookieContext::ContextMetadata::
+                        ContextDowngradeType::kStrictToLax,
+                    net::CookieOptions::SameSiteCookieContext::ContextMetadata::
+                        ContextDowngradeType::kStrictToCross,
+                    net::CookieOptions::SameSiteCookieContext::ContextMetadata::
+                        ContextDowngradeType::kLaxToCross}) {
+    net::CookieOptions::SameSiteCookieContext::ContextMetadata::
+        ContextDowngradeType roundtrip;
+    ASSERT_TRUE(mojo::test::SerializeAndDeserialize<
+                mojom::CookieSameSiteContextMetadataDowngradeType>(type,
+                                                                   roundtrip));
+    EXPECT_EQ(type, roundtrip);
+  }
+}
+
+TEST(CookieManagerTraitsTest, Roundtrips_ContextRedirectTypeBug1221316) {
+  for (auto type : {net::CookieOptions::SameSiteCookieContext::ContextMetadata::
+                        ContextRedirectTypeBug1221316::kUnset,
+                    net::CookieOptions::SameSiteCookieContext::ContextMetadata::
+                        ContextRedirectTypeBug1221316::kNoRedirect,
+                    net::CookieOptions::SameSiteCookieContext::ContextMetadata::
+                        ContextRedirectTypeBug1221316::kCrossSiteRedirect,
+                    net::CookieOptions::SameSiteCookieContext::ContextMetadata::
+                        ContextRedirectTypeBug1221316::kPartialSameSiteRedirect,
+                    net::CookieOptions::SameSiteCookieContext::ContextMetadata::
+                        ContextRedirectTypeBug1221316::kAllSameSiteRedirect}) {
+    net::CookieOptions::SameSiteCookieContext::ContextMetadata::
+        ContextRedirectTypeBug1221316 roundtrip;
+    ASSERT_TRUE(mojo::test::SerializeAndDeserialize<
+                mojom::ContextRedirectTypeBug1221316>(type, roundtrip));
+    EXPECT_EQ(type, roundtrip);
+  }
+}
+
+TEST(CookieManagerTraitsTest, Roundtrips_CookieSameSiteContextMetadata) {
+  net::CookieOptions::SameSiteCookieContext::ContextMetadata metadata,
+      roundtrip;
+
+  // Default values.
+  ASSERT_TRUE(
+      mojo::test::SerializeAndDeserialize<mojom::CookieSameSiteContextMetadata>(
+          metadata, roundtrip));
+  EXPECT_EQ(metadata, roundtrip);
+
+  // Arbitrary values.
+  metadata.cross_site_redirect_downgrade =
+      net::CookieOptions::SameSiteCookieContext::ContextMetadata::
+          ContextDowngradeType::kStrictToLax;
+  metadata.redirect_type_bug_1221316 =
+      net::CookieOptions::SameSiteCookieContext::ContextMetadata::
+          ContextRedirectTypeBug1221316::kPartialSameSiteRedirect;
+  ASSERT_TRUE(
+      mojo::test::SerializeAndDeserialize<mojom::CookieSameSiteContextMetadata>(
+          metadata, roundtrip));
+  EXPECT_EQ(metadata, roundtrip);
+}
+
 TEST(CookieManagerTraitsTest, Roundtrips_CookieSameSiteContext) {
   using ContextType = net::CookieOptions::SameSiteCookieContext::ContextType;
+  using ContextMetadata =
+      net::CookieOptions::SameSiteCookieContext::ContextMetadata;
 
   const ContextType all_context_types[]{
       ContextType::CROSS_SITE, ContextType::SAME_SITE_LAX_METHOD_UNSAFE,
       ContextType::SAME_SITE_LAX, ContextType::SAME_SITE_STRICT};
 
+  ContextMetadata metadata1;
+  metadata1.cross_site_redirect_downgrade =
+      ContextMetadata::ContextDowngradeType::kStrictToLax;
+  metadata1.redirect_type_bug_1221316 =
+      ContextMetadata::ContextRedirectTypeBug1221316::kCrossSiteRedirect;
+  ContextMetadata metadata2;
+  metadata2.cross_site_redirect_downgrade =
+      ContextMetadata::ContextDowngradeType::kLaxToCross;
+  metadata2.redirect_type_bug_1221316 =
+      ContextMetadata::ContextRedirectTypeBug1221316::kNoRedirect;
+
+  const ContextMetadata metadatas[]{ContextMetadata(), metadata1, metadata2};
+
   for (ContextType context_type : all_context_types) {
     for (ContextType schemeful_context_type : all_context_types) {
-      net::CookieOptions::SameSiteCookieContext context_in, copy;
-      // We want to test malformed SameSiteCookieContexts. Since the constructor
-      // will DCHECK for these use the setters to bypass it.
-      context_in.set_context(context_type);
-      context_in.set_schemeful_context(schemeful_context_type);
+      for (const ContextMetadata& metadata : metadatas) {
+        for (const ContextMetadata& schemeful_metadata : metadatas) {
+          net::CookieOptions::SameSiteCookieContext copy;
+          net::CookieOptions::SameSiteCookieContext context_in(
+              context_type, context_type, metadata, schemeful_metadata);
+          // We want to test malformed SameSiteCookieContexts. Since the
+          // constructor will DCHECK for these use this setter to bypass it.
+          context_in.SetContextTypesForTesting(context_type,
+                                               schemeful_context_type);
 
-      EXPECT_EQ(
-          mojo::test::SerializeAndDeserialize<mojom::CookieSameSiteContext>(
-              context_in, copy),
-          schemeful_context_type <= context_type);
+          EXPECT_EQ(
+              mojo::test::SerializeAndDeserialize<mojom::CookieSameSiteContext>(
+                  context_in, copy),
+              schemeful_context_type <= context_type);
 
-      if (schemeful_context_type <= context_type)
-        EXPECT_EQ(context_in, copy);
+          if (schemeful_context_type <= context_type)
+            EXPECT_TRUE(context_in.CompleteEquivalenceForTesting(copy));
+        }
+      }
     }
   }
 }
 
 TEST(CookieManagerTraitsTest, Roundtrips_SamePartyCookieContextType) {
-  using ContextType = net::CookieOptions::SamePartyCookieContextType;
+  using ContextType = net::SamePartyContext::Type;
   for (ContextType context_type :
        {ContextType::kCrossParty, ContextType::kSameParty}) {
     ContextType roundtrip;
@@ -317,6 +368,115 @@ TEST(CookieManagerTraitsTest, Roundtrips_SamePartyCookieContextType) {
         mojo::test::SerializeAndDeserialize<mojom::SamePartyCookieContextType>(
             context_type, roundtrip));
     EXPECT_EQ(context_type, roundtrip);
+  }
+}
+
+TEST(CookieManagerTraitsTest, Roundtrips_PartitionKey) {
+  auto original = net::CanonicalCookie::CreateUnsafeCookieForTesting(
+      "__Host-A", "B", "x.y", "/", base::Time(), base::Time(), base::Time(),
+      true, false, net::CookieSameSite::NO_RESTRICTION,
+      net::COOKIE_PRIORITY_LOW, false,
+      net::CookiePartitionKey::FromURLForTesting(
+          GURL("https://toplevelsite.com")),
+      net::CookieSourceScheme::kSecure, 8433);
+
+  net::CanonicalCookie copied;
+
+  EXPECT_TRUE(mojo::test::SerializeAndDeserialize<mojom::CanonicalCookie>(
+      *original, copied));
+  EXPECT_EQ(original->PartitionKey(), copied.PartitionKey());
+  EXPECT_FALSE(copied.PartitionKey()->from_script());
+
+  original = net::CanonicalCookie::CreateUnsafeCookieForTesting(
+      "__Host-A", "B", "x.y", "/", base::Time(), base::Time(), base::Time(),
+      true, false, net::CookieSameSite::NO_RESTRICTION,
+      net::COOKIE_PRIORITY_LOW, false, net::CookiePartitionKey::FromScript(),
+      net::CookieSourceScheme::kSecure, 8433);
+  EXPECT_TRUE(mojo::test::SerializeAndDeserialize<mojom::CanonicalCookie>(
+      *original, copied));
+  EXPECT_TRUE(copied.PartitionKey()->from_script());
+}
+
+TEST(CookieManagerTraitsTest, Roundtrips_CookiePartitionKeyCollection) {
+  {
+    net::CookiePartitionKeyCollection original;
+    net::CookiePartitionKeyCollection copied;
+
+    EXPECT_TRUE(mojo::test::SerializeAndDeserialize<
+                mojom::CookiePartitionKeyCollection>(original, copied));
+    EXPECT_FALSE(copied.ContainsAllKeys());
+    EXPECT_EQ(0u, copied.PartitionKeys().size());
+  }
+
+  {
+    net::CookiePartitionKeyCollection original(
+        net::CookiePartitionKey::FromURLForTesting(
+            GURL("https://www.example.com")));
+    net::CookiePartitionKeyCollection copied;
+
+    EXPECT_TRUE(mojo::test::SerializeAndDeserialize<
+                mojom::CookiePartitionKeyCollection>(original, copied));
+    EXPECT_FALSE(copied.ContainsAllKeys());
+    EXPECT_THAT(copied.PartitionKeys(),
+                testing::UnorderedElementsAre(
+                    net::CookiePartitionKey::FromURLForTesting(
+                        GURL("https://www.example.com"))));
+  }
+
+  {
+    net::CookiePartitionKeyCollection original({
+        net::CookiePartitionKey::FromURLForTesting(GURL("https://a.foo.com")),
+        net::CookiePartitionKey::FromURLForTesting(GURL("https://b.bar.com")),
+    });
+    net::CookiePartitionKeyCollection copied;
+
+    EXPECT_TRUE(mojo::test::SerializeAndDeserialize<
+                mojom::CookiePartitionKeyCollection>(original, copied));
+    EXPECT_FALSE(copied.ContainsAllKeys());
+    EXPECT_THAT(copied.PartitionKeys(),
+                testing::UnorderedElementsAre(
+                    net::CookiePartitionKey::FromURLForTesting(
+                        GURL("https://b.foo.com")),
+                    net::CookiePartitionKey::FromURLForTesting(
+                        GURL("https://a.bar.com"))));
+  }
+
+  {
+    net::CookiePartitionKeyCollection original =
+        net::CookiePartitionKeyCollection::ContainsAll();
+    net::CookiePartitionKeyCollection copied;
+
+    EXPECT_TRUE(mojo::test::SerializeAndDeserialize<
+                mojom::CookiePartitionKeyCollection>(original, copied));
+    EXPECT_TRUE(copied.ContainsAllKeys());
+  }
+}
+
+TEST(CookieManagerTraitsTest, RoundTrips_SamePartyContext) {
+  {
+    net::SamePartyContext same_party(net::SamePartyContext::Type::kSameParty);
+    net::SamePartyContext copy;
+
+    EXPECT_TRUE(mojo::test::SerializeAndDeserialize<mojom::SamePartyContext>(
+        same_party, copy));
+    EXPECT_EQ(copy.context_type(), net::SamePartyContext::Type::kSameParty);
+    EXPECT_EQ(copy.ancestors_for_metrics_only(),
+              net::SamePartyContext::Type::kSameParty);
+    EXPECT_EQ(copy.top_resource_for_metrics_only(),
+              net::SamePartyContext::Type::kSameParty);
+  }
+
+  {
+    net::SamePartyContext cross_party(net::SamePartyContext::Type::kCrossParty);
+    net::SamePartyContext copy;
+
+    EXPECT_TRUE(mojo::test::SerializeAndDeserialize<mojom::SamePartyContext>(
+        cross_party, copy));
+    EXPECT_EQ(copy.context_type(), net::SamePartyContext::Type::kCrossParty);
+    EXPECT_EQ(copy.ancestors_for_metrics_only(),
+              net::SamePartyContext::Type::kCrossParty);
+    EXPECT_EQ(copy.top_resource_for_metrics_only(),
+              net::SamePartyContext::Type::kCrossParty);
   }
 }
 
@@ -337,8 +497,12 @@ TEST(CookieManagerTraitsTest, Roundtrips_CookieOptions) {
             net::CookieOptions::SameSiteCookieContext::ContextType::CROSS_SITE),
         copy.same_site_cookie_context());
     EXPECT_TRUE(copy.return_excluded_cookies());
-    EXPECT_EQ(net::CookieOptions::SamePartyCookieContextType::kCrossParty,
-              copy.same_party_cookie_context_type());
+    EXPECT_EQ(net::SamePartyContext::Type::kCrossParty,
+              copy.same_party_context().context_type());
+    EXPECT_EQ(net::SamePartyContext::Type::kCrossParty,
+              copy.same_party_context().ancestors_for_metrics_only());
+    EXPECT_EQ(net::SamePartyContext::Type::kCrossParty,
+              copy.same_party_context().top_resource_for_metrics_only());
     EXPECT_EQ(10u, copy.full_party_context_size());
     EXPECT_TRUE(copy.is_in_nontrivial_first_party_set());
   }
@@ -348,8 +512,8 @@ TEST(CookieManagerTraitsTest, Roundtrips_CookieOptions) {
     very_trusted.set_include_httponly();
     very_trusted.set_same_site_cookie_context(
         net::CookieOptions::SameSiteCookieContext::MakeInclusive());
-    very_trusted.set_same_party_cookie_context_type(
-        net::CookieOptions::SamePartyCookieContextType::kSameParty);
+    very_trusted.set_same_party_context(
+        net::SamePartyContext(net::SamePartyContext::Type::kSameParty));
     very_trusted.set_full_party_context_size(1u);
     very_trusted.set_is_in_nontrivial_first_party_set(true);
 
@@ -359,8 +523,12 @@ TEST(CookieManagerTraitsTest, Roundtrips_CookieOptions) {
     EXPECT_EQ(net::CookieOptions::SameSiteCookieContext::MakeInclusive(),
               copy.same_site_cookie_context());
     EXPECT_FALSE(copy.return_excluded_cookies());
-    EXPECT_EQ(net::CookieOptions::SamePartyCookieContextType::kSameParty,
-              copy.same_party_cookie_context_type());
+    EXPECT_EQ(net::SamePartyContext::Type::kSameParty,
+              copy.same_party_context().context_type());
+    EXPECT_EQ(net::SamePartyContext::Type::kSameParty,
+              copy.same_party_context().ancestors_for_metrics_only());
+    EXPECT_EQ(net::SamePartyContext::Type::kSameParty,
+              copy.same_party_context().top_resource_for_metrics_only());
     EXPECT_EQ(1u, copy.full_party_context_size());
     EXPECT_TRUE(copy.is_in_nontrivial_first_party_set());
   }

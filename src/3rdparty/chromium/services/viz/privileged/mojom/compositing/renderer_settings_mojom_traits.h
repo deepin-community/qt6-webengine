@@ -24,6 +24,11 @@ struct StructTraits<viz::mojom::DebugRendererSettingsDataView,
     return input.tint_composited_content;
   }
 
+  static bool tint_composited_content_modulate(
+      const viz::DebugRendererSettings& input) {
+    return input.tint_composited_content_modulate;
+  }
+
   static bool show_overdraw_feedback(const viz::DebugRendererSettings& input) {
     return input.show_overdraw_feedback;
   }
@@ -44,6 +49,11 @@ struct StructTraits<viz::mojom::DebugRendererSettingsDataView,
 template <>
 struct StructTraits<viz::mojom::RendererSettingsDataView,
                     viz::RendererSettings> {
+  static bool apply_simple_frame_rate_throttling(
+      const viz::RendererSettings& input) {
+    return input.apply_simple_frame_rate_throttling;
+  }
+
   static bool allow_antialiasing(const viz::RendererSettings& input) {
     return input.allow_antialiasing;
   }
@@ -83,10 +93,6 @@ struct StructTraits<viz::mojom::RendererSettingsDataView,
     return input.use_skia_renderer;
   }
 
-  static bool allow_overlays(const viz::RendererSettings& input) {
-    return input.allow_overlays;
-  }
-
   static bool auto_resize_output_surface(const viz::RendererSettings& input) {
     return input.auto_resize_output_surface;
   }
@@ -95,7 +101,7 @@ struct StructTraits<viz::mojom::RendererSettingsDataView,
     return input.requires_alpha_channel;
   }
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   static gfx::Size initial_screen_size(const viz::RendererSettings& input) {
     return input.initial_screen_size;
   }

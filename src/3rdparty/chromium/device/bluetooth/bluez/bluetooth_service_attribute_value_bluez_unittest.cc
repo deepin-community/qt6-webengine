@@ -23,17 +23,15 @@ constexpr char kServiceUuid[] = "00001801-0000-1000-8000-00805f9b34fb";
 void CheckUuidValue(const BluetoothServiceAttributeValueBlueZ& value,
                     const std::string& uuid) {
   EXPECT_EQ(Type::UUID, value.type());
-  std::string str;
-  EXPECT_TRUE(value.value().GetAsString(&str));
-  EXPECT_EQ(uuid, str);
+  EXPECT_TRUE(value.value().is_string());
+  EXPECT_EQ(uuid, value.value().GetString());
 }
 
 void CheckIntValue(const BluetoothServiceAttributeValueBlueZ& value,
                    uint32_t val) {
   EXPECT_EQ(Type::INT, value.type());
-  int i_val;
-  EXPECT_TRUE(value.value().GetAsInteger(&i_val));
-  EXPECT_EQ(val, static_cast<uint32_t>(i_val));
+  EXPECT_TRUE(value.value().is_int());
+  EXPECT_EQ(val, static_cast<uint32_t>(value.value().GetInt()));
 }
 
 // MakeUnique can't use a initializer list directly, since it can't derive the

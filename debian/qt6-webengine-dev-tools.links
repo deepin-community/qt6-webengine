@@ -1,0 +1,2 @@
+# Create an unversioned symlink to the dictionary conversion tool so that Hunspell dictionaries do not need to adjust their code for Qt transitions.
+usr/lib/qt6/libexec/qwebengine_convert_dict usr/bin/convert-bdic

@@ -6,8 +6,8 @@
 #define UI_AURA_SCREEN_OZONE_H_
 
 #include <memory>
+#include <vector>
 
-#include "base/macros.h"
 #include "ui/aura/aura_export.h"
 #include "ui/display/screen.h"
 
@@ -22,7 +22,13 @@ namespace aura {
 class AURA_EXPORT ScreenOzone : public display::Screen {
  public:
   ScreenOzone();
+
+  ScreenOzone(const ScreenOzone&) = delete;
+  ScreenOzone& operator=(const ScreenOzone&) = delete;
+
   ~ScreenOzone() override;
+
+  void Initialize();
 
   // display::Screen interface.
   gfx::Point GetCursorScreenPoint() override;
@@ -41,27 +47,33 @@ class AURA_EXPORT ScreenOzone : public display::Screen {
   display::Display GetDisplayMatching(
       const gfx::Rect& match_rect) const override;
   display::Display GetPrimaryDisplay() const override;
-  void SetScreenSaverSuspended(bool suspend) override;
   bool IsScreenSaverActive() const override;
   base::TimeDelta CalculateIdleTime() const override;
   void AddObserver(display::DisplayObserver* observer) override;
   void RemoveObserver(display::DisplayObserver* observer) override;
   std::string GetCurrentWorkspace() override;
-  base::Value GetGpuExtraInfoAsListValue(
+  std::vector<base::Value> GetGpuExtraInfo(
       const gfx::GpuExtraInfo& gpu_extra_info) override;
 
   // Returns the NativeWindow associated with the AcceleratedWidget.
   virtual gfx::NativeWindow GetNativeWindowFromAcceleratedWidget(
       gfx::AcceleratedWidget widget) const;
 
+ protected:
+  ui::PlatformScreen* platform_screen() { return platform_screen_.get(); }
+
+#if BUILDFLAG(IS_CHROMEOS_LACROS) || BUILDFLAG(IS_LINUX)
+  bool SetScreenSaverSuspended(bool suspend) override;
+#endif  // BUILDFLAG(IS_CHROMEOS_LACROS) || BUILDFLAG(IS_LINUX)
+
  private:
   gfx::AcceleratedWidget GetAcceleratedWidgetForWindow(
       aura::Window* window) const;
 
+  virtual void OnBeforePlatformScreenInit();
+
   display::Screen* const old_screen_ = display::Screen::SetScreenInstance(this);
   std::unique_ptr<ui::PlatformScreen> platform_screen_;
-
-  DISALLOW_COPY_AND_ASSIGN(ScreenOzone);
 };
 
 }  // namespace aura

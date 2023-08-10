@@ -32,9 +32,10 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_HTML_TRACK_TEXT_TRACK_CUE_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_HTML_TRACK_TEXT_TRACK_CUE_H_
 
+#include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/dom/events/event_target.h"
 #include "third_party/blink/renderer/core/html/html_div_element.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 
 namespace blink {
 
@@ -86,7 +87,7 @@ class CORE_EXPORT TextTrackCue : public EventTargetWithInlineData {
 
   // Returns the first timestamp value greater than the given time at which an
   // inter-cue update occurs, if such a timestamp exists.
-  virtual base::Optional<double> GetNextIntraCueTime(
+  virtual absl::optional<double> GetNextIntraCueTime(
       double movie_time) const = 0;
 
   // FIXME: Refactor to eliminate removeDisplayTree(). https://crbug.com/322434

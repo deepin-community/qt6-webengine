@@ -1263,7 +1263,7 @@ void av1_upscale_normative_rows(const AV1_COMMON *cm, const uint8_t *src,
                                 int src_stride, uint8_t *dst, int dst_stride,
                                 int plane, int rows) {
   const int is_uv = (plane > 0);
-  const int ss_x = is_uv && cm->seq_params.subsampling_x;
+  const int ss_x = is_uv && cm->seq_params->subsampling_x;
   const int downscaled_plane_width = ROUND_POWER_OF_TWO(cm->width, ss_x);
   const int upscaled_plane_width =
       ROUND_POWER_OF_TWO(cm->superres_upscaled_width, ss_x);
@@ -1305,11 +1305,11 @@ void av1_upscale_normative_rows(const AV1_COMMON *cm, const uint8_t *src,
     const int pad_right = (j == cm->tiles.cols - 1);
 
 #if CONFIG_AV1_HIGHBITDEPTH
-    if (cm->seq_params.use_highbitdepth)
+    if (cm->seq_params->use_highbitdepth)
       highbd_upscale_normative_rect(src_ptr, rows, src_width, src_stride,
                                     dst_ptr, rows, dst_width, dst_stride,
                                     x_step_qn, x0_qn, pad_left, pad_right,
-                                    cm->seq_params.bit_depth);
+                                    cm->seq_params->bit_depth);
     else
       upscale_normative_rect(src_ptr, rows, src_width, src_stride, dst_ptr,
                              rows, dst_width, dst_stride, x_step_qn, x0_qn,
@@ -1338,34 +1338,52 @@ void av1_upscale_normative_and_extend_frame(const AV1_COMMON *cm,
   aom_extend_frame_borders(dst, num_planes);
 }
 
-YV12_BUFFER_CONFIG *av1_scale_if_required(
+YV12_BUFFER_CONFIG *av1_realloc_and_scale_if_required(
     AV1_COMMON *cm, YV12_BUFFER_CONFIG *unscaled, YV12_BUFFER_CONFIG *scaled,
     const InterpFilter filter, const int phase, const bool use_optimized_scaler,
-    const bool for_psnr) {
+    const bool for_psnr, const int border_in_pixels,
+    const bool alloc_y_buffer_8bit) {
   // If scaling is performed for the sole purpose of calculating PSNR, then our
   // target dimensions are superres upscaled width/height. Otherwise our target
   // dimensions are coded width/height.
-  const bool scaling_required =
-      for_psnr ? (cm->superres_upscaled_width != unscaled->y_crop_width ||
-                  cm->superres_upscaled_height != unscaled->y_crop_height)
-               : (cm->width != unscaled->y_crop_width ||
-                  cm->height != unscaled->y_crop_height);
+  const int scaled_width = for_psnr ? cm->superres_upscaled_width : cm->width;
+  const int scaled_height =
+      for_psnr ? cm->superres_upscaled_height : cm->height;
+  const bool scaling_required = (scaled_width != unscaled->y_crop_width) ||
+                                (scaled_height != unscaled->y_crop_height);
 
   if (scaling_required) {
     const int num_planes = av1_num_planes(cm);
+    const SequenceHeader *seq_params = cm->seq_params;
+
+    // Reallocate the frame buffer based on the target dimensions when scaling
+    // is required.
+    if (aom_realloc_frame_buffer(
+            scaled, scaled_width, scaled_height, seq_params->subsampling_x,
+            seq_params->subsampling_y, seq_params->use_highbitdepth,
+            border_in_pixels, cm->features.byte_alignment, NULL, NULL, NULL,
+            alloc_y_buffer_8bit))
+      aom_internal_error(cm->error, AOM_CODEC_MEM_ERROR,
+                         "Failed to allocate scaled buffer");
+
+    const bool has_optimized_scaler = av1_has_optimized_scaler(
+        unscaled->y_crop_width, unscaled->y_crop_height, scaled_width,
+        scaled_height);
+
 #if CONFIG_AV1_HIGHBITDEPTH
-    if (use_optimized_scaler && cm->seq_params.bit_depth == AOM_BITS_8) {
+    if (use_optimized_scaler && has_optimized_scaler &&
+        cm->seq_params->bit_depth == AOM_BITS_8) {
       av1_resize_and_extend_frame(unscaled, scaled, filter, phase, num_planes);
     } else {
       av1_resize_and_extend_frame_nonnormative(
-          unscaled, scaled, (int)cm->seq_params.bit_depth, num_planes);
+          unscaled, scaled, (int)cm->seq_params->bit_depth, num_planes);
     }
 #else
-    if (use_optimized_scaler) {
+    if (use_optimized_scaler && has_optimized_scaler) {
       av1_resize_and_extend_frame(unscaled, scaled, filter, phase, num_planes);
     } else {
       av1_resize_and_extend_frame_nonnormative(
-          unscaled, scaled, (int)cm->seq_params.bit_depth, num_planes);
+          unscaled, scaled, (int)cm->seq_params->bit_depth, num_planes);
     }
 #endif
     return scaled;
@@ -1432,7 +1450,7 @@ static void copy_buffer_config(const YV12_BUFFER_CONFIG *const src,
 void av1_superres_upscale(AV1_COMMON *cm, BufferPool *const pool) {
   const int num_planes = av1_num_planes(cm);
   if (!av1_superres_scaled(cm)) return;
-  const SequenceHeader *const seq_params = &cm->seq_params;
+  const SequenceHeader *const seq_params = cm->seq_params;
   const int byte_alignment = cm->features.byte_alignment;
 
   YV12_BUFFER_CONFIG copy_buffer;
@@ -1445,7 +1463,7 @@ void av1_superres_upscale(AV1_COMMON *cm, BufferPool *const pool) {
           &copy_buffer, aligned_width, cm->height, seq_params->subsampling_x,
           seq_params->subsampling_y, seq_params->use_highbitdepth,
           AOM_BORDER_IN_PIXELS, byte_alignment))
-    aom_internal_error(&cm->error, AOM_CODEC_MEM_ERROR,
+    aom_internal_error(cm->error, AOM_CODEC_MEM_ERROR,
                        "Failed to allocate copy buffer for superres upscaling");
 
   // Copy function assumes the frames are the same size.
@@ -1468,7 +1486,7 @@ void av1_superres_upscale(AV1_COMMON *cm, BufferPool *const pool) {
     if (release_fb_cb(cb_priv, fb)) {
       unlock_buffer_pool(pool);
       aom_internal_error(
-          &cm->error, AOM_CODEC_MEM_ERROR,
+          cm->error, AOM_CODEC_MEM_ERROR,
           "Failed to free current frame buffer before superres upscaling");
     }
     // aom_realloc_frame_buffer() leaves config data for frame_to_show intact
@@ -1476,10 +1494,10 @@ void av1_superres_upscale(AV1_COMMON *cm, BufferPool *const pool) {
             frame_to_show, cm->superres_upscaled_width,
             cm->superres_upscaled_height, seq_params->subsampling_x,
             seq_params->subsampling_y, seq_params->use_highbitdepth,
-            AOM_BORDER_IN_PIXELS, byte_alignment, fb, cb, cb_priv)) {
+            AOM_BORDER_IN_PIXELS, byte_alignment, fb, cb, cb_priv, 0)) {
       unlock_buffer_pool(pool);
       aom_internal_error(
-          &cm->error, AOM_CODEC_MEM_ERROR,
+          cm->error, AOM_CODEC_MEM_ERROR,
           "Failed to allocate current frame buffer for superres upscaling");
     }
     unlock_buffer_pool(pool);
@@ -1495,7 +1513,7 @@ void av1_superres_upscale(AV1_COMMON *cm, BufferPool *const pool) {
             seq_params->subsampling_y, seq_params->use_highbitdepth,
             AOM_BORDER_IN_PIXELS, byte_alignment))
       aom_internal_error(
-          &cm->error, AOM_CODEC_MEM_ERROR,
+          cm->error, AOM_CODEC_MEM_ERROR,
           "Failed to reallocate current frame buffer for superres upscaling");
 
     // Restore config data back to frame_to_show

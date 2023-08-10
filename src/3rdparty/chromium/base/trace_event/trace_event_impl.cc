@@ -11,8 +11,8 @@
 #include "base/format_macros.h"
 #include "base/json/string_escape.h"
 #include "base/memory/ptr_util.h"
+#include "base/notreached.h"
 #include "base/process/process_handle.h"
-#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
@@ -20,6 +20,7 @@
 #include "base/trace_event/trace_event.h"
 #include "base/trace_event/trace_log.h"
 #include "base/trace_event/traced_value.h"
+#include "build/build_config.h"
 
 #if BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
 
@@ -31,22 +32,24 @@ namespace perfetto {
 namespace legacy {
 
 template <>
-bool ConvertThreadId(const ::base::PlatformThreadId& thread,
-                     uint64_t* track_uuid_out,
-                     int32_t* pid_override_out,
-                     int32_t* tid_override_out) {
-  // Only support threads in the current process.
-  *track_uuid_out = perfetto::ThreadTrack::ForThread(
-                        static_cast<base::PlatformThreadId>(thread))
-                        .uuid;
-  return true;
+perfetto::ThreadTrack ConvertThreadId(const ::base::PlatformThreadId& thread) {
+  return perfetto::ThreadTrack::ForThread(static_cast<int32_t>(thread));
 }
+
+#if BUILDFLAG(IS_WIN)
+template <>
+perfetto::ThreadTrack ConvertThreadId(const int& thread) {
+  return perfetto::ThreadTrack::ForThread(static_cast<int32_t>(thread));
+}
+#endif  // BUILDFLAG(IS_WIN)
 
 }  // namespace legacy
 
-template <>
-TraceTimestamp ConvertTimestampToTraceTimeNs(const ::base::TimeTicks& ticks) {
-  return {TrackEvent::GetTraceClockId(), ticks.since_origin().InNanoseconds()};
+TraceTimestamp
+TraceTimestampTraits<::base::TimeTicks>::ConvertTimestampToTraceTimeNs(
+    const ::base::TimeTicks& ticks) {
+  return {TrackEvent::GetTraceClockId(),
+          static_cast<uint64_t>(ticks.since_origin().InNanoseconds())};
 }
 
 namespace internal {

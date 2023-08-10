@@ -24,10 +24,10 @@
 #include "third_party/blink/renderer/core/html/html_script_element.h"
 
 #include "third_party/blink/public/mojom/script/script_type.mojom-blink.h"
-#include "third_party/blink/renderer/bindings/core/v8/html_script_element_or_svg_script_element.h"
-#include "third_party/blink/renderer/bindings/core/v8/string_or_trusted_script.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_union_htmlscriptelement_svgscriptelement.h"
 #include "third_party/blink/renderer/core/dom/attribute.h"
 #include "third_party/blink/renderer/core/dom/document.h"
+#include "third_party/blink/renderer/core/dom/dom_node_ids.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
 #include "third_party/blink/renderer/core/dom/text.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
@@ -35,6 +35,7 @@
 #include "third_party/blink/renderer/core/html_names.h"
 #include "third_party/blink/renderer/core/script/script_loader.h"
 #include "third_party/blink/renderer/core/script/script_runner.h"
+#include "third_party/blink/renderer/core/script_type_names.h"
 #include "third_party/blink/renderer/core/trustedtypes/trusted_script.h"
 #include "third_party/blink/renderer/core/trustedtypes/trusted_types_util.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
@@ -47,6 +48,7 @@ HTMLScriptElement::HTMLScriptElement(Document& document,
                                      const CreateElementFlags flags)
     : HTMLElement(html_names::kScriptTag, document),
       children_changed_by_api_(false),
+      blocking_attribute_(MakeGarbageCollected<BlockingAttribute>(this)),
       loader_(InitializeScriptLoader(flags)) {}
 
 const AttrNameToTrustedType& HTMLScriptElement::GetCheckedAttributeTypes()
@@ -91,14 +93,23 @@ void HTMLScriptElement::ParseAttribute(
     loader_->HandleSourceAttribute(params.new_value);
     LogUpdateAttributeIfIsolatedWorldAndInDocument("script", params);
   } else if (params.name == html_names::kAsyncAttr) {
+    // https://html.spec.whatwg.org/C/#non-blocking
+    // "In addition, whenever a script element whose |non-blocking|
+    // flag is set has an async content attribute added, the element's
+    // |non-blocking| flag must be unset."
     loader_->HandleAsyncAttribute();
-  } else if (params.name == html_names::kImportanceAttr &&
+  } else if (params.name == html_names::kFetchpriorityAttr &&
              RuntimeEnabledFeatures::PriorityHintsEnabled(
                  GetExecutionContext())) {
-    // The only thing we need to do for the the importance attribute/Priority
+    // The only thing we need to do for the the fetchPriority attribute/Priority
     // Hints is count usage upon parsing. Processing the value happens when the
     // element loads.
     UseCounter::Count(GetDocument(), WebFeature::kPriorityHints);
+  } else if (params.name == html_names::kBlockingAttr &&
+             RuntimeEnabledFeatures::BlockingAttributeEnabled()) {
+    blocking_attribute_->DidUpdateAttributeValue(params.old_value,
+                                                 params.new_value);
+    blocking_attribute_->CountTokenUsage();
   } else {
     HTMLElement::ParseAttribute(params);
   }
@@ -120,6 +131,15 @@ Node::InsertionNotificationRequest HTMLScriptElement::InsertedInto(
   return kInsertionShouldCallDidNotifySubtreeInsertions;
 }
 
+void HTMLScriptElement::RemovedFrom(ContainerNode& insertion_point) {
+  HTMLElement::RemovedFrom(insertion_point);
+  loader_->Removed();
+  if (GetDocument().GetRenderBlockingResourceManager()) {
+    GetDocument().GetRenderBlockingResourceManager()->RemovePendingScript(
+        *this);
+  }
+}
+
 void HTMLScriptElement::DidNotifySubtreeInsertionsToDocument() {
   loader_->DidNotifySubtreeInsertionsToDocument();
 }
@@ -128,22 +148,33 @@ void HTMLScriptElement::setText(const String& string) {
   setTextContent(string);
 }
 
-void HTMLScriptElement::text(StringOrTrustedScript& result) {
-  result.SetString(TextFromChildren());
+void HTMLScriptElement::setInnerTextForBinding(
+    const V8UnionStringTreatNullAsEmptyStringOrTrustedScript*
+        string_or_trusted_script,
+    ExceptionState& exception_state) {
+  const String& value = TrustedTypesCheckForScript(
+      string_or_trusted_script, GetExecutionContext(), exception_state);
+  if (exception_state.HadException())
+    return;
+  // https://w3c.github.io/webappsec-trusted-types/dist/spec/#setting-slot-values
+  // On setting, the innerText [...] perform the regular steps, and then set
+  // content object's [[ScriptText]] internal slot value [...].
+  HTMLElement::setInnerText(value, exception_state);
+  script_text_internal_slot_ = ParkableString(value.Impl());
 }
 
-void HTMLScriptElement::setInnerText(
-    const StringOrTrustedScript& string_or_trusted_script,
+void HTMLScriptElement::setTextContentForBinding(
+    const V8UnionStringOrTrustedScript* value,
     ExceptionState& exception_state) {
-  String value = TrustedTypesCheckForScript(
-      string_or_trusted_script, GetExecutionContext(), exception_state);
-  if (!exception_state.HadException()) {
-    // https://w3c.github.io/webappsec-trusted-types/dist/spec/#setting-slot-values
-    // On setting, the innerText [...] perform the regular steps, and then set
-    // content object's [[ScriptText]] internal slot value [...].
-    HTMLElement::setInnerText(value, exception_state);
-    script_text_internal_slot_ = ParkableString(value.Impl());
-  }
+  const String& string =
+      TrustedTypesCheckForScript(value, GetExecutionContext(), exception_state);
+  if (exception_state.HadException())
+    return;
+  // https://w3c.github.io/webappsec-trusted-types/dist/spec/#setting-slot-values
+  // On setting, [..] textContent [..] perform the regular steps, and then set
+  // content object's [[ScriptText]] internal slot value [...].
+  Node::setTextContent(string);
+  script_text_internal_slot_ = ParkableString(string.Impl());
 }
 
 void HTMLScriptElement::setTextContent(const String& string) {
@@ -154,21 +185,8 @@ void HTMLScriptElement::setTextContent(const String& string) {
   script_text_internal_slot_ = ParkableString(string.Impl());
 }
 
-void HTMLScriptElement::setTextContent(
-    const StringOrTrustedScript& string_or_trusted_script,
-    ExceptionState& exception_state) {
-  String value = TrustedTypesCheckForScript(
-      string_or_trusted_script, GetExecutionContext(), exception_state);
-  if (!exception_state.HadException()) {
-    // https://w3c.github.io/webappsec-trusted-types/dist/spec/#setting-slot-values
-    // On setting, [..] textContent [..] perform the regular steps, and then set
-    // content object's [[ScriptText]] internal slot value [...].
-    Node::setTextContent(value);
-    script_text_internal_slot_ = ParkableString(value.Impl());
-  }
-}
-
 void HTMLScriptElement::setAsync(bool async) {
+  // https://html.spec.whatwg.org/multipage/scripting.html#dom-script-async
   SetBooleanAttribute(html_names::kAsyncAttr, async);
   loader_->HandleAsyncAttribute();
 }
@@ -230,8 +248,8 @@ String HTMLScriptElement::ReferrerPolicyAttributeValue() const {
   return FastGetAttribute(html_names::kReferrerpolicyAttr);
 }
 
-String HTMLScriptElement::ImportanceAttributeValue() const {
-  return FastGetAttribute(html_names::kImportanceAttr);
+String HTMLScriptElement::FetchPriorityAttributeValue() const {
+  return FastGetAttribute(html_names::kFetchpriorityAttr);
 }
 
 String HTMLScriptElement::ChildTextContent() {
@@ -285,18 +303,22 @@ ExecutionContext* HTMLScriptElement::GetExecutionContext() const {
   return Node::GetExecutionContext();
 }
 
+V8HTMLOrSVGScriptElement* HTMLScriptElement::AsV8HTMLOrSVGScriptElement() {
+  if (IsInShadowTree())
+    return nullptr;
+  return MakeGarbageCollected<V8HTMLOrSVGScriptElement>(this);
+}
+
+DOMNodeId HTMLScriptElement::GetDOMNodeId() {
+  return DOMNodeIds::IdForNode(this);
+}
+
 void HTMLScriptElement::DispatchLoadEvent() {
   DispatchEvent(*Event::Create(event_type_names::kLoad));
 }
 
 void HTMLScriptElement::DispatchErrorEvent() {
   DispatchEvent(*Event::Create(event_type_names::kError));
-}
-
-void HTMLScriptElement::SetScriptElementForBinding(
-    HTMLScriptElementOrSVGScriptElement& element) {
-  if (!IsInShadowTree())
-    element.SetHTMLScriptElement(this);
 }
 
 ScriptElementBase::Type HTMLScriptElement::GetScriptElementType() {
@@ -311,7 +333,31 @@ Element& HTMLScriptElement::CloneWithoutAttributesAndChildren(
   return *factory.CreateElement(TagQName(), flags, IsValue());
 }
 
+// static
+bool HTMLScriptElement::supports(ScriptState* script_state,
+                                 const AtomicString& type) {
+  ExecutionContext* execution_context = ExecutionContext::From(script_state);
+  if (type == script_type_names::kClassic)
+    return true;
+  if (type == script_type_names::kModule)
+    return true;
+  if (type == script_type_names::kImportmap)
+    return true;
+
+  if ((type == script_type_names::kSpeculationrules) &&
+      RuntimeEnabledFeatures::SpeculationRulesEnabled(execution_context)) {
+    return true;
+  }
+  if ((type == script_type_names::kWebbundle) &&
+      RuntimeEnabledFeatures::SubresourceWebBundlesEnabled(execution_context)) {
+    return true;
+  }
+
+  return false;
+}
+
 void HTMLScriptElement::Trace(Visitor* visitor) const {
+  visitor->Trace(blocking_attribute_);
   visitor->Trace(loader_);
   HTMLElement::Trace(visitor);
   ScriptElementBase::Trace(visitor);

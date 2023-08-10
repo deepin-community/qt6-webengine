@@ -13,6 +13,7 @@
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test_utils.h"
 #include "content/public/test/test_utils.h"
+#include "third_party/blink/public/common/features.h"
 
 namespace content {
 
@@ -29,7 +30,7 @@ static const int kNumPeerConnections = 5;
 #endif
 }  // namespace
 
-#if defined(OS_ANDROID) && defined(ADDRESS_SANITIZER)
+#if BUILDFLAG(IS_ANDROID) && defined(ADDRESS_SANITIZER)
 // Renderer crashes under Android ASAN: https://crbug.com/408496.
 #define MAYBE_WebRtcStressSourceSwitchBrowserTest \
   DISABLED_WebRtcStressSourceSwitchBrowserTest

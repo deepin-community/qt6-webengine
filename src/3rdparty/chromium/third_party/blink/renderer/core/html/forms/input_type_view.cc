@@ -93,10 +93,6 @@ HTMLFormElement* InputTypeView::FormForSubmission() const {
   return GetElement().Form();
 }
 
-bool InputTypeView::TypeShouldForceLegacyLayout() const {
-  return false;
-}
-
 LayoutObject* InputTypeView::CreateLayoutObject(const ComputedStyle& style,
                                                 LegacyLayout legacy) const {
   return LayoutObject::CreateObject(&GetElement(), style, legacy);
@@ -120,7 +116,7 @@ void InputTypeView::HandleBlurEvent() {}
 
 void InputTypeView::HandleFocusInEvent(Element*, mojom::blink::FocusType) {}
 
-void InputTypeView::StartResourceLoading() {}
+void InputTypeView::OpenPopupView() {}
 
 void InputTypeView::ClosePopupView() {}
 
@@ -203,8 +199,7 @@ FormControlState InputTypeView::SaveFormControlState() const {
 }
 
 void InputTypeView::RestoreFormControlState(const FormControlState& state) {
-  GetElement().setValue(state[0],
-                        TextFieldEventBehavior::kDispatchInputAndChangeEvent);
+  GetElement().setValue(state[0]);
 }
 
 bool InputTypeView::IsDraggedSlider() const {

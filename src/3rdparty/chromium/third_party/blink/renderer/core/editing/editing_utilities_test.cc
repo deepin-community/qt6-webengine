@@ -5,8 +5,14 @@
 #include "third_party/blink/renderer/core/editing/editing_utilities.h"
 
 #include "third_party/blink/renderer/core/dom/static_node_list.h"
+#include "third_party/blink/renderer/core/editing/position_with_affinity.h"
 #include "third_party/blink/renderer/core/editing/testing/editing_test_base.h"
 #include "third_party/blink/renderer/core/editing/visible_position.h"
+#include "third_party/blink/renderer/core/html/forms/html_input_element.h"
+#include "third_party/blink/renderer/core/layout/geometry/physical_offset.h"
+#include "third_party/blink/renderer/core/layout/hit_test_result.h"
+#include "third_party/blink/renderer/core/layout/layout_view.h"
+#include "third_party/blink/renderer/core/testing/core_unit_test_helper.h"
 
 namespace blink {
 
@@ -158,6 +164,140 @@ TEST_F(EditingUtilitiesTest, isEditablePositionWithTable) {
   UpdateAllLifecyclePhasesForTest();
 
   EXPECT_FALSE(IsEditablePosition(Position(table, 0)));
+}
+
+// http://crbug.com/1185089
+// See also PositionRespectingEditingBoundaryWithInputReadWrite
+TEST_F(EditingUtilitiesTest,
+       PositionRespectingEditingBoundaryWithInputReadOnly) {
+  LoadAhem();
+  InsertStyleElement("body { font: 10px/15px Ahem; margin: 0px; }");
+  SetBodyContent(
+      "<div id=sample>012"
+      "<input value=abc placeholder=xyz readonly>"
+      "345</div>");
+  const auto& sample = *GetElementById("sample");
+  const auto& text_012 = *To<Text>(sample.firstChild());
+  const auto& input = ToTextControl(*GetDocument().QuerySelector("input"));
+  const auto& inner_editor = *input.InnerEditorElement();
+  const auto& text_abc = *To<Text>(inner_editor.firstChild());
+
+  const HitTestRequest hit_request(HitTestRequest::kActive);
+  const HitTestLocation hit_location(PhysicalOffset(0, 0));
+  HitTestResult hit_result(hit_request, hit_location);
+  ASSERT_TRUE(
+      GetDocument().View()->GetLayoutView()->HitTest(hit_location, hit_result));
+  ASSERT_EQ(PositionWithAffinity(Position(text_012, 0)),
+            hit_result.GetPosition());
+
+  EXPECT_EQ(
+      PositionWithAffinity(Position(text_abc, 0)),
+      PositionRespectingEditingBoundary(Position(text_abc, 1), hit_result))
+      << "Adjust to outside of <input> to inside of <input>";
+  EXPECT_EQ(PositionWithAffinity(Position(text_012, 0)),
+            PositionRespectingEditingBoundary(Position::BeforeNode(input),
+                                              hit_result))
+      << "No adjustment because both position are in same enclosing element";
+}
+
+// http://crbug.com/1185089
+TEST_F(EditingUtilitiesTest,
+       PositionRespectingEditingBoundaryWithInputReadOnlyInEditable) {
+  LoadAhem();
+  InsertStyleElement("body { font: 10px/15px Ahem; margin: 0px; }");
+  SetBodyContent(
+      "<div contenteditable id=sample>012"
+      "<input value=abc placeholder=xyz readonly>"
+      "345</div>");
+  const auto& sample = *GetElementById("sample");
+  const auto& text_012 = *To<Text>(sample.firstChild());
+  const auto& input = ToTextControl(*GetDocument().QuerySelector("input"));
+  const auto& inner_editor = *input.InnerEditorElement();
+  const auto& text_abc = *To<Text>(inner_editor.firstChild());
+
+  const HitTestRequest hit_request(HitTestRequest::kActive);
+  const HitTestLocation hit_location(PhysicalOffset(5, 5));
+  HitTestResult hit_result(hit_request, hit_location);
+  ASSERT_TRUE(
+      GetDocument().View()->GetLayoutView()->HitTest(hit_location, hit_result));
+  ASSERT_EQ(PositionWithAffinity(Position(text_012, 0)),
+            hit_result.GetPosition());
+
+  EXPECT_EQ(
+      PositionWithAffinity(Position(text_abc, 0)),
+      PositionRespectingEditingBoundary(Position(text_abc, 1), hit_result))
+      << "Adjust to outside of <input> to inside of <input>";
+  EXPECT_EQ(PositionWithAffinity(Position(text_012, 0)),
+            PositionRespectingEditingBoundary(Position::BeforeNode(input),
+                                              hit_result))
+      << "No adjustment because both position are in same enclosing element";
+}
+
+// http://crbug.com/1185089
+// See also PositionRespectingEditingBoundaryWithInputReadOnly
+TEST_F(EditingUtilitiesTest,
+       PositionRespectingEditingBoundaryWithInputReadWrite) {
+  LoadAhem();
+  InsertStyleElement("body { font: 10px/15px Ahem; margin: 0px; }");
+  SetBodyContent(
+      "<div id=sample>012"
+      "<input value=abc placeholder=xyz>"
+      "345</div>");
+  const auto& sample = *GetElementById("sample");
+  const auto& text_012 = *To<Text>(sample.firstChild());
+  const auto& input = ToTextControl(*GetDocument().QuerySelector("input"));
+  const auto& inner_editor = *input.InnerEditorElement();
+  const auto& text_abc = *To<Text>(inner_editor.firstChild());
+
+  const HitTestRequest hit_request(HitTestRequest::kActive);
+  const HitTestLocation hit_location(PhysicalOffset(5, 5));
+  HitTestResult hit_result(hit_request, hit_location);
+  ASSERT_TRUE(
+      GetDocument().View()->GetLayoutView()->HitTest(hit_location, hit_result));
+  ASSERT_EQ(PositionWithAffinity(Position(text_012, 0)),
+            hit_result.GetPosition());
+
+  EXPECT_EQ(
+      PositionWithAffinity(Position(text_abc, 0)),
+      PositionRespectingEditingBoundary(Position(text_abc, 1), hit_result))
+      << "Adjust to outside of <input> to inside of <input>";
+  EXPECT_EQ(PositionWithAffinity(Position(text_012, 0)),
+            PositionRespectingEditingBoundary(Position::BeforeNode(input),
+                                              hit_result))
+      << "No adjustment because both position are in same enclosing element";
+}
+
+// http://crbug.com/1249655 and http://crbug.com/1252377
+TEST_F(EditingUtilitiesTest,
+       PositionRespectingEditingBoundaryWithPointerEventNone) {
+  LoadAhem();
+  InsertStyleElement(
+      "body { font: 10px/15px Ahem; margin: 0px; }"
+      "input { pointer-events: none; }");
+  SetBodyContent("<div>012 <input id=target placeholder=abc> 345</div>");
+  const auto& target = *To<TextControlElement>(GetElementById("target"));
+  const auto& text_abc = *To<Text>(target.PlaceholderElement()->firstChild());
+
+  const HitTestRequest hit_request(HitTestRequest::kActive);
+  const HitTestLocation hit_location(PhysicalOffset(50, 5));
+  HitTestResult hit_result(hit_request, hit_location);
+  ASSERT_TRUE(
+      GetDocument().View()->GetLayoutView()->HitTest(hit_location, hit_result));
+  if (RuntimeEnabledFeatures::LayoutNGEnabled()) {
+    ASSERT_EQ(PositionWithAffinity(Position(text_abc, 1)),
+              hit_result.GetPosition());
+    // Simulates drag from "abc"@2 to "abc@1"
+    EXPECT_EQ(
+        PositionWithAffinity(Position(text_abc, 1)),
+        PositionRespectingEditingBoundary(Position(text_abc, 2), hit_result));
+  } else {
+    ASSERT_EQ(PositionWithAffinity(Position::BeforeNode(target)),
+              hit_result.GetPosition());
+  // Simulates drag from "abc"@2 to "abc@1"
+    EXPECT_EQ(
+        PositionWithAffinity(Position::BeforeNode(target)),
+        PositionRespectingEditingBoundary(Position(text_abc, 2), hit_result));
+  }
 }
 
 TEST_F(EditingUtilitiesTest, RepeatString) {

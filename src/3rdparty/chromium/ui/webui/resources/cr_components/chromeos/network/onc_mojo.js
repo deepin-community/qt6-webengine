@@ -19,6 +19,18 @@
  * strings and for debugging. They are not intended to be drectly user facing.
  */
 
+// Used to indicate a saved but unknown credential value. Will appear as
+// placeholder character in the credential (passphrase, password, etc.) field by
+// default.
+// See |kFakeCredential| in chromeos/network/policy_util.h.
+/** @type {string} */
+/* #export */ const FAKE_CREDENTIAL = 'FAKE_CREDENTIAL_VPaJDV9x';
+
+  /**
+   * Regex expression to validate RFC compliant DNS characters.
+   */
+ const VALID_DNS_CHARS_REGEX = RegExp('^[a-zA-Z0-9-\\.]*$');
+
 /* #export */ class OncMojo {
   /**
    * @param {number|undefined} value
@@ -192,8 +204,6 @@
         return 'Prohibited';
       case DeviceStateType.kUnavailable:
         return 'Unavailable';
-      case DeviceStateType.kInhibited:
-        return 'Inhibited';
     }
     assertNotReached('Unexpected enum value: ' + OncMojo.getEnumString(value));
     return '';
@@ -210,8 +220,6 @@
       case DeviceStateType.kDisabling:
       case DeviceStateType.kEnabling:
       case DeviceStateType.kUnavailable:
-      case DeviceStateType.kInhibited:
-        return true;
       case DeviceStateType.kDisabled:
       case DeviceStateType.kEnabled:
       case DeviceStateType.kProhibited:
@@ -219,6 +227,20 @@
     }
     assertNotReached('Unexpected enum value: ' + OncMojo.getEnumString(value));
     return false;
+  }
+
+  /**
+   * @param {?chromeos.networkConfig.mojom.DeviceStateProperties|undefined}
+   *     device
+   * @return {boolean}
+   */
+  static deviceIsInhibited(device) {
+    if (!device) {
+      return false;
+    }
+
+    return device.inhibitReason !==
+        chromeos.networkConfig.mojom.InhibitReason.kNotInhibited;
   }
 
   /**
@@ -691,6 +713,10 @@
     switch (properties.type) {
       case mojom.NetworkType.kCellular:
         const cellularProperties = properties.typeProperties.cellular;
+        networkState.typeState.cellular.iccid =
+            cellularProperties.iccid || '';
+        networkState.typeState.cellular.eid =
+            cellularProperties.eid || '';
         networkState.typeState.cellular.activationState =
             cellularProperties.activationState;
         networkState.typeState.cellular.networkTechnology =
@@ -699,6 +725,8 @@
             cellularProperties.roamingState === 'Roaming';
         networkState.typeState.cellular.signalStrength =
             cellularProperties.signalStrength;
+        networkState.typeState.cellular.simLocked =
+            cellularProperties.simLocked;
         break;
       case mojom.NetworkType.kEthernet:
         networkState.typeState.ethernet.authentication =
@@ -755,13 +783,13 @@
       ipAddressConfigType: OncMojo.createManagedString('DHCP'),
       nameServersConfigType: OncMojo.createManagedString('DHCP'),
       portalState: mojom.PortalState.kUnknown,
+      trafficCounterProperties: OncMojo.createTrafficCounterProperties(),
     };
     switch (type) {
       case mojom.NetworkType.kCellular:
         result.typeProperties = {
           cellular: {
             activationState: mojom.ActivationStateType.kUnknown,
-            allowRoaming: false,
             signalStrength: 0,
             simLocked: false,
             supportNetworkScan: false,
@@ -875,6 +903,7 @@
    *         !chromeos.networkConfig.mojom.ManagedString|
    *         !chromeos.networkConfig.mojom.ManagedStringList|
    *         !chromeos.networkConfig.mojom.ManagedApnList|
+   *         !chromeos.networkConfig.mojom.ManagedSubjectAltNameMatchList|
    *         null|undefined} property
    * @return {boolean|number|string|!Array<string>|
    *          !Array<!chromeos.networkConfig.mojom.ApnProperties>|undefined}
@@ -901,7 +930,7 @@
    * Returns IPConfigProperties for |type|. For IPv4, these will be the static
    * properties if IPAddressConfigType is Static and StaticIPConfig is set.
    * @param {!chromeos.networkConfig.mojom.ManagedProperties} properties
-   * @param {string} desiredType Desired ip config type (IPv4 or IPv6).
+   * @param {!chromeos.networkConfig.mojom.IPConfigType} desiredType
    * @return {!chromeos.networkConfig.mojom.IPConfigProperties|undefined}
    */
   static getIPConfigForType(properties, desiredType) {
@@ -910,13 +939,13 @@
     let ipConfig;
     if (ipConfigs) {
       ipConfig = ipConfigs.find(ipconfig => ipconfig.type === desiredType);
-      if (ipConfig && desiredType !== 'IPv4') {
+      if (ipConfig && desiredType !== mojom.IPConfigType.kIPv4) {
         return ipConfig;
       }
     }
 
     // Only populate static ip config properties for IPv4.
-    if (desiredType !== 'IPv4') {
+    if (desiredType !== mojom.IPConfigType.kIPv4) {
       return undefined;
     }
 
@@ -941,9 +970,7 @@
       if (staticIpConfig.routingPrefix) {
         ipConfig.routingPrefix = staticIpConfig.routingPrefix.activeValue;
       }
-      if (staticIpConfig.type) {
-        ipConfig.type = staticIpConfig.type.activeValue;
-      }
+      ipConfig.type = staticIpConfig.type;
     }
     if (properties.nameServersConfigType &&
         properties.nameServersConfigType.activeValue === 'Static') {
@@ -1001,7 +1028,8 @@
     let nsConfigType =
         OncMojo.getActiveString(managedProperties.nameServersConfigType) ||
         'DHCP';
-    let staticIpConfig = OncMojo.getIPConfigForType(managedProperties, 'IPv4');
+    let staticIpConfig =
+        OncMojo.getIPConfigForType(managedProperties, mojom.IPConfigType.kIPv4);
     let nameServers = staticIpConfig ? staticIpConfig.nameServers : undefined;
     if (field === 'ipAddressConfigType') {
       const newIpConfigType = /** @type {string} */ (newValue);
@@ -1018,7 +1046,7 @@
     } else if (field === 'staticIpConfig') {
       const ipConfigValue =
           /** @type {!mojom.IPConfigProperties} */ (newValue);
-      if (!ipConfigValue.type || !ipConfigValue.ipAddress) {
+      if (!ipConfigValue.ipAddress) {
         console.error('Invalid StaticIPConfig: ' + JSON.stringify(newValue));
         return null;
       }
@@ -1049,7 +1077,7 @@
     config.ipAddressConfigType = ipConfigType;
     config.nameServersConfigType = nsConfigType;
     if (ipConfigType === 'Static') {
-      assert(staticIpConfig && staticIpConfig.type && staticIpConfig.ipAddress);
+      assert(staticIpConfig && staticIpConfig.ipAddress);
       config.staticIpConfig = staticIpConfig;
     }
     if (nsConfigType === 'Static') {
@@ -1116,6 +1144,17 @@
   }
 
   /**
+   * @return {!chromeos.networkConfig.mojom.TrafficCounterProperties}
+   */
+  static createTrafficCounterProperties() {
+    return {
+      lastResetTime: null,
+      autoReset: false,
+      userSpecifiedResetDay: 1
+    };
+  }
+
+  /**
    * Returns a string to translate for the user visible connection state.
    * @param {!chromeos.networkConfig.mojom.ConnectionStateType}
    *     connectionState
@@ -1175,6 +1214,31 @@
   }
 
   /**
+   * Returns true if the SIMInfos match.
+   * @param {?Array<chromeos.networkConfig.mojom.SIMInfo>|undefined} a
+   * @param {?Array<chromeos.networkConfig.mojom.SIMInfo>|undefined} b
+   */
+  static simInfosMatch(a, b) {
+    if (!a || !b) {
+      return !!a === !!b;
+    }
+    if (a.length !== b.length) {
+      return false;
+    }
+    for (let i = 0; i < a.length; i++) {
+      const acurrent = a[i];
+      const bcurrent = b[i];
+      if (acurrent.slotId !== bcurrent.slotId ||
+          acurrent.eid !== bcurrent.eid ||
+          acurrent.iccid !== bcurrent.iccid ||
+          acurrent.isPrimary !== bcurrent.isPrimary) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /**
    * Returns true if the APN properties match.
    * @param {chromeos.networkConfig.mojom.ApnProperties} a
    * @param {chromeos.networkConfig.mojom.ApnProperties} b
@@ -1228,7 +1292,134 @@
     assertNotReached();
     return false;
   }
+
+  /**
+   * Returns a string representation of the DomainSuffixMatch, formatted as a
+   * semicolon separated string of entries.
+   * See https://w1.fi/cgit/hostap/plain/wpa_supplicant/wpa_supplicant.conf.
+   * @param {!Array<!string>} domainSuffixMatch
+   * @return {string}
+   */
+  static serializeDomainSuffixMatch(domainSuffixMatch) {
+    if (!domainSuffixMatch || domainSuffixMatch.length === 0) {
+      return '';
+    }
+    return domainSuffixMatch.join(';');
+  }
+
+  /**
+   * Converts the string representation of the DomainSuffixMatch to a mojo
+   *  object. Returns null if `domainSuffixMatch` contains non-RFC compliant
+   * characters.
+   * @param {string} domainSuffixMatch
+   * @return  {?Array<!string>}
+   */
+  static deserializeDomainSuffixMatch(domainSuffixMatch) {
+    const entries = domainSuffixMatch.trim().split(';');
+    const result = [];
+    for (const e of entries) {
+      const value = VALID_DNS_CHARS_REGEX.exec(e);
+      if (!value || value.length !== 1) {
+        console.warn('Invalid Domain Suffix Match entry: ' + e);
+        return null;
+      }
+      const entry = value[0].trim();
+      if (entry !== '') {
+        result.push(value[0]);
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Returns a string representation of the SubjectAlternativeNameMatch,
+   * formatted as a semicolon separated string of entries in the following
+   * format: <type>:<value>.
+   * See https://w1.fi/cgit/hostap/plain/wpa_supplicant/wpa_supplicant.conf.
+   * @param {!Array<!chromeos.networkConfig.mojom.SubjectAltName>}
+   *        subjectAltNameMatch
+   * @return {string}
+   */
+  static serializeSubjectAltNameMatch(subjectAltNameMatch) {
+    if (!subjectAltNameMatch || subjectAltNameMatch.length === 0) {
+      return '';
+    }
+    const result = [];
+    for (const e of subjectAltNameMatch) {
+      let type;
+      switch (e.type) {
+        case chromeos.networkConfig.mojom.SubjectAltName_Type.kEmail:
+          type = 'EMAIL';
+          break;
+        case chromeos.networkConfig.mojom.SubjectAltName_Type.kDns:
+          type = 'DNS';
+          break;
+        case chromeos.networkConfig.mojom.SubjectAltName_Type.kUri:
+          type = 'URI';
+          break;
+        default:
+          assertNotReached('Unknown subjectAltNameMatchType ' + e.type);
+      }
+      result.push(type + ':' + e.value);
+    }
+    return result.join(';');
+  }
+
+  /**
+   * Converts the string representation of the DomainSuffixMatch to a mojo
+   * object. Returns null if `subjectAltNameMatch` contains:
+   *  - entries not in the format <type>:<value>;
+   *  - a type other than 'EMAIL', 'DNS', 'URI';
+   *  - a value with non-RFC compliant characters.
+   * @param {string} subjectAltNameMatch
+   * @return {?Array<!chromeos.networkConfig.mojom.SubjectAltName>}
+   */
+  static deserializeSubjectAltNameMatch(subjectAltNameMatch) {
+    const regValidEmailChars = RegExp('^[a-zA-Z0-9-\\.\\+_~@]*$');
+    const regValidUriChars =
+      RegExp('^[a-zA-Z0-9-\\._~:/?#\\[\\]@!$&\'()\\*\\+,;=]*$');
+
+    const entries = subjectAltNameMatch.trim().split(';');
+    const result =
+      /*@type {Array<!chromeos.networkConfig.mojom.SubjectAltName>}*/[];
+
+    for (const entry of entries) {
+      if (entry === '') {
+        continue;
+      }
+      let type;
+      let value;
+      if (entry.toUpperCase().startsWith('EMAIL:')) {
+        type = chromeos.networkConfig.mojom.SubjectAltName_Type.kEmail;
+        value = regValidEmailChars.exec(entry.substring(6));
+      } else if (entry.toUpperCase().startsWith('DNS:')) {
+        type = chromeos.networkConfig.mojom.SubjectAltName_Type.kDns;
+        value = VALID_DNS_CHARS_REGEX.exec(entry.substring(4));
+      } else if (entry.toUpperCase().startsWith('URI:')) {
+        type = chromeos.networkConfig.mojom.SubjectAltName_Type.kUri;
+        value = regValidUriChars.exec(entry.substring(4));
+      } else {
+        console.warn('Invalid Subject Alternative Name Match type ' + entry);
+        return null;
+      }
+      if (!value || value.length !== 1) {
+        console.warn('Invalid Subject Alternative Name Match value ' + entry);
+        return null;
+      }
+      result.push(/* @type {!chromeos.networkConfig.mojom.SubjectAltName} */ {
+        type: type,
+        value: value[0]
+      });
+    }
+    return result;
+  }
 }
+
+/**
+ * The value of ApnProperties.attach must be equivalent to this value
+ * in order for an Attach APN to occur.
+ */
+OncMojo.USE_ATTACH_APN_NAME = 'attach';
 
 /** @typedef {chromeos.networkConfig.mojom.DeviceStateProperties} */
 OncMojo.DeviceStateProperties;
@@ -1254,7 +1445,7 @@ OncMojo.ManagedProperty;
  *   ipAddress: (string|undefined),
  *   nameServers: (Array<string>|undefined),
  *   netmask: (string|undefined),
- *   type: (string|undefined),
+ *   type: !chromeos.networkConfig.mojom.IPConfigType,
  *   webProxyAutoDiscoveryUrl: (string|undefined),
  * }}
  */

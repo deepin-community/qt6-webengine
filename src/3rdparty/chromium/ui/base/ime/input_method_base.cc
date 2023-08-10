@@ -4,9 +4,12 @@
 
 #include "ui/base/ime/input_method_base.h"
 
+#include <tuple>
+
 #include "base/bind.h"
 #include "base/callback_helpers.h"
 #include "base/check.h"
+#include "base/observer_list.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "ui/base/ime/input_method_delegate.h"
@@ -41,10 +44,18 @@ void InputMethodBase::OnFocus() {
 void InputMethodBase::OnBlur() {
 }
 
-#if defined(OS_WIN)
+void InputMethodBase::OnTouch(ui::EventPointerType pointerType) {}
+
+#if BUILDFLAG(IS_WIN)
 bool InputMethodBase::OnUntranslatedIMEMessage(
-    const MSG event,
+    const CHROME_MSG event,
     InputMethod::NativeEventResult* result) {
+  return false;
+}
+
+void InputMethodBase::OnInputLocaleChanged() {}
+
+bool InputMethodBase::IsInputLocaleCJK() const {
   return false;
 }
 #endif
@@ -69,17 +80,10 @@ void InputMethodBase::SetOnScreenKeyboardBounds(const gfx::Rect& new_bounds) {
     text_input_client_->EnsureCaretNotInRect(keyboard_bounds_);
 }
 
-void InputMethodBase::OnTextInputTypeChanged(const TextInputClient* client) {
+void InputMethodBase::OnTextInputTypeChanged(TextInputClient* client) {
   if (!IsTextInputClientFocused(client))
     return;
   NotifyTextInputStateChanged(client);
-}
-
-void InputMethodBase::OnInputLocaleChanged() {
-}
-
-bool InputMethodBase::IsInputLocaleCJK() const {
-  return false;
 }
 
 TextInputType InputMethodBase::GetTextInputType() const {
@@ -87,31 +91,17 @@ TextInputType InputMethodBase::GetTextInputType() const {
   return client ? client->GetTextInputType() : TEXT_INPUT_TYPE_NONE;
 }
 
-TextInputMode InputMethodBase::GetTextInputMode() const {
-  TextInputClient* client = GetTextInputClient();
-  return client ? client->GetTextInputMode() : TEXT_INPUT_MODE_DEFAULT;
-}
-
-int InputMethodBase::GetTextInputFlags() const {
-  TextInputClient* client = GetTextInputClient();
-  return client ? client->GetTextInputFlags() : 0;
-}
-
-bool InputMethodBase::CanComposeInline() const {
-  TextInputClient* client = GetTextInputClient();
-  return client ? client->CanComposeInline() : true;
-}
-
-bool InputMethodBase::GetClientShouldDoLearning() {
-  TextInputClient* client = GetTextInputClient();
-  return client && client->ShouldDoLearning();
-}
-
-void InputMethodBase::ShowVirtualKeyboardIfEnabled() {
+void InputMethodBase::SetVirtualKeyboardVisibilityIfEnabled(bool should_show) {
   for (InputMethodObserver& observer : observer_list_)
-    observer.OnShowVirtualKeyboardIfEnabled();
-  if (auto* keyboard = GetVirtualKeyboardController())
-    keyboard->DisplayVirtualKeyboard();
+    observer.OnVirtualKeyboardVisibilityChangedIfEnabled(should_show);
+  auto* keyboard = GetVirtualKeyboardController();
+  if (keyboard) {
+    if (should_show) {
+      keyboard->DisplayVirtualKeyboard();
+    } else {
+      keyboard->DismissVirtualKeyboard();
+    }
+  }
 }
 
 void InputMethodBase::AddObserver(InputMethodObserver* observer) {
@@ -198,7 +188,7 @@ std::vector<gfx::Rect> InputMethodBase::GetCompositionBounds(
 bool InputMethodBase::SendFakeProcessKeyEvent(bool pressed) const {
   KeyEvent evt(pressed ? ET_KEY_PRESSED : ET_KEY_RELEASED,
                pressed ? VKEY_PROCESSKEY : VKEY_UNKNOWN, EF_IME_FABRICATED_KEY);
-  ignore_result(DispatchKeyEventPostIME(&evt));
+  std::ignore = DispatchKeyEventPostIME(&evt);
   return evt.stopped_propagation();
 }
 

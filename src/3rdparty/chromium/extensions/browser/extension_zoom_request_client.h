@@ -5,9 +5,6 @@
 #ifndef EXTENSIONS_BROWSER_EXTENSION_ZOOM_REQUEST_CLIENT_H_
 #define EXTENSIONS_BROWSER_EXTENSION_ZOOM_REQUEST_CLIENT_H_
 
-#include <memory>
-
-#include "base/macros.h"
 #include "components/zoom/zoom_controller.h"
 #include "extensions/common/extension.h"
 
@@ -23,6 +20,10 @@ class ExtensionZoomRequestClient : public zoom::ZoomRequestClient {
  public:
   explicit ExtensionZoomRequestClient(scoped_refptr<const Extension> extension);
 
+  ExtensionZoomRequestClient(const ExtensionZoomRequestClient&) = delete;
+  ExtensionZoomRequestClient& operator=(const ExtensionZoomRequestClient&) =
+      delete;
+
   bool ShouldSuppressBubble() const override;
   const Extension* extension() const { return extension_.get(); }
 
@@ -31,8 +32,6 @@ class ExtensionZoomRequestClient : public zoom::ZoomRequestClient {
 
  private:
   scoped_refptr<const Extension> extension_;
-
-  DISALLOW_COPY_AND_ASSIGN(ExtensionZoomRequestClient);
 };
 
 }  // namespace extensions

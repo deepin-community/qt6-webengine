@@ -7,10 +7,9 @@
 
 #include <memory>
 
-#include "base/compiler_specific.h"
 #include "base/gtest_prod_util.h"
-#include "base/macros.h"
-#include "base/time/time.h"
+#include "base/memory/raw_ptr.h"
+#include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/gfx/font_list.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/views/bubble/bubble_border.h"
@@ -18,7 +17,6 @@
 #include "ui/views/controls/label.h"
 #include "ui/views/controls/progress_bar.h"
 #include "ui/views/input_event_activation_protector.h"
-#include "ui/views/metadata/metadata_header_macros.h"
 #include "ui/views/window/non_client_view.h"
 
 namespace gfx {
@@ -44,7 +42,7 @@ class VIEWS_EXPORT BubbleFrameView : public NonClientFrameView {
   ~BubbleFrameView() override;
 
   static std::unique_ptr<Label> CreateDefaultTitleLabel(
-      const base::string16& title_text);
+      const std::u16string& title_text);
 
   // Creates a close button used in the corner of the dialog.
   static std::unique_ptr<Button> CreateCloseButton(
@@ -65,6 +63,7 @@ class VIEWS_EXPORT BubbleFrameView : public NonClientFrameView {
   void UpdateWindowIcon() override;
   void UpdateWindowTitle() override;
   void SizeConstraintsChanged() override;
+  void InsertClientView(ClientView* client_view) override;
 
   // Sets a custom view to be the dialog title instead of the |default_title_|
   // label. If there is an existing title view it will be deleted.
@@ -72,10 +71,10 @@ class VIEWS_EXPORT BubbleFrameView : public NonClientFrameView {
 
   // Updates the current progress value of |progress_indicator_|. If progress is
   // absent, hides |the progress_indicator|.
-  void SetProgress(base::Optional<double> progress);
+  void SetProgress(absl::optional<double> progress);
   // Returns the current progress value of |progress_indicator_| if
   // |progress_indicator_| is visible.
-  base::Optional<double> GetProgress() const;
+  absl::optional<double> GetProgress() const;
 
   // View:
   gfx::Size CalculatePreferredSize() const override;
@@ -93,7 +92,7 @@ class VIEWS_EXPORT BubbleFrameView : public NonClientFrameView {
   void SetBubbleBorder(std::unique_ptr<BubbleBorder> border);
 
   const View* title() const {
-    return custom_title_ ? custom_title_ : default_title_;
+    return custom_title_ ? custom_title_.get() : default_title_.get();
   }
   View* title() {
     return const_cast<View*>(
@@ -140,6 +139,10 @@ class VIEWS_EXPORT BubbleFrameView : public NonClientFrameView {
   void SetArrow(BubbleBorder::Arrow arrow);
   BubbleBorder::Arrow GetArrow() const;
 
+  // Specify whether the frame should include a visible, caret-shaped arrow.
+  void SetDisplayVisibleArrow(bool display_visible_arrow);
+  bool GetDisplayVisibleArrow() const;
+
   // Set the background color of the bubble border.
   void SetBackgroundColor(SkColor color);
   SkColor GetBackgroundColor() const;
@@ -168,6 +171,8 @@ class VIEWS_EXPORT BubbleFrameView : public NonClientFrameView {
   // See IsPossiblyUnintendedInteraction().
   void ResetViewShownTimeStampForTesting();
 
+  BubbleBorder* bubble_border() const { return bubble_border_; }
+
  protected:
   // Returns the available screen bounds if the frame were to show in |rect|.
   virtual gfx::Rect GetAvailableScreenBounds(const gfx::Rect& rect) const;
@@ -188,8 +193,6 @@ class VIEWS_EXPORT BubbleFrameView : public NonClientFrameView {
   // inset present on the client view and the presence of header and footer
   // views.
   gfx::RoundedCornersF GetClientCornerRadii() const;
-
-  BubbleBorder* bubble_border_for_testing() const { return bubble_border_; }
 
  private:
   FRIEND_TEST_ALL_PREFIXES(BubbleFrameViewTest, RemoveFootnoteView);
@@ -248,7 +251,7 @@ class VIEWS_EXPORT BubbleFrameView : public NonClientFrameView {
   void UpdateClientLayerCornerRadius();
 
   // The bubble border.
-  BubbleBorder* bubble_border_ = nullptr;
+  raw_ptr<BubbleBorder> bubble_border_ = nullptr;
 
   // Margins around the title label.
   gfx::Insets title_margins_;
@@ -260,29 +263,29 @@ class VIEWS_EXPORT BubbleFrameView : public NonClientFrameView {
   gfx::Insets footnote_margins_;
 
   // The optional title icon.
-  ImageView* title_icon_ = nullptr;
+  raw_ptr<ImageView> title_icon_ = nullptr;
 
   // One of these fields is used as the dialog title. If SetTitleView is called
   // the custom title view is stored in |custom_title_| and this class assumes
   // ownership. Otherwise |default_title_| is used.
-  Label* default_title_ = nullptr;
-  View* custom_title_ = nullptr;
+  raw_ptr<Label> default_title_ = nullptr;
+  raw_ptr<View> custom_title_ = nullptr;
 
   // The optional close button (the X).
-  Button* close_ = nullptr;
+  raw_ptr<Button> close_ = nullptr;
 
   // The optional minimize button.
-  Button* minimize_ = nullptr;
+  raw_ptr<Button> minimize_ = nullptr;
 
   // The optional progress bar. Used to indicate bubble pending state. By
   // default it is invisible.
-  ProgressBar* progress_indicator_ = nullptr;
+  raw_ptr<ProgressBar> progress_indicator_ = nullptr;
 
   // The optional header view.
-  View* header_view_ = nullptr;
+  raw_ptr<View> header_view_ = nullptr;
 
   // A view to contain the footnote view, if it exists.
-  FootnoteContainerView* footnote_container_ = nullptr;
+  raw_ptr<FootnoteContainerView> footnote_container_ = nullptr;
 
   // Set preference for how the arrow will be adjusted if the window is outside
   // the available bounds.

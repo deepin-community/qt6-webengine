@@ -34,7 +34,7 @@
 #include "third_party/blink/renderer/core/editing/iterators/text_iterator_behavior.h"
 #include "third_party/blink/renderer/core/editing/iterators/text_iterator_text_node_handler.h"
 #include "third_party/blink/renderer/core/editing/iterators/text_iterator_text_state.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
 namespace blink {
 
@@ -189,8 +189,6 @@ class TextIteratorAlgorithm {
   bool SkipsUnselectableContent() const {
     return behavior_.SkipsUnselectableContent();
   }
-
-  bool ForInnerText() const { return behavior_.ForInnerText(); }
 
   bool IsBetweenSurrogatePair(unsigned position) const;
 

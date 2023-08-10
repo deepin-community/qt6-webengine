@@ -6,12 +6,13 @@
 #define UI_BASE_MODELS_DIALOG_MODEL_H_
 
 #include <memory>
+#include <string>
 
 #include "base/callback.h"
 #include "base/component_export.h"
-#include "base/containers/flat_map.h"
-#include "base/strings/string16.h"
+#include "base/memory/raw_ptr.h"
 #include "base/types/pass_key.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/base/models/dialog_model_field.h"
 #include "ui/base/models/dialog_model_host.h"
 #include "ui/base/models/image_model.h"
@@ -64,11 +65,11 @@ class COMPONENT_EXPORT(UI_BASE) DialogModelDelegate {
 //
 // auto dialog_model =
 //     ui::DialogModel::Builder(std::move(model_delegate))
-//         .SetTitle(base::ASCIIToUTF16("Hello, world!"))
+//         .SetTitle(u"Hello, world!")
 //         .AddOkButton(base::BindOnce(&Delegate::OnDialogAccepted,
 //                                     base::Unretained(model_delegate_ptr)))
 //         .AddTextfield(
-//             base::ASCIIToUTF16("Name"), base::string16(),
+//             u"Name", std::u16string(),
 //             ui::DialogModelTextfield::Params().SetUniqueId(kNameTextfield))
 //         .Build();
 //
@@ -78,7 +79,7 @@ class COMPONENT_EXPORT(UI_BASE) DialogModelDelegate {
 //     std::make_unique<views::BubbleDialogModelHost>(std::move(dialog_model));
 // bubble->SetAnchorView(anchor_view);
 // views::Widget* const widget =
-//     views::BubbleDialogDelegateView::CreateBubble(bubble.release());
+//     views::BubbleDialogDelegate::CreateBubble(std::move(bubble));
 // widget->Show();
 class COMPONENT_EXPORT(UI_BASE) DialogModel final {
  public:
@@ -100,7 +101,7 @@ class COMPONENT_EXPORT(UI_BASE) DialogModel final {
 
     ~Builder();
 
-    std::unique_ptr<DialogModel> Build() WARN_UNUSED_RESULT;
+    [[nodiscard]] std::unique_ptr<DialogModel> Build();
 
     // Gets the DialogModel. Used for setting up callbacks that make use of the
     // model later once it's fully constructed. This is useful for dialogs or
@@ -122,7 +123,12 @@ class COMPONENT_EXPORT(UI_BASE) DialogModel final {
       return *this;
     }
 
-    Builder& SetTitle(base::string16 title) {
+    Builder& SetInternalName(std::string internal_name) {
+      model_->internal_name_ = std::move(internal_name);
+      return *this;
+    }
+
+    Builder& SetTitle(std::u16string title) {
       model_->title_ = std::move(title);
       return *this;
     }
@@ -147,17 +153,20 @@ class COMPONENT_EXPORT(UI_BASE) DialogModel final {
 
     // Called when the dialog is explicitly closed (Esc, close-x). Not called
     // during accept/cancel.
-    Builder& SetCloseCallback(base::OnceClosure callback) {
-      model_->close_callback_ = std::move(callback);
+    Builder& SetCloseActionCallback(base::OnceClosure callback) {
+      model_->close_action_callback_ = std::move(callback);
       return *this;
     }
 
     // TODO(pbos): Clarify and enforce (through tests) that this is called after
     // {accept,cancel,close} callbacks.
-    // Unconditionally called when the dialog closes. Called on top of
-    // {accept,cancel,close} callbacks.
-    Builder& SetWindowClosingCallback(base::OnceClosure callback) {
-      model_->window_closing_callback_ = std::move(callback);
+    // Unconditionally called when the dialog destroys. Happens after
+    // user-action callbacks (accept, cancel, close), or as a result of dialog
+    // destruction. The latter can happen without a user action, for instance as
+    // a result of the OS destroying a native Widget in which this dialog is
+    // hosted.
+    Builder& SetDialogDestroyingCallback(base::OnceClosure callback) {
+      model_->dialog_destroying_callback_ = std::move(callback);
       return *this;
     }
 
@@ -167,13 +176,16 @@ class COMPONENT_EXPORT(UI_BASE) DialogModel final {
     // result, besides the dialog closing.
     // If no |label| is provided, default strings are chosen by the
     // DialogModelHost implementation.
+    // TODO(pbos): Reconsider this API, a DialogModelHost does not need to use
+    // buttons for accepting/cancelling. Also "ok" should be "accept" to be in
+    // sync with other APIs?
     Builder& AddOkButton(
         base::OnceClosure callback,
-        base::string16 label = base::string16(),
+        std::u16string label = std::u16string(),
         const DialogModelButton::Params& params = DialogModelButton::Params());
     Builder& AddCancelButton(
         base::OnceClosure callback,
-        base::string16 label = base::string16(),
+        std::u16string label = std::u16string(),
         const DialogModelButton::Params& params = DialogModelButton::Params());
 
     // Use of the extra button in new dialogs are discouraged. If this is deemed
@@ -181,7 +193,7 @@ class COMPONENT_EXPORT(UI_BASE) DialogModel final {
     // them.
     Builder& AddDialogExtraButton(
         base::RepeatingCallback<void(const Event&)> callback,
-        base::string16 label,
+        std::u16string label,
         const DialogModelButton::Params& params = DialogModelButton::Params());
 
     // Adds body text. See DialogModel::AddBodyText().
@@ -200,7 +212,7 @@ class COMPONENT_EXPORT(UI_BASE) DialogModel final {
     }
 
     // Adds a combobox. See DialogModel::AddCombobox().
-    Builder& AddCombobox(base::string16 label,
+    Builder& AddCombobox(std::u16string label,
                          std::unique_ptr<ui::ComboboxModel> combobox_model,
                          const DialogModelCombobox::Params& params =
                              DialogModelCombobox::Params()) {
@@ -209,11 +221,19 @@ class COMPONENT_EXPORT(UI_BASE) DialogModel final {
     }
 
     // Adds a textfield. See DialogModel::AddTextfield().
-    Builder& AddTextfield(base::string16 label,
-                          base::string16 text,
+    Builder& AddTextfield(std::u16string label,
+                          std::u16string text,
                           const DialogModelTextfield::Params& params =
                               DialogModelTextfield::Params()) {
       model_->AddTextfield(std::move(label), std::move(text), params);
+      return *this;
+    }
+
+    // Adds a custom field. See DialogModel::AddCustomField().
+    Builder& AddCustomField(
+        std::unique_ptr<DialogModelCustomField::Factory> factory,
+        int unique_id = -1) {
+      model_->AddCustomField(std::move(factory), unique_id);
       return *this;
     }
 
@@ -247,16 +267,22 @@ class COMPONENT_EXPORT(UI_BASE) DialogModel final {
                        DialogModelCheckbox::Params());
 
   // Adds a labeled combobox (label: [model]) at the end of the dialog model.
-  void AddCombobox(base::string16 label,
+  void AddCombobox(std::u16string label,
                    std::unique_ptr<ui::ComboboxModel> combobox_model,
                    const DialogModelCombobox::Params& params =
                        DialogModelCombobox::Params());
 
   // Adds a labeled textfield (label: [text]) at the end of the dialog model.
-  void AddTextfield(base::string16 label,
-                    base::string16 text,
+  void AddTextfield(std::u16string label,
+                    std::u16string text,
                     const DialogModelTextfield::Params& params =
                         DialogModelTextfield::Params());
+
+  // Adds a custom field at the end of the dialog model. This is used to inject
+  // framework-specific custom UI into dialogs that are otherwise constructed as
+  // DialogModels.
+  void AddCustomField(std::unique_ptr<DialogModelCustomField::Factory> factory,
+                      int unique_id = -1);
 
   // Check for the existence of a field. Should not be used if the code path
   // expects the |unique_id| to always be present, as GetFieldByUniqueId() and
@@ -274,28 +300,33 @@ class COMPONENT_EXPORT(UI_BASE) DialogModel final {
 
   // Methods with base::PassKey<DialogModelHost> are only intended to be called
   // by the DialogModelHost implementation.
-  void OnDialogAccepted(base::PassKey<DialogModelHost>);
-  void OnDialogCancelled(base::PassKey<DialogModelHost>);
-  void OnDialogClosed(base::PassKey<DialogModelHost>);
-  void OnWindowClosing(base::PassKey<DialogModelHost>);
+  void OnDialogAcceptAction(base::PassKey<DialogModelHost>);
+  void OnDialogCancelAction(base::PassKey<DialogModelHost>);
+  void OnDialogCloseAction(base::PassKey<DialogModelHost>);
+
+  void OnDialogDestroying(base::PassKey<DialogModelHost>);
 
   // Called when added to a DialogModelHost.
   void set_host(base::PassKey<DialogModelHost>, DialogModelHost* host) {
     host_ = host;
   }
 
-  const base::Optional<bool>& override_show_close_button(
+  const absl::optional<bool>& override_show_close_button(
       base::PassKey<DialogModelHost>) const {
     return override_show_close_button_;
   }
 
-  const base::string16& title(base::PassKey<DialogModelHost>) const {
+  const std::string& internal_name(base::PassKey<DialogModelHost>) const {
+    return internal_name_;
+  }
+
+  const std::u16string& title(base::PassKey<DialogModelHost>) const {
     return title_;
   }
 
   const ImageModel& icon(base::PassKey<DialogModelHost>) const { return icon_; }
 
-  base::Optional<int> initially_focused_field(
+  absl::optional<int> initially_focused_field(
       base::PassKey<DialogModelHost>) const {
     return initially_focused_field_;
   }
@@ -336,26 +367,27 @@ class COMPONENT_EXPORT(UI_BASE) DialogModel final {
   void AddField(std::unique_ptr<DialogModelField> field);
 
   std::unique_ptr<DialogModelDelegate> delegate_;
-  DialogModelHost* host_ = nullptr;
+  raw_ptr<DialogModelHost> host_ = nullptr;
 
-  base::Optional<bool> override_show_close_button_;
+  absl::optional<bool> override_show_close_button_;
   bool close_on_deactivate_ = true;
-  base::string16 title_;
+  std::string internal_name_;
+  std::u16string title_;
   ImageModel icon_;
 
   std::vector<std::unique_ptr<DialogModelField>> fields_;
-  base::Optional<int> initially_focused_field_;
+  absl::optional<int> initially_focused_field_;
   bool is_alert_dialog_ = false;
 
-  base::Optional<DialogModelButton> ok_button_;
-  base::Optional<DialogModelButton> cancel_button_;
-  base::Optional<DialogModelButton> extra_button_;
+  absl::optional<DialogModelButton> ok_button_;
+  absl::optional<DialogModelButton> cancel_button_;
+  absl::optional<DialogModelButton> extra_button_;
 
-  base::OnceClosure accept_callback_;
-  base::OnceClosure cancel_callback_;
-  base::OnceClosure close_callback_;
+  base::OnceClosure accept_action_callback_;
+  base::OnceClosure cancel_action_callback_;
+  base::OnceClosure close_action_callback_;
 
-  base::OnceClosure window_closing_callback_;
+  base::OnceClosure dialog_destroying_callback_;
 };
 
 }  // namespace ui

@@ -6,6 +6,7 @@
 
 #include "base/bind.h"
 #include "base/callback_helpers.h"
+#include "base/containers/contains.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "dbus/bus.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
@@ -265,7 +266,7 @@ void MtpDeviceManager::OnStorageAttached(const std::string& storage_name) {
       storage_name,
       base::BindOnce(&MtpDeviceManager::OnGetStorageInfo,
                      weak_ptr_factory_.GetWeakPtr()),
-      base::DoNothing::Once());
+      base::DoNothing());
 }
 
 void MtpDeviceManager::OnStorageDetached(const std::string& storage_name) {
@@ -512,7 +513,7 @@ void MtpDeviceManager::FinishSetupOnOriginThread(
   mtp_client_->EnumerateStorages(
       base::BindOnce(&MtpDeviceManager::OnEnumerateStorages,
                      weak_ptr_factory_.GetWeakPtr()),
-      base::DoNothing::Once());
+      base::DoNothing());
 }
 
 // static

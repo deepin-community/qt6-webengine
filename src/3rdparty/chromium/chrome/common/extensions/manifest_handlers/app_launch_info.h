@@ -8,8 +8,8 @@
 #include <string>
 #include <vector>
 
-#include "base/macros.h"
 #include "chrome/common/extensions/extension_constants.h"
+#include "components/services/app_service/public/mojom/types.mojom-forward.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/manifest.h"
@@ -22,6 +22,10 @@ namespace extensions {
 class AppLaunchInfo : public Extension::ManifestData {
  public:
   AppLaunchInfo();
+
+  AppLaunchInfo(const AppLaunchInfo&) = delete;
+  AppLaunchInfo& operator=(const AppLaunchInfo&) = delete;
+
   ~AppLaunchInfo() override;
 
   // Get the local path inside the extension to use with the launcher.
@@ -35,7 +39,7 @@ class AppLaunchInfo : public Extension::ManifestData {
   // users can override the way each app launches.  See
   // ExtensionPrefs::GetLaunchContainer(), which looks at a per-app pref
   // to decide what container an app will launch in.
-  static LaunchContainer GetLaunchContainer(
+  static apps::mojom::LaunchContainer GetLaunchContainer(
       const Extension* extension);
 
   // The default size of the container when launching. Only respected for
@@ -46,38 +50,38 @@ class AppLaunchInfo : public Extension::ManifestData {
   // Get the fully resolved absolute launch URL.
   static GURL GetFullLaunchURL(const Extension* extension);
 
-  bool Parse(Extension* extension, base::string16* error);
+  bool Parse(Extension* extension, std::u16string* error);
 
  private:
-  bool LoadLaunchURL(Extension* extension, base::string16* error);
-  bool LoadLaunchContainer(Extension* extension, base::string16* error);
+  bool LoadLaunchURL(Extension* extension, std::u16string* error);
+  bool LoadLaunchContainer(Extension* extension, std::u16string* error);
   void OverrideLaunchURL(Extension* extension, GURL override_url);
 
   std::string launch_local_path_;
 
   GURL launch_web_url_;
 
-  LaunchContainer launch_container_;
+  apps::mojom::LaunchContainer launch_container_;
 
   int launch_width_;
   int launch_height_;
-
-  DISALLOW_COPY_AND_ASSIGN(AppLaunchInfo);
 };
 
 // Parses all app launch related keys in the manifest.
 class AppLaunchManifestHandler : public ManifestHandler {
  public:
   AppLaunchManifestHandler();
+
+  AppLaunchManifestHandler(const AppLaunchManifestHandler&) = delete;
+  AppLaunchManifestHandler& operator=(const AppLaunchManifestHandler&) = delete;
+
   ~AppLaunchManifestHandler() override;
 
-  bool Parse(Extension* extension, base::string16* error) override;
+  bool Parse(Extension* extension, std::u16string* error) override;
   bool AlwaysParseForType(Manifest::Type type) const override;
 
  private:
   base::span<const char* const> Keys() const override;
-
-  DISALLOW_COPY_AND_ASSIGN(AppLaunchManifestHandler);
 };
 
 }  // namespace extensions

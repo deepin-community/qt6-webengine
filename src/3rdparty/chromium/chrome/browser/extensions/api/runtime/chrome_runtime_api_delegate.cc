@@ -13,7 +13,7 @@
 #include "base/lazy_instance.h"
 #include "base/location.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/single_thread_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/tick_clock.h"
 #include "base/time/time.h"
@@ -39,10 +39,13 @@
 #include "net/base/backoff_entry.h"
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/power/power_manager_client.h"
 #include "components/user_manager/user_manager.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
+#endif
+
+#if BUILDFLAG(IS_CHROMEOS_LACROS)
+#include "chrome/browser/lacros/app_mode/kiosk_session_service_lacros.h"
 #endif
 
 using extensions::Extension;
@@ -134,7 +137,7 @@ ChromeRuntimeAPIDelegate::ChromeRuntimeAPIDelegate(
   registrar_.Add(this,
                  extensions::NOTIFICATION_EXTENSION_UPDATE_FOUND,
                  content::NotificationService::AllSources());
-  extension_registry_observer_.Add(
+  extension_registry_observation_.Observe(
       extensions::ExtensionRegistry::Get(browser_context_));
 }
 
@@ -335,9 +338,15 @@ bool ChromeRuntimeAPIDelegate::GetPlatformInfo(PlatformInfo* info) {
 
 bool ChromeRuntimeAPIDelegate::RestartDevice(std::string* error_message) {
 #if BUILDFLAG(IS_CHROMEOS_ASH)
-  if (user_manager::UserManager::Get()->IsLoggedInAsKioskApp()) {
+  if (user_manager::UserManager::Get()->IsLoggedInAsKioskApp() ||
+      user_manager::UserManager::Get()->IsLoggedInAsWebKioskApp()) {
     chromeos::PowerManagerClient::Get()->RequestRestart(
         power_manager::REQUEST_RESTART_OTHER, "chrome.runtime API");
+    return true;
+  }
+#endif
+#if BUILDFLAG(IS_CHROMEOS_LACROS)
+  if (KioskSessionServiceLacros::Get()->RestartDevice("chrome.runtime API")) {
     return true;
   }
 #endif

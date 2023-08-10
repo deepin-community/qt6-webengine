@@ -30,7 +30,7 @@ constexpr int kSigninDialogHeight = 640;
 AccountMigrationWelcomeDialog::AccountMigrationWelcomeDialog(
     const GURL gurl,
     const std::string& email)
-    : SystemWebDialogDelegate(gurl, base::string16() /* title */),
+    : SystemWebDialogDelegate(gurl, std::u16string() /* title */),
       email_(email),
       id_(gurl.spec()) {}
 
@@ -78,7 +78,7 @@ void AccountMigrationWelcomeDialog::GetDialogSize(gfx::Size* size) const {
 std::string AccountMigrationWelcomeDialog::GetDialogArgs() const {
   std::string data;
   base::DictionaryValue dialog_args;
-  dialog_args.SetString("email", email_);
+  dialog_args.SetStringKey("email", email_);
   base::JSONWriter::Write(dialog_args, &data);
   return data;
 }

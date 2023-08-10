@@ -10,8 +10,10 @@
 #include <sched.h>
 #include <signal.h>
 #include <stdint.h>
+#include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/prctl.h>
+#include <sys/ptrace.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/time.h>
@@ -19,7 +21,6 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "base/macros.h"
 #include "base/notreached.h"
 #include "base/synchronization/synchronization_buildflags.h"
 #include "build/build_config.h"
@@ -34,12 +35,8 @@
 #include "sandbox/linux/system_headers/linux_syscalls.h"
 #include "sandbox/linux/system_headers/linux_time.h"
 
-// PNaCl toolchain does not provide sys/ioctl.h and sys/ptrace.h headers.
-#if !defined(OS_NACL_NONSFI)
-#include <sys/ioctl.h>
-#include <sys/ptrace.h>
-#if (defined(OS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS)) && \
-    !defined(__arm__) && !defined(__aarch64__) &&           \
+#if (BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS)) && \
+    !defined(__arm__) && !defined(__aarch64__) &&             \
     !defined(PTRACE_GET_THREAD_AREA)
 // Also include asm/ptrace-abi.h since ptrace.h in older libc (for instance
 // the one in Ubuntu 16.04 LTS) is missing PTRACE_GET_THREAD_AREA.
@@ -47,15 +44,14 @@
 // defined on aarch64, so don't try to include this on those platforms.
 #include <asm/ptrace-abi.h>
 #endif
-#endif  // !OS_NACL_NONSFI
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 
 #if !defined(F_DUPFD_CLOEXEC)
 #define F_DUPFD_CLOEXEC (F_LINUX_SPECIFIC_BASE + 6)
 #endif
 
-#endif  // defined(OS_ANDROID)
+#endif  // BUILDFLAG(IS_ANDROID)
 
 #if defined(__arm__) && !defined(MAP_STACK)
 #define MAP_STACK 0x20000  // Daisy build environment has old headers.
@@ -64,6 +60,14 @@
 #if defined(__mips__) && !defined(MAP_STACK)
 #define MAP_STACK 0x40000
 #endif
+
+// Temporary definitions for Arm's Memory Tagging Extension (MTE) and Branch
+// Target Identification (BTI).
+#if defined(ARCH_CPU_ARM64)
+#define PROT_MTE 0x20
+#define PROT_BTI 0x10
+#endif
+
 namespace {
 
 inline bool IsArchitectureX86_64() {
@@ -83,7 +87,7 @@ inline bool IsArchitectureI386() {
 }
 
 inline bool IsAndroid() {
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   return true;
 #else
   return false;
@@ -123,7 +127,6 @@ using sandbox::bpf_dsl::ResultExpr;
 
 namespace sandbox {
 
-#if !defined(OS_NACL_NONSFI)
 // Allow Glibc's and Android pthread creation flags, crash on any other
 // thread creation attempts and EPERM attempts to use neither
 // CLONE_VM nor CLONE_THREAD (all fork implementations), unless CLONE_VFORK is
@@ -159,15 +162,19 @@ ResultExpr RestrictCloneToThreadsAndEPERMFork() {
       .Else(CrashSIGSYSClone());
 }
 
+#ifndef PR_PAC_RESET_KEYS
+#define PR_PAC_RESET_KEYS 54
+#endif
+
 ResultExpr RestrictPrctl() {
   // Will need to add seccomp compositing in the future. PR_SET_PTRACER is
   // used by breakpad but not needed anymore.
   const Arg<int> option(0);
   return Switch(option)
       .CASES((PR_GET_NAME, PR_SET_NAME, PR_GET_DUMPABLE, PR_SET_DUMPABLE
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
               , PR_SET_VMA, PR_SET_PTRACER, PR_SET_TIMERSLACK
-              , PR_GET_NO_NEW_PRIVS
+              , PR_GET_NO_NEW_PRIVS, PR_PAC_RESET_KEYS
 
 // Enable PR_SET_TIMERSLACK_PID, an Android custom prctl which is used in:
 // https://android.googlesource.com/platform/system/core/+/lollipop-release/libcutils/sched_policy.c.
@@ -195,10 +202,11 @@ ResultExpr RestrictPrctl() {
               , PR_SET_TIMERSLACK_PID_1
               , PR_SET_TIMERSLACK_PID_2
               , PR_SET_TIMERSLACK_PID_3
-#endif  // defined(OS_ANDROID)
+#endif  // BUILDFLAG(IS_ANDROID)
               ),
              Allow())
-      .Default(CrashSIGSYSPrctl());
+      .Default(
+          If(option == PR_SET_PTRACER, Error(EPERM)).Else(CrashSIGSYSPrctl()));
 }
 
 ResultExpr RestrictIoctl() {
@@ -225,7 +233,15 @@ ResultExpr RestrictMprotectFlags() {
   // "denied" mask because of the negation operator.
   // Significantly, we don't permit weird undocumented flags such as
   // PROT_GROWSDOWN.
-  const uint64_t kAllowedMask = PROT_READ | PROT_WRITE | PROT_EXEC;
+#if defined(ARCH_CPU_ARM64)
+  // Allows PROT_MTE and PROT_BTI (as explained higher up) on only Arm
+  // platforms.
+  const uint64_t kArchSpecificFlags = PROT_MTE | PROT_BTI;
+#else
+  const uint64_t kArchSpecificFlags = 0;
+#endif
+  const uint64_t kAllowedMask =
+      PROT_READ | PROT_WRITE | PROT_EXEC | kArchSpecificFlags;
   const Arg<int> prot(2);
   return If((prot & ~kAllowedMask) == 0, Allow()).Else(CrashSIGSYS());
 }
@@ -245,7 +261,13 @@ ResultExpr RestrictFcntlCommands() {
 
   const uint64_t kAllowedMask = O_ACCMODE | O_APPEND | O_NONBLOCK | O_SYNC |
                                 kOLargeFileFlag | O_CLOEXEC | O_NOATIME;
-  const uint64_t kAllowedSeals = F_SEAL_SEAL | F_SEAL_GROW | F_SEAL_SHRINK;
+#if BUILDFLAG(IS_ANDROID)
+  const uint64_t kOsSpecificSeals = F_SEAL_FUTURE_WRITE;
+#else
+  const uint64_t kOsSpecificSeals = 0;
+#endif
+  const uint64_t kAllowedSeals = F_SEAL_SEAL | F_SEAL_GROW | F_SEAL_SHRINK |
+                                 kOsSpecificSeals;
   // clang-format off
   return Switch(cmd)
       .CASES((F_GETFL,
@@ -332,6 +354,10 @@ ResultExpr RestrictSchedTarget(pid_t target_pid, int sysno) {
     case __NR_sched_getparam:
     case __NR_sched_getscheduler:
     case __NR_sched_rr_get_interval:
+#if defined(__i386__) || defined(__arm__) || \
+    (defined(ARCH_CPU_MIPS_FAMILY) && defined(ARCH_CPU_32_BITS))
+    case __NR_sched_rr_get_interval_time64:
+#endif
     case __NR_sched_setaffinity:
     case __NR_sched_setattr:
     case __NR_sched_setparam:
@@ -357,7 +383,6 @@ ResultExpr RestrictGetrusage() {
   return If(AnyOf(who == RUSAGE_SELF, who == RUSAGE_THREAD), Allow())
          .Else(CrashSIGSYS());
 }
-#endif  // !defined(OS_NACL_NONSFI)
 
 ResultExpr RestrictClockID() {
   static_assert(4 == sizeof(clockid_t), "clockid_t is not 32bit");
@@ -379,7 +404,7 @@ ResultExpr RestrictClockID() {
               CLOCK_THREAD_CPUTIME_ID),
              Allow())
       .Default(CrashSIGSYS()))
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
     // Allow per-pid and per-tid clocks.
     .ElseIf((clockid & CPUCLOCK_CLOCK_MASK) != CLOCKFD, Allow())
 #endif
@@ -411,7 +436,6 @@ ResultExpr RestrictPrlimitToGetrlimit(pid_t target_pid) {
       .Else(Error(EPERM));
 }
 
-#if !defined(OS_NACL_NONSFI)
 ResultExpr RestrictPtrace() {
   const Arg<int> request(0);
 #if defined(__aarch64__)
@@ -439,6 +463,10 @@ ResultExpr RestrictPtrace() {
 #endif
       .Default(CrashSIGSYSPtrace());
 }
-#endif  // defined(OS_NACL_NONSFI)
+
+ResultExpr RestrictPkeyAllocFlags() {
+  const Arg<int> flags(0);
+  return If(flags == 0, Allow()).Else(CrashSIGSYS());
+}
 
 }  // namespace sandbox.

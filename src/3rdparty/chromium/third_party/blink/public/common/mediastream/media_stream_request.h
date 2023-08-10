@@ -11,12 +11,12 @@
 #include <string>
 #include <vector>
 
-#include "base/callback_forward.h"
 #include "base/unguessable_token.h"
 #include "media/base/audio_parameters.h"
 #include "media/base/video_facing.h"
 #include "media/capture/video/video_capture_device_descriptor.h"
 #include "media/mojo/mojom/display_media_information.mojom.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/common/common_export.h"
 #include "third_party/blink/public/mojom/mediastream/media_stream.mojom-shared.h"
 
@@ -28,6 +28,7 @@ enum MediaStreamRequestType {
   MEDIA_DEVICE_ACCESS = 0,
   MEDIA_DEVICE_UPDATE,
   MEDIA_GENERATE_STREAM,
+  MEDIA_GET_OPEN_DEVICE,
   MEDIA_OPEN_DEVICE_PEPPER_ONLY  // Only used in requests made by Pepper.
 };
 
@@ -58,7 +59,7 @@ struct BLINK_COMMON_EXPORT MediaStreamDevice {
       const std::string& name,
       const media::VideoCaptureControlSupport& control_support,
       media::VideoFacingMode facing,
-      const base::Optional<std::string>& group_id = base::nullopt);
+      const absl::optional<std::string>& group_id = absl::nullopt);
   MediaStreamDevice(mojom::MediaStreamType type,
                     const std::string& id,
                     const std::string& name,
@@ -76,14 +77,14 @@ struct BLINK_COMMON_EXPORT MediaStreamDevice {
     return session_id_ ? *session_id_ : base::UnguessableToken();
   }
 
-  const base::Optional<base::UnguessableToken>& serializable_session_id()
+  const absl::optional<base::UnguessableToken>& serializable_session_id()
       const {
     return session_id_;
   }
 
   void set_session_id(const base::UnguessableToken& session_id) {
     session_id_ = session_id.is_empty()
-                      ? base::Optional<base::UnguessableToken>()
+                      ? absl::optional<base::UnguessableToken>()
                       : session_id;
   }
 
@@ -100,11 +101,11 @@ struct BLINK_COMMON_EXPORT MediaStreamDevice {
   media::VideoFacingMode video_facing;
 
   // The device's group ID.
-  base::Optional<std::string> group_id;
+  absl::optional<std::string> group_id;
 
   // The device id of a matched output device if any (otherwise empty).
   // Only applicable to audio devices.
-  base::Optional<std::string> matched_output_device_id;
+  absl::optional<std::string> matched_output_device_id;
 
   // The device's "friendly" name. Not guaranteed to be unique.
   std::string name;
@@ -114,12 +115,12 @@ struct BLINK_COMMON_EXPORT MediaStreamDevice {
   media::AudioParameters input =
       media::AudioParameters::UnavailableDeviceParams();
 
-  // This field is optional and available only for display media devices.
-  base::Optional<media::mojom::DisplayMediaInformationPtr> display_media_info;
+  // This field is only non-null for display media devices.
+  media::mojom::DisplayMediaInformationPtr display_media_info;
 
  private:
   // Id for this capture session. Unique for all sessions of the same type.
-  base::Optional<base::UnguessableToken> session_id_;  // = kNoId;
+  absl::optional<base::UnguessableToken> session_id_;  // = kNoId;
 };
 
 using MediaStreamDevices = std::vector<MediaStreamDevice>;

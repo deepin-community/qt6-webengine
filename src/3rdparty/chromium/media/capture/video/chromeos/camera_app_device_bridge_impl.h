@@ -28,6 +28,10 @@ class CAPTURE_EXPORT CameraAppDeviceBridgeImpl
 
   CameraAppDeviceBridgeImpl();
 
+  CameraAppDeviceBridgeImpl(const CameraAppDeviceBridgeImpl&) = delete;
+  CameraAppDeviceBridgeImpl& operator=(const CameraAppDeviceBridgeImpl&) =
+      delete;
+
   ~CameraAppDeviceBridgeImpl() override;
 
   static CameraAppDeviceBridgeImpl* GetInstance();
@@ -43,6 +47,10 @@ class CAPTURE_EXPORT CameraAppDeviceBridgeImpl
 
   void OnDeviceMojoDisconnected(const std::string& device_id);
 
+  void InvalidateDevicePtrsOnDeviceIpcThread(const std::string& device_id,
+                                             bool should_disable_new_ptrs,
+                                             base::OnceClosure callback);
+
   void SetCameraInfoGetter(CameraInfoGetter camera_info_getter);
 
   void UnsetCameraInfoGetter();
@@ -56,6 +64,8 @@ class CAPTURE_EXPORT CameraAppDeviceBridgeImpl
       const std::string& device_id);
 
   void RemoveCameraAppDevice(const std::string& device_id);
+
+  void RemoveIpcTaskRunner(const std::string& device_id);
 
   // cros::mojom::CameraAppDeviceBridge implementations.
   void GetCameraAppDevice(const std::string& device_id,
@@ -91,8 +101,6 @@ class CAPTURE_EXPORT CameraAppDeviceBridgeImpl
   base::Lock task_runner_map_lock_;
   base::flat_map<std::string, scoped_refptr<base::SingleThreadTaskRunner>>
       ipc_task_runners_ GUARDED_BY(task_runner_map_lock_);
-
-  DISALLOW_COPY_AND_ASSIGN(CameraAppDeviceBridgeImpl);
 };
 
 }  // namespace media

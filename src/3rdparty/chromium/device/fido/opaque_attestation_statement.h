@@ -8,7 +8,6 @@
 #include <string>
 
 #include "base/component_export.h"
-#include "base/macros.h"
 #include "components/cbor/values.h"
 #include "device/fido/attestation_statement.h"
 
@@ -20,18 +19,21 @@ class COMPONENT_EXPORT(DEVICE_FIDO) OpaqueAttestationStatement
  public:
   OpaqueAttestationStatement(std::string attestation_format,
                              cbor::Value attestation_statement_map);
+
+  OpaqueAttestationStatement(const OpaqueAttestationStatement&) = delete;
+  OpaqueAttestationStatement& operator=(const OpaqueAttestationStatement&) =
+      delete;
+
   ~OpaqueAttestationStatement() override;
 
   // AttestationStatement:
   cbor::Value AsCBOR() const override;
   bool IsSelfAttestation() const override;
   bool IsAttestationCertificateInappropriatelyIdentifying() const override;
-  base::Optional<base::span<const uint8_t>> GetLeafCertificate() const override;
+  absl::optional<base::span<const uint8_t>> GetLeafCertificate() const override;
 
  private:
   cbor::Value attestation_statement_map_;
-
-  DISALLOW_COPY_AND_ASSIGN(OpaqueAttestationStatement);
 };
 
 }  // namespace device

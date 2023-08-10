@@ -34,7 +34,6 @@ namespace blink {
 
 class CSSParserContext;
 class CSSSelectorList;
-class Node;
 
 // This class represents a simple selector for a StyleRule.
 
@@ -106,23 +105,9 @@ class CORE_EXPORT CSSSelector {
   static constexpr unsigned kClassLikeSpecificity = 0x000100;
   static constexpr unsigned kTagSpecificity = 0x000001;
 
-  // TODO(crbug.com/1143404): Fix :host pseudos and remove this enum.
-  enum class SpecificityMode {
-    // Normal mode currently treats :host() and :host-context() as zero.
-    // (The actual specificity is determined dynamically during selector
-    // matching).
-    kNormal,
-    // This mode calculates the specificity for :host() and :host-context()
-    // like it's calculated for :is(), i.e. the specificity is that of the
-    // most specific argument.
-    //
-    // This mode is intended for use-counting purposes only.
-    kIncludeHostPseudos
-  };
-
   // http://www.w3.org/TR/css3-selectors/#specificity
   // We use 256 as the base of the specificity number system.
-  unsigned Specificity(SpecificityMode = SpecificityMode::kNormal) const;
+  unsigned Specificity() const;
 
   /* how the attribute value has to match.... Default is Exact */
   enum MatchType {
@@ -171,6 +156,15 @@ class CORE_EXPORT CSSSelector {
     // matching a ::part in shadow-including descendant tree for #host in
     // "#host::part(button)".
     kShadowPart,
+
+    // leftmost "Space" combinator of relative selector
+    kRelativeDescendant,
+    // leftmost > combinator of relative selector
+    kRelativeChild,
+    // leftmost + combinator of relative selector
+    kRelativeDirectAdjacent,
+    // leftmost ~ combinator of relative selector
+    kRelativeIndirectAdjacent
   };
 
   enum PseudoType {
@@ -198,6 +192,7 @@ class CORE_EXPORT CSSSelector {
     kPseudoAnyLink,
     kPseudoWebkitAnyLink,
     kPseudoAutofill,
+    kPseudoWebKitAutofill,
     kPseudoAutofillPreviewed,
     kPseudoAutofillSelected,
     kPseudoHover,
@@ -224,6 +219,7 @@ class CORE_EXPORT CSSSelector {
     kPseudoAfter,
     kPseudoMarker,
     kPseudoModal,
+    kPseudoSelectorFragmentAnchor,
     kPseudoBackdrop,
     kPseudoLang,
     kPseudoNot,
@@ -259,7 +255,9 @@ class CORE_EXPORT CSSSelector {
     kPseudoFullScreen,
     kPseudoFullScreenAncestor,
     kPseudoFullscreen,
+    kPseudoPaused,
     kPseudoPictureInPicture,
+    kPseudoPlaying,
     kPseudoInRange,
     kPseudoOutOfRange,
     kPseudoXrOverlay,
@@ -286,8 +284,27 @@ class CORE_EXPORT CSSSelector {
     kPseudoVideoPersistentAncestor,
     kPseudoTargetText,
     kPseudoDir,
+    kPseudoHighlight,
     kPseudoSpellingError,
     kPseudoGrammarError,
+    kPseudoHas,
+
+    // TODO(blee@igalia.com) Need to clarify the :scope dependency in relative
+    // selector definition.
+    // - spec : https://www.w3.org/TR/selectors-4/#relative
+    // - csswg issue : https://github.com/w3c/csswg-drafts/issues/6399
+    kPseudoRelativeLeftmost,
+
+    // The following selectors are used to target pseudo elements created for
+    // DocumentTransition.
+    // See
+    // https://github.com/WICG/shared-element-transitions/blob/main/explainer.md
+    // for details.
+    kPseudoPageTransition,
+    kPseudoPageTransitionContainer,
+    kPseudoPageTransitionImageWrapper,
+    kPseudoPageTransitionOutgoingImage,
+    kPseudoPageTransitionIncomingImage,
   };
 
   enum class AttributeMatchType {
@@ -305,9 +322,7 @@ class CORE_EXPORT CSSSelector {
                         bool has_arguments,
                         CSSParserMode);
   void UpdatePseudoPage(const AtomicString&);
-
-  static PseudoType ParsePseudoType(const AtomicString&, bool has_arguments);
-  static PseudoId ParsePseudoId(const String&, const Node*);
+  static PseudoType NameToPseudoType(const AtomicString&, bool has_arguments);
   static PseudoId GetPseudoId(PseudoType);
 
   // Selectors are kept in an array by CSSSelectorList. The next component of
@@ -341,6 +356,11 @@ class CORE_EXPORT CSSSelector {
   const Vector<AtomicString>* PartNames() const {
     return has_rare_data_ ? data_.rare_data_->part_names_.get() : nullptr;
   }
+  bool ContainsPseudoInsideHasPseudoClass() const {
+    return has_rare_data_ ? data_.rare_data_->bits_
+                                .contains_pseudo_inside_has_pseudo_class_
+                          : false;
+  }
 
 #ifndef NDEBUG
   void Show() const;
@@ -353,6 +373,7 @@ class CORE_EXPORT CSSSelector {
   void SetArgument(const AtomicString&);
   void SetSelectorList(std::unique_ptr<CSSSelectorList>);
   void SetPartNames(std::unique_ptr<Vector<AtomicString>>);
+  void SetContainsPseudoInsideHasPseudoClass();
 
   void SetNth(int a, int b);
   bool MatchNth(unsigned count) const;
@@ -416,9 +437,10 @@ class CORE_EXPORT CSSSelector {
   bool IsTreeAbidingPseudoElement() const;
   bool IsAllowedAfterPart() const;
 
-  bool HasSlottedPseudo() const;
   // Returns true if the immediately preceeding simple selector is ::part.
   bool FollowsPart() const;
+  // Returns true if the immediately preceeding simple selector is ::slotted.
+  bool FollowsSlotted() const;
 
   static String FormatPseudoTypeForDebugging(PseudoType);
 
@@ -439,8 +461,7 @@ class CORE_EXPORT CSSSelector {
               pseudo_type);  // using a bitfield.
   }
 
-  unsigned SpecificityForOneSelector(
-      SpecificityMode = SpecificityMode::kNormal) const;
+  unsigned SpecificityForOneSelector() const;
   unsigned SpecificityForPage() const;
   const CSSSelector* SerializeCompound(StringBuilder&) const;
 
@@ -466,6 +487,9 @@ class CORE_EXPORT CSSSelector {
       } nth_;
       AttributeMatchType
           attribute_match_;  // used for attribute selector (with value)
+
+      // Used for :has() with pseudos in its argument. e.g. :has(:hover)
+      bool contains_pseudo_inside_has_pseudo_class_;
     } bits_;
     QualifiedName attribute_;  // used for attribute selector
     AtomicString argument_;    // Used for :contains, :lang, :nth-*

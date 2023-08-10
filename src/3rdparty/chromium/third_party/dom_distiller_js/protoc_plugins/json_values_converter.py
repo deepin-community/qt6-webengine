@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # Copyright 2016 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
@@ -175,7 +175,7 @@ class CppConverterWriter(writer.CodeWriter):
         'if (!value->is_list()) {{\n'
         '  goto error;\n'
         '}}\n'
-        'for (const auto& element : value->GetList()) {{\n'
+        'for (const auto& element : value->GetListDeprecated()) {{\n'
     )
 
     with self.AddIndent():
@@ -235,7 +235,8 @@ def SetBinaryStdio():
 
 
 def ReadRequestFromStdin():
-  data = sys.stdin.read()
+  stream = sys.stdin if sys.version_info[0] < 3 else sys.stdin.buffer
+  data = stream.read()
   return plugin_protos.PluginRequestFromString(data)
 
 

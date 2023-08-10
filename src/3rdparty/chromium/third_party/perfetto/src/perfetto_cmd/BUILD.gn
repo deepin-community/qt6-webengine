@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import("../../gn/perfetto.gni")
+import("../../gn/perfetto_cc_proto_descriptor.gni")
 import("../../gn/proto_library.gni")
 import("../../gn/test.gni")
 
@@ -44,10 +45,11 @@ executable("trigger_perfetto") {
 # is shared both by the executable and tests.
 source_set("perfetto_cmd") {
   public_deps = [
-    ":protos",
+    ":protos_cpp",
     "../../include/perfetto/ext/traced",
   ]
   deps = [
+    ":gen_cc_config_descriptor",
     ":trigger_producer",
     "../../gn:default_deps",
     "../../protos/perfetto/common:cpp",
@@ -70,7 +72,6 @@ source_set("perfetto_cmd") {
     "pbtxt_to_pb.h",
     "perfetto_cmd.cc",
     "perfetto_cmd.h",
-    "perfetto_config.descriptor.h",
     "rate_limiter.cc",
     "rate_limiter.h",
   ]
@@ -80,9 +81,14 @@ source_set("perfetto_cmd") {
   }
 }
 
+perfetto_cc_proto_descriptor("gen_cc_config_descriptor") {
+  descriptor_name = "config.descriptor"
+  descriptor_target = "../../protos/perfetto/config:descriptor"
+}
+
 source_set("trigger_perfetto_cmd") {
   public_deps = [
-    ":protos",
+    ":protos_cpp",
     "../../include/perfetto/ext/traced",
   ]
   deps = [
@@ -107,8 +113,11 @@ source_set("trigger_producer") {
   ]
 }
 
-perfetto_proto_library("protos") {
-  proto_generators = [ "cpp" ]
+perfetto_proto_library("protos_@TYPE@") {
+  proto_generators = [
+    "cpp",
+    "source_set",
+  ]
   sources = [ "perfetto_cmd_state.proto" ]
   proto_path = perfetto_root_path
 }

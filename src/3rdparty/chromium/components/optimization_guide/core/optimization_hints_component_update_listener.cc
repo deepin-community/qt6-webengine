@@ -5,6 +5,8 @@
 #include "components/optimization_guide/core/optimization_hints_component_update_listener.h"
 
 #include "base/metrics/histogram_functions.h"
+#include "base/no_destructor.h"
+#include "base/observer_list.h"
 
 namespace optimization_guide {
 
@@ -61,7 +63,7 @@ void OptimizationHintsComponentUpdateListener::MaybeUpdateHintsComponent(
 }
 
 void OptimizationHintsComponentUpdateListener::ResetStateForTesting() {
-  hints_component_info_ = base::nullopt;
+  hints_component_info_ = absl::nullopt;
 }
 
 }  // namespace optimization_guide

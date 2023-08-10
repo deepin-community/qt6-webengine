@@ -15,10 +15,13 @@
 #include "base/mac/foundation_util.h"
 #include "base/mac/mac_util.h"
 #include "base/mac/scoped_cftyperef.h"
+#include "base/memory/read_only_shared_memory_region.h"
 #include "base/memory/ref_counted.h"
+#include "base/memory/shared_memory_mapping.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/process/kill.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_piece.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
@@ -30,6 +33,7 @@
 #include "sandbox/mac/seatbelt.h"
 #include "sandbox/mac/seatbelt_exec.h"
 #include "sandbox/policy/mac/sandbox_mac.h"
+#include "sandbox/policy/mojom/sandbox.mojom.h"
 #include "sandbox/policy/switches.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/multiprocess_func_list.h"
@@ -58,10 +62,9 @@ class SandboxMacTest : public base::MultiProcessTest {
   }
 
   void ExecuteWithParams(const std::string& procname,
-                         sandbox::policy::SandboxType sandbox_type) {
+                         sandbox::mojom::Sandbox sandbox_type) {
     std::string profile =
-        sandbox::policy::SandboxMac::GetSandboxProfile(sandbox_type) +
-        kTempDirSuffix;
+        sandbox::policy::GetSandboxProfile(sandbox_type) + kTempDirSuffix;
     sandbox::SeatbeltExecClient client;
     client.SetProfile(profile);
     SetupSandboxParameters(sandbox_type,
@@ -85,15 +88,18 @@ class SandboxMacTest : public base::MultiProcessTest {
 
   void ExecuteInAllSandboxTypes(const std::string& multiprocess_main,
                                 base::RepeatingClosure after_each) {
-    constexpr sandbox::policy::SandboxType kSandboxTypes[] = {
-        sandbox::policy::SandboxType::kAudio,
-        sandbox::policy::SandboxType::kCdm,
-        sandbox::policy::SandboxType::kGpu,
-        sandbox::policy::SandboxType::kNaClLoader,
-        sandbox::policy::SandboxType::kPpapi,
-        sandbox::policy::SandboxType::kPrintCompositor,
-        sandbox::policy::SandboxType::kRenderer,
-        sandbox::policy::SandboxType::kUtility,
+    constexpr sandbox::mojom::Sandbox kSandboxTypes[] = {
+        sandbox::mojom::Sandbox::kAudio,
+        sandbox::mojom::Sandbox::kCdm,
+        sandbox::mojom::Sandbox::kGpu,
+        sandbox::mojom::Sandbox::kNaClLoader,
+        sandbox::mojom::Sandbox::kPpapi,
+        sandbox::mojom::Sandbox::kPrintBackend,
+        sandbox::mojom::Sandbox::kPrintCompositor,
+        sandbox::mojom::Sandbox::kRenderer,
+        sandbox::mojom::Sandbox::kService,
+        sandbox::mojom::Sandbox::kServiceWithJit,
+        sandbox::mojom::Sandbox::kUtility,
     };
 
     for (const auto type : kSandboxTypes) {
@@ -145,8 +151,7 @@ MULTIPROCESS_TEST_MAIN(RendererWriteProcess) {
 }
 
 TEST_F(SandboxMacTest, RendererCannotWriteHomeDir) {
-  ExecuteWithParams("RendererWriteProcess",
-                    sandbox::policy::SandboxType::kRenderer);
+  ExecuteWithParams("RendererWriteProcess", sandbox::mojom::Sandbox::kRenderer);
 }
 
 MULTIPROCESS_TEST_MAIN(ClipboardAccessProcess) {
@@ -201,24 +206,19 @@ MULTIPROCESS_TEST_MAIN(FontLoadingProcess) {
   size_t font_data_length = font_data.length();
   CHECK(font_data_length > 0);
 
-  auto font_shmem = mojo::SharedBufferHandle::Create(font_data_length);
-  CHECK(font_shmem.is_valid());
+  auto shmem_region_and_mapping =
+      base::ReadOnlySharedMemoryRegion::Create(font_data_length);
+  CHECK(shmem_region_and_mapping.IsValid());
 
-  mojo::ScopedSharedBufferMapping mapping = font_shmem->Map(font_data_length);
-  CHECK(mapping);
-
-  memcpy(mapping.get(), font_data.c_str(), font_data_length);
+  memcpy(shmem_region_and_mapping.mapping.memory(), font_data.c_str(),
+         font_data_length);
 
   // Now init the sandbox.
   CheckCreateSeatbeltServer();
 
-  mojo::ScopedSharedBufferHandle shmem_handle =
-      font_shmem->Clone(mojo::SharedBufferHandle::AccessMode::READ_ONLY);
-  CHECK(shmem_handle.is_valid());
-
   base::ScopedCFTypeRef<CTFontDescriptorRef> data_descriptor;
   CHECK(FontLoader::CTFontDescriptorFromBuffer(
-      std::move(shmem_handle), font_data_length, &data_descriptor));
+      std::move(shmem_region_and_mapping.region), &data_descriptor));
   CHECK(data_descriptor);
 
   base::ScopedCFTypeRef<CTFontRef> sized_ctfont(
@@ -239,24 +239,24 @@ TEST_F(SandboxMacTest, FontLoadingTest) {
   ASSERT_TRUE(temp_file);
 
   std::unique_ptr<FontLoader::ResultInternal> result =
-      FontLoader::LoadFontForTesting(base::ASCIIToUTF16("Geeza Pro"), 16);
+      FontLoader::LoadFontForTesting(u"Geeza Pro", 16);
   ASSERT_TRUE(result);
-  ASSERT_TRUE(result->font_data.is_valid());
-  uint64_t font_data_size = result->font_data->GetSize();
+  ASSERT_TRUE(result->font_data.IsValid());
+  uint64_t font_data_size = result->font_data.GetSize();
   EXPECT_GT(font_data_size, 0U);
   EXPECT_GT(result->font_id, 0U);
 
-  mojo::ScopedSharedBufferMapping mapping =
-      result->font_data->Map(font_data_size);
-  ASSERT_TRUE(mapping);
+  base::ReadOnlySharedMemoryMapping mapping = result->font_data.Map();
+  ASSERT_TRUE(mapping.IsValid());
+  ASSERT_EQ(font_data_size, mapping.size());
 
-  base::WriteFileDescriptor(fileno(temp_file.get()),
-                            static_cast<const char*>(mapping.get()),
-                            font_data_size);
+  base::WriteFileDescriptor(
+      fileno(temp_file.get()),
+      base::StringPiece(static_cast<const char*>(mapping.memory()),
+                        font_data_size));
 
   extra_data_ = temp_file_path.value();
-  ExecuteWithParams("FontLoadingProcess",
-                    sandbox::policy::SandboxType::kRenderer);
+  ExecuteWithParams("FontLoadingProcess", sandbox::mojom::Sandbox::kRenderer);
   temp_file.reset();
   ASSERT_TRUE(base::DeleteFile(temp_file_path));
 }
@@ -314,8 +314,7 @@ MULTIPROCESS_TEST_MAIN(NetworkProcessPrefs) {
 }
 
 TEST_F(SandboxMacTest, NetworkProcessPrefs) {
-  ExecuteWithParams("NetworkProcessPrefs",
-                    sandbox::policy::SandboxType::kNetwork);
+  ExecuteWithParams("NetworkProcessPrefs", sandbox::mojom::Sandbox::kNetwork);
 }
 
 }  // namespace content

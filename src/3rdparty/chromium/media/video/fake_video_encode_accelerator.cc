@@ -8,7 +8,9 @@
 #include "base/check.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/sequenced_task_runner.h"
+#include "base/task/sequenced_task_runner.h"
+#include "media/base/media_log.h"
+#include "media/base/video_frame.h"
 
 namespace media {
 
@@ -23,6 +25,7 @@ FakeVideoEncodeAccelerator::FakeVideoEncodeAccelerator(
     const scoped_refptr<base::SequencedTaskRunner>& task_runner)
     : task_runner_(task_runner),
       will_initialization_succeed_(true),
+      will_encoding_succeed_(true),
       client_(nullptr),
       next_frame_is_first_frame_(true) {}
 
@@ -45,8 +48,10 @@ FakeVideoEncodeAccelerator::GetSupportedProfiles() {
   return profiles;
 }
 
-bool FakeVideoEncodeAccelerator::Initialize(const Config& config,
-                                            Client* client) {
+bool FakeVideoEncodeAccelerator::Initialize(
+    const Config& config,
+    Client* client,
+    std::unique_ptr<MediaLog> media_log) {
   if (!will_initialization_succeed_) {
     return false;
   }
@@ -80,9 +85,13 @@ void FakeVideoEncodeAccelerator::UseOutputBitstreamBuffer(
 }
 
 void FakeVideoEncodeAccelerator::RequestEncodingParametersChange(
-    uint32_t bitrate,
+    const Bitrate& bitrate,
     uint32_t framerate) {
-  stored_bitrates_.push_back(bitrate);
+  // Reject bitrate mode changes.
+  if (stored_bitrates_.empty() ||
+      stored_bitrates_.back().mode() == bitrate.mode()) {
+    stored_bitrates_.push_back(bitrate);
+  }
 }
 
 void FakeVideoEncodeAccelerator::RequestEncodingParametersChange(
@@ -98,6 +107,11 @@ void FakeVideoEncodeAccelerator::Destroy() {
 void FakeVideoEncodeAccelerator::SetWillInitializationSucceed(
     bool will_initialization_succeed) {
   will_initialization_succeed_ = will_initialization_succeed;
+}
+
+void FakeVideoEncodeAccelerator::SetWillEncodingSucceed(
+    bool will_encoding_succeed) {
+  will_encoding_succeed_ = will_encoding_succeed;
 }
 
 void FakeVideoEncodeAccelerator::DoRequireBitstreamBuffers(
@@ -131,6 +145,11 @@ void FakeVideoEncodeAccelerator::EncodeTask() {
 void FakeVideoEncodeAccelerator::DoBitstreamBufferReady(
     BitstreamBuffer buffer,
     FrameToEncode frame_to_encode) const {
+  if (!will_encoding_succeed_) {
+    client_->NotifyError(VideoEncodeAccelerator::kPlatformFailureError);
+    return;
+  }
+
   BitstreamBufferMetadata metadata(kMinimumOutputBufferSize,
                                    frame_to_encode.force_keyframe,
                                    frame_to_encode.frame->timestamp());

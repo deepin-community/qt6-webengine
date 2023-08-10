@@ -1,32 +1,6 @@
 #!/usr/bin/env python
-
-#############################################################################
-##
-## Copyright (C) 2016 The Qt Company Ltd.
-## Contact: https://www.qt.io/licensing/
-##
-## This file is part of the QtWebEngine module of the Qt Toolkit.
-##
-## $QT_BEGIN_LICENSE:GPL-EXCEPT$
-## Commercial License Usage
-## Licensees holding valid commercial Qt licenses may use this file in
-## accordance with the commercial license agreement provided with the
-## Software or, alternatively, in accordance with the terms contained in
-## a written agreement between you and The Qt Company. For licensing terms
-## and conditions see https://www.qt.io/terms-conditions. For further
-## information use the contact form at https://www.qt.io/contact-us.
-##
-## GNU General Public License Usage
-## Alternatively, this file may be used under the terms of the GNU
-## General Public License version 3 as published by the Free Software
-## Foundation with exceptions as appearing in the file LICENSE.GPL3-EXCEPT
-## included in the packaging of this file. Please review the following
-## information to ensure the GNU General Public License requirements will
-## be met: https://www.gnu.org/licenses/gpl-3.0.html.
-##
-## $QT_END_LICENSE$
-##
-#############################################################################
+# Copyright (C) 2016 The Qt Company Ltd.
+# SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
 import glob
 import os
@@ -35,11 +9,11 @@ import shutil
 import subprocess
 import sys
 import json
-import urllib2
+import urllib3
 import git_submodule as GitSubmodule
 
-chromium_version = '90.0.4430.228'
-chromium_branch = '4430'
+chromium_version = '102.0.5005.177'
+chromium_branch = '5005'
 ninja_version = 'v1.8.2'
 
 json_url = 'http://omahaproxy.appspot.com/all.json'
@@ -171,7 +145,7 @@ def resetUpstream():
 
     chromium = GitSubmodule.Submodule()
     chromium.path = "."
-    submodules = chromium.readSubmodules()
+    submodules = chromium.readSubmodules(True)
     submodules.append(chromium)
 
     print('-- resetting upstream submodules in ' + os.path.relpath(target_dir) + ' to baseline --')

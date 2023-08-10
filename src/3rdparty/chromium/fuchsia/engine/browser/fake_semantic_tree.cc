@@ -10,6 +10,7 @@
 #include "base/auto_reset.h"
 #include "base/notreached.h"
 #include "base/run_loop.h"
+#include "base/strings/string_piece.h"
 #include "base/test/bind.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -57,6 +58,21 @@ void FakeSemanticTree::RunUntilNodeCountAtLeast(size_t count) {
         if (nodes_.size() >= count) {
           run_loop.Quit();
         }
+      }));
+  run_loop.Run();
+}
+
+void FakeSemanticTree::RunUntilNodeWithLabelIsInTree(base::StringPiece label) {
+  DCHECK(!on_commit_updates_);
+  if (GetNodeFromLabel(label))
+    return;
+
+  base::RunLoop run_loop;
+  base::AutoReset<base::RepeatingClosure> auto_reset(
+      &on_commit_updates_,
+      base::BindLambdaForTesting([this, label, &run_loop]() {
+        if (GetNodeFromLabel(label))
+          run_loop.Quit();
       }));
   run_loop.Run();
 }
@@ -161,4 +177,20 @@ void FakeSemanticTree::NotImplemented_(const std::string& name) {
 
 void FakeSemanticTree::Clear() {
   nodes_.clear();
+}
+
+void FakeSemanticTree::RunUntilConditionIsTrue(
+    base::RepeatingCallback<bool()> condition) {
+  DCHECK(!on_commit_updates_);
+  if (condition.Run())
+    return;
+
+  base::RunLoop run_loop;
+  base::AutoReset<base::RepeatingClosure> auto_reset(
+      &on_commit_updates_,
+      base::BindLambdaForTesting([&condition, &run_loop]() {
+        if (condition.Run())
+          run_loop.Quit();
+      }));
+  run_loop.Run();
 }

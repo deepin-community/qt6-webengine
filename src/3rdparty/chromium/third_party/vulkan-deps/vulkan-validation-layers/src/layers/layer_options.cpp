@@ -1,6 +1,7 @@
-/* Copyright (c) 2020 The Khronos Group Inc.
- * Copyright (c) 2020 Valve Corporation
- * Copyright (c) 2020 LunarG, Inc.
+/* Copyright (c) 2020-2022 The Khronos Group Inc.
+ * Copyright (c) 2020-2022 Valve Corporation
+ * Copyright (c) 2020-2022 LunarG, Inc.
+ * Modifications Copyright (C) 2020 Advanced Micro Devices, Inc. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +17,7 @@
  *
  * Author: Mark Lobodzinski <mark@lunarg.com>
  * Author: John Zulauf <jzulauf@lunarg.com>
+ * Author: Nadav Geva <nadav.geva@amd.com>
  */
 
 #include "layer_options.h"
@@ -28,12 +30,6 @@ void SetValidationDisable(CHECK_DISABLED &disable_data, const ValidationCheckDis
             break;
         case VALIDATION_CHECK_DISABLE_OBJECT_IN_USE:
             disable_data[object_in_use] = true;
-            break;
-        case VALIDATION_CHECK_DISABLE_IDLE_DESCRIPTOR_SET:
-            disable_data[idle_descriptor_set] = true;
-            break;
-        case VALIDATION_CHECK_DISABLE_PUSH_CONSTANT_RANGE:
-            disable_data[push_constant_range] = true;
             break;
         case VALIDATION_CHECK_DISABLE_QUERY_VALIDATION:
             disable_data[query_validation] = true;
@@ -67,6 +63,9 @@ void SetValidationFeatureDisable(CHECK_DISABLED &disable_data, const VkValidatio
         case VK_VALIDATION_FEATURE_DISABLE_UNIQUE_HANDLES_EXT:
             disable_data[handle_wrapping] = true;
             break;
+        case VK_VALIDATION_FEATURE_DISABLE_SHADER_VALIDATION_CACHE_EXT:
+            disable_data[shader_validation_caching] = true;
+            break;
         case VK_VALIDATION_FEATURE_DISABLE_ALL_EXT:
             // Set all disabled flags to true
             std::fill(disable_data.begin(), disable_data.end(), true);
@@ -82,8 +81,16 @@ void SetValidationEnable(CHECK_ENABLED &enable_data, const ValidationCheckEnable
         case VALIDATION_CHECK_ENABLE_VENDOR_SPECIFIC_ARM:
             enable_data[vendor_specific_arm] = true;
             break;
+        case VALIDATION_CHECK_ENABLE_VENDOR_SPECIFIC_AMD:
+            enable_data[vendor_specific_amd] = true;
+            break;
+        case VALIDATION_CHECK_ENABLE_VENDOR_SPECIFIC_IMG:
+            enable_data[vendor_specific_img] = true;
+            break;
         case VALIDATION_CHECK_ENABLE_VENDOR_SPECIFIC_ALL:
             enable_data[vendor_specific_arm] = true;
+            enable_data[vendor_specific_amd] = true;
+            enable_data[vendor_specific_img] = true;
             break;
         default:
             assert(true);
@@ -257,7 +264,7 @@ void SetCustomStypeInfo(std::string raw_id_list, std::string delimiter) {
         if ((stype_id != 0) && (struct_size_in_bytes != 0)) {
             bool found = false;
             // Prevent duplicate entries
-            for (auto item : custom_stype_info) {
+            for (const auto &item : custom_stype_info) {
                 if (item.first == stype_id) {
                     found = true;
                     break;
@@ -288,7 +295,7 @@ const VkLayerSettingsEXT *FindSettingsInChain(const void *next) {
     const VkBaseOutStructure *current = reinterpret_cast<const VkBaseOutStructure *>(next);
     const VkLayerSettingsEXT *found = nullptr;
     while (current) {
-        if (static_cast<VkStructureType>(VK_STRUCTURE_TYPE_INSTANCE_LAYER_SETTINGS_EXT) == current->sType) {
+        if (VK_STRUCTURE_TYPE_INSTANCE_LAYER_SETTINGS_EXT == static_cast<uint32_t>(current->sType)) {
             found = reinterpret_cast<const VkLayerSettingsEXT *>(current);
             current = nullptr;
         } else {
@@ -296,6 +303,26 @@ const VkLayerSettingsEXT *FindSettingsInChain(const void *next) {
         }
     }
     return found;
+}
+
+static bool SetBool(std::string &config_string, std::string &env_string, bool default_val) {
+    bool result = default_val;
+
+    std::string setting;
+    if (!env_string.empty()) {
+        setting = env_string;
+    } else if (!config_string.empty()) {
+        setting = config_string;
+    }
+    if (!setting.empty()) {
+        transform(setting.begin(), setting.end(), setting.begin(), ::tolower);
+        if (setting == "true") {
+            result = true;
+        } else {
+            result = std::atoi(setting.c_str()) != 0;
+        }
+    }
+    return result;
 }
 
 // Process enables and disables set though the vk_layer_settings.txt config file or through an environment variable
@@ -326,7 +353,7 @@ void ProcessConfigAndEnvSettings(ConfigAndEnvSettings *settings_data) {
                         auto struct_size = cur_setting.data.arrayInt32.pInt32Array[(j * 2) + 1];
                         bool found = false;
                         // Prevent duplicate entries
-                        for (auto item : custom_stype_info) {
+                        for (const auto &item : custom_stype_info) {
                             if (item.first == stype_id) {
                                 found = true;
                                 break;
@@ -352,11 +379,13 @@ void ProcessConfigAndEnvSettings(ConfigAndEnvSettings *settings_data) {
     std::string stypes_key(settings_data->layer_description);
     std::string filter_msg_key(settings_data->layer_description);
     std::string message_limit(settings_data->layer_description);
+    std::string fine_grained_locking(settings_data->layer_description);
     enable_key.append(".enables");
     disable_key.append(".disables");
     stypes_key.append(".custom_stype_list");
     filter_msg_key.append(".message_id_filter");
     message_limit.append(".duplicate_message_limit");
+    fine_grained_locking.append(".fine_grained_locking");
     std::string list_of_config_enables = getLayerOption(enable_key.c_str());
     std::string list_of_env_enables = GetLayerEnvVar("VK_LAYER_ENABLES");
     std::string list_of_config_disables = getLayerOption(disable_key.c_str());
@@ -367,6 +396,8 @@ void ProcessConfigAndEnvSettings(ConfigAndEnvSettings *settings_data) {
     std::string list_of_env_stypes = GetLayerEnvVar("VK_LAYER_CUSTOM_STYPE_LIST");
     std::string config_message_limit = getLayerOption(message_limit.c_str());
     std::string env_message_limit = GetLayerEnvVar("VK_LAYER_DUPLICATE_MESSAGE_LIMIT");
+    std::string config_fine_grained_locking = getLayerOption(fine_grained_locking.c_str());
+    std::string env_fine_grained_locking = GetLayerEnvVar("VK_LAYER_FINE_GRAINED_LOCKING");
 
 #if defined(_WIN32)
     std::string env_delimiter = ";";
@@ -389,4 +420,5 @@ void ProcessConfigAndEnvSettings(ConfigAndEnvSettings *settings_data) {
     if (config_limit_setting != 0) {
         *settings_data->duplicate_message_limit = config_limit_setting;
     }
+    *settings_data->fine_grained_locking = SetBool(config_fine_grained_locking, env_fine_grained_locking, false);
 }

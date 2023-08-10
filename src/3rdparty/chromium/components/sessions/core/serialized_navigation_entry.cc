@@ -5,9 +5,10 @@
 #include "components/sessions/core/serialized_navigation_entry.h"
 
 #include <stddef.h>
+
+#include <tuple>
 #include <utility>
 
-#include "base/macros.h"
 #include "base/pickle.h"
 #include "base/trace_event/memory_usage_estimator.h"
 #include "components/sessions/core/serialized_navigation_driver.h"
@@ -69,19 +70,19 @@ void WriteStringToPickle(base::Pickle* pickle,
   }
 }
 
-// base::string16 version of WriteStringToPickle.
+// std::u16string version of WriteStringToPickle.
 //
 // TODO(akalin): Unify this, too.
 void WriteString16ToPickle(base::Pickle* pickle,
                            int* bytes_written,
                            int max_bytes,
-                           const base::string16& str) {
-  int num_bytes = str.size() * sizeof(base::char16);
+                           const std::u16string& str) {
+  int num_bytes = str.size() * sizeof(char16_t);
   if (*bytes_written + num_bytes < max_bytes) {
     *bytes_written += num_bytes;
     pickle->WriteString16(str);
   } else {
-    pickle->WriteString16(base::string16());
+    pickle->WriteString16(std::u16string());
   }
 }
 
@@ -154,7 +155,7 @@ void SerializedNavigationEntry::WriteToPickle(int max_size,
 
   // The |search_terms_| field was removed. Write an empty string to keep
   // backwards compatibility.
-  WriteString16ToPickle(pickle, &bytes_written, max_size, base::string16());
+  WriteString16ToPickle(pickle, &bytes_written, max_size, std::u16string());
 
   pickle->WriteInt(http_status_code_);
 
@@ -206,7 +207,7 @@ bool SerializedNavigationEntry::ReadFromPickle(base::PickleIterator* iterator) {
     // and ignored. A correct referrer policy is extracted later (see
     // |correct_referrer_policy| below).
     int ignored_referrer_policy;
-    ignore_result(iterator->ReadInt(&ignored_referrer_policy));
+    std::ignore = iterator->ReadInt(&ignored_referrer_policy);
 
     // If the original URL can't be found, leave it empty.
     std::string original_request_url_spec;
@@ -227,8 +228,8 @@ bool SerializedNavigationEntry::ReadFromPickle(base::PickleIterator* iterator) {
 
     // The |search_terms_| field was removed, but it still exists in the binary
     // format to keep backwards compatibility. Just get rid of it.
-    base::string16 search_terms;
-    ignore_result(iterator->ReadString16(&search_terms));
+    std::u16string search_terms;
+    std::ignore = iterator->ReadString16(&search_terms);
 
     if (!iterator->ReadInt(&http_status_code_))
       http_status_code_ = 0;
@@ -267,7 +268,7 @@ bool SerializedNavigationEntry::ReadFromPickle(base::PickleIterator* iterator) {
 
     // Child task ids are no longer used.
     int children_task_ids_size = 0;
-    ignore_result(iterator->ReadInt(&children_task_ids_size));
+    std::ignore = iterator->ReadInt(&children_task_ids_size);
   }
 
   SerializedNavigationDriver::Get()->Sanitize(this);
@@ -287,7 +288,6 @@ size_t SerializedNavigationEntry::EstimateMemoryUsage() const {
          EstimateMemoryUsage(redirect_chain_) +
          EstimateMemoryUsage(
              replaced_entry_data_.value_or(ReplacedNavigationEntryData())) +
-         EstimateMemoryUsage(content_pack_categories_) +
          EstimateMemoryUsage(extended_info_map_);
 }
 

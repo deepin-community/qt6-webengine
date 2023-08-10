@@ -8,7 +8,6 @@
 #include <utility>
 
 #include "base/allocator/partition_allocator/partition_alloc.h"
-#include "base/partition_alloc_buildflags.h"
 #include "components/crash/core/common/crash_key.h"
 #include "components/gwp_asan/client/export.h"
 #include "components/gwp_asan/client/guarded_page_allocator.h"
@@ -30,8 +29,8 @@ GuardedPageAllocator* gpa = nullptr;
 bool AllocationHook(void** out, int flags, size_t size, const char* type_name) {
   if (UNLIKELY(sampling_state.Sample())) {
     // Ignore allocation requests with unknown flags.
-    constexpr int kKnownFlags =
-        base::PartitionAllocReturnNull | base::PartitionAllocZeroFill;
+    constexpr int kKnownFlags = partition_alloc::AllocFlags::kReturnNull |
+                                partition_alloc::AllocFlags::kZeroFill;
     if (flags & ~kKnownFlags)
       return false;
 

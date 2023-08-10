@@ -10,7 +10,6 @@
 #include "base/files/file_path.h"
 #include "base/logging.h"
 #include "base/mac/foundation_util.h"
-#include "base/stl_util.h"
 #include "base/strings/sys_string_conversions.h"
 
 namespace skia {
@@ -21,7 +20,7 @@ void ConfigureTestFont() {
                                                "ChromiumAATTest.ttf"};
 
   NSMutableArray* font_urls = [NSMutableArray array];
-  for (unsigned i = 0; i < base::size(kFontFileNames); ++i) {
+  for (unsigned i = 0; i < std::size(kFontFileNames); ++i) {
     base::ScopedCFTypeRef<CFStringRef> file_name(
         base::SysUTF8ToCFStringRef(kFontFileNames[i]));
     NSURL* font_url = base::mac::FilePathToNSURL(

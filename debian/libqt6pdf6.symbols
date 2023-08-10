@@ -1,6 +1,6 @@
-# SymbolsHelper-Confirmed: 6.2.4 amd64 armhf i386
+# SymbolsHelper-Confirmed: 6.4.2 amd64 arm64 armhf i386
 libQt6Pdf.so.6 libqt6pdf6 #MINVER#
-| libqt6pdf6 #MINVER#, qt6-webengine-abi (= 6.2.4)
+| libqt6pdf6 #MINVER#, qt6-webengine-abi (= 6.4.2)
 * Build-Depends-Package: qt6-webengine-dev
  _ZGVZN9QMetaType21registerConverterImplI5QListI6QRectFE9QIterableI13QMetaSequenceEEEbSt8functionIFbPKvPvEES_S_E10unregister@Base 6.2.2
  _ZGVZN9QMetaType21registerConverterImplI5QListI9QPolygonFE9QIterableI13QMetaSequenceEEEbSt8functionIFbPKvPvEES_S_E10unregister@Base 6.2.2
@@ -14,6 +14,7 @@ libQt6Pdf.so.6 libqt6pdf6 #MINVER#
  _ZN12QPdfDocument13statusChangedENS_6StatusE@Base 6.2.2
  _ZN12QPdfDocument15passwordChangedEv@Base 6.2.2
  _ZN12QPdfDocument16pageCountChangedEi@Base 6.2.2
+ _ZN12QPdfDocument16pageModelChangedEv@Base 6.4.0
  _ZN12QPdfDocument16passwordRequiredEv@Base 6.2.2
  _ZN12QPdfDocument16staticMetaObjectE@Base 6.2.2
  _ZN12QPdfDocument19getSelectionAtIndexEiii@Base 6.2.2
@@ -21,6 +22,8 @@ libQt6Pdf.so.6 libqt6pdf6 #MINVER#
  _ZN12QPdfDocument4loadERK7QString@Base 6.2.2
  _ZN12QPdfDocument5closeEv@Base 6.2.2
  _ZN12QPdfDocument6renderEi5QSize25QPdfDocumentRenderOptions@Base 6.2.2
+ _ZN12QPdfDocument9pageLabelEi@Base 6.4.0
+ _ZN12QPdfDocument9pageModelEv@Base 6.4.0
  _ZN12QPdfDocumentC1EP7QObject@Base 6.2.2
  _ZN12QPdfDocumentC2EP7QObject@Base 6.2.2
  _ZN12QPdfDocumentD0Ev@Base 6.2.2
@@ -41,41 +44,24 @@ libQt6Pdf.so.6 libqt6pdf6 #MINVER#
  _ZN13QPdfLinkModelD0Ev@Base 6.2.2
  _ZN13QPdfLinkModelD1Ev@Base 6.2.2
  _ZN13QPdfLinkModelD2Ev@Base 6.2.2
+ _ZN13QPdfPageModel11qt_metacallEN11QMetaObject4CallEiPPv@Base 6.4.0
+ _ZN13QPdfPageModel11qt_metacastEPKc@Base 6.4.0
+ _ZN13QPdfPageModel16staticMetaObjectE@Base 6.4.0
  _ZN13QPdfSelection16staticMetaObjectE@Base 6.2.2
  _ZN13QPdfSelectionC1EOS_@Base 6.2.2
- _ZN13QPdfSelectionC1EP20QPdfSelectionPrivate@Base 6.2.2
- _ZN13QPdfSelectionC1ERK7QString5QListI9QPolygonFE6QRectFii@Base 6.2.2
  _ZN13QPdfSelectionC1ERKS_@Base 6.2.2
- _ZN13QPdfSelectionC1Ev@Base 6.2.2
  _ZN13QPdfSelectionC2EOS_@Base 6.2.2
- _ZN13QPdfSelectionC2EP20QPdfSelectionPrivate@Base 6.2.2
- _ZN13QPdfSelectionC2ERK7QString5QListI9QPolygonFE6QRectFii@Base 6.2.2
  _ZN13QPdfSelectionC2ERKS_@Base 6.2.2
- _ZN13QPdfSelectionC2Ev@Base 6.2.2
  _ZN13QPdfSelectionD1Ev@Base 6.2.2
  _ZN13QPdfSelectionD2Ev@Base 6.2.2
  _ZN13QPdfSelectionaSERKS_@Base 6.2.2
- _ZN15QPdfDestination16staticMetaObjectE@Base 6.2.2
- _ZN15QPdfDestinationC1EOS_@Base 6.2.2
- _ZN15QPdfDestinationC1EP22QPdfDestinationPrivate@Base 6.2.2
- _ZN15QPdfDestinationC1ERKS_@Base 6.2.2
- _ZN15QPdfDestinationC1Ei7QPointFd@Base 6.2.2
- _ZN15QPdfDestinationC1Ev@Base 6.2.2
- _ZN15QPdfDestinationC2EOS_@Base 6.2.2
- _ZN15QPdfDestinationC2EP22QPdfDestinationPrivate@Base 6.2.2
- _ZN15QPdfDestinationC2ERKS_@Base 6.2.2
- _ZN15QPdfDestinationC2Ei7QPointFd@Base 6.2.2
- _ZN15QPdfDestinationC2Ev@Base 6.2.2
- _ZN15QPdfDestinationD1Ev@Base 6.2.2
- _ZN15QPdfDestinationD2Ev@Base 6.2.2
- _ZN15QPdfDestinationaSERKS_@Base 6.2.2
  _ZN15QPdfSearchModel10timerEventEP11QTimerEvent@Base 6.2.2
  _ZN15QPdfSearchModel10updatePageEi@Base 6.2.2
  _ZN15QPdfSearchModel11qt_metacallEN11QMetaObject4CallEiPPv@Base 6.2.2
  _ZN15QPdfSearchModel11qt_metacastEPKc@Base 6.2.2
  _ZN15QPdfSearchModel11setDocumentEP12QPdfDocument@Base 6.2.2
  _ZN15QPdfSearchModel15documentChangedEv@Base 6.2.2
- _ZN15QPdfSearchModel15setSearchStringE7QString@Base 6.2.2
+ _ZN15QPdfSearchModel15setSearchStringERK7QString@Base 6.3.0
  _ZN15QPdfSearchModel16staticMetaObjectE@Base 6.2.2
  _ZN15QPdfSearchModel19searchStringChangedEv@Base 6.2.2
  _ZN15QPdfSearchModelC1EP7QObject@Base 6.2.2
@@ -97,39 +83,36 @@ libQt6Pdf.so.6 libqt6pdf6 #MINVER#
  _ZN16QPdfPageRendererD0Ev@Base 6.2.2
  _ZN16QPdfPageRendererD1Ev@Base 6.2.2
  _ZN16QPdfPageRendererD2Ev@Base 6.2.2
- _ZN16QPdfSearchResult16staticMetaObjectE@Base 6.2.2
- _ZN16QPdfSearchResultC1EP23QPdfSearchResultPrivate@Base 6.2.2
- _ZN16QPdfSearchResultC1Ei5QListI6QRectFE7QStringS3_@Base 6.2.2
- _ZN16QPdfSearchResultC1Ev@Base 6.2.2
- _ZN16QPdfSearchResultC2EP23QPdfSearchResultPrivate@Base 6.2.2
- _ZN16QPdfSearchResultC2Ei5QListI6QRectFE7QStringS3_@Base 6.2.2
- _ZN16QPdfSearchResultC2Ev@Base 6.2.2
  _ZN17QPdfBookmarkModel11qt_metacallEN11QMetaObject4CallEiPPv@Base 6.2.2
  _ZN17QPdfBookmarkModel11qt_metacastEPKc@Base 6.2.2
  _ZN17QPdfBookmarkModel11setDocumentEP12QPdfDocument@Base 6.2.2
  _ZN17QPdfBookmarkModel15documentChangedEP12QPdfDocument@Base 6.2.2
- _ZN17QPdfBookmarkModel16setStructureModeENS_13StructureModeE@Base 6.2.2
  _ZN17QPdfBookmarkModel16staticMetaObjectE@Base 6.2.2
- _ZN17QPdfBookmarkModel20structureModeChangedENS_13StructureModeE@Base 6.2.2
  _ZN17QPdfBookmarkModelC1EP7QObject@Base 6.2.2
  _ZN17QPdfBookmarkModelC2EP7QObject@Base 6.2.2
- _ZN18QPdfPageNavigation11qt_metacallEN11QMetaObject4CallEiPPv@Base 6.2.2
- _ZN18QPdfPageNavigation11qt_metacastEPKc@Base 6.2.2
- _ZN18QPdfPageNavigation11setDocumentEP12QPdfDocument@Base 6.2.2
- _ZN18QPdfPageNavigation12goToNextPageEv@Base 6.2.2
- _ZN18QPdfPageNavigation14setCurrentPageEi@Base 6.2.2
- _ZN18QPdfPageNavigation15documentChangedEP12QPdfDocument@Base 6.2.2
- _ZN18QPdfPageNavigation16goToPreviousPageEv@Base 6.2.2
- _ZN18QPdfPageNavigation16pageCountChangedEi@Base 6.2.2
- _ZN18QPdfPageNavigation16staticMetaObjectE@Base 6.2.2
- _ZN18QPdfPageNavigation18currentPageChangedEi@Base 6.2.2
- _ZN18QPdfPageNavigation22canGoToNextPageChangedEb@Base 6.2.2
- _ZN18QPdfPageNavigation26canGoToPreviousPageChangedEb@Base 6.2.2
- _ZN18QPdfPageNavigationC1EP7QObject@Base 6.2.2
- _ZN18QPdfPageNavigationC2EP7QObject@Base 6.2.2
- _ZN18QPdfPageNavigationD0Ev@Base 6.2.2
- _ZN18QPdfPageNavigationD1Ev@Base 6.2.2
- _ZN18QPdfPageNavigationD2Ev@Base 6.2.2
+ _ZN17QPdfBookmarkModelD0Ev@Base 6.3.0
+ _ZN17QPdfBookmarkModelD1Ev@Base 6.3.0
+ _ZN17QPdfBookmarkModelD2Ev@Base 6.3.0
+ _ZN17QPdfPageNavigator11qt_metacallEN11QMetaObject4CallEiPPv@Base 6.4.0
+ _ZN17QPdfPageNavigator11qt_metacastEPKc@Base 6.4.0
+ _ZN17QPdfPageNavigator16staticMetaObjectE@Base 6.4.0
+ _ZN17QPdfPageNavigator18currentPageChangedEi@Base 6.4.0
+ _ZN17QPdfPageNavigator18currentZoomChangedEd@Base 6.4.0
+ _ZN17QPdfPageNavigator20backAvailableChangedEb@Base 6.4.0
+ _ZN17QPdfPageNavigator22currentLocationChangedE7QPointF@Base 6.4.0
+ _ZN17QPdfPageNavigator23forwardAvailableChangedEb@Base 6.4.0
+ _ZN17QPdfPageNavigator4backEv@Base 6.4.0
+ _ZN17QPdfPageNavigator4jumpE8QPdfLink@Base 6.4.0
+ _ZN17QPdfPageNavigator4jumpEiRK7QPointFd@Base 6.4.0
+ _ZN17QPdfPageNavigator5clearEv@Base 6.4.0
+ _ZN17QPdfPageNavigator6jumpedE8QPdfLink@Base 6.4.0
+ _ZN17QPdfPageNavigator6updateEiRK7QPointFd@Base 6.4.0
+ _ZN17QPdfPageNavigator7forwardEv@Base 6.4.0
+ _ZN17QPdfPageNavigatorC1EP7QObject@Base 6.4.0
+ _ZN17QPdfPageNavigatorC2EP7QObject@Base 6.4.0
+ _ZN17QPdfPageNavigatorD0Ev@Base 6.4.0
+ _ZN17QPdfPageNavigatorD1Ev@Base 6.4.0
+ _ZN17QPdfPageNavigatorD2Ev@Base 6.4.0
  _ZN19QPdfDocumentPrivate10getCharBoxEP17fpdf_textpage_t__di@Base 6.2.2
  _ZN19QPdfDocumentPrivate13checkCompleteEv@Base 6.2.2
  _ZN19QPdfDocumentPrivate13fpdf_GetBlockEPvmPhm@Base 6.2.2
@@ -151,11 +134,27 @@ libQt6Pdf.so.6 libqt6pdf6 #MINVER#
  _ZN19QPdfDocumentPrivateC2Ev@Base 6.2.2
  _ZN19QPdfDocumentPrivateD1Ev@Base 6.2.2
  _ZN19QPdfDocumentPrivateD2Ev@Base 6.2.2
+ _ZN8QPdfFile11qt_metacallEN11QMetaObject4CallEiPPv@Base 6.4.0
+ _ZN8QPdfFile11qt_metacastEPKc@Base 6.4.0
+ _ZN8QPdfFile16staticMetaObjectE@Base 6.4.0
+ _ZN8QPdfFileC1EP12QPdfDocument@Base 6.4.0
+ _ZN8QPdfFileC2EP12QPdfDocument@Base 6.4.0
+ _ZN8QPdfLink16staticMetaObjectE@Base 6.4.0
+ _ZN8QPdfLinkC1EOS_@Base 6.4.0
+ _ZN8QPdfLinkC1ERKS_@Base 6.4.0
+ _ZN8QPdfLinkC1Ev@Base 6.4.0
+ _ZN8QPdfLinkC2EOS_@Base 6.4.0
+ _ZN8QPdfLinkC2ERKS_@Base 6.4.0
+ _ZN8QPdfLinkC2Ev@Base 6.4.0
+ _ZN8QPdfLinkD1Ev@Base 6.4.0
+ _ZN8QPdfLinkD2Ev@Base 6.4.0
+ _ZN8QPdfLinkaSERKS_@Base 6.4.0
  _ZNK12QPdfDocument10metaObjectEv@Base 6.2.2
+ _ZNK12QPdfDocument13pagePointSizeEi@Base 6.4.0
  _ZNK12QPdfDocument5errorEv@Base 6.2.2
  _ZNK12QPdfDocument6statusEv@Base 6.2.2
+ _ZNK12QPdfDocument8fileNameEv@Base 6.4.0
  _ZNK12QPdfDocument8metaDataENS_13MetaDataFieldE@Base 6.2.2
- _ZNK12QPdfDocument8pageSizeEi@Base 6.2.2
  _ZNK12QPdfDocument8passwordEv@Base 6.2.2
  _ZNK12QPdfDocument9pageCountEv@Base 6.2.2
  _ZNK13QPdfLinkModel10metaObjectEv@Base 6.2.2
@@ -164,6 +163,7 @@ libQt6Pdf.so.6 libqt6pdf6 #MINVER#
  _ZNK13QPdfLinkModel8documentEv@Base 6.2.2
  _ZNK13QPdfLinkModel8rowCountERK11QModelIndex@Base 6.2.2
  _ZNK13QPdfLinkModel9roleNamesEv@Base 6.2.2
+ _ZNK13QPdfPageModel10metaObjectEv@Base 6.4.0
  _ZNK13QPdfSelection10startIndexEv@Base 6.2.2
  _ZNK13QPdfSelection15copyToClipboardEN10QClipboard4ModeE@Base 6.2.2
  _ZNK13QPdfSelection17boundingRectangleEv@Base 6.2.2
@@ -171,10 +171,6 @@ libQt6Pdf.so.6 libqt6pdf6 #MINVER#
  _ZNK13QPdfSelection6boundsEv@Base 6.2.2
  _ZNK13QPdfSelection7isValidEv@Base 6.2.2
  _ZNK13QPdfSelection8endIndexEv@Base 6.2.2
- _ZNK15QPdfDestination4pageEv@Base 6.2.2
- _ZNK15QPdfDestination4zoomEv@Base 6.2.2
- _ZNK15QPdfDestination7isValidEv@Base 6.2.2
- _ZNK15QPdfDestination8locationEv@Base 6.2.2
  _ZNK15QPdfSearchModel10metaObjectEv@Base 6.2.2
  _ZNK15QPdfSearchModel12searchStringEv@Base 6.2.2
  _ZNK15QPdfSearchModel13resultAtIndexEi@Base 6.2.2
@@ -186,35 +182,40 @@ libQt6Pdf.so.6 libqt6pdf6 #MINVER#
  _ZNK16QPdfPageRenderer10metaObjectEv@Base 6.2.2
  _ZNK16QPdfPageRenderer10renderModeEv@Base 6.2.2
  _ZNK16QPdfPageRenderer8documentEv@Base 6.2.2
- _ZNK16QPdfSearchResult10rectanglesEv@Base 6.2.2
- _ZNK16QPdfSearchResult12contextAfterEv@Base 6.2.2
- _ZNK16QPdfSearchResult13contextBeforeEv@Base 6.2.2
  _ZNK17QPdfBookmarkModel10metaObjectEv@Base 6.2.2
  _ZNK17QPdfBookmarkModel11columnCountERK11QModelIndex@Base 6.2.2
- _ZNK17QPdfBookmarkModel13structureModeEv@Base 6.2.2
  _ZNK17QPdfBookmarkModel4dataERK11QModelIndexi@Base 6.2.2
  _ZNK17QPdfBookmarkModel5indexEiiRK11QModelIndex@Base 6.2.2
  _ZNK17QPdfBookmarkModel6parentERK11QModelIndex@Base 6.2.2
  _ZNK17QPdfBookmarkModel8documentEv@Base 6.2.2
  _ZNK17QPdfBookmarkModel8rowCountERK11QModelIndex@Base 6.2.2
  _ZNK17QPdfBookmarkModel9roleNamesEv@Base 6.2.2
- _ZNK18QPdfPageNavigation10metaObjectEv@Base 6.2.2
- _ZNK18QPdfPageNavigation11currentPageEv@Base 6.2.2
- _ZNK18QPdfPageNavigation15canGoToNextPageEv@Base 6.2.2
- _ZNK18QPdfPageNavigation19canGoToPreviousPageEv@Base 6.2.2
- _ZNK18QPdfPageNavigation8documentEv@Base 6.2.2
- _ZNK18QPdfPageNavigation9pageCountEv@Base 6.2.2
- (optional=templinst|arch=armhf)_ZNKSt8_Rb_treeIxxSt9_IdentityIxESt4lessIxESaIxEE4findERKx@Base 6.2.4
+ _ZNK17QPdfPageNavigator10metaObjectEv@Base 6.4.0
+ _ZNK17QPdfPageNavigator11currentLinkEv@Base 6.4.0
+ _ZNK17QPdfPageNavigator11currentPageEv@Base 6.4.0
+ _ZNK17QPdfPageNavigator11currentZoomEv@Base 6.4.0
+ _ZNK17QPdfPageNavigator13backAvailableEv@Base 6.4.0
+ _ZNK17QPdfPageNavigator15currentLocationEv@Base 6.4.0
+ _ZNK17QPdfPageNavigator16forwardAvailableEv@Base 6.4.0
+ _ZNK8QPdfFile10metaObjectEv@Base 6.4.0
+ _ZNK8QPdfLink10rectanglesEv@Base 6.4.0
+ _ZNK8QPdfLink12contextAfterEv@Base 6.4.0
+ _ZNK8QPdfLink13contextBeforeEv@Base 6.4.0
+ _ZNK8QPdfLink15copyToClipboardEN10QClipboard4ModeE@Base 6.4.0
+ _ZNK8QPdfLink3urlEv@Base 6.4.0
+ _ZNK8QPdfLink4pageEv@Base 6.4.0
+ _ZNK8QPdfLink4zoomEv@Base 6.4.0
+ _ZNK8QPdfLink7isValidEv@Base 6.4.0
+ _ZNK8QPdfLink8locationEv@Base 6.4.0
+ _ZNK8QPdfLink8toStringEv@Base 6.4.0
  (optional=templinst|subst)_ZNSt11_Deque_baseIjSaIjEE17_M_initialize_mapE{size_t}@Base 6.2.2
  (optional=templinst)_ZNSt11_Deque_baseIjSaIjEED1Ev@Base 6.2.2
  (optional=templinst)_ZNSt11_Deque_baseIjSaIjEED2Ev@Base 6.2.2
- (optional=templinst)_ZNSt5dequeIN11CFX_XMLNode4TypeESaIS1_EE12emplace_backIJS1_EEEvDpOT_@Base 6.2.2
  (optional=templinst|subst)_ZNSt5dequeIjSaIjEE17_M_reallocate_mapE{size_t}b@Base 6.2.2
- (optional=templinst)_ZNSt5dequeIwSaIwEE12emplace_backIJwEEEvDpOT_@Base 6.2.2
  (optional=templinst)_ZNSt6vectorI18UnsupportedFeatureSaIS0_EE17_M_realloc_insertIJS0_EEEvN9__gnu_cxx17__normal_iteratorIPS0_S2_EEDpOT_@Base 6.2.2
  (optional=templinst)_ZNSt6vectorIN10CPDF_Annot7SubtypeESaIS1_EE17_M_realloc_insertIJS1_EEEvN9__gnu_cxx17__normal_iteratorIPS1_S3_EEDpOT_@Base 6.2.2
- (optional=templinst)_ZNSt6vectorISt4pairIiiESaIS1_EE17_M_realloc_insertIJS1_EEEvN9__gnu_cxx17__normal_iteratorIPS1_S3_EEDpOT_@Base 6.2.2
- (optional=templinst|arch=!amd64)_ZNSt6vectorISt4pairIjxESaIS1_EE17_M_realloc_insertIJjxEEEvN9__gnu_cxx17__normal_iteratorIPS1_S3_EEDpOT_@Base 6.2.4
+ (optional=templinst|arch=armhf)_ZNSt6vectorISt4pairIdjESaIS1_EE17_M_realloc_insertIJRKdiEEEvN9__gnu_cxx17__normal_iteratorIPS1_S3_EEDpOT_@Base 6.4.2
+ (optional=templinst|arch=!amd64 !arm64 !i386)_ZNSt6vectorISt4pairIjxESaIS1_EE17_M_realloc_insertIJjxEEEvN9__gnu_cxx17__normal_iteratorIPS1_S3_EEDpOT_@Base 6.3.1
  (optional=templinst|subst)_ZNSt6vectorIbSaIbEE14_M_fill_insertESt13_Bit_iterator{size_t}b@Base 6.2.2
  (optional=templinst|subst)_ZNSt6vectorIfSaIfEE17_M_default_appendE{size_t}@Base 6.2.2
  (optional=templinst)_ZNSt6vectorIfSaIfEE17_M_realloc_insertIJRKfEEEvN9__gnu_cxx17__normal_iteratorIPfS1_EEDpOT_@Base 6.2.2
@@ -225,93 +226,57 @@ libQt6Pdf.so.6 libqt6pdf6 #MINVER#
  (optional=templinst|subst)_ZNSt6vectorIjSaIjEE17_M_default_appendE{size_t}@Base 6.2.2
  (optional=templinst)_ZNSt6vectorIjSaIjEE17_M_realloc_insertIJRKjEEEvN9__gnu_cxx17__normal_iteratorIPjS1_EEDpOT_@Base 6.2.2
  (optional=templinst)_ZNSt6vectorIjSaIjEE17_M_realloc_insertIJjEEEvN9__gnu_cxx17__normal_iteratorIPjS1_EEDpOT_@Base 6.2.2
- (optional=templinst|arch=amd64)_ZNSt6vectorImSaImEE17_M_realloc_insertIJRKmEEEvN9__gnu_cxx17__normal_iteratorIPmS1_EEDpOT_@Base 6.2.4
- (optional=templinst|arch=!amd64)_ZNSt6vectorIxSaIxEE13_M_insert_auxIxEEvN9__gnu_cxx17__normal_iteratorIPxS1_EEOT_@Base 6.2.4
- (optional=templinst|subst)_ZNSt6vectorI{int64_t}SaI{int64_t}EE14_M_insert_rvalEN9__gnu_cxx17__normal_iteratorIPK{int64_t}S1_EEO{int64_t}@Base 6.2.2
+ (optional=templinst|arch=amd64 arm64)_ZNSt6vectorIlSaIlEE13_M_insert_auxIlEEvN9__gnu_cxx17__normal_iteratorIPlS1_EEOT_@Base 6.4.2
+ (optional=templinst|arch=amd64 arm64)_ZNSt6vectorImSaImEE17_M_realloc_insertIJRKmEEEvN9__gnu_cxx17__normal_iteratorIPmS1_EEDpOT_@Base 6.4.2
+ (optional=templinst|arch=amd64 arm64)_ZNSt6vectorImSaImEE17_M_realloc_insertIJmEEEvN9__gnu_cxx17__normal_iteratorIPmS1_EEDpOT_@Base 6.3.0
+ (optional=templinst|arch=!amd64 !arm64)_ZNSt6vectorIxSaIxEE13_M_insert_auxIxEEvN9__gnu_cxx17__normal_iteratorIPxS1_EEOT_@Base 6.3.1
+ (optional=templinst|subst|arch=!i386)_ZNSt6vectorI{int64_t}SaI{int64_t}EE14_M_insert_rvalEN9__gnu_cxx17__normal_iteratorIPK{int64_t}S1_EEO{int64_t}@Base 6.2.2
  (optional=templinst|subst)_ZNSt6vectorI{int64_t}SaI{int64_t}EE17_M_realloc_insertIJRK{int64_t}EEEvN9__gnu_cxx17__normal_iteratorIP{int64_t}S1_EEDpOT_@Base 6.2.2
  (optional=templinst|subst)_ZNSt6vectorI{int64_t}SaI{int64_t}EE17_M_realloc_insertIJ{int64_t}EEEvN9__gnu_cxx17__normal_iteratorIP{int64_t}S1_EEDpOT_@Base 6.2.2
- (optional=templinst|subst)_ZNSt6vectorI{int64_t}SaI{int64_t}EE6insertEN9__gnu_cxx17__normal_iteratorIPK{int64_t}S1_EERS4_@Base 6.2.2
- (optional=templinst)_ZNSt8_Rb_treeIPKhS1_St9_IdentityIS1_ESt4lessIS1_ESaIS1_EE16_M_insert_uniqueIRKS1_EESt4pairISt17_Rb_tree_iteratorIS1_EbEOT_@Base 6.2.2
- (optional=templinst)_ZNSt8_Rb_treeISt4pairIjjES0_IKS1_St6vectorIjSaIjEEESt10_Select1stIS6_ESt4lessIS1_ESaIS6_EE24_M_get_insert_unique_posERS2_@Base 6.2.2
- (optional=templinst|arch=amd64)_ZNSt8_Rb_treeISt4pairIjjES0_IKS1_St6vectorIjSaIjEEESt10_Select1stIS6_ESt4lessIS1_ESaIS6_EE29_M_get_insert_hint_unique_posESt23_Rb_tree_const_iteratorIS6_ERS2_@Base 6.2.4
- (optional=templinst)_ZNSt8_Rb_treeISt4pairIjjES0_IKS1_jESt10_Select1stIS3_ESt4lessIS1_ESaIS3_EE24_M_get_insert_unique_posERS2_@Base 6.2.2
- (optional=templinst|arch=amd64)_ZNSt8_Rb_treeISt4pairIjjES0_IKS1_jESt10_Select1stIS3_ESt4lessIS1_ESaIS3_EE29_M_get_insert_hint_unique_posESt23_Rb_tree_const_iteratorIS3_ERS2_@Base 6.2.4
- (optional=templinst)_ZNSt8_Rb_treeIiSt4pairIKiN13CPWL_ListCtrl11SelectState5StateEESt10_Select1stIS5_ESt4lessIiESaIS5_EE24_M_get_insert_unique_posERS1_@Base 6.2.2
- (optional=templinst|arch=amd64)_ZNSt8_Rb_treeIiSt4pairIKiN13CPWL_ListCtrl11SelectState5StateEESt10_Select1stIS5_ESt4lessIiESaIS5_EE29_M_get_insert_hint_unique_posESt23_Rb_tree_const_iteratorIS5_ERS1_@Base 6.2.4
- (optional=templinst)_ZNSt8_Rb_treeIiSt4pairIKiSt10unique_ptrINSt7__cxx1119basic_ostringstreamIcSt11char_traitsIcESaIcEEESt14default_deleteIS8_EEESt10_Select1stISC_ESt4lessIiESaISC_EE24_M_get_insert_unique_posERS1_@Base 6.2.2
- (optional=templinst|arch=amd64)_ZNSt8_Rb_treeIiSt4pairIKiSt10unique_ptrINSt7__cxx1119basic_ostringstreamIcSt11char_traitsIcESaIcEEESt14default_deleteIS8_EEESt10_Select1stISC_ESt4lessIiESaISC_EE29_M_get_insert_hint_unique_posESt23_Rb_tree_const_iteratorISC_ERS1_@Base 6.2.4
- (optional=templinst|subst)_ZNSt8_Rb_treeIiSt4pairIKi{size_t}ESt10_Select1stIS2_ESt4lessIiESaIS2_EE24_M_get_insert_unique_posERS1_@Base 6.2.2
- (optional=templinst|subst)_ZNSt8_Rb_treeIiSt4pairIKi{size_t}ESt10_Select1stIS2_ESt4lessIiESaIS2_EE29_M_get_insert_hint_unique_posESt23_Rb_tree_const_iteratorIS2_ERS1_@Base 6.2.2
- (optional=templinst)_ZNSt8_Rb_treeIiiSt9_IdentityIiESt4lessIiESaIiEE16_M_insert_uniqueIRKiEESt4pairISt17_Rb_tree_iteratorIiEbEOT_@Base 6.2.2
- (optional=templinst|arch=amd64)_ZNSt8_Rb_treeIiiSt9_IdentityIiESt4lessIiESaIiEE16_M_insert_uniqueIiEESt4pairISt17_Rb_tree_iteratorIiEbEOT_@Base 6.2.4
- (optional=templinst)_ZNSt8_Rb_treeIiiSt9_IdentityIiESt4lessIiESaIiEE24_M_get_insert_unique_posERKi@Base 6.2.2
- (optional=templinst|arch=amd64)_ZNSt8_Rb_treeIiiSt9_IdentityIiESt4lessIiESaIiEE29_M_get_insert_hint_unique_posESt23_Rb_tree_const_iteratorIiERKi@Base 6.2.4
- (optional=templinst)_ZNSt8_Rb_treeIjSt4pairIKjjESt10_Select1stIS2_ESt4lessIjESaIS2_EE16_M_emplace_equalIJRjjEEESt17_Rb_tree_iteratorIS2_EDpOT_@Base 6.2.2
- (optional=templinst)_ZNSt8_Rb_treeIjSt4pairIKjjESt10_Select1stIS2_ESt4lessIjESaIS2_EE24_M_get_insert_unique_posERS1_@Base 6.2.2
- (optional=templinst|arch=amd64)_ZNSt8_Rb_treeIjSt4pairIKjjESt10_Select1stIS2_ESt4lessIjESaIS2_EE29_M_get_insert_hint_unique_posESt23_Rb_tree_const_iteratorIS2_ERS1_@Base 6.2.4
- (optional=templinst|subst)_ZNSt8_Rb_treeIjSt4pairIKj{int64_t}ESt10_Select1stIS2_ESt4lessIjESaIS2_EE24_M_get_insert_unique_posERS1_@Base 6.2.2
- (optional=templinst|subst)_ZNSt8_Rb_treeIjSt4pairIKj{int64_t}ESt10_Select1stIS2_ESt4lessIjESaIS2_EE29_M_get_insert_hint_unique_posESt23_Rb_tree_const_iteratorIS2_ERS1_@Base 6.2.2
- (optional=templinst)_ZNSt8_Rb_treeIjjSt9_IdentityIjESt4lessIjESaIjEE16_M_insert_uniqueIRKjEESt4pairISt17_Rb_tree_iteratorIjEbEOT_@Base 6.2.2
- (optional=templinst)_ZNSt8_Rb_treeIjjSt9_IdentityIjESt4lessIjESaIjEE16_M_insert_uniqueIjEESt4pairISt17_Rb_tree_iteratorIjEbEOT_@Base 6.2.2
- (optional=templinst)_ZNSt8_Rb_treeIjjSt9_IdentityIjESt4lessIjESaIjEE24_M_get_insert_unique_posERKj@Base 6.2.2
- (optional=templinst|arch=amd64)_ZNSt8_Rb_treeIllSt9_IdentityIlESt4lessIlESaIlEE29_M_get_insert_hint_unique_posESt23_Rb_tree_const_iteratorIlERKl@Base 6.2.4
- (optional=templinst|subst)_ZNSt8_Rb_treeI{int64_t}{int64_t}St9_IdentityI{int64_t}ESt4lessI{int64_t}ESaI{int64_t}EE16_M_insert_uniqueIRK{int64_t}EESt4pairISt17_Rb_tree_iteratorI{int64_t}EbEOT_@Base 6.2.2
- (optional=templinst|subst)_ZNSt8_Rb_treeI{int64_t}{int64_t}St9_IdentityI{int64_t}ESt4lessI{int64_t}ESaI{int64_t}EE24_M_get_insert_unique_posERK{int64_t}@Base 6.2.2
+ (optional=templinst|subst|arch=!i386)_ZNSt6vectorI{int64_t}SaI{int64_t}EE6insertEN9__gnu_cxx17__normal_iteratorIPK{int64_t}S1_EERS4_@Base 6.2.2
+ (optional=templinst|arch=amd64 arm64)_ZNSt8_Rb_treeISt4pairIjjES0_IKS1_St6vectorIjSaIjEEESt10_Select1stIS6_ESt4lessIS1_ESaIS6_EE29_M_get_insert_hint_unique_posESt23_Rb_tree_const_iteratorIS6_ERS2_@Base 6.3.0
+ (optional=templinst|arch=amd64 arm64)_ZNSt8_Rb_treeISt4pairIjjES0_IKS1_jESt10_Select1stIS3_ESt4lessIS1_ESaIS3_EE29_M_get_insert_hint_unique_posESt23_Rb_tree_const_iteratorIS3_ERS2_@Base 6.3.0
+ (optional=templinst|arch=amd64 arm64)_ZNSt8_Rb_treeIiiSt9_IdentityIiESt4lessIiESaIiEE16_M_insert_uniqueIRKiEESt4pairISt17_Rb_tree_iteratorIiEbEOT_@Base 6.2.2
+ (optional=templinst|arch=amd64 arm64)_ZNSt8_Rb_treeIiiSt9_IdentityIiESt4lessIiESaIiEE16_M_insert_uniqueIiEESt4pairISt17_Rb_tree_iteratorIiEbEOT_@Base 6.3.0
+ (optional=templinst|arch=!i386)_ZNSt8_Rb_treeIjSt4pairIKjjESt10_Select1stIS2_ESt4lessIjESaIS2_EE16_M_emplace_equalIJRjjEEESt17_Rb_tree_iteratorIS2_EDpOT_@Base 6.2.2
+ (optional=templinst|arch=!amd64 !arm64)_ZNSt8_Rb_treeIjjSt9_IdentityIjESt4lessIjESaIjEE16_M_insert_uniqueIRKjEESt4pairISt17_Rb_tree_iteratorIjEbEOT_@Base 6.3.1
+ (optional=templinst|arch=amd64 arm64)_ZNSt8_Rb_treeIjjSt9_IdentityIjESt4lessIjESaIjEE16_M_insert_uniqueIjEESt4pairISt17_Rb_tree_iteratorIjEbEOT_@Base 6.2.2
+ (optional=templinst|subst|arch=amd64 arm64)_ZNSt8_Rb_treeI{int64_t}{int64_t}St9_IdentityI{int64_t}ESt4lessI{int64_t}ESaI{int64_t}EE16_M_insert_uniqueIRK{int64_t}EESt4pairISt17_Rb_tree_iteratorI{int64_t}EbEOT_@Base 6.2.2
+ (optional=templinst|subst|arch=!amd64 !arm64)_ZNSt8_Rb_treeI{int64_t}{int64_t}St9_IdentityI{int64_t}ESt4lessI{int64_t}ESaI{int64_t}EE24_M_get_insert_unique_posERK{int64_t}@Base 6.2.2
  _ZTI12QPdfDocument@Base 6.2.2
  _ZTI13QPdfLinkModel@Base 6.2.2
+ _ZTI13QPdfPageModel@Base 6.4.0
  _ZTI15QPdfSearchModel@Base 6.2.2
  _ZTI16QPdfPageRenderer@Base 6.2.2
  _ZTI17QPdfBookmarkModel@Base 6.2.2
- _ZTI18QPdfPageNavigation@Base 6.2.2
+ _ZTI17QPdfPageNavigator@Base 6.4.0
+ _ZTI8QPdfFile@Base 6.4.0
  _ZTIZN9QMetaType17registerConverterI5QListI6QRectFE9QIterableI13QMetaSequenceEN9QtPrivate33QSequentialIterableConvertFunctorIS3_EEEEbT1_EUlPKvPvE_@Base 6.2.2
  _ZTIZN9QMetaType17registerConverterI5QListI9QPolygonFE9QIterableI13QMetaSequenceEN9QtPrivate33QSequentialIterableConvertFunctorIS3_EEEEbT1_EUlPKvPvE_@Base 6.2.2
  _ZTIZN9QMetaType19registerMutableViewI5QListI6QRectFE9QIterableI13QMetaSequenceEN9QtPrivate37QSequentialIterableMutableViewFunctorIS3_EEEEbT1_EUlPvSB_E_@Base 6.2.2
  _ZTIZN9QMetaType19registerMutableViewI5QListI9QPolygonFE9QIterableI13QMetaSequenceEN9QtPrivate37QSequentialIterableMutableViewFunctorIS3_EEEEbT1_EUlPvSB_E_@Base 6.2.2
  _ZTS12QPdfDocument@Base 6.2.2
  _ZTS13QPdfLinkModel@Base 6.2.2
+ _ZTS13QPdfPageModel@Base 6.4.0
  _ZTS15QPdfSearchModel@Base 6.2.2
  _ZTS16QPdfPageRenderer@Base 6.2.2
  _ZTS17QPdfBookmarkModel@Base 6.2.2
- _ZTS18QPdfPageNavigation@Base 6.2.2
+ _ZTS17QPdfPageNavigator@Base 6.4.0
+ _ZTS8QPdfFile@Base 6.4.0
  _ZTSZN9QMetaType17registerConverterI5QListI6QRectFE9QIterableI13QMetaSequenceEN9QtPrivate33QSequentialIterableConvertFunctorIS3_EEEEbT1_EUlPKvPvE_@Base 6.2.2
  _ZTSZN9QMetaType17registerConverterI5QListI9QPolygonFE9QIterableI13QMetaSequenceEN9QtPrivate33QSequentialIterableConvertFunctorIS3_EEEEbT1_EUlPKvPvE_@Base 6.2.2
  _ZTSZN9QMetaType19registerMutableViewI5QListI6QRectFE9QIterableI13QMetaSequenceEN9QtPrivate37QSequentialIterableMutableViewFunctorIS3_EEEEbT1_EUlPvSB_E_@Base 6.2.2
  _ZTSZN9QMetaType19registerMutableViewI5QListI9QPolygonFE9QIterableI13QMetaSequenceEN9QtPrivate37QSequentialIterableMutableViewFunctorIS3_EEEEbT1_EUlPvSB_E_@Base 6.2.2
  _ZTV12QPdfDocument@Base 6.2.2
  _ZTV13QPdfLinkModel@Base 6.2.2
+ _ZTV13QPdfPageModel@Base 6.4.0
  _ZTV15QPdfSearchModel@Base 6.2.2
  _ZTV16QPdfPageRenderer@Base 6.2.2
  _ZTV17QPdfBookmarkModel@Base 6.2.2
- _ZTV18QPdfPageNavigation@Base 6.2.2
+ _ZTV17QPdfPageNavigator@Base 6.4.0
+ _ZTV8QPdfFile@Base 6.4.0
  (optional=templinst)_ZZN9QMetaType21registerConverterImplI5QListI6QRectFE9QIterableI13QMetaSequenceEEEbSt8functionIFbPKvPvEES_S_E10unregister@Base 6.2.2
  (optional=templinst)_ZZN9QMetaType21registerConverterImplI5QListI9QPolygonFE9QIterableI13QMetaSequenceEEEbSt8functionIFbPKvPvEES_S_E10unregister@Base 6.2.2
  (optional=templinst)_ZZN9QMetaType23registerMutableViewImplI5QListI6QRectFE9QIterableI13QMetaSequenceEEEbSt8functionIFbPvS8_EES_S_E10unregister@Base 6.2.2
  (optional=templinst)_ZZN9QMetaType23registerMutableViewImplI5QListI9QPolygonFE9QIterableI13QMetaSequenceEEEbSt8functionIFbPvS8_EES_S_E10unregister@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeI5QSizeE10getCopyCtrEvENUlPKNS_18QMetaTypeInterfaceEPvPKvE_4_FUNES5_S6_S8_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeI5QSizeE10getMoveCtrEvENUlPKNS_18QMetaTypeInterfaceEPvS6_E_4_FUNES5_S6_S6_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeI5QSizeE13getDefaultCtrEvENUlPKNS_18QMetaTypeInterfaceEPvE_4_FUNES5_S6_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeI6QRectFE10getCopyCtrEvENUlPKNS_18QMetaTypeInterfaceEPvPKvE_4_FUNES5_S6_S8_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeI6QRectFE10getMoveCtrEvENUlPKNS_18QMetaTypeInterfaceEPvS6_E_4_FUNES5_S6_S6_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeI6QRectFE13getDefaultCtrEvENUlPKNS_18QMetaTypeInterfaceEPvE_4_FUNES5_S6_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeI7QPointFE10getCopyCtrEvENUlPKNS_18QMetaTypeInterfaceEPvPKvE_4_FUNES5_S6_S8_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeI7QPointFE10getMoveCtrEvENUlPKNS_18QMetaTypeInterfaceEPvS6_E_4_FUNES5_S6_S6_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeI7QPointFE13getDefaultCtrEvENUlPKNS_18QMetaTypeInterfaceEPvE_4_FUNES5_S6_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeI7QStringE10getCopyCtrEvENUlPKNS_18QMetaTypeInterfaceEPvPKvE_4_FUNES5_S6_S8_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeI7QStringE10getMoveCtrEvENUlPKNS_18QMetaTypeInterfaceEPvS6_E_4_FUNES5_S6_S6_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeI7QStringE13getDefaultCtrEvENUlPKNS_18QMetaTypeInterfaceEPvE_4_FUNES5_S6_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeI7QStringE7getDtorEvENUlPKNS_18QMetaTypeInterfaceEPvE_4_FUNES5_S6_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeIbE10getCopyCtrEvENUlPKNS_18QMetaTypeInterfaceEPvPKvE_4_FUNES4_S5_S7_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeIbE10getMoveCtrEvENUlPKNS_18QMetaTypeInterfaceEPvS5_E_4_FUNES4_S5_S5_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeIbE13getDefaultCtrEvENUlPKNS_18QMetaTypeInterfaceEPvE_4_FUNES4_S5_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeIdE10getCopyCtrEvENUlPKNS_18QMetaTypeInterfaceEPvPKvE_4_FUNES4_S5_S7_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeIdE10getMoveCtrEvENUlPKNS_18QMetaTypeInterfaceEPvS5_E_4_FUNES4_S5_S5_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeIdE13getDefaultCtrEvENUlPKNS_18QMetaTypeInterfaceEPvE_4_FUNES4_S5_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeIiE10getCopyCtrEvENUlPKNS_18QMetaTypeInterfaceEPvPKvE_4_FUNES4_S5_S7_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeIiE10getMoveCtrEvENUlPKNS_18QMetaTypeInterfaceEPvS5_E_4_FUNES4_S5_S5_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeIiE13getDefaultCtrEvENUlPKNS_18QMetaTypeInterfaceEPvE_4_FUNES4_S5_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeIyE10getCopyCtrEvENUlPKNS_18QMetaTypeInterfaceEPvPKvE_4_FUNES4_S5_S7_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeIyE10getMoveCtrEvENUlPKNS_18QMetaTypeInterfaceEPvS5_E_4_FUNES4_S5_S5_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeIyE13getDefaultCtrEvENUlPKNS_18QMetaTypeInterfaceEPvE_4_FUNES4_S5_@Base 6.2.2
- (optional=templinst)_ZZNSt9once_flag18_Prepare_executionC4IZSt9call_onceIRFvvEJEEvRS_OT_DpOT0_EUlvE_EERS6_ENUlvE_4_FUNEv@Base 6.2.2
- _Zls6QDebugRK15QPdfDestination@Base 6.2.2
- _Zls6QDebugRK16QPdfSearchResult@Base 6.2.2
+ _Zls6QDebugRK8QPdfLink@Base 6.4.0

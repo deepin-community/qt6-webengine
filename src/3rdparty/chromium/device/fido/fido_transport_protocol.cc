@@ -4,8 +4,6 @@
 
 #include "device/fido/fido_transport_protocol.h"
 
-#include "base/notreached.h"
-
 namespace device {
 
 const char kUsbHumanInterfaceDevice[] = "usb";
@@ -14,7 +12,7 @@ const char kBluetoothLowEnergy[] = "ble";
 const char kCloudAssistedBluetoothLowEnergy[] = "cable";
 const char kInternal[] = "internal";
 
-base::Optional<FidoTransportProtocol> ConvertToFidoTransportProtocol(
+absl::optional<FidoTransportProtocol> ConvertToFidoTransportProtocol(
     base::StringPiece protocol) {
   if (protocol == kUsbHumanInterfaceDevice)
     return FidoTransportProtocol::kUsbHumanInterfaceDevice;
@@ -27,11 +25,10 @@ base::Optional<FidoTransportProtocol> ConvertToFidoTransportProtocol(
   else if (protocol == kInternal)
     return FidoTransportProtocol::kInternal;
   else
-    return base::nullopt;
+    return absl::nullopt;
 }
 
-COMPONENT_EXPORT(DEVICE_FIDO)
-std::string ToString(FidoTransportProtocol protocol) {
+base::StringPiece ToString(FidoTransportProtocol protocol) {
   switch (protocol) {
     case FidoTransportProtocol::kUsbHumanInterfaceDevice:
       return kUsbHumanInterfaceDevice;
@@ -48,8 +45,20 @@ std::string ToString(FidoTransportProtocol protocol) {
       // is considered a flavour of caBLE.
       return kCloudAssistedBluetoothLowEnergy;
   }
-  NOTREACHED();
-  return "";
+}
+
+AuthenticatorAttachment AuthenticatorAttachmentFromTransport(
+    FidoTransportProtocol transport) {
+  switch (transport) {
+    case FidoTransportProtocol::kInternal:
+      return AuthenticatorAttachment::kPlatform;
+    case FidoTransportProtocol::kUsbHumanInterfaceDevice:
+    case FidoTransportProtocol::kNearFieldCommunication:
+    case FidoTransportProtocol::kBluetoothLowEnergy:
+    case FidoTransportProtocol::kCloudAssistedBluetoothLowEnergy:
+    case FidoTransportProtocol::kAndroidAccessory:
+      return AuthenticatorAttachment::kCrossPlatform;
+  }
 }
 
 }  // namespace device

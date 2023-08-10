@@ -1,19 +1,17 @@
-from __future__ import print_function
 import array
 import os
-import sys
 from collections import defaultdict, namedtuple
+from typing import Dict, List, Tuple
 
 from mozlog import structuredlog
-from six import ensure_str, ensure_text, iteritems, iterkeys, itervalues, text_type
-from six.moves import intern, range
+from six import ensure_str, ensure_text
+from sys import intern
 
 from . import manifestupdate
 from . import testloader
 from . import wptmanifest
 from . import wpttest
 from .expected import expected_path
-from .vcs import git
 manifest = None  # Module that will be imported relative to test_root
 manifestitem = None
 
@@ -22,10 +20,10 @@ logger = structuredlog.StructuredLogger("web-platform-tests")
 try:
     import ujson as json
 except ImportError:
-    import json
+    import json  # type: ignore
 
 
-class RunInfo(object):
+class RunInfo:
     """A wrapper around RunInfo dicts so that they can be hashed by identity"""
 
     def __init__(self, dict_value):
@@ -45,17 +43,15 @@ class RunInfo(object):
         return self.canonical_repr == other.canonical_repr
 
     def iteritems(self):
-        for key, value in iteritems(self.data):
-            yield key, value
+        yield from self.data.items()
 
     def items(self):
-        return list(iteritems(self))
+        return list(self.items())
 
 
-def update_expected(test_paths, serve_root, log_file_names,
-                    update_properties, rev_old=None, rev_new="HEAD",
-                    full_update=False, sync_root=None, disable_intermittent=None,
-                    update_intermittent=False, remove_intermittent=False):
+def update_expected(test_paths, log_file_names,
+                    update_properties, full_update=False, disable_intermittent=None,
+                    update_intermittent=False, remove_intermittent=False, **kwargs):
     """Update the metadata files for web-platform-tests based on
     the results obtained in a previous run or runs
 
@@ -69,9 +65,16 @@ def update_expected(test_paths, serve_root, log_file_names,
     intermittent statuses which are not present in the current run will be removed from the
     metadata, else they are left in."""
 
-    do_delayed_imports(serve_root)
+    do_delayed_imports()
 
     id_test_map = load_test_data(test_paths)
+
+    msg = f"Updating metadata using properties: {','.join(update_properties[0])}"
+    if update_properties[1]:
+        dependent_strs = [f"{item}: {','.join(values)}"
+                          for item, values in update_properties[1].items()]
+        msg += f", and dependent properties: {' '.join(dependent_strs)}"
+    logger.info(msg)
 
     for metadata_path, updated_ini in update_from_logs(id_test_map,
                                                        update_properties,
@@ -86,57 +89,15 @@ def update_expected(test_paths, serve_root, log_file_names,
             for test in updated_ini.iterchildren():
                 for subtest in test.iterchildren():
                     if subtest.new_disabled:
-                        print("disabled: %s" % os.path.dirname(subtest.root.test_path) + "/" + subtest.name)
+                        logger.info("disabled: %s" % os.path.dirname(subtest.root.test_path) + "/" + subtest.name)
                     if test.new_disabled:
-                        print("disabled: %s" % test.root.test_path)
+                        logger.info("disabled: %s" % test.root.test_path)
 
 
-def do_delayed_imports(serve_root=None):
+def do_delayed_imports():
     global manifest, manifestitem
-    from manifest import manifest, item as manifestitem
+    from manifest import manifest, item as manifestitem  # type: ignore
 
-
-def files_in_repo(repo_root):
-    return git("ls-tree", "-r", "--name-only", "HEAD").split("\n")
-
-
-def rev_range(rev_old, rev_new, symmetric=False):
-    joiner = ".." if not symmetric else "..."
-    return "".join([rev_old, joiner, rev_new])
-
-
-def paths_changed(rev_old, rev_new, repo):
-    data = git("diff", "--name-status", rev_range(rev_old, rev_new), repo=repo)
-    lines = [tuple(item.strip() for item in line.strip().split("\t", 1))
-             for line in data.split("\n") if line.strip()]
-    output = set(lines)
-    return output
-
-
-def load_change_data(rev_old, rev_new, repo):
-    changes = paths_changed(rev_old, rev_new, repo)
-    rv = {}
-    status_keys = {"M": "modified",
-                   "A": "new",
-                   "D": "deleted"}
-    # TODO: deal with renames
-    for item in changes:
-        rv[item[1]] = status_keys[item[0]]
-    return rv
-
-
-def unexpected_changes(manifests, change_data, files_changed):
-    files_changed = set(files_changed)
-
-    root_manifest = None
-    for manifest, paths in iteritems(manifests):
-        if paths["url_base"] == "/":
-            root_manifest = manifest
-            break
-    else:
-        return []
-
-    return [fn for _, fn, _ in root_manifest if fn in files_changed and change_data.get(fn) != "M"]
 
 # For each testrun
 # Load all files and scan for the suite_start entry
@@ -154,7 +115,7 @@ def unexpected_changes(manifests, change_data, files_changed):
 #   Check if all the RHS values are the same; if so collapse the conditionals
 
 
-class InternedData(object):
+class InternedData:
     """Class for interning data of any (hashable) type.
 
     This class is intended for building a mapping of int <=> value, such
@@ -170,9 +131,10 @@ class InternedData(object):
     type_conv = None
     rev_type_conv = None
 
-    def __init__(self, max_bits=8):
+    def __init__(self, max_bits: int = 8):
         self.max_idx = 2**max_bits - 2
         # Reserve 0 as a sentinal
+        self._data: Tuple[List[object], Dict[int, object]]
         self._data = [None], {}
 
     def clear(self):
@@ -240,7 +202,7 @@ def pack_result(data):
 def unpack_result(data):
     if isinstance(data, int):
         return (status_intern.get(data), None)
-    if isinstance(data, text_type):
+    if isinstance(data, str):
         return (data, None)
     # Unpack multiple statuses into a tuple to be used in the Results named tuple below,
     # separating `status` and `known_intermittent`.
@@ -259,7 +221,7 @@ def load_test_data(test_paths):
     manifests = manifest_loader.load()
 
     id_test_map = {}
-    for test_manifest, paths in iteritems(manifests):
+    for test_manifest, paths in manifests.items():
         id_test_map.update(create_test_tree(paths["metadata_path"],
                                             test_manifest))
     return id_test_map
@@ -271,14 +233,13 @@ def update_from_logs(id_test_map, update_properties, disable_intermittent, updat
     updater = ExpectedUpdater(id_test_map)
 
     for i, log_filename in enumerate(log_filenames):
-        print("Processing log %d/%d" % (i + 1, len(log_filenames)))
+        logger.info("Processing log %d/%d" % (i + 1, len(log_filenames)))
         with open(log_filename) as f:
             updater.update_from_log(f)
 
-    for item in update_results(id_test_map, update_properties, full_update,
-                               disable_intermittent, update_intermittent=update_intermittent,
-                               remove_intermittent=remove_intermittent):
-        yield item
+    yield from update_results(id_test_map, update_properties, full_update,
+                              disable_intermittent, update_intermittent=update_intermittent,
+                              remove_intermittent=remove_intermittent)
 
 
 def update_results(id_test_map,
@@ -287,10 +248,10 @@ def update_results(id_test_map,
                    disable_intermittent,
                    update_intermittent,
                    remove_intermittent):
-    test_file_items = set(itervalues(id_test_map))
+    test_file_items = set(id_test_map.values())
 
     default_expected_by_type = {}
-    for test_type, test_cls in iteritems(wpttest.manifest_test_cls):
+    for test_type, test_cls in wpttest.manifest_test_cls.items():
         if test_cls.result_cls:
             default_expected_by_type[(test_type, False)] = test_cls.result_cls.default_expected
         if test_cls.subtest_result_cls:
@@ -327,10 +288,7 @@ def write_new_expected(metadata_path, expected):
         try:
             with open(tmp_path, "wb") as f:
                 f.write(manifest_str.encode("utf8"))
-            if sys.version_info >= (3, 3):
-                os.replace(tmp_path, path)
-            else:
-                os.rename(tmp_path, path)
+            os.replace(tmp_path, path)
         except (Exception, KeyboardInterrupt):
             try:
                 os.unlink(tmp_path)
@@ -343,7 +301,7 @@ def write_new_expected(metadata_path, expected):
             pass
 
 
-class ExpectedUpdater(object):
+class ExpectedUpdater:
     def __init__(self, id_test_map):
         self.id_test_map = id_test_map
         self.run_info = None
@@ -431,7 +389,7 @@ class ExpectedUpdater(object):
             action_map["lsan_leak"](item)
 
         mozleak_data = data.get("mozleak", {})
-        for scope, scope_data in iteritems(mozleak_data):
+        for scope, scope_data in mozleak_data.items():
             for key, action in [("objects", "mozleak_object"),
                                 ("total", "mozleak_total")]:
                 for item in scope_data.get(key, []):
@@ -447,7 +405,7 @@ class ExpectedUpdater(object):
         try:
             self.id_test_map[test_id]
         except KeyError:
-            print("Test not found %s, skipping" % test_id)
+            logger.warning("Test not found %s, skipping" % test_id)
             return
 
         self.tests_visited[test_id] = set()
@@ -571,7 +529,7 @@ def create_test_tree(metadata_path, test_manifest):
     return id_test_map
 
 
-class PackedResultList(object):
+class PackedResultList:
     """Class for storing test results.
 
     Results are stored as an array of 2-byte integers for compactness.
@@ -618,7 +576,7 @@ class PackedResultList(object):
             yield self.unpack(i, item)
 
 
-class TestFileData(object):
+class TestFileData:
     __slots__ = ("url_base", "item_type", "test_path", "metadata_path", "tests",
                  "_requires_update", "data")
 
@@ -668,11 +626,11 @@ class TestFileData(object):
         # Return subtest nodes present in the expected file, but missing from the data
         rv = []
 
-        for test_id, subtests in iteritems(self.data):
+        for test_id, subtests in self.data.items():
             test = expected.get_test(ensure_text(test_id))
             if not test:
                 continue
-            seen_subtests = set(ensure_text(item) for item in iterkeys(subtests) if item is not None)
+            seen_subtests = {ensure_text(item) for item in subtests.keys() if item is not None}
             missing_subtests = set(test.subtests.keys()) - seen_subtests
             for item in missing_subtests:
                 expected_subtest = test.get_subtest(item)
@@ -691,7 +649,7 @@ class TestFileData(object):
         # since removing these may be inappropriate
         top_level_props, dependent_props = update_properties
         all_properties = set(top_level_props)
-        for item in itervalues(dependent_props):
+        for item in dependent_props.values():
             all_properties |= set(item)
 
         filtered = []
@@ -717,6 +675,8 @@ class TestFileData(object):
         if not self.requires_update and not full_update:
             return
 
+        logger.debug("Updating %s", self.metadata_path)
+
         expected = self.expected(update_properties,
                                  update_intermittent=update_intermittent,
                                  remove_intermittent=remove_intermittent)
@@ -741,9 +701,9 @@ class TestFileData(object):
             test_expected = expected.get_test(test_id)
             expected_by_test[test_id] = test_expected
 
-        for test_id, test_data in iteritems(self.data):
+        for test_id, test_data in self.data.items():
             test_id = ensure_str(test_id)
-            for subtest_id, results_list in iteritems(test_data):
+            for subtest_id, results_list in test_data.items():
                 for prop, run_info, value in results_list:
                     # Special case directory metadata
                     if subtest_id is None and test_id.endswith("__dir__"):

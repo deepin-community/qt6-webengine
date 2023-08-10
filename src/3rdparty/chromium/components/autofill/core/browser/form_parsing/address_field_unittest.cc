@@ -5,9 +5,7 @@
 #include "components/autofill/core/browser/form_parsing/address_field.h"
 
 #include <memory>
-#include <vector>
 
-#include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/test/scoped_feature_list.h"
 #include "components/autofill/core/browser/form_parsing/parsing_test_utils.h"
@@ -95,6 +93,21 @@ TEST_F(AddressFieldTest, ParseStreetNameAndHouseNumberAndApartmentNumber) {
   ClassifyAndVerify();
 }
 
+// Tests that an address field after a |ADDRESS_HOME_STREET_NAME|,
+// |ADDRESS_HOME_HOUSE_NUMBER| combination is classified as
+// |ADDRESS_HOME_LINE2| instead of |ADDRESS_HOME_LINE1|.
+TEST_F(AddressFieldTest, ParseAsAddressLine2AfterStreetName) {
+  // TODO(crbug.com/1125978): Remove once launched.
+  base::test::ScopedFeatureList structured_addresses;
+  structured_addresses.InitAndEnableFeature(
+      features::kAutofillEnableSupportForMoreStructureInAddresses);
+
+  AddTextFormFieldData("street", "Street", ADDRESS_HOME_STREET_NAME);
+  AddTextFormFieldData("house-number", "House no.", ADDRESS_HOME_HOUSE_NUMBER);
+  AddTextFormFieldData("address", "Address", ADDRESS_HOME_LINE2);
+  ClassifyAndVerify();
+}
+
 // Tests that the field is not classified as |ADDRESS_HOME_STREET_NAME| when
 // it is labeled accordingly but an adjacent field classified as
 // |ADDRESS_HOME_HOUSE_NUMBER| is absent.
@@ -146,6 +159,12 @@ TEST_F(AddressFieldTest, ParseState) {
 TEST_F(AddressFieldTest, ParseZip) {
   AddTextFormFieldData("zip", "Zip", ADDRESS_HOME_ZIP);
   ClassifyAndVerify();
+}
+
+TEST_F(AddressFieldTest, ParseZipFileExtension) {
+  AddTextFormFieldData("filename", "Supported formats: .zip, .rar",
+                       UNKNOWN_TYPE);
+  ClassifyAndVerify(ParseResult::NOT_PARSED);
 }
 
 TEST_F(AddressFieldTest, ParseStateAndZipOneLabel) {

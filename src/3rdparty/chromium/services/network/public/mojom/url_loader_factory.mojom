@@ -6,6 +6,7 @@ module network.mojom;
 
 import "services/network/public/mojom/mutable_network_traffic_annotation_tag.mojom";
 import "services/network/public/mojom/url_loader.mojom";
+import "services/network/public/mojom/url_request.mojom";
 
 const uint32 kURLLoadOptionNone = 0;
 
@@ -56,22 +57,15 @@ const uint32 kURLLoadOptionBlockLocalRequest = 256;
 // URLLoaderFactory is an interface for requesting URLs. It creates URLLoader
 // instances. One URLLoader instance can load one URL.
 interface URLLoaderFactory {
-  // Creates a URLLoader and starts loading with the given |request|. |client|'s
+  // Creates a URLLoader and starts loading with the given `request`. `client`'s
   // methods will be called when certain events related to that loading
   // (e.g., response arrival) happen.
   //
-  // |routing_id| is the routing_id for subframe requests, and is the
-  // frame_tree_node_id for frame requests.
-  // TODO: once MojoLoading is only codepath and we have one factory per frame,
-  // remove this.
+  // `request_id` is an arbitrary id for the request. `request_id` should be
+  // unique over all calls to CreateLoaderAndStart() on this factory, or 0.
   //
-  // |request_id| is an arbitrary id for the request. The (routing_id,
-  // request_id) pair must be unique over all calls to CreateLoaderAndStart()
-  // on this factory.
-  //
-  // |options| is a bitfield of the options defined above.
+  // `options` is a bitfield of the options defined above.
   CreateLoaderAndStart(pending_receiver<URLLoader> loader,
-                       int32 routing_id,
                        int32 request_id,
                        uint32 options,
                        URLRequest request,

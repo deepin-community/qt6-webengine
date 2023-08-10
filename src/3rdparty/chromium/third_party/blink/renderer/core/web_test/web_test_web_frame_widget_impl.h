@@ -8,7 +8,6 @@
 #include <memory>
 #include <utility>
 
-#include "base/macros.h"
 #include "third_party/blink/public/test/frame_widget_test_helper.h"
 #include "third_party/blink/renderer/core/frame/web_frame_widget_impl.h"
 
@@ -53,6 +52,7 @@ class WebTestWebFrameWidgetImpl : public WebFrameWidgetImpl,
   void SynchronouslyCompositeAfterTest() override;
   void UpdateAllLifecyclePhasesAndComposite(
       base::OnceClosure completion_callback) override;
+  void DisableEndDocumentTransition() override;
 
   // WebFrameWidget overrides.
   FrameWidgetTestHelper* GetFrameWidgetTestHelperForTesting() override;
@@ -99,7 +99,7 @@ class WebTestWebFrameWidgetImpl : public WebFrameWidgetImpl,
   // Otherwise, any scheduled AnimateNow() calls will only perform the animation
   // step, which calls out to blink but doesn't composite for performance
   // reasons. See setAnimationRequiresRaster() in
-  // https://chromium.googlesource.com/chromium/src/+/master/docs/testing/writing_web_tests.md
+  // https://chromium.googlesource.com/chromium/src/+/main/docs/testing/writing_web_tests.md
   // for details on the optimization.
   bool composite_requested_ = false;
   // Synchronous composites should not be nested inside another

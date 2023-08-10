@@ -79,6 +79,8 @@ const feedbackCallerExtensions = [
   'C2ABD68C33A5B485971C9638B80D6A2E9CBA78C4',  // http://crbug.com/908458
   'B41E7F08E1179CC03CBD1F49E57CF353A40ADE07',  // http://crbug.com/908458
   'A948368FC53BE437A55FEB414106E207925482F5',  // ChromeOS Files App.
+  '754A9CB3C8623093180E10CF4C3AB64837179E68',  // https://crbug.com/1201800
+  'CF6B19571334F49878327D557597D23B1458AA39',  // https://crbug.com/1201800
 ];
 
 /**
@@ -179,23 +181,23 @@ class FeedbackRequest {
     /** @const */ const FLOW = this.feedbackInfo_.flow;
     chrome.feedbackPrivate.sendFeedback(
         this.feedbackInfo_, function(result, landingPageType) {
-          if (result == chrome.feedbackPrivate.Status.SUCCESS) {
-            console.log('Feedback: Report sent for request with ID ' + ID);
-            if (FLOW != chrome.feedbackPrivate.FeedbackFlow.LOGIN &&
-                landingPageType !=
+          if (result === chrome.feedbackPrivate.Status.SUCCESS) {
+            console.info('Feedback: Report sent for request with ID ' + ID);
+            if (FLOW !== chrome.feedbackPrivate.FeedbackFlow.LOGIN &&
+                landingPageType !==
                     chrome.feedbackPrivate.LandingPageType.NO_LANDING_PAGE) {
-              const landingPage = landingPageType ==
+              const landingPage = landingPageType ===
                       chrome.feedbackPrivate.LandingPageType.NORMAL ?
                   FEEDBACK_LANDING_PAGE :
                   FEEDBACK_LANDING_PAGE_TECHSTOP;
               window.open(landingPage, '_blank');
             }
           } else {
-            console.log(
+            console.info(
                 'Feedback: Report for request with ID ' + ID +
                 ' will be sent later.');
           }
-          if (FLOW == chrome.feedbackPrivate.FeedbackFlow.LOGIN) {
+          if (FLOW === chrome.feedbackPrivate.FeedbackFlow.LOGIN) {
             chrome.feedbackPrivate.loginFeedbackComplete();
           }
         });
@@ -208,7 +210,7 @@ class FeedbackRequest {
   onWindowClosed() {
     if (!this.reportIsBeingSent_) {
       this.isRequestCanceled_ = true;
-      if (this.feedbackInfo_.flow ==
+      if (this.feedbackInfo_.flow ===
           chrome.feedbackPrivate.FeedbackFlow.LOGIN) {
         chrome.feedbackPrivate.loginFeedbackComplete();
       }
@@ -217,17 +219,25 @@ class FeedbackRequest {
 }
 
 /**
- * Function to determine whether or not a given extension id is allowed to
+ * Function to determine whether or not a given app or extension is allowed to
  * invoke the feedback UI. If it is, the callback to start the Feedback UI will
  * be called.
- * @param {string} id the id of the sender extension.
+ * @param {Object} sender the sender of the feedback request message.
  * @param {Function} startFeedbackCallback The callback function that will
  *     will start the feedback UI.
  * @param {Object} feedbackInfo The feedback info object to pass to the
  *     start feedback UI callback.
  */
-function invokeFeedbackIfPermitted(id, startFeedbackCallback, feedbackInfo) {
-  crypto.subtle.digest('SHA-1', new TextEncoder().encode(id))
+function invokeFeedbackIfPermitted(
+    sender, startFeedbackCallback, feedbackInfo) {
+  // Files app SWA, non-extension user.
+  if (sender.origin === 'chrome://file-manager') {
+    startFeedbackCallback(feedbackInfo);
+    return;
+  }
+
+  // Extensions.
+  crypto.subtle.digest('SHA-1', new TextEncoder().encode(sender.id))
       .then(function(hashBuffer) {
         let hashString = '';
         const hashView = new Uint8Array(hashBuffer);
@@ -236,7 +246,7 @@ function invokeFeedbackIfPermitted(id, startFeedbackCallback, feedbackInfo) {
           hashString += n < 0x10 ? '0' : '';
           hashString += n.toString(16);
         }
-        if (feedbackCallerExtensions.indexOf(hashString.toUpperCase()) != -1) {
+        if (feedbackCallerExtensions.indexOf(hashString.toUpperCase()) !== -1) {
           startFeedbackCallback(feedbackInfo);
         }
       });
@@ -256,14 +266,15 @@ function feedbackReadyHandler(request, sender, sendResponse) {
 }
 
 /**
- * Callback which gets notified if another extension is requesting feedback.
+ * Callback which gets notified if another app or extension is
+ * requesting feedback.
  * @param {Object} request The message request object.
  * @param {Object} sender The sender of the message.
  * @param {function(Object)} sendResponse Callback for sending a response.
  */
 function requestFeedbackHandler(request, sender, sendResponse) {
   if (request.requestFeedback) {
-    invokeFeedbackIfPermitted(sender.id, startFeedbackUI, request.feedbackInfo);
+    invokeFeedbackIfPermitted(sender, startFeedbackUI, request.feedbackInfo);
   }
 }
 

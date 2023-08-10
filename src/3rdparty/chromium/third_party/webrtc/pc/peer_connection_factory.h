@@ -21,8 +21,10 @@
 #include "absl/strings/string_view.h"
 #include "api/audio_options.h"
 #include "api/fec_controller.h"
+#include "api/field_trials_view.h"
 #include "api/media_stream_interface.h"
 #include "api/media_types.h"
+#include "api/metronome/metronome.h"
 #include "api/neteq/neteq_factory.h"
 #include "api/network_state_predictor.h"
 #include "api/peer_connection_interface.h"
@@ -35,9 +37,8 @@
 #include "api/task_queue/task_queue_factory.h"
 #include "api/transport/network_control.h"
 #include "api/transport/sctp_transport_factory_interface.h"
-#include "api/transport/webrtc_key_value_config.h"
 #include "call/call.h"
-#include "media/sctp/sctp_transport_internal.h"
+#include "call/rtp_transport_controller_send_factory_interface.h"
 #include "p2p/base/port_allocator.h"
 #include "pc/channel_manager.h"
 #include "pc/connection_context.h"
@@ -66,16 +67,6 @@ class PeerConnectionFactory : public PeerConnectionFactoryInterface {
       PeerConnectionFactoryDependencies dependencies);
 
   void SetOptions(const Options& options) override;
-
-  rtc::scoped_refptr<PeerConnectionInterface> CreatePeerConnection(
-      const PeerConnectionInterface::RTCConfiguration& configuration,
-      std::unique_ptr<cricket::PortAllocator> allocator,
-      std::unique_ptr<rtc::RTCCertificateGeneratorInterface> cert_generator,
-      PeerConnectionObserver* observer) override;
-
-  rtc::scoped_refptr<PeerConnectionInterface> CreatePeerConnection(
-      const PeerConnectionInterface::RTCConfiguration& configuration,
-      PeerConnectionDependencies dependencies) override;
 
   RTCErrorOr<rtc::scoped_refptr<PeerConnectionInterface>>
   CreatePeerConnectionOrError(
@@ -117,12 +108,14 @@ class PeerConnectionFactory : public PeerConnectionFactoryInterface {
     return context_->signaling_thread();
   }
 
+  rtc::Thread* worker_thread() const { return context_->worker_thread(); }
+
   const Options& options() const {
     RTC_DCHECK_RUN_ON(signaling_thread());
     return options_;
   }
 
-  const WebRtcKeyValueConfig& trials() const { return context_->trials(); }
+  const FieldTrialsView& trials() const { return context_->trials(); }
 
  protected:
   // Constructor used by the static Create() method. Modifies the dependencies.
@@ -137,7 +130,6 @@ class PeerConnectionFactory : public PeerConnectionFactoryInterface {
   virtual ~PeerConnectionFactory();
 
  private:
-  rtc::Thread* worker_thread() const { return context_->worker_thread(); }
   rtc::Thread* network_thread() const { return context_->network_thread(); }
 
   bool IsTrialEnabled(absl::string_view key) const;
@@ -159,6 +151,9 @@ class PeerConnectionFactory : public PeerConnectionFactoryInterface {
   std::unique_ptr<NetworkControllerFactoryInterface>
       injected_network_controller_factory_;
   std::unique_ptr<NetEqFactory> neteq_factory_;
+  const std::unique_ptr<RtpTransportControllerSendFactoryInterface>
+      transport_controller_send_factory_;
+  std::unique_ptr<Metronome> metronome_;
 };
 
 }  // namespace webrtc

@@ -7,7 +7,6 @@
 #include <dlfcn.h>
 
 #include "base/logging.h"
-#include "base/stl_util.h"
 
 decltype(&::gnome_keyring_is_available)
     GnomeKeyringLoader::gnome_keyring_is_available_ptr;
@@ -78,7 +77,7 @@ bool GnomeKeyringLoader::LoadGnomeKeyring() {
     return false;
   }
 
-  for (size_t i = 0; i < base::size(functions); ++i) {
+  for (size_t i = 0; i < std::size(functions); ++i) {
     dlerror();
     *functions[i].pointer = dlsym(handle, functions[i].name);
     const char* error = dlerror();

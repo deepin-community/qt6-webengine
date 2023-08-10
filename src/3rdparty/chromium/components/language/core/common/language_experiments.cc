@@ -14,24 +14,20 @@
 
 namespace language {
 // Features:
-const base::Feature kUseHeuristicLanguageModel{
-    "UseHeuristicLanguageModel", base::FEATURE_DISABLED_BY_DEFAULT};
 const base::Feature kOverrideTranslateTriggerInIndia{
     "OverrideTranslateTriggerInIndia", base::FEATURE_DISABLED_BY_DEFAULT};
 const base::Feature kExplicitLanguageAsk{"ExplicitLanguageAsk",
                                          base::FEATURE_DISABLED_BY_DEFAULT};
-const base::Feature kUseFluentLanguageModel {
-  "UseFluentLanguageModel",
-#if defined(OS_IOS)
-      base::FEATURE_DISABLED_BY_DEFAULT
-#else
-      base::FEATURE_ENABLED_BY_DEFAULT
-#endif
-};
+const base::Feature kAppLanguagePrompt{"AppLanguagePrompt",
+                                       base::FEATURE_DISABLED_BY_DEFAULT};
+const base::Feature kAppLanguagePromptULP{"AppLanguagePromptULP",
+                                          base::FEATURE_DISABLED_BY_DEFAULT};
+const base::Feature kForceAppLanguagePrompt{"ForceAppLanguagePrompt",
+                                            base::FEATURE_DISABLED_BY_DEFAULT};
 const base::Feature kNotifySyncOnLanguageDetermined{
     "NotifySyncOnLanguageDetermined", base::FEATURE_ENABLED_BY_DEFAULT};
-const base::Feature kDetailedLanguageSettings{
-    "DetailedLanguageSettings", base::FEATURE_DISABLED_BY_DEFAULT};
+const base::Feature kDetailedLanguageSettings{"DetailedLanguageSettings",
+                                              base::FEATURE_ENABLED_BY_DEFAULT};
 const base::Feature kDesktopRestructuredLanguageSettings{
     "DesktopRestructuredLanguageSettings", base::FEATURE_DISABLED_BY_DEFAULT};
 const base::Feature kDesktopDetailedLanguageSettings{
@@ -40,42 +36,31 @@ const base::Feature kTranslateAssistContent{"TranslateAssistContent",
                                             base::FEATURE_DISABLED_BY_DEFAULT};
 const base::Feature kTranslateIntent{"TranslateIntent",
                                      base::FEATURE_DISABLED_BY_DEFAULT};
-const base::Feature kDetectedSourceLanguageOption{
-    "DetectedSourceLanguageOption", base::FEATURE_DISABLED_BY_DEFAULT};
 const base::Feature kContentLanguagesInLanguagePicker{
     "ContentLanguagesInLanguagePicker", base::FEATURE_DISABLED_BY_DEFAULT};
+const base::Feature kUseULPLanguagesInChrome{"UseULPLanguagesInChrome",
+                                             base::FEATURE_ENABLED_BY_DEFAULT};
 
 // Params:
 const char kBackoffThresholdKey[] = "backoff_threshold";
 const char kOverrideModelKey[] = "override_model";
 const char kEnforceRankerKey[] = "enforce_ranker";
-const char kOverrideModelHeuristicValue[] = "heuristic";
 const char kOverrideModelGeoValue[] = "geo";
 const char kOverrideModelDefaultValue[] = "default";
+const char kContentLanguagesDisableObserversParam[] = "disable_observers";
 
 OverrideLanguageModel GetOverrideLanguageModel() {
   std::map<std::string, std::string> params;
   bool should_override_model = base::GetFieldTrialParamsByFeature(
       kOverrideTranslateTriggerInIndia, &params);
 
-  // The model overrides ordering is important as it allows us to
-  // have concurrent overrides in experiment without having to partition them
-  // explicitly. For example, we may have a FLUENT experiment globally and a
-  // GEO experiment in India only.
-
-  if (base::FeatureList::IsEnabled(kUseHeuristicLanguageModel) ||
-      (should_override_model &&
-       params[kOverrideModelKey] == kOverrideModelHeuristicValue)) {
-    return OverrideLanguageModel::HEURISTIC;
-  }
+  // Note: when there are multiple possible override models, the overrides
+  // ordering is important as it allows us to have concurrent overrides in
+  // experiment without having to partition them explicitly.
 
   if (should_override_model &&
       params[kOverrideModelKey] == kOverrideModelGeoValue) {
     return OverrideLanguageModel::GEO;
-  }
-
-  if (base::FeatureList::IsEnabled(kUseFluentLanguageModel)) {
-    return OverrideLanguageModel::FLUENT;
   }
 
   return OverrideLanguageModel::DEFAULT;

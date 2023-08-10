@@ -10,8 +10,8 @@
 #include <tuple>
 #include <vector>
 
-#include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "base/time/time.h"
 #include "device/bluetooth/bluetooth_adapter.h"
 #include "device/bluetooth/bluetooth_advertisement.h"
 #include "device/bluetooth/bluetooth_gatt_connection.h"
@@ -31,6 +31,10 @@ class Adapter : public mojom::Adapter,
                 public device::BluetoothAdapter::Observer {
  public:
   explicit Adapter(scoped_refptr<device::BluetoothAdapter> adapter);
+
+  Adapter(const Adapter&) = delete;
+  Adapter& operator=(const Adapter&) = delete;
+
   ~Adapter() override;
 
   // mojom::Adapter overrides:
@@ -47,7 +51,8 @@ class Adapter : public mojom::Adapter,
   void SetDiscoverable(bool discoverable,
                        SetDiscoverableCallback callback) override;
   void SetName(const std::string& name, SetNameCallback callback) override;
-  void StartDiscoverySession(StartDiscoverySessionCallback callback) override;
+  void StartDiscoverySession(const std::string& client_name,
+                             StartDiscoverySessionCallback callback) override;
   void ConnectToServiceInsecurely(
       const std::string& address,
       const device::BluetoothUUID& service_uuid,
@@ -80,19 +85,30 @@ class Adapter : public mojom::Adapter,
   void AllowConnectionsForUuid(const device::BluetoothUUID& service_uuid);
 
  private:
+  struct ConnectToServiceRequestDetails {
+    ConnectToServiceRequestDetails(const std::string& address,
+                                   const device::BluetoothUUID& service_uuid,
+                                   const base::Time& time_requested,
+                                   ConnectToServiceInsecurelyCallback callback);
+    ~ConnectToServiceRequestDetails();
+
+    std::string address;
+    device::BluetoothUUID service_uuid;
+    base::Time time_requested;
+    ConnectToServiceInsecurelyCallback callback;
+  };
+
   void OnDeviceFetchedForInsecureServiceConnection(
-      const device::BluetoothUUID& service_uuid,
-      ConnectToServiceInsecurelyCallback callback,
+      int request_id,
       device::BluetoothDevice* device);
   void ProcessPendingInsecureServiceConnectionRequest(
       const std::string& address,
       device::BluetoothDevice* device);
 
-  void OnGattConnected(
+  void OnGattConnect(
       ConnectToDeviceCallback callback,
-      std::unique_ptr<device::BluetoothGattConnection> connection);
-  void OnConnectError(ConnectToDeviceCallback callback,
-                      device::BluetoothDevice::ConnectErrorCode error_code);
+      std::unique_ptr<device::BluetoothGattConnection> connection,
+      absl::optional<device::BluetoothDevice::ConnectErrorCode> error_code);
 
   void OnRegisterAdvertisement(
       RegisterAdvertisementCallback callback,
@@ -112,10 +128,9 @@ class Adapter : public mojom::Adapter,
       std::unique_ptr<device::BluetoothDiscoverySession> session);
   void OnDiscoverySessionError(StartDiscoverySessionCallback callback);
 
-  void OnConnectToService(ConnectToServiceInsecurelyCallback callback,
+  void OnConnectToService(int request_id,
                           scoped_refptr<device::BluetoothSocket> socket);
-  void OnConnectToServiceError(ConnectToServiceInsecurelyCallback callback,
-                               const std::string& message);
+  void OnConnectToServiceError(int request_id, const std::string& message);
 
   void OnCreateRfcommServiceInsecurely(
       CreateRfcommServiceInsecurelyCallback callback,
@@ -124,26 +139,35 @@ class Adapter : public mojom::Adapter,
       CreateRfcommServiceInsecurelyCallback callback,
       const std::string& message);
 
+  void ExecuteConnectToServiceCallback(int request_id,
+                                       mojom::ConnectToServiceResultPtr result);
+
   // The current Bluetooth adapter.
   scoped_refptr<device::BluetoothAdapter> adapter_;
 
   // The adapter observers that listen to this service.
   mojo::RemoteSet<mojom::AdapterObserver> observers_;
 
-  // Arguments provided to ConnectToServiceInsecurely(), cached until the
-  // device is ready to be connected to.
-  std::vector<std::tuple<std::string,
-                         device::BluetoothUUID,
-                         ConnectToServiceInsecurelyCallback>>
-      pending_connect_to_service_args_;
+  // Keeps track of details about pending ConnectToService requests while async
+  // operations are in progress.  This includes details about the caller and
+  // service as well as the callback.  Requests will wait here in three cases:
+  // * device::BluetoothAdapter::ConnectDevice()
+  // * device::BluetoothDevice::ConnectToServiceInsecurely()
+  // * device's services have not completed discovery
+  base::flat_map<int, std::unique_ptr<ConnectToServiceRequestDetails>>
+      connect_to_service_request_map_;
+
+  // Ids of ConnectToServiceRequestDetails that are awaiting the completion of
+  // service discovery for the given device.
+  std::vector<int> connect_to_service_requests_pending_discovery_;
 
   // Allowed UUIDs for untrusted clients to initiate outgoing connections, or
   // listen on incoming connections.
   std::set<device::BluetoothUUID> allowed_uuids_;
 
-  base::WeakPtrFactory<Adapter> weak_ptr_factory_{this};
+  int next_request_id_ = 0;
 
-  DISALLOW_COPY_AND_ASSIGN(Adapter);
+  base::WeakPtrFactory<Adapter> weak_ptr_factory_{this};
 };
 
 }  // namespace bluetooth

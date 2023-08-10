@@ -10,6 +10,8 @@
 #include <map>
 #include <string>
 
+#include "base/compiler_specific.h"
+
 namespace {
 
 // A single rule can use at most this amount of memory.
@@ -265,7 +267,7 @@ bool PolicyRule::AddStringMatch(RuleType rule_type,
         if (L'?' == current_char[1]) {
           ++current_char;
         }
-        FALLTHROUGH;
+        [[fallthrough]];
       default:
         fragment += *current_char;
         last_char = kLastCharIsAlpha;
@@ -348,7 +350,7 @@ bool PolicyRule::RebindCopy(PolicyOpcode* opcode_start,
 }
 
 PolicyRule::~PolicyRule() {
-  delete[] reinterpret_cast<char*>(buffer_);
+  delete[] reinterpret_cast<char*>(buffer_.get());
   delete opcode_factory_;
 }
 

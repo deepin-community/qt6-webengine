@@ -36,10 +36,9 @@
 #include <memory>
 #include <string>
 
-#include "base/macros.h"
+#include "base/callback_helpers.h"
 #include "base/memory/weak_ptr.h"
 #include "cc/test/fake_layer_tree_frame_sink.h"
-#include "cc/test/test_task_graph_runner.h"
 #include "cc/trees/layer_tree_host.h"
 #include "components/viz/common/surfaces/frame_sink_id.h"
 #include "mojo/public/cpp/bindings/associated_remote.h"
@@ -47,10 +46,10 @@
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "third_party/blink/public/common/input/web_mouse_event.h"
 #include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom-blink-forward.h"
-#include "third_party/blink/public/mojom/frame/frame_owner_element_type.mojom-blink.h"
 #include "third_party/blink/public/mojom/frame/tree_scope_type.mojom-blink.h"
 #include "third_party/blink/public/mojom/input/input_handler.mojom-blink.h"
 #include "third_party/blink/public/mojom/page/widget.mojom-blink.h"
+#include "third_party/blink/public/mojom/widget/platform_widget.mojom-blink.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/platform/scheduler/test/web_fake_thread_scheduler.h"
 #include "third_party/blink/public/platform/web_string.h"
@@ -68,29 +67,8 @@
 #include "third_party/blink/renderer/core/scroll/scrollbar_theme.h"
 #include "third_party/blink/renderer/core/testing/scoped_mock_overlay_scrollbars.h"
 #include "third_party/blink/renderer/platform/loader/testing/web_url_loader_factory_with_mock.h"
-#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
-
-#define EXPECT_FLOAT_POINT_EQ(expected, actual)    \
-  do {                                             \
-    EXPECT_FLOAT_EQ((expected).X(), (actual).X()); \
-    EXPECT_FLOAT_EQ((expected).Y(), (actual).Y()); \
-  } while (false)
-
-#define EXPECT_FLOAT_SIZE_EQ(expected, actual)               \
-  do {                                                       \
-    EXPECT_FLOAT_EQ((expected).Width(), (actual).Width());   \
-    EXPECT_FLOAT_EQ((expected).Height(), (actual).Height()); \
-  } while (false)
-
-#define EXPECT_FLOAT_RECT_EQ(expected, actual)               \
-  do {                                                       \
-    EXPECT_FLOAT_EQ((expected).X(), (actual).X());           \
-    EXPECT_FLOAT_EQ((expected).Y(), (actual).Y());           \
-    EXPECT_FLOAT_EQ((expected).Width(), (actual).Width());   \
-    EXPECT_FLOAT_EQ((expected).Height(), (actual).Height()); \
-  } while (false)
 
 namespace base {
 class TickClock;
@@ -139,7 +117,7 @@ void PumpPendingRequestsForFrameToLoad(WebLocalFrame*);
 
 WebMouseEvent CreateMouseEvent(WebInputEvent::Type,
                                WebMouseEvent::Button,
-                               const IntPoint&,
+                               const gfx::Point&,
                                int modifiers);
 
 // Helpers for creating frames for test purposes. All methods that accept raw
@@ -186,14 +164,20 @@ class TestWebFrameWidgetHost : public mojom::blink::WidgetHost,
 
   // mojom::blink::WidgetHost overrides:
   void SetCursor(const ui::Cursor& cursor) override;
-  void SetToolTipText(const String& tooltip_text,
-                      base::i18n::TextDirection text_direction_hint) override;
+  void UpdateTooltipUnderCursor(
+      const String& tooltip_text,
+      base::i18n::TextDirection text_direction_hint) override;
+  void UpdateTooltipFromKeyboard(const String& tooltip_text,
+                                 base::i18n::TextDirection text_direction_hint,
+                                 const gfx::Rect& bounds) override;
+  void ClearKeyboardTriggeredTooltip() override;
   void TextInputStateChanged(
       ui::mojom::blink::TextInputStatePtr state) override;
   void SelectionBoundsChanged(const gfx::Rect& anchor_rect,
                               base::i18n::TextDirection anchor_dir,
                               const gfx::Rect& focus_rect,
                               base::i18n::TextDirection focus_dir,
+                              const gfx::Rect& bounding_box,
                               bool is_anchor_first) override;
   void CreateFrameSink(
       mojo::PendingReceiver<viz::mojom::blink::CompositorFrameSink>
@@ -217,7 +201,6 @@ class TestWebFrameWidgetHost : public mojom::blink::WidgetHost,
   void AutoscrollStart(const gfx::PointF& position) override;
   void AutoscrollFling(const gfx::Vector2dF& position) override;
   void AutoscrollEnd() override;
-  void DidFirstVisuallyNonEmptyPaint() override;
   void StartDragging(const blink::WebDragData& drag_data,
                      blink::DragOperationsMask operations_allowed,
                      const SkBitmap& bitmap,
@@ -252,8 +235,6 @@ class TestWebFrameWidget : public WebFrameWidgetImpl {
     return injected_scroll_events_;
   }
 
-  cc::TaskGraphRunner* task_graph_runner() { return &test_task_graph_runner_; }
-
   scheduler::WebThreadScheduler* main_thread_scheduler() {
     return &fake_thread_scheduler_;
   }
@@ -268,7 +249,7 @@ class TestWebFrameWidget : public WebFrameWidgetImpl {
   // threaded compositor, such as SimCompositor tests.
   cc::FakeLayerTreeFrameSink* LastCreatedFrameSink();
 
-  virtual ScreenInfo GetInitialScreenInfo();
+  virtual display::ScreenInfo GetInitialScreenInfo();
   virtual std::unique_ptr<TestWebFrameWidgetHost> CreateWidgetHost();
 
   void BindWidgetChannels(
@@ -291,7 +272,6 @@ class TestWebFrameWidget : public WebFrameWidgetImpl {
   }
 
  private:
-  cc::TestTaskGraphRunner test_task_graph_runner_;
   cc::FakeLayerTreeFrameSink* last_created_frame_sink_ = nullptr;
   blink::scheduler::WebFakeThreadScheduler fake_thread_scheduler_;
   std::unique_ptr<blink::scheduler::WebAgentGroupScheduler>
@@ -311,7 +291,6 @@ class TestWebViewClient : public WebViewClient {
   void DestroyChildViews();
 
   // WebViewClient overrides.
-  bool CanUpdateLayout() override { return true; }
   WebView* CreateView(WebLocalFrame* opener,
                       const WebURLRequest&,
                       const WebWindowFeatures&,
@@ -320,7 +299,7 @@ class TestWebViewClient : public WebViewClient {
                       network::mojom::blink::WebSandboxFlags,
                       const SessionStorageNamespaceId&,
                       bool& consumed_user_gesture,
-                      const base::Optional<WebImpression>&) override;
+                      const absl::optional<WebImpression>&) override;
 
  private:
   WTF::Vector<std::unique_ptr<WebViewHelper>> child_web_views_;
@@ -351,6 +330,8 @@ class WebViewHelper : public ScopedMockOverlayScrollbars {
  public:
   explicit WebViewHelper(CreateTestWebFrameWidgetCallback
                              create_web_frame_callback = base::NullCallback());
+  WebViewHelper(const WebViewHelper&) = delete;
+  WebViewHelper& operator=(const WebViewHelper&) = delete;
   ~WebViewHelper();
 
   // Helpers for creating the main frame. All methods that accept raw
@@ -486,8 +467,6 @@ class WebViewHelper : public ScopedMockOverlayScrollbars {
 
   // The Platform should not change during the lifetime of the test!
   Platform* const platform_;
-
-  DISALLOW_COPY_AND_ASSIGN(WebViewHelper);
 };
 
 // Minimal implementation of WebLocalFrameClient needed for unit tests that load
@@ -515,7 +494,7 @@ class TestWebFrameClient : public WebLocalFrameClient {
       const WebString& fallback_name,
       const FramePolicy&,
       const WebFrameOwnerProperties&,
-      mojom::blink::FrameOwnerElementType,
+      FrameOwnerElementType,
       WebPolicyContainerBindParams policy_container_bind_params) override;
   void InitializeAsChildFrame(WebLocalFrame* parent) override;
   void DidStartLoading() override;
@@ -548,6 +527,9 @@ class TestWebFrameClient : public WebLocalFrameClient {
   int FinishedLoadingLayoutCount() const {
     return finished_loading_layout_count_;
   }
+  network::mojom::WebSandboxFlags sandbox_flags() const {
+    return sandbox_flags_;
+  }
 
  private:
   void CommitNavigation(std::unique_ptr<WebNavigationInfo>);
@@ -569,6 +551,10 @@ class TestWebFrameClient : public WebLocalFrameClient {
   int visually_non_empty_layout_count_ = 0;
   int finished_parsing_layout_count_ = 0;
   int finished_loading_layout_count_ = 0;
+
+  // The sandbox flags to use when committing navigations.
+  network::mojom::WebSandboxFlags sandbox_flags_ =
+      network::mojom::WebSandboxFlags::kNone;
 
   base::WeakPtrFactory<TestWebFrameClient> weak_factory_{this};
 };

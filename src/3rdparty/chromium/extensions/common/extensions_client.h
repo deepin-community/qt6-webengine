@@ -118,8 +118,8 @@ class ExtensionsClient {
   virtual const GURL& GetWebstoreUpdateURL() const = 0;
 
   // Returns a flag indicating whether or not a given URL is a valid
-  // extension blacklist URL.
-  virtual bool IsBlacklistUpdateURL(const GURL& url) const = 0;
+  // extension blocklist URL.
+  virtual bool IsBlocklistUpdateURL(const GURL& url) const = 0;
 
   // Returns the set of file paths corresponding to any images within an
   // extension's contents that may be displayed directly within the browser UI
@@ -140,6 +140,11 @@ class ExtensionsClient {
       const Extension& extension,
       bool is_extension_active,
       std::vector<network::mojom::CorsOriginPatternPtr>* origin_patterns) const;
+
+  // Returns the extended error code used by the embedder when an extension
+  // blocks a request. Returns absl::nullopt if the embedder doesn't define such
+  // an error code.
+  virtual absl::optional<int> GetExtensionExtendedErrorCode() const;
 
  private:
   // Performs common initialization and calls Initialize() to allow subclasses

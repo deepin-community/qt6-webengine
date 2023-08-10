@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # Copyright 2015 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
@@ -109,7 +109,8 @@ FakeApi.prototype = {
  * @type {!ChromeEvent}
  * @see https://developer.chrome.com/extensions/fakeApi#event-onTrapDetected
  */
-FakeApi.prototype.onTrapDetected;""" % (datetime.now().year, sys.argv[0]))
+FakeApi.prototype.onTrapDetected;""" % (datetime.now().year,
+                                        sys.argv[0].replace('\\', '/')))
 
 class JsExternGeneratorTest(unittest.TestCase):
   def _GetNamespace(self, fake_content, filename):

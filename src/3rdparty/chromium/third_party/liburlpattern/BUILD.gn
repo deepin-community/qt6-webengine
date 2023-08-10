@@ -2,14 +2,24 @@
 # Use of this source code is governed by an MIT-style license that can be
 # found in the LICENSE file or at https://opensource.org/licenses/MIT.
 
+import("//testing/libfuzzer/fuzzer_test.gni")
 import("//testing/test.gni")
+
+config("warnings") {
+  if(is_clang || !is_win) {
+    cflags = [ "-Wno-shadow" ]
+  }
+}
 
 component("liburlpattern") {
   defines = [ "IS_LIBURLPATTERN_IMPL" ]
   deps = [
     "//base:base",
     "//third_party/abseil-cpp:absl",
+    "//third_party/icu:icu",
   ]
+
+  configs += [ ":warnings" ]
 
   # Note, also update the local modifications in README.chromium.
   sources = [
@@ -30,6 +40,8 @@ test("liburlpattern_unittests") {
     ":liburlpattern",
     "//base/test:run_all_unittests",
     "//testing/gtest",
+    "//third_party/abseil-cpp:absl",
+    "//third_party/icu:icu",
   ]
 
   # Note, also update the local modifications in README.chromium.
@@ -40,4 +52,13 @@ test("liburlpattern_unittests") {
     "utils_unittest.cc",
   ]
   testonly = true
+}
+
+fuzzer_test("liburlpattern_fuzzer") {
+  sources = [ "parse_fuzzer.cc" ]
+  deps = [
+    ":liburlpattern",
+    "//base",
+    "//third_party/abseil-cpp:absl",
+  ]
 }

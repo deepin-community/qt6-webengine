@@ -8,7 +8,6 @@
 #include <string>
 #include <vector>
 
-#include "base/macros.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/manifest_handler.h"
 
@@ -65,28 +64,32 @@ struct ManifestURL : public Extension::ManifestData {
 class HomepageURLHandler : public ManifestHandler {
  public:
   HomepageURLHandler();
+
+  HomepageURLHandler(const HomepageURLHandler&) = delete;
+  HomepageURLHandler& operator=(const HomepageURLHandler&) = delete;
+
   ~HomepageURLHandler() override;
 
-  bool Parse(Extension* extension, base::string16* error) override;
+  bool Parse(Extension* extension, std::u16string* error) override;
 
  private:
   base::span<const char* const> Keys() const override;
-
-  DISALLOW_COPY_AND_ASSIGN(HomepageURLHandler);
 };
 
 // Parses the "update_url" manifest key.
 class UpdateURLHandler : public ManifestHandler {
  public:
   UpdateURLHandler();
+
+  UpdateURLHandler(const UpdateURLHandler&) = delete;
+  UpdateURLHandler& operator=(const UpdateURLHandler&) = delete;
+
   ~UpdateURLHandler() override;
 
-  bool Parse(Extension* extension, base::string16* error) override;
+  bool Parse(Extension* extension, std::u16string* error) override;
 
  private:
   base::span<const char* const> Keys() const override;
-
-  DISALLOW_COPY_AND_ASSIGN(UpdateURLHandler);
 };
 
 // Parses the "about_page" manifest key.
@@ -97,17 +100,19 @@ class UpdateURLHandler : public ManifestHandler {
 class AboutPageHandler : public ManifestHandler {
  public:
   AboutPageHandler();
+
+  AboutPageHandler(const AboutPageHandler&) = delete;
+  AboutPageHandler& operator=(const AboutPageHandler&) = delete;
+
   ~AboutPageHandler() override;
 
-  bool Parse(Extension* extension, base::string16* error) override;
+  bool Parse(Extension* extension, std::u16string* error) override;
   bool Validate(const Extension* extension,
                 std::string* error,
                 std::vector<InstallWarning>* warnings) const override;
 
  private:
   base::span<const char* const> Keys() const override;
-
-  DISALLOW_COPY_AND_ASSIGN(AboutPageHandler);
 };
 
 }  // namespace extensions

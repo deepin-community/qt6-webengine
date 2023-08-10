@@ -4,12 +4,19 @@
 
 module network.mojom;
 
+import "mojo/public/mojom/base/file.mojom";
+import "mojo/public/mojom/base/file_path.mojom";
 import "mojo/public/mojom/base/memory_pressure_level.mojom";
+import "mojo/public/mojom/base/time.mojom";
+import "services/network/public/mojom/host_resolver.mojom";
 import "services/network/public/mojom/network_change_manager.mojom";
 import "services/network/public/mojom/network_param.mojom";
 import "services/network/public/mojom/network_types.mojom";
+import "services/network/public/mojom/http_cache_backend_file_operations.mojom";
 
 // Maps to net::RuleBasedHostResolverProc::Rule::ResolverType.
+//
+// TODO(https://crbug.com/1298106) Deduplicate this enum's definition.
 enum ResolverType {
   kResolverTypeFail,
   kResolverTypeFailTimeout,
@@ -27,6 +34,16 @@ struct Rule {
   string replacement;
   int32 host_resolver_flags;
   array<string> dns_aliases;
+};
+
+// An entry in the "simple" backend of an HTTP cache.
+interface SimpleCacheEntry {
+};
+
+// The "simple" backend of an HTTP cache.
+interface SimpleCache {
+  // Creates a new entry.
+  CreateEntry(string key) => (pending_remote<SimpleCacheEntry>? entry);
 };
 
 // Testing interface to the network service.
@@ -84,6 +101,17 @@ interface NetworkServiceTest {
   [Sync]
   SetAllowNetworkAccessToHostResolutions() => ();
 
+  // Replace the system DNS configuration with a basic, single-server,
+  // localhost-only configuration and ignore any future changes to the real
+  // configuration.
+  [Sync]
+  ReplaceSystemDnsConfig() => ();
+
+  // Set the DoH configuration to be used during tests.
+  [Sync]
+  SetTestDohConfig(SecureDnsMode secure_dns_mode,
+                   DnsOverHttpsConfig doh_config) => ();
+
   // Causes the next host resolve to the given hostname to crash the process.
   CrashOnResolveHost(string host);
 
@@ -116,13 +144,24 @@ interface NetworkServiceTest {
   // network service informs the main process when a field trial is activated.
   ActivateFieldTrial(string field_trial_name);
 
-  // Instantiates a net::ScopedTestEVPolicy with the specified fingerprint and
-  // policy oid.
+  // Set how long of an initial delay should be used for exponential backoff in
+  // SCT auditing retries. Setting the delay to nullopt will reset to the
+  // default.
   [Sync]
-  SetEVPolicy(array<uint8, 32> fingerprint_sha256, string policy_oid) => ();
+  SetSCTAuditingRetryDelay(mojo_base.mojom.TimeDelta? delay) => ();
 
-  // Gets the current count of entries in the First-Party sets mapping. Note
-  // that each entry is a registered domain mapped to its owner.
-  [Sync]
-  GetFirstPartySetEntriesCount() => (int64 entries);
+  // Opens a file with the given `path`, and returns whether it is valid.
+  OpenFile(mojo_base.mojom.FilePath path) => (bool result);
+
+  // Enumerate files in the specified directory.
+  EnumerateFiles(mojo_base.mojom.FilePath path,
+                 pending_remote<HttpCacheBackendFileOperationsFactory> factory)
+      => (array<FileEnumerationEntry> entries, bool error);
+
+  // Creates a "simple" backend for an HTTP cache.
+  // Returns the created cache if succeeded, and null otherwise.
+  CreateSimpleCache(
+      pending_remote<HttpCacheBackendFileOperationsFactory> factory,
+      mojo_base.mojom.FilePath path)
+      => (pending_remote<SimpleCache>? backend);
 };

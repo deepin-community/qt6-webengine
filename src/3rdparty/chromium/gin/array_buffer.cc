@@ -9,17 +9,16 @@
 
 #include "base/allocator/partition_allocator/page_allocator.h"
 #include "base/check_op.h"
-#include "base/partition_alloc_buildflags.h"
 #include "build/build_config.h"
 #include "gin/per_isolate_data.h"
 
-#if defined(OS_POSIX)
+#if BUILDFLAG(IS_POSIX)
 #include <sys/mman.h>
 
 #ifndef MAP_ANONYMOUS
 #define MAP_ANONYMOUS MAP_ANON
 #endif
-#endif  // defined(OS_POSIX)
+#endif  // BUILDFLAG(IS_POSIX)
 
 namespace gin {
 

@@ -12,7 +12,7 @@ the root and first few levels looks like the following (some nodes omitted for s
 - **`api`** with tests for full coverage of the Javascript API surface of WebGPU.
     - **`validation`** with positive and negative tests for all the validation rules of the API.
     - **`operation`** with tests that checks the result of performing valid WebGPU operations,
-      taking advantage of parametrization to exercise interactions between features.
+      taking advantage of parametrization to exercise interactions between parts of the API.
     - **`regression`** for one-off tests that reproduce bugs found in implementations to prevent
       the bugs from appearing again.
 - **`shader`** with tests for full coverage of the shaders that can be passed to WebGPU.
@@ -23,7 +23,7 @@ the root and first few levels looks like the following (some nodes omitted for s
   objects exposed exactly the correct members, and that methods throw when passed incomplete
   dictionaries.
 - **`web-platform`** with tests for Web platform-specific interactions like `GPUSwapChain` and
-  `<canvas>`, WebXR and `GPUCommandEncoder.copyImageBitmapToTexture`.
+  `<canvas>`, WebXR and `GPUQueue.copyExternalImageToTexture`.
 
 At the same time test hierarchies can be used to split the testing of a single sub-object into
 several file for maintainability. For example `GPURenderPipeline` has a large descriptor and some
@@ -79,7 +79,7 @@ There are many aspects that should be tested in all validation tests:
 - each individual argument to a method call (including `this`) or member of a descriptor
   dictionary should be tested including:
     - what happens when an error object is passed.
-    - what happens when an extension enum or method is used.
+    - what happens when an optional feature enum or method is used.
     - what happens for numeric values when they are at 0, too large, too small, etc.
 - each validation rule in the specification should be checked both with a control success case,
   and error cases.
@@ -91,10 +91,10 @@ be tested but boundary testing of alignment should be between a value aligned to
 aligned to 2^(N-1).
 
 Finally, this is probably also where we would test that extensions follow the rule that: if the
-browser supports an extension but it is not enabled on the device, then calling methods from that
-extension throws `TypeError`.
+browser supports a feature but it is not enabled on the device, then calling methods from that
+feature throws `TypeError`.
 
-- Test providing unknown properties *that are definitely not part of any extension* are
+- Test providing unknown properties *that are definitely not part of any feature* are
   valid/ignored. (Unfortunately, due to the rules of IDL, adding a member to a dictionary is
   always a breaking change. So this is how we have to test this unless we can get a "strict"
   dictionary type in IDL. We can't test adding members from non-enabled extensions.)
@@ -106,8 +106,8 @@ Operation tests test the actual results of using the API. They execute
 set of behaviors (which can be quite complex to compute).
 
 Note that operation tests need to test a lot of interactions between different
-features, and so can become quite complex. Try to reduce the complexity by
-utilizing combinatorics and [helpers](helper_index.md), and splitting/merging test files as needed.
+parts of the API, and so can become quite complex. Try to reduce the complexity by
+utilizing combinatorics and [helpers](./helper_index.txt), and splitting/merging test files as needed.
 
 #### Errors
 

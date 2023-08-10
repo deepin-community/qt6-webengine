@@ -7,11 +7,13 @@
 #ifndef CORE_FXCRT_CFX_BINARYBUF_H_
 #define CORE_FXCRT_CFX_BINARYBUF_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <memory>
 
+#include "core/fxcrt/bytestring.h"
 #include "core/fxcrt/fx_memory_wrappers.h"
-#include "core/fxcrt/fx_string.h"
-#include "core/fxcrt/fx_system.h"
 #include "third_party/base/span.h"
 
 class CFX_BinaryBuf {
@@ -25,10 +27,9 @@ class CFX_BinaryBuf {
 
   pdfium::span<uint8_t> GetSpan();
   pdfium::span<const uint8_t> GetSpan() const;
-  uint8_t* GetBuffer() const { return m_pBuffer.get(); }
-  size_t GetSize() const { return m_DataSize; }
-  virtual size_t GetLength() const;
   bool IsEmpty() const { return GetLength() == 0; }
+  size_t GetSize() const { return m_DataSize; }  // In bytes.
+  virtual size_t GetLength() const;              // In subclass-specific units.
 
   void Clear();
   void SetAllocStep(size_t step) { m_AllocStep = step; }
@@ -44,13 +45,12 @@ class CFX_BinaryBuf {
     m_pBuffer.get()[m_DataSize++] = byte;
   }
 
-  void Delete(size_t start_index, size_t count);
-
   // Releases ownership of |m_pBuffer| and returns it.
   std::unique_ptr<uint8_t, FxFreeDeleter> DetachBuffer();
 
  protected:
   void ExpandBuf(size_t size);
+  void DeleteBuf(size_t start_index, size_t count);
 
   size_t m_AllocStep = 0;
   size_t m_AllocSize = 0;

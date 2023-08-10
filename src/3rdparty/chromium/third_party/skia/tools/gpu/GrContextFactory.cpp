@@ -7,7 +7,7 @@
  */
 
 #include "include/gpu/GrDirectContext.h"
-#include "src/gpu/GrDirectContextPriv.h"
+#include "src/gpu/ganesh/GrDirectContextPriv.h"
 #include "tools/gpu/GrContextFactory.h"
 #ifdef SK_GL
 #include "tools/gpu/gl/GLTestContext.h"
@@ -29,8 +29,7 @@
 #ifdef SK_DAWN
 #include "tools/gpu/dawn/DawnTestContext.h"
 #endif
-#include "src/gpu/GrCaps.h"
-#include "src/gpu/gl/GrGLGpu.h"
+#include "src/gpu/ganesh/GrCaps.h"
 #include "tools/gpu/mock/MockTestContext.h"
 
 #if defined(SK_BUILD_FOR_WIN) && defined(SK_ENABLE_DISCRETE_GPU)
@@ -188,8 +187,8 @@ ContextInfo GrContextFactory::getContextInfoInternal(ContextType type, ContextOv
                     // (<= 269.73). We get shader link failures when testing on recent drivers
                     // using this backend.
                     if (glCtx) {
-                        auto [backend, vendor, renderer] = GrGLGetANGLEInfo(glCtx->gl());
-                        if (vendor == GrGLANGLEVendor::kNVIDIA) {
+                        GrGLDriverInfo info = GrGLGetDriverInfo(glCtx->gl());
+                        if (info.fANGLEVendor == GrGLVendor::kNVIDIA) {
                             delete glCtx;
                             return ContextInfo();
                         }
@@ -213,8 +212,11 @@ ContextInfo GrContextFactory::getContextInfoInternal(ContextType type, ContextOv
                     break;
 #endif
 #ifndef SK_NO_COMMAND_BUFFER
-                case kCommandBuffer_ContextType:
-                    glCtx = CommandBufferGLTestContext::Create(glShareContext);
+                case kCommandBuffer_ES2_ContextType:
+                    glCtx = CommandBufferGLTestContext::Create(2, glShareContext);
+                    break;
+                case kCommandBuffer_ES3_ContextType:
+                    glCtx = CommandBufferGLTestContext::Create(3, glShareContext);
                     break;
 #endif
                 default:
@@ -240,10 +242,10 @@ ContextInfo GrContextFactory::getContextInfoInternal(ContextType type, ContextOv
             if (!testCtx) {
                 return ContextInfo();
             }
-
+#ifdef SK_GL
             // We previously had an issue where the VkDevice destruction would occasionally hang
-            // on systems with NVIDIA GPUs and having an existing GL context fixed it. Now (March
-            // 2020) we still need the GL context to keep Vulkan/TSAN bots from running incredibly
+            // on systems with NVIDIA GPUs and having an existing GL context fixed it. Now (Feb
+            // 2022) we still need the GL context to keep Vulkan/TSAN bots from running incredibly
             // slow. Perhaps this prevents repeated driver loading/unloading? Note that keeping
             // a persistent VkTestContext around instead was tried and did not work.
             if (!fSentinelGLContext) {
@@ -252,6 +254,7 @@ ContextInfo GrContextFactory::getContextInfoInternal(ContextType type, ContextOv
                     fSentinelGLContext.reset(CreatePlatformGLTestContext(kGLES_GrGLStandard));
                 }
             }
+#endif
             break;
         }
 #endif
@@ -308,6 +311,9 @@ ContextInfo GrContextFactory::getContextInfoInternal(ContextType type, ContextOv
     if (ContextOverrides::kAvoidStencilBuffers & overrides) {
         grOptions.fAvoidStencilBuffers = true;
     }
+    if (ContextOverrides::kReducedShaders & overrides) {
+        grOptions.fReducedShaderVariations = true;
+    }
     sk_sp<GrDirectContext> grCtx;
     {
         auto restore = testCtx->makeCurrentAndAutoRestore();
@@ -315,6 +321,10 @@ ContextInfo GrContextFactory::getContextInfoInternal(ContextType type, ContextOv
     }
     if (!grCtx) {
         return ContextInfo();
+    }
+
+    if (shareContext) {
+        SkASSERT(grCtx->directContextID() != shareContext->directContextID());
     }
 
     // We must always add new contexts by pushing to the back so that when we delete them we delete

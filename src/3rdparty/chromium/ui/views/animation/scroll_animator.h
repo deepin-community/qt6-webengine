@@ -7,7 +7,7 @@
 
 #include <memory>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "ui/gfx/animation/animation_delegate.h"
 #include "ui/views/views_export.h"
 
@@ -22,6 +22,9 @@ class VIEWS_EXPORT ScrollDelegate {
   // Returns true if the content was actually scrolled, false otherwise.
   virtual bool OnScroll(float dx, float dy) = 0;
 
+  // Called when the contents scrolled by the fling event ended.
+  virtual void OnFlingScrollEnded() {}
+
  protected:
   ~ScrollDelegate() = default;
 };
@@ -30,6 +33,10 @@ class VIEWS_EXPORT ScrollAnimator : public gfx::AnimationDelegate {
  public:
   // The ScrollAnimator does not own the delegate. Uses default acceleration.
   explicit ScrollAnimator(ScrollDelegate* delegate);
+
+  ScrollAnimator(const ScrollAnimator&) = delete;
+  ScrollAnimator& operator=(const ScrollAnimator&) = delete;
+
   ~ScrollAnimator() override;
 
   // Use this if you would prefer different acceleration than the default.
@@ -46,7 +53,7 @@ class VIEWS_EXPORT ScrollAnimator : public gfx::AnimationDelegate {
   void AnimationProgressed(const gfx::Animation* animation) override;
   void AnimationCanceled(const gfx::Animation* animation) override;
 
-  ScrollDelegate* delegate_;
+  raw_ptr<ScrollDelegate> delegate_;
 
   float velocity_x_;
   float velocity_y_;
@@ -55,8 +62,6 @@ class VIEWS_EXPORT ScrollAnimator : public gfx::AnimationDelegate {
   float acceleration_;
 
   std::unique_ptr<gfx::SlideAnimation> animation_;
-
-  DISALLOW_COPY_AND_ASSIGN(ScrollAnimator);
 };
 
 }  // namespace views

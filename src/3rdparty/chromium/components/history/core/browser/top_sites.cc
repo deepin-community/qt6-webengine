@@ -4,6 +4,7 @@
 
 #include "components/history/core/browser/top_sites.h"
 
+#include "base/observer_list.h"
 #include "components/history/core/browser/top_sites_observer.h"
 
 namespace history {
@@ -11,13 +12,10 @@ namespace history {
 PrepopulatedPage::PrepopulatedPage() : favicon_id(-1), color() {}
 
 PrepopulatedPage::PrepopulatedPage(const GURL& url,
-                                   const base::string16& title,
+                                   const std::u16string& title,
                                    int favicon_id,
                                    SkColor color)
-    : most_visited(url, title),
-      favicon_id(favicon_id),
-      color(color) {
-}
+    : most_visited(url, title), favicon_id(favicon_id), color(color) {}
 
 TopSites::TopSites() = default;
 

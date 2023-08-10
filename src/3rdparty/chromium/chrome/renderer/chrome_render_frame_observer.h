@@ -8,8 +8,6 @@
 #include <string>
 #include <vector>
 
-#include "base/macros.h"
-#include "base/timer/timer.h"
 #include "build/build_config.h"
 #include "chrome/common/chrome_render_frame.mojom.h"
 #include "components/safe_browsing/buildflags.h"
@@ -18,6 +16,8 @@
 #include "mojo/public/cpp/bindings/pending_associated_receiver.h"
 #include "services/service_manager/public/cpp/binder_registry.h"
 #include "third_party/blink/public/common/associated_interfaces/associated_interface_registry.h"
+
+class SkBitmap;
 
 namespace gfx {
 class Size;
@@ -46,6 +46,11 @@ class ChromeRenderFrameObserver : public content::RenderFrameObserver,
  public:
   ChromeRenderFrameObserver(content::RenderFrame* render_frame,
                             web_cache::WebCacheImpl* web_cache_impl);
+
+  ChromeRenderFrameObserver(const ChromeRenderFrameObserver&) = delete;
+  ChromeRenderFrameObserver& operator=(const ChromeRenderFrameObserver&) =
+      delete;
+
   ~ChromeRenderFrameObserver() override;
 
   service_manager::BinderRegistry* registry() { return &registry_; }
@@ -53,7 +58,7 @@ class ChromeRenderFrameObserver : public content::RenderFrameObserver,
     return &associated_interfaces_;
   }
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   // This is called on the main thread for subresources or worker threads for
   // dedicated workers.
   static std::string GetCCTClientHeader(int render_frame_id);
@@ -77,18 +82,19 @@ class ChromeRenderFrameObserver : public content::RenderFrameObserver,
   void DidClearWindowObject() override;
   void DidMeaningfulLayout(blink::WebMeaningfulLayout layout_type) override;
   void OnDestruct() override;
+  void DraggableRegionsChanged() override;
 
   // chrome::mojom::ChromeRenderFrame:
   void SetWindowFeatures(
       blink::mojom::WindowFeaturesPtr window_features) override;
-  void ExecuteWebUIJavaScript(const base::string16& javascript) override;
+  void ExecuteWebUIJavaScript(const std::u16string& javascript) override;
   void RequestImageForContextNode(
       int32_t thumbnail_min_area_pixels,
       const gfx::Size& thumbnail_max_size_pixels,
       chrome::mojom::ImageFormat image_format,
       RequestImageForContextNodeCallback callback) override;
   void RequestReloadImageForContextNode() override;
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   void SetCCTClientHeader(const std::string& header) override;
 #endif
   void GetMediaFeedURL(GetMediaFeedURLCallback callback) override;
@@ -138,17 +144,15 @@ class ChromeRenderFrameObserver : public content::RenderFrameObserver,
   // Owned by ChromeContentRendererClient and outlive us.
   web_cache::WebCacheImpl* web_cache_impl_;
 
-#if !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
   // Save the JavaScript to preload if ExecuteWebUIJavaScript is invoked.
-  std::vector<base::string16> webui_javascript_;
+  std::vector<std::u16string> webui_javascript_;
 #endif
 
   mojo::AssociatedReceiverSet<chrome::mojom::ChromeRenderFrame> receivers_;
 
   service_manager::BinderRegistry registry_;
   blink::AssociatedInterfaceRegistry associated_interfaces_;
-
-  DISALLOW_COPY_AND_ASSIGN(ChromeRenderFrameObserver);
 };
 
 #endif  // CHROME_RENDERER_CHROME_RENDER_FRAME_OBSERVER_H_

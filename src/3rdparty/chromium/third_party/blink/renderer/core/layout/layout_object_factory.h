@@ -12,6 +12,9 @@
 namespace blink {
 
 class ComputedStyle;
+class CounterContentData;
+class Document;
+class HTMLElement;
 class LayoutBlock;
 class LayoutBlockFlow;
 class LayoutObject;
@@ -22,7 +25,9 @@ class LayoutRubyAsBlock;
 class LayoutTableCaption;
 class LayoutText;
 class LayoutTextFragment;
+class LayoutView;
 class Node;
+class PseudoElement;
 
 // Helper class for creation of certain LayoutObject-derived objects that may
 // need to be of different types, depending on whether or not LayoutNG is to be
@@ -42,11 +47,13 @@ class LayoutObjectFactory {
   static LayoutBlock* CreateBlockForLineClamp(Node& node,
                                               const ComputedStyle& style,
                                               LegacyLayout legacy);
+  static LayoutView* CreateView(Document&, const ComputedStyle&);
   static LayoutBlock* CreateFlexibleBox(Node&,
                                         const ComputedStyle&,
                                         LegacyLayout);
   static LayoutBlock* CreateGrid(Node&, const ComputedStyle&, LegacyLayout);
   static LayoutBlock* CreateMath(Node&, const ComputedStyle&, LegacyLayout);
+  static LayoutBlock* CreateCustom(Node&, const ComputedStyle&, LegacyLayout);
   static LayoutObject* CreateListMarker(Node&,
                                         const ComputedStyle&,
                                         LegacyLayout);
@@ -69,6 +76,9 @@ class LayoutObjectFactory {
   static LayoutObject* CreateButton(Node& node,
                                     const ComputedStyle& style,
                                     LegacyLayout legacy);
+  static LayoutObject* CreateCounter(PseudoElement& pseduo,
+                                     const CounterContentData& counter,
+                                     LegacyLayout legacy);
   static LayoutBlock* CreateFieldset(Node&, const ComputedStyle&, LegacyLayout);
   static LayoutBlockFlow* CreateFileUploadControl(Node& node,
                                                   const ComputedStyle& style,
@@ -87,6 +97,9 @@ class LayoutObjectFactory {
                                                    LegacyLayout legacy);
 
   static LayoutText* CreateText(Node*, scoped_refptr<StringImpl>, LegacyLayout);
+  static LayoutText* CreateTextCombine(Node*,
+                                       scoped_refptr<StringImpl>,
+                                       LegacyLayout);
   static LayoutTextFragment* CreateTextFragment(Node*,
                                                 StringImpl*,
                                                 int start_offset,
@@ -102,7 +115,14 @@ class LayoutObjectFactory {
                                       const ComputedStyle& style,
                                       LegacyLayout legacy);
 
-  // Anonoymous creation methods
+  static LayoutObject* CreateSVGText(Node& node,
+                                     const ComputedStyle& style,
+                                     LegacyLayout legacy);
+
+  static LayoutObject* CreateBR(Node*, LegacyLayout);
+  static LayoutObject* CreateWordBreak(HTMLElement*, LegacyLayout);
+
+  // Anonymous creation methods
 
   // |child_forces_legacy| true if creating parents boxes for legacy child.
   // Table must match child's type.

@@ -9,8 +9,7 @@
 
 #include "base/mac/scoped_typeref.h"
 
-namespace base {
-namespace mac {
+namespace base::mac {
 
 namespace internal {
 
@@ -24,13 +23,12 @@ struct ScopedIOObjectTraits {
   static void Release(IOT iot) { IOObjectRelease(iot); }
 };
 
-}  // namespce internal
+}  // namespace internal
 
 // Just like ScopedCFTypeRef but for io_object_t and subclasses.
 template <typename IOT>
 using ScopedIOObject = ScopedTypeRef<IOT, internal::ScopedIOObjectTraits<IOT>>;
 
-}  // namespace mac
-}  // namespace base
+}  // namespace base::mac
 
 #endif  // BASE_MAC_SCOPED_IOOBJECT_H_

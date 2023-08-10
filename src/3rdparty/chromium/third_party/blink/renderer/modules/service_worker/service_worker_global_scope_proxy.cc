@@ -46,14 +46,12 @@
 #include "third_party/blink/renderer/core/fetch/headers.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
 #include "third_party/blink/renderer/core/messaging/message_port.h"
-#include "third_party/blink/renderer/core/origin_trials/origin_trials.h"
 #include "third_party/blink/renderer/core/workers/worker_global_scope.h"
 #include "third_party/blink/renderer/core/workers/worker_thread.h"
 #include "third_party/blink/renderer/modules/exported/web_embedded_worker_impl.h"
 #include "third_party/blink/renderer/modules/service_worker/service_worker_global_scope.h"
 #include "third_party/blink/renderer/modules/service_worker/wait_until_observer.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_response.h"
-#include "third_party/blink/renderer/platform/wtf/assertions.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
@@ -177,11 +175,8 @@ void ServiceWorkerGlobalScopeProxy::WillEvaluateClassicScript(
   TRACE_EVENT_NESTABLE_ASYNC_BEGIN0(
       "ServiceWorker", "ServiceWorkerGlobalScopeProxy::EvaluateTopLevelScript",
       TRACE_ID_LOCAL(this));
-  // TODO(asamidoi): Remove CountWorkerScript which is called for recording
-  // metrics if the metrics are no longer referenced, and then merge
-  // WillEvaluateClassicScript and WillEvaluateModuleScript for cleanup.
-  worker_global_scope_->CountWorkerScript(script_size, cached_metadata_size);
-
+  // TODO(https://crbug.com/1253218): Merge WillEvaluateClassicScript and
+  // WillEvaluateModuleScript for cleanup.
   ScriptState::Scope scope(
       WorkerGlobalScope()->ScriptController()->GetScriptState());
   Client().WillEvaluateScript(
@@ -192,7 +187,7 @@ void ServiceWorkerGlobalScopeProxy::WillEvaluateImportedClassicScript(
     size_t script_size,
     size_t cached_metadata_size) {
   DCHECK_CALLED_ON_VALID_THREAD(worker_thread_checker_);
-  worker_global_scope_->CountImportedScript(script_size, cached_metadata_size);
+  // TODO(https://crbug.com/1253218): Remove this empty function.
 }
 
 void ServiceWorkerGlobalScopeProxy::WillEvaluateModuleScript() {

@@ -11,9 +11,8 @@
 #include <string>
 #include <vector>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
-#include "base/strings/string16.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "net/base/completion_once_callback.h"
@@ -79,6 +78,9 @@ class NET_EXPORT_PRIVATE PacFileDecider {
   PacFileDecider(PacFileFetcher* pac_file_fetcher,
                  DhcpPacFileFetcher* dhcp_pac_file_fetcher,
                  NetLog* net_log);
+
+  PacFileDecider(const PacFileDecider&) = delete;
+  PacFileDecider& operator=(const PacFileDecider&) = delete;
 
   // Aborts any in-progress request.
   ~PacFileDecider();
@@ -179,15 +181,15 @@ class NET_EXPORT_PRIVATE PacFileDecider {
   void DidComplete();
   void Cancel();
 
-  PacFileFetcher* pac_file_fetcher_;
-  DhcpPacFileFetcher* dhcp_pac_file_fetcher_;
+  raw_ptr<PacFileFetcher> pac_file_fetcher_;
+  raw_ptr<DhcpPacFileFetcher> dhcp_pac_file_fetcher_;
 
   CompletionOnceCallback callback_;
 
   size_t current_pac_source_index_;
 
   // Filled when the PAC script fetch completes.
-  base::string16 pac_script_;
+  std::u16string pac_script_;
 
   // Flag indicating whether the caller requested a mandatory PAC script
   // (i.e. fallback to direct connections are prohibited).
@@ -218,8 +220,6 @@ class NET_EXPORT_PRIVATE PacFileDecider {
   std::unique_ptr<HostResolver::ResolveHostRequest> resolve_request_;
 
   base::OneShotTimer quick_check_timer_;
-
-  DISALLOW_COPY_AND_ASSIGN(PacFileDecider);
 };
 
 }  // namespace net

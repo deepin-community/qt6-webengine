@@ -9,8 +9,8 @@
 #include <string>
 #include <utility>
 
-#include "base/macros.h"
-#include "base/scoped_observer.h"
+#include "base/memory/raw_ptr.h"
+#include "base/scoped_observation.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "extensions/browser/api/runtime/runtime_api.h"
@@ -39,6 +39,10 @@ class ChromeRuntimeAPIDelegate : public extensions::RuntimeAPIDelegate,
                                  public extensions::ExtensionRegistryObserver {
  public:
   explicit ChromeRuntimeAPIDelegate(content::BrowserContext* context);
+
+  ChromeRuntimeAPIDelegate(const ChromeRuntimeAPIDelegate&) = delete;
+  ChromeRuntimeAPIDelegate& operator=(const ChromeRuntimeAPIDelegate&) = delete;
+
   ~ChromeRuntimeAPIDelegate() override;
 
   // Sets a custom TickClock to use in tests.
@@ -73,7 +77,7 @@ class ChromeRuntimeAPIDelegate : public extensions::RuntimeAPIDelegate,
   void CallUpdateCallbacks(const std::string& extension_id,
                            const UpdateCheckResult& result);
 
-  content::BrowserContext* browser_context_;
+  raw_ptr<content::BrowserContext> browser_context_;
 
   content::NotificationRegistrar registrar_;
 
@@ -90,11 +94,9 @@ class ChromeRuntimeAPIDelegate : public extensions::RuntimeAPIDelegate,
   struct UpdateCheckInfo;
   std::map<std::string, UpdateCheckInfo> update_check_info_;
 
-  ScopedObserver<extensions::ExtensionRegistry,
-                 extensions::ExtensionRegistryObserver>
-      extension_registry_observer_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(ChromeRuntimeAPIDelegate);
+  base::ScopedObservation<extensions::ExtensionRegistry,
+                          extensions::ExtensionRegistryObserver>
+      extension_registry_observation_{this};
 };
 
 #endif  // CHROME_BROWSER_EXTENSIONS_API_RUNTIME_CHROME_RUNTIME_API_DELEGATE_H_

@@ -10,8 +10,9 @@
 #include "ash/constants/ash_switches.h"
 #include "base/callback.h"
 #include "base/command_line.h"
-#include "base/single_thread_task_runner.h"
+#include "base/containers/contains.h"
 #include "base/system/sys_info.h"
+#include "base/task/single_thread_task_runner.h"
 #include "components/user_manager/user_names.h"
 #include "components/user_manager/user_type.h"
 
@@ -59,6 +60,14 @@ const User* FakeUserManager::AddChildUser(const AccountId& account_id) {
 
 const User* FakeUserManager::AddGuestUser(const AccountId& account_id) {
   User* user = User::CreateGuestUser(account_id);
+  users_.push_back(user);
+  return user;
+}
+
+const User* FakeUserManager::AddKioskAppUser(const AccountId& account_id) {
+  User* user = User::CreateKioskAppUser(account_id);
+  // TODO: Merge with ProfileHelper::GetUserIdHashByUserIdForTesting.
+  user->set_username_hash(account_id.GetUserEmail() + "-hash");
   users_.push_back(user);
   return user;
 }
@@ -125,6 +134,16 @@ void FakeUserManager::LogoutAllUsers() {
   active_user_ = nullptr;
 }
 
+void FakeUserManager::SetUserNonCryptohomeDataEphemeral(
+    const AccountId& account_id,
+    bool is_ephemeral) {
+  if (is_ephemeral) {
+    accounts_with_ephemeral_non_cryptohome_data_.insert(account_id);
+  } else {
+    accounts_with_ephemeral_non_cryptohome_data_.erase(account_id);
+  }
+}
+
 void FakeUserManager::UserLoggedIn(const AccountId& account_id,
                                    const std::string& username_hash,
                                    bool browser_restart,
@@ -183,7 +202,7 @@ void FakeUserManager::SwitchActiveUser(const AccountId& account_id) {
 }
 
 void FakeUserManager::SaveUserDisplayName(const AccountId& account_id,
-                                          const base::string16& display_name) {
+                                          const std::u16string& display_name) {
   for (UserList::iterator it = users_.begin(); it != users_.end(); ++it) {
     if ((*it)->GetAccountId() == account_id) {
       (*it)->set_display_name(display_name);
@@ -229,9 +248,9 @@ const User* FakeUserManager::GetPrimaryUser() const {
   return primary_user_;
 }
 
-base::string16 FakeUserManager::GetUserDisplayName(
+std::u16string FakeUserManager::GetUserDisplayName(
     const AccountId& account_id) const {
-  return base::string16();
+  return std::u16string();
 }
 
 bool FakeUserManager::IsCurrentUserOwner() const {
@@ -264,7 +283,8 @@ bool FakeUserManager::IsLoggedInAsPublicAccount() const {
 }
 
 bool FakeUserManager::IsLoggedInAsGuest() const {
-  return false;
+  const User* active_user = GetActiveUser();
+  return active_user && active_user->GetType() == USER_TYPE_GUEST;
 }
 
 bool FakeUserManager::IsLoggedInAsKioskApp() const {
@@ -295,7 +315,8 @@ bool FakeUserManager::IsLoggedInAsStub() const {
 
 bool FakeUserManager::IsUserNonCryptohomeDataEphemeral(
     const AccountId& account_id) const {
-  return false;
+  return base::Contains(accounts_with_ephemeral_non_cryptohome_data_,
+                        account_id);
 }
 
 bool FakeUserManager::IsGuestSessionAllowed() const {
@@ -331,10 +352,6 @@ bool FakeUserManager::IsEnterpriseManaged() const {
   return false;
 }
 
-bool FakeUserManager::IsDemoApp(const AccountId& account_id) const {
-  return account_id == DemoAccountId();
-}
-
 bool FakeUserManager::IsDeviceLocalAccountMarkedForRemoval(
     const AccountId& account_id) const {
   return false;
@@ -365,7 +382,7 @@ const AccountId& FakeUserManager::GetGuestAccountId() const {
 
 bool FakeUserManager::IsFirstExecAfterBoot() const {
   return base::CommandLine::ForCurrentProcess()->HasSwitch(
-      chromeos::switches::kFirstExecAfterBoot);
+      ash::switches::kFirstExecAfterBoot);
 }
 
 void FakeUserManager::AsyncRemoveCryptohome(const AccountId& account_id) const {
@@ -388,7 +405,7 @@ bool FakeUserManager::IsDeprecatedSupervisedAccountId(
 bool FakeUserManager::HasBrowserRestarted() const {
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
   return base::SysInfo::IsRunningOnChromeOS() &&
-         command_line->HasSwitch(chromeos::switches::kLoginUser);
+         command_line->HasSwitch(ash::switches::kLoginUser);
 }
 
 const gfx::ImageSkia& FakeUserManager::GetResourceImagekiaNamed(int id) const {
@@ -396,8 +413,8 @@ const gfx::ImageSkia& FakeUserManager::GetResourceImagekiaNamed(int id) const {
   return empty_image_;
 }
 
-base::string16 FakeUserManager::GetResourceStringUTF16(int string_id) const {
-  return base::string16();
+std::u16string FakeUserManager::GetResourceStringUTF16(int string_id) const {
+  return std::u16string();
 }
 
 void FakeUserManager::ScheduleResolveLocale(

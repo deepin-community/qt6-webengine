@@ -4,6 +4,7 @@
 
 #include "net/proxy_resolution/multi_threaded_proxy_resolver.h"
 
+#include <memory>
 #include <utility>
 #include <vector>
 
@@ -11,10 +12,10 @@
 #include "base/callback_helpers.h"
 #include "base/containers/circular_deque.h"
 #include "base/location.h"
-#include "base/single_thread_task_runner.h"
-#include "base/stl_util.h"
+#include "base/memory/raw_ptr.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_checker.h"
 #include "base/threading/thread_restrictions.h"
@@ -88,7 +89,7 @@ class Executor : public base::RefCountedThreadSafe<Executor> {
   friend class base::RefCountedThreadSafe<Executor>;
   ~Executor();
 
-  Coordinator* coordinator_;
+  raw_ptr<Coordinator> coordinator_;
   const int thread_number_;
 
   // The currently active job for this executor (either a CreateProxyResolver or
@@ -207,7 +208,7 @@ class Job : public base::RefCountedThreadSafe<Job> {
   virtual ~Job() = default;
 
  private:
-  Executor* executor_;
+  raw_ptr<Executor> executor_;
   bool was_cancelled_;
 };
 
@@ -261,7 +262,7 @@ class CreateResolverJob : public Job {
   }
 
   const scoped_refptr<PacFileData> script_data_;
-  ProxyResolverFactory* factory_;
+  raw_ptr<ProxyResolverFactory> factory_;
   std::unique_ptr<ProxyResolver> resolver_;
 };
 
@@ -336,7 +337,7 @@ class MultiThreadedProxyResolver::GetProxyForURLJob : public Job {
   CompletionOnceCallback callback_;
 
   // Must only be used on the "origin" thread.
-  ProxyInfo* results_;
+  raw_ptr<ProxyInfo> results_;
 
   // Can be used on either "origin" or worker thread.
   NetLogWithSource net_log_;
@@ -356,8 +357,8 @@ Executor::Executor(Executor::Coordinator* coordinator, int thread_number)
     : coordinator_(coordinator), thread_number_(thread_number) {
   DCHECK(coordinator);
   // Start up the thread.
-  thread_.reset(new base::Thread(base::StringPrintf("PAC thread #%d",
-                                                    thread_number)));
+  thread_ = std::make_unique<base::Thread>(
+      base::StringPrintf("PAC thread #%d", thread_number));
   CHECK(thread_->Start());
 }
 
@@ -458,7 +459,7 @@ int MultiThreadedProxyResolver::GetProxyForURL(
   // Completion will be notified through |callback|, unless the caller cancels
   // the request using |request|.
   if (request)
-    request->reset(new RequestImpl(job));
+    *request = std::make_unique<RequestImpl>(job);
 
   // If there is an executor that is ready to run this request, submit it!
   Executor* executor = FindIdleExecutor();
@@ -554,9 +555,9 @@ class MultiThreadedProxyResolverFactory::Job
   void OnExecutorReady(Executor* executor) override {
     int error = OK;
     if (executor->resolver()) {
-      resolver_out_->reset(new MultiThreadedProxyResolver(
+      *resolver_out_ = std::make_unique<MultiThreadedProxyResolver>(
           std::move(resolver_factory_), max_num_threads_,
-          std::move(script_data_), executor_));
+          std::move(script_data_), executor_);
     } else {
       error = ERR_PAC_SCRIPT_FAILED;
       executor_->Destroy();
@@ -566,8 +567,8 @@ class MultiThreadedProxyResolverFactory::Job
     std::move(callback_).Run(error);
   }
 
-  MultiThreadedProxyResolverFactory* factory_;
-  std::unique_ptr<ProxyResolver>* const resolver_out_;
+  raw_ptr<MultiThreadedProxyResolverFactory> factory_;
+  const raw_ptr<std::unique_ptr<ProxyResolver>> resolver_out_;
   std::unique_ptr<ProxyResolverFactory> resolver_factory_;
   const size_t max_num_threads_;
   scoped_refptr<PacFileData> script_data_;

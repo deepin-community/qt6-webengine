@@ -8,10 +8,10 @@
 #include <memory>
 #include <string>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/scoped_observation.h"
+#include "components/signin/public/base/consent_level.h"
 #include "components/signin/public/identity_manager/access_token_fetcher.h"
-#include "components/signin/public/identity_manager/consent_level.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/signin/public/identity_manager/scope_set.h"
 #include "google_apis/gaia/core_account_id.h"
@@ -160,13 +160,18 @@ class PrimaryAccountAccessTokenFetcher : public IdentityManager::Observer {
                                    Mode mode,
                                    ConsentLevel consent = ConsentLevel::kSync);
 
+  PrimaryAccountAccessTokenFetcher(const PrimaryAccountAccessTokenFetcher&) =
+      delete;
+  PrimaryAccountAccessTokenFetcher& operator=(
+      const PrimaryAccountAccessTokenFetcher&) = delete;
+
   ~PrimaryAccountAccessTokenFetcher() override;
 
   // Exposed for tests.
   bool access_token_request_retried() { return access_token_retried_; }
 
  private:
-  // Returns the primary account ID. If consent is |kNotRequired| this may be
+  // Returns the primary account ID. If consent is |kSignin| this may be
   // the "unconsented" primary account ID.
   CoreAccountId GetAccountId() const;
 
@@ -181,6 +186,9 @@ class PrimaryAccountAccessTokenFetcher : public IdentityManager::Observer {
   void OnRefreshTokenUpdatedForAccount(
       const CoreAccountInfo& account_info) override;
 
+  // IdentityManager::DiagnosticsObserver implementation.
+  void OnIdentityManagerShutdown(IdentityManager* identity_manager) override;
+
   // Checks whether credentials are now available and starts an access token
   // request if so. Should only be called in mode |kWaitUntilAvailable|.
   void ProcessSigninStateChange();
@@ -190,7 +198,7 @@ class PrimaryAccountAccessTokenFetcher : public IdentityManager::Observer {
                                   AccessTokenInfo access_token_info);
 
   std::string oauth_consumer_name_;
-  IdentityManager* identity_manager_;
+  raw_ptr<IdentityManager> identity_manager_;
   ScopeSet scopes_;
 
   // Per the contract of this class, it is allowed for clients to delete this
@@ -206,13 +214,15 @@ class PrimaryAccountAccessTokenFetcher : public IdentityManager::Observer {
   std::unique_ptr<AccessTokenFetcher> access_token_fetcher_;
 
   // When a token request gets canceled, we want to retry once.
-  bool access_token_retried_;
+  bool access_token_retried_ = false;
+
+  // Used in kWaitUntilAvailable mode when waiting for the account to be
+  // available.
+  bool waiting_for_account_available_ = false;
 
   Mode mode_;
 
   const ConsentLevel consent_;
-
-  DISALLOW_COPY_AND_ASSIGN(PrimaryAccountAccessTokenFetcher);
 };
 
 }  // namespace signin

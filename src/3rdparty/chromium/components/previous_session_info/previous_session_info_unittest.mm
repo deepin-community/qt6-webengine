@@ -4,6 +4,7 @@
 
 #include "components/previous_session_info/previous_session_info.h"
 
+#include "base/callback_helpers.h"
 #include "base/strings/sys_string_conversions.h"
 #import "base/test/ios/wait_util.h"
 #include "components/previous_session_info/previous_session_info_private.h"
@@ -569,8 +570,7 @@ TEST_F(PreviousSessionInfoTest, MemoryFootprintRecording) {
 
   [[PreviousSessionInfo sharedInstance] beginRecordingCurrentSession];
   [[PreviousSessionInfo sharedInstance]
-      startRecordingMemoryFootprintWithInterval:base::TimeDelta::
-                                                    FromMilliseconds(1)];
+      startRecordingMemoryFootprintWithInterval:base::Milliseconds(1)];
 
   // Memory footprint should be updated after timeout.
   EXPECT_FALSE([NSUserDefaults.standardUserDefaults

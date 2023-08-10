@@ -15,6 +15,7 @@
 #include "base/threading/thread_checker_impl.h"
 #include "base/time/time.h"
 #include "base/trace_event/base_tracing.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace base {
 namespace sequence_manager {
@@ -142,7 +143,7 @@ void TaskQueue::ShutdownTaskQueueGracefully() {
 
   // If we've not been unregistered then this must occur on the main thread.
   DCHECK_CALLED_ON_VALID_THREAD(associated_thread_->thread_checker);
-  impl_->SetObserver(nullptr);
+  impl_->ResetThrottler();
   if (auto* sequence_manager = impl_->sequence_manager())
     sequence_manager->ShutdownTaskQueueGracefully(TakeTaskQueueImpl());
 }
@@ -181,11 +182,6 @@ void TaskQueue::ShutdownTaskQueue() {
     return;
   }
   impl_->SetBlameContext(nullptr);
-  impl_->SetOnTaskStartedHandler(
-      internal::TaskQueueImpl::OnTaskStartedHandler());
-  impl_->SetOnTaskCompletedHandler(
-      internal::TaskQueueImpl::OnTaskCompletedHandler());
-  impl_->SetOnTaskPostedHandler(internal::TaskQueueImpl::OnTaskPostedHandler());
   sequence_manager_->UnregisterTaskQueueImpl(TakeTaskQueueImpl());
 }
 
@@ -228,18 +224,25 @@ size_t TaskQueue::GetNumberOfPendingTasks() const {
   return impl_->GetNumberOfPendingTasks();
 }
 
-bool TaskQueue::HasTaskToRunImmediately() const {
+bool TaskQueue::HasTaskToRunImmediatelyOrReadyDelayedTask() const {
   DCHECK_CALLED_ON_VALID_THREAD(associated_thread_->thread_checker);
   if (!impl_)
     return false;
-  return impl_->HasTaskToRunImmediately();
+  return impl_->HasTaskToRunImmediatelyOrReadyDelayedTask();
 }
 
-Optional<TimeTicks> TaskQueue::GetNextScheduledWakeUp() {
+absl::optional<WakeUp> TaskQueue::GetNextDesiredWakeUp() {
   DCHECK_CALLED_ON_VALID_THREAD(associated_thread_->thread_checker);
   if (!impl_)
-    return nullopt;
-  return impl_->GetNextScheduledWakeUp();
+    return absl::nullopt;
+  return impl_->GetNextDesiredWakeUp();
+}
+
+void TaskQueue::UpdateWakeUp(LazyNow* lazy_now) {
+  DCHECK_CALLED_ON_VALID_THREAD(associated_thread_->thread_checker);
+  if (!impl_)
+    return;
+  impl_->UpdateWakeUp(lazy_now);
 }
 
 void TaskQueue::SetQueuePriority(TaskQueue::QueuePriority priority) {
@@ -268,20 +271,6 @@ void TaskQueue::RemoveTaskObserver(TaskObserver* task_observer) {
   if (!impl_)
     return;
   impl_->RemoveTaskObserver(task_observer);
-}
-
-void TaskQueue::SetTimeDomain(TimeDomain* time_domain) {
-  DCHECK_CALLED_ON_VALID_THREAD(associated_thread_->thread_checker);
-  if (!impl_)
-    return;
-  impl_->SetTimeDomain(time_domain);
-}
-
-TimeDomain* TaskQueue::GetTimeDomain() const {
-  DCHECK_CALLED_ON_VALID_THREAD(associated_thread_->thread_checker);
-  if (!impl_)
-    return nullptr;
-  return impl_->GetTimeDomain();
 }
 
 void TaskQueue::SetBlameContext(trace_event::BlameContext* blame_context) {
@@ -327,21 +316,26 @@ const char* TaskQueue::GetName() const {
   return name_;
 }
 
-#if BUILDFLAG(ENABLE_BASE_TRACING)
-void TaskQueue::WriteIntoTracedValue(perfetto::TracedValue context) const {
+void TaskQueue::WriteIntoTrace(perfetto::TracedValue context) const {
   auto dict = std::move(context).WriteDictionary();
   dict.Add("name", name_);
 }
-#endif
 
-void TaskQueue::SetObserver(Observer* observer) {
+void TaskQueue::SetThrottler(Throttler* throttler) {
   DCHECK_CALLED_ON_VALID_THREAD(associated_thread_->thread_checker);
   if (!impl_)
     return;
 
-  // Observer is guaranteed to outlive TaskQueue and TaskQueueImpl lifecycle is
-  // controlled by |this|.
-  impl_->SetObserver(observer);
+  // |throttler| is guaranteed to outlive TaskQueue and TaskQueueImpl lifecycle
+  // is controlled by |this|.
+  impl_->SetThrottler(throttler);
+}
+
+void TaskQueue::ResetThrottler() {
+  DCHECK_CALLED_ON_VALID_THREAD(associated_thread_->thread_checker);
+  if (!impl_)
+    return;
+  impl_->ResetThrottler();
 }
 
 void TaskQueue::SetShouldReportPostedTasksWhenDisabled(bool should_report) {
@@ -374,12 +368,21 @@ void TaskQueue::SetOnTaskCompletedHandler(OnTaskCompletedHandler handler) {
   impl_->SetOnTaskCompletedHandler(std::move(handler));
 }
 
-void TaskQueue::SetOnTaskPostedHandler(OnTaskPostedHandler handler) {
+std::unique_ptr<TaskQueue::OnTaskPostedCallbackHandle>
+TaskQueue::AddOnTaskPostedHandler(OnTaskPostedHandler handler) {
+  DCHECK_CALLED_ON_VALID_THREAD(associated_thread_->thread_checker);
+  if (!impl_)
+    return nullptr;
+
+  return impl_->AddOnTaskPostedHandler(std::move(handler));
+}
+
+void TaskQueue::SetTaskExecutionTraceLogger(TaskExecutionTraceLogger logger) {
   DCHECK_CALLED_ON_VALID_THREAD(associated_thread_->thread_checker);
   if (!impl_)
     return;
 
-  impl_->SetOnTaskPostedHandler(std::move(handler));
+  impl_->SetTaskExecutionTraceLogger(std::move(logger));
 }
 
 }  // namespace sequence_manager

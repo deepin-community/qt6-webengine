@@ -8,7 +8,6 @@
 #include "base/memory/scoped_refptr.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/css/parser/css_parser_token_range.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
 
 namespace blink {
@@ -23,14 +22,12 @@ class CORE_EXPORT CSSVariableParser {
   static bool ContainsValidVariableReferences(CSSParserTokenRange);
 
   static CSSCustomPropertyDeclaration* ParseDeclarationValue(
-      const AtomicString&,
       const CSSTokenizedValue&,
       bool is_animation_tainted,
       const CSSParserContext&);
-  static CSSVariableReferenceValue* ParseRegisteredPropertyValue(
+  static CSSVariableReferenceValue* ParseVariableReferenceValue(
       CSSParserTokenRange,
       const CSSParserContext&,
-      bool require_var_reference,
       bool is_animation_tainted);
 
   static bool IsValidVariableName(const CSSParserToken&);

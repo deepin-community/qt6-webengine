@@ -8,9 +8,9 @@
 
 #include "base/bind.h"
 #include "base/check.h"
+#include "third_party/blink/public/common/frame/frame_owner_element_type.h"
 #include "third_party/blink/public/common/thread_safe_browser_interface_broker_proxy.h"
 #include "third_party/blink/public/common/tokens/tokens.h"
-#include "third_party/blink/public/mojom/frame/frame_owner_element_type.mojom-blink.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
@@ -21,13 +21,13 @@
 #include "third_party/blink/renderer/core/html/html_frame_owner_element.h"
 #include "third_party/blink/renderer/core/html_names.h"
 #include "third_party/blink/renderer/platform/bindings/dom_wrapper_world.h"
-#include "third_party/blink/renderer/platform/heap/thread_state.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/scheduler/public/post_cross_thread_task.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread.h"
 #include "third_party/blink/renderer/platform/wtf/casting.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_copier.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
+#include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
 using performance_manager::mojom::blink::IframeAttributionData;
 using performance_manager::mojom::blink::IframeAttributionDataPtr;
@@ -59,8 +59,6 @@ struct CrossThreadCopier<blink::V8ContextToken>
 
 namespace blink {
 
-using mojom::blink::FrameOwnerElementType;
-
 namespace {
 
 // Determines if the given stable world ID is an extension world ID.
@@ -73,7 +71,7 @@ bool IsExtensionStableWorldId(const String& stable_world_id) {
     return false;
   if (stable_world_id.length() != 32)
     return false;
-  for (size_t i = 0; i < stable_world_id.length(); ++i) {
+  for (unsigned i = 0; i < stable_world_id.length(); ++i) {
     if (stable_world_id[i] < 'a' || stable_world_id[i] > 'p')
       return false;
   }
@@ -248,6 +246,11 @@ void RendererResourceCoordinatorImpl::OnBeforeContentFrameDetached(
       frame.GetFrameToken().GetAs<RemoteFrameToken>());
 }
 
+void RendererResourceCoordinatorImpl::FireBackgroundTracingTrigger(
+    const String& trigger_name) {
+  DispatchFireBackgroundTracingTrigger(trigger_name);
+}
+
 RendererResourceCoordinatorImpl::RendererResourceCoordinatorImpl(
     mojo::PendingRemote<ProcessCoordinationUnit> remote) {
   service_.Bind(std::move(remote));
@@ -301,6 +304,21 @@ void RendererResourceCoordinatorImpl::DispatchOnV8ContextDestroyed(
             WTF::CrossThreadUnretained(this), token));
   } else {
     service_->OnV8ContextDestroyed(token);
+  }
+}
+
+void RendererResourceCoordinatorImpl::DispatchFireBackgroundTracingTrigger(
+    const String& trigger_name) {
+  DCHECK(service_);
+  if (!IsMainThread()) {
+    blink::PostCrossThreadTask(
+        *Thread::MainThread()->GetTaskRunner(), FROM_HERE,
+        WTF::CrossThreadBindOnce(&RendererResourceCoordinatorImpl::
+                                     DispatchFireBackgroundTracingTrigger,
+                                 WTF::CrossThreadUnretained(this),
+                                 trigger_name));
+  } else {
+    service_->FireBackgroundTracingTrigger(trigger_name);
   }
 }
 

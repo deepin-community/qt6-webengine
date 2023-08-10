@@ -4,11 +4,14 @@
 
 #include "public/fpdf_signature.h"
 
+#include <vector>
+
 #include "core/fpdfapi/parser/cpdf_array.h"
 #include "core/fpdfapi/parser/cpdf_dictionary.h"
 #include "core/fpdfapi/parser/cpdf_document.h"
+#include "core/fxcrt/stl_util.h"
 #include "fpdfsdk/cpdfsdk_helpers.h"
-#include "third_party/base/stl_util.h"
+#include "third_party/base/numerics/safe_conversions.h"
 
 namespace {
 
@@ -42,7 +45,7 @@ FPDF_EXPORT int FPDF_CALLCONV FPDF_GetSignatureCount(FPDF_DOCUMENT document) {
   if (!doc)
     return -1;
 
-  return pdfium::CollectionSize<int>(CollectSignatures(doc));
+  return fxcrt::CollectionSize<int>(CollectSignatures(doc));
 }
 
 FPDF_EXPORT FPDF_SIGNATURE FPDF_CALLCONV
@@ -52,7 +55,7 @@ FPDF_GetSignatureObject(FPDF_DOCUMENT document, int index) {
     return nullptr;
 
   std::vector<CPDF_Dictionary*> signatures = CollectSignatures(doc);
-  if (!pdfium::IndexInBounds(signatures, index))
+  if (!fxcrt::IndexInBounds(signatures, index))
     return nullptr;
 
   return FPDFSignatureFromCPDFDictionary(signatures[index]);
@@ -71,7 +74,8 @@ FPDFSignatureObj_GetContents(FPDF_SIGNATURE signature,
     return 0;
 
   ByteString contents = value_dict->GetStringFor("Contents");
-  unsigned long contents_len = contents.GetLength();
+  const unsigned long contents_len =
+      pdfium::base::checked_cast<unsigned long>(contents.GetLength());
   if (buffer && length >= contents_len)
     memcpy(buffer, contents.c_str(), contents_len);
 
@@ -94,12 +98,12 @@ FPDFSignatureObj_GetByteRange(FPDF_SIGNATURE signature,
   if (!byte_range)
     return 0;
 
-  unsigned long byte_range_len = byte_range->size();
+  const unsigned long byte_range_len =
+      fxcrt::CollectionSize<unsigned long>(*byte_range);
   if (buffer && length >= byte_range_len) {
     for (size_t i = 0; i < byte_range_len; ++i)
       buffer[i] = byte_range->GetIntegerAt(i);
   }
-
   return byte_range_len;
 }
 

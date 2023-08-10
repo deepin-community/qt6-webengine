@@ -23,12 +23,12 @@
 #include "include/core/SkTypes.h"
 #include "include/effects/SkGradientShader.h"
 #include "include/gpu/GrRecordingContext.h"
-#include "include/private/GrTypesPriv.h"
+#include "include/private/gpu/ganesh/GrTypesPriv.h"
 #include "src/core/SkCanvasPriv.h"
 #include "src/core/SkMatrixProvider.h"
-#include "src/gpu/GrPaint.h"
-#include "src/gpu/GrSurfaceDrawContext.h"
-#include "src/gpu/SkGr.h"
+#include "src/gpu/ganesh/GrPaint.h"
+#include "src/gpu/ganesh/SkGr.h"
+#include "src/gpu/ganesh/v1/SurfaceDrawContext_v1.h"
 #include "tools/ToolUtils.h"
 
 #include <utility>
@@ -49,9 +49,9 @@ static void draw_gradient_tiles(SkCanvas* canvas, bool alignGradients) {
     static constexpr SkPoint pts[] = { {0.f, 0.f}, {0.25f * kTileWidth, 0.25f * kTileHeight} };
     static constexpr SkColor colors[] = { SK_ColorBLUE, SK_ColorWHITE };
 
-    GrSurfaceDrawContext* sdc = SkCanvasPriv::TopDeviceSurfaceDrawContext(canvas);
+    auto sdc = SkCanvasPriv::TopDeviceSurfaceDrawContext(canvas);
 
-    auto context = canvas->recordingContext();
+    auto rContext = canvas->recordingContext();
 
     auto gradient = SkGradientShader::MakeLinear(pts, colors, nullptr, 2, SkTileMode::kMirror);
     SkPaint paint;
@@ -84,10 +84,10 @@ static void draw_gradient_tiles(SkCanvas* canvas, bool alignGradients) {
             if (sdc) {
                 // Use non-public API to leverage general GrPaint capabilities
                 SkMatrix view = canvas->getTotalMatrix();
-                SkSimpleMatrixProvider matrixProvider(view);
+                SkMatrixProvider matrixProvider(view);
                 GrPaint grPaint;
-                SkPaintToGrPaint(context, sdc->colorInfo(), paint, matrixProvider, &grPaint);
-                sdc->fillRectWithEdgeAA(nullptr, std::move(grPaint), GrAA::kYes,
+                SkPaintToGrPaint(rContext, sdc->colorInfo(), paint, matrixProvider, &grPaint);
+                sdc->fillRectWithEdgeAA(nullptr, std::move(grPaint),
                                         static_cast<GrQuadAAFlags>(aa), view, tile);
             } else {
                 // Fallback to solid color on raster backend since the public API only has color

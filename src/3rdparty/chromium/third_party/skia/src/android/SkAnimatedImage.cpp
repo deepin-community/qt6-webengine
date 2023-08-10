@@ -44,8 +44,12 @@ sk_sp<SkAnimatedImage> SkAnimatedImage::Make(std::unique_ptr<SkAndroidCodec> cod
         return nullptr;
     }
 
-    const auto& decodeInfo = codec->getInfo();
-    const auto  cropRect   = SkIRect::MakeSize(decodeInfo.dimensions());
+    auto decodeInfo = codec->getInfo();
+    const auto origin = codec->codec()->getOrigin();
+    if (SkEncodedOriginSwapsWidthHeight(origin)) {
+        decodeInfo = decodeInfo.makeWH(decodeInfo.height(), decodeInfo.width());
+    }
+    const auto cropRect = SkIRect::MakeSize(decodeInfo.dimensions());
     return Make(std::move(codec), decodeInfo, cropRect, nullptr);
 }
 
@@ -299,7 +303,8 @@ int SkAnimatedImage::decodeNextFrame() {
     auto result = fCodec->getAndroidPixels(dst->info(), dst->getPixels(), dst->rowBytes(),
                                            &options);
     if (result != SkCodec::kSuccess) {
-        SkCodecPrintf("error %i, frame %i of %i\n", result, frameToDecode, fFrameCount);
+        SkCodecPrintf("%s, frame %i of %i\n", SkCodec::ResultToString(result),
+                      frameToDecode, fFrameCount);
         return this->finish();
     }
 

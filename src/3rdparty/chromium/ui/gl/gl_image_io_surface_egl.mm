@@ -33,21 +33,19 @@ struct InternalFormatType {
 
 // Convert a gfx::BufferFormat to a (internal format, type) combination from the
 // EGL_ANGLE_iosurface_client_buffer extension spec.
-InternalFormatType BufferFormatToInternalFormatType(gfx::BufferFormat format,
-                                                    bool emulate_rgb) {
+InternalFormatType BufferFormatToInternalFormatType(gfx::BufferFormat format) {
   switch (format) {
     case gfx::BufferFormat::R_8:
       return {GL_RED, GL_UNSIGNED_BYTE};
     case gfx::BufferFormat::R_16:
+      // TODO(https://crbug.com/1233228): This should be GL_RED.
       return {GL_RED_INTEGER, GL_UNSIGNED_SHORT};
     case gfx::BufferFormat::RG_88:
       return {GL_RG, GL_UNSIGNED_BYTE};
+    case gfx::BufferFormat::RG_1616:
+      return {GL_RG, GL_UNSIGNED_SHORT};
     case gfx::BufferFormat::BGRX_8888:
-      if (emulate_rgb) {
-        return {GL_BGRA_EXT, GL_UNSIGNED_BYTE};
-      } else {
-        return {GL_RGB, GL_UNSIGNED_BYTE};
-      }
+      return {GL_RGB, GL_UNSIGNED_BYTE};
     case gfx::BufferFormat::BGRA_8888:
     case gfx::BufferFormat::RGBA_8888:
       return {GL_BGRA_EXT, GL_UNSIGNED_BYTE};
@@ -113,10 +111,8 @@ GLenum TargetGetterFromGLTarget(GLint gl_target) {
 }  // anonymous namespace
 
 GLImageIOSurfaceEGL::GLImageIOSurfaceEGL(const gfx::Size& size,
-                                         unsigned internalformat,
-                                         bool emulate_rgb)
+                                         unsigned internalformat)
     : GLImageIOSurface(size, internalformat),
-      emulate_rgb_(emulate_rgb),
       display_(GLSurfaceEGL::GetHardwareDisplay()),
       pbuffer_(EGL_NO_SURFACE),
       dummy_config_(nullptr),
@@ -182,10 +178,7 @@ bool GLImageIOSurfaceEGL::BindTexImageImpl(unsigned target,
   // DrawingBuffer::SetupRGBEmulationForBlitFramebuffer to bind an RGBA
   // IOSurface as RGB. We should support this.
 
-  if (texture_bound_) {
-    LOG(ERROR) << "Cannot re-bind already bound IOSurface.";
-    return false;
-  }
+  CHECK(!texture_bound_) << "Cannot re-bind already bound IOSurface.";
 
   GLenum target_getter = TargetGetterFromGLTarget(target);
   EGLint target_egl = EGLTargetFromGLTarget(target);
@@ -205,18 +198,17 @@ bool GLImageIOSurfaceEGL::BindTexImageImpl(unsigned target,
   // in the constructor if we're going to be used to bind plane 0 to a texture,
   // or to transform YUV to RGB.
   if (pbuffer_ == EGL_NO_SURFACE) {
-    InternalFormatType formatType =
-        BufferFormatToInternalFormatType(format_, emulate_rgb_);
+    InternalFormatType formatType = BufferFormatToInternalFormatType(format_);
 
     // clang-format off
     const EGLint attribs[] = {
       EGL_WIDTH,                         size_.width(),
       EGL_HEIGHT,                        size_.height(),
-      EGL_IOSURFACE_PLANE_ANGLE,         0,
+      EGL_IOSURFACE_PLANE_ANGLE,         static_cast<EGLint>(io_surface_plane_),
       EGL_TEXTURE_TARGET,                texture_target_,
-      EGL_TEXTURE_INTERNAL_FORMAT_ANGLE, formatType.format,
+      EGL_TEXTURE_INTERNAL_FORMAT_ANGLE, static_cast<EGLint>(formatType.format),
       EGL_TEXTURE_FORMAT,                EGL_TEXTURE_RGBA,
-      EGL_TEXTURE_TYPE_ANGLE,            formatType.type,
+      EGL_TEXTURE_TYPE_ANGLE,            static_cast<EGLint>(formatType.type),
       EGL_NONE,                          EGL_NONE,
     };
     // clang-format on
@@ -312,6 +304,12 @@ bool GLImageIOSurfaceEGL::CopyTexImage(unsigned target) {
   const EGLint texture_type =
       format_ == gfx::BufferFormat::P010 ? GL_UNSIGNED_SHORT : GL_UNSIGNED_BYTE;
 
+  // GL_UNSIGNED_SHORT is not supported for all contexts. Use half-float
+  // instead.
+  // https://crbug.com/1282350
+  const GLenum rgb_texture_type =
+      format_ == gfx::BufferFormat::P010 ? GL_HALF_FLOAT_OES : GL_UNSIGNED_BYTE;
+
   // clang-format off
   const EGLint yAttribs[] = {
     EGL_WIDTH,                         size_.width(),
@@ -379,7 +377,7 @@ bool GLImageIOSurfaceEGL::CopyTexImage(unsigned target) {
   }
 
   yuv_to_rgb_converter->CopyYUV420ToRGB(target, size_, rgb_texture,
-                                        texture_type);
+                                        rgb_texture_type);
   if (glGetError() != GL_NO_ERROR) {
     LOG(ERROR) << "Failed converting from YUV to RGB";
     return false;

@@ -5,7 +5,11 @@
 #include "content/browser/renderer_host/policy_container_host.h"
 
 #include "base/lazy_instance.h"
+#include "content/browser/renderer_host/frame_navigation_entry.h"
+#include "content/browser/renderer_host/frame_tree_node.h"
+#include "content/browser/renderer_host/render_frame_host_impl.h"
 #include "content/public/browser/browser_thread.h"
+#include "services/network/public/mojom/content_security_policy.mojom.h"
 
 namespace content {
 
@@ -37,20 +41,114 @@ base::LazyInstance<TokenPolicyContainerMap>::Leaky
 bool operator==(const PolicyContainerPolicies& lhs,
                 const PolicyContainerPolicies& rhs) {
   return lhs.referrer_policy == rhs.referrer_policy &&
-         lhs.ip_address_space == rhs.ip_address_space;
+         lhs.ip_address_space == rhs.ip_address_space &&
+         lhs.is_web_secure_context == rhs.is_web_secure_context &&
+         std::equal(lhs.content_security_policies.begin(),
+                    lhs.content_security_policies.end(),
+                    rhs.content_security_policies.begin(),
+                    rhs.content_security_policies.end()) &&
+         lhs.cross_origin_opener_policy == rhs.cross_origin_opener_policy &&
+         lhs.cross_origin_embedder_policy == rhs.cross_origin_embedder_policy &&
+         lhs.sandbox_flags == rhs.sandbox_flags;
+}
+
+bool operator!=(const PolicyContainerPolicies& lhs,
+                const PolicyContainerPolicies& rhs) {
+  return !(lhs == rhs);
 }
 
 std::ostream& operator<<(std::ostream& out,
                          const PolicyContainerPolicies& policies) {
-  return out << "{ referrer_policy: " << policies.referrer_policy
-             << ", ip_address_space: " << policies.ip_address_space << " }";
+  out << "{ referrer_policy: " << policies.referrer_policy
+      << ", ip_address_space: " << policies.ip_address_space
+      << ", is_web_secure_context: " << policies.is_web_secure_context
+      << ", content_security_policies: ";
+
+  if (policies.content_security_policies.empty()) {
+    out << "[]";
+  } else {
+    out << "[ ";
+    auto it = policies.content_security_policies.begin();
+    for (; it + 1 != policies.content_security_policies.end(); ++it) {
+      out << (*it)->header->header_value << ", ";
+    }
+    out << (*it)->header->header_value << " ]";
+  }
+
+  out << ", cross_origin_opener_policy: "
+      << "{ value: " << policies.cross_origin_opener_policy.value
+      << ", reporting_endpoint: "
+      << policies.cross_origin_opener_policy.reporting_endpoint.value_or(
+             "<null>")
+      << ", report_only_value: "
+      << policies.cross_origin_opener_policy.report_only_value
+      << ", report_only_reporting_endpoint: "
+      << policies.cross_origin_opener_policy.report_only_reporting_endpoint
+             .value_or("<null>")
+      << ", soap_by_default_value: "
+      << policies.cross_origin_opener_policy.soap_by_default_value << " }";
+
+  out << ", cross_origin_embedder_policy: "
+      << "{ value: " << policies.cross_origin_embedder_policy.value
+      << ", reporting_endpoint: "
+      << policies.cross_origin_embedder_policy.reporting_endpoint.value_or(
+             "<null>")
+      << ", report_only_value: "
+      << policies.cross_origin_embedder_policy.report_only_value
+      << ", report_only_reporting_endpoint: "
+      << policies.cross_origin_embedder_policy.report_only_reporting_endpoint
+             .value_or("<null>")
+      << " }";
+
+  out << ", sandbox_flags: " << policies.sandbox_flags;
+
+  return out << " }";
 }
 
-PolicyContainerHost::PolicyContainerHost() = default;
+PolicyContainerPolicies::PolicyContainerPolicies() = default;
+
+PolicyContainerPolicies::PolicyContainerPolicies(
+    network::mojom::ReferrerPolicy referrer_policy,
+    network::mojom::IPAddressSpace ip_address_space,
+    bool is_web_secure_context,
+    std::vector<network::mojom::ContentSecurityPolicyPtr>
+        content_security_policies,
+    const network::CrossOriginOpenerPolicy& cross_origin_opener_policy,
+    const network::CrossOriginEmbedderPolicy& cross_origin_embedder_policy,
+    network::mojom::WebSandboxFlags sandbox_flags)
+    : referrer_policy(referrer_policy),
+      ip_address_space(ip_address_space),
+      is_web_secure_context(is_web_secure_context),
+      content_security_policies(std::move(content_security_policies)),
+      cross_origin_opener_policy(cross_origin_opener_policy),
+      cross_origin_embedder_policy(cross_origin_embedder_policy),
+      sandbox_flags(sandbox_flags) {}
+
+PolicyContainerPolicies::~PolicyContainerPolicies() = default;
+
+std::unique_ptr<PolicyContainerPolicies> PolicyContainerPolicies::Clone()
+    const {
+  return std::make_unique<PolicyContainerPolicies>(
+      referrer_policy, ip_address_space, is_web_secure_context,
+      mojo::Clone(content_security_policies), cross_origin_opener_policy,
+      cross_origin_embedder_policy, sandbox_flags);
+}
+
+void PolicyContainerPolicies::AddContentSecurityPolicies(
+    std::vector<network::mojom::ContentSecurityPolicyPtr> policies) {
+  content_security_policies.insert(content_security_policies.end(),
+                                   std::make_move_iterator(policies.begin()),
+                                   std::make_move_iterator(policies.end()));
+}
+
+PolicyContainerHost::PolicyContainerHost()
+    : PolicyContainerHost(std::make_unique<PolicyContainerPolicies>()) {}
 
 PolicyContainerHost::PolicyContainerHost(
-    const PolicyContainerPolicies& policies)
-    : policies_(policies) {}
+    std::unique_ptr<PolicyContainerPolicies> policies)
+    : policies_(std::move(policies)) {
+  DCHECK(policies_);
+}
 
 PolicyContainerHost::~PolicyContainerHost() {
   // The PolicyContainerHost associated with |frame_token_| might have
@@ -60,10 +158,12 @@ PolicyContainerHost::~PolicyContainerHost() {
 }
 
 void PolicyContainerHost::AssociateWithFrameToken(
-    const blink::LocalFrameToken& frame_token) {
+    const blink::LocalFrameToken& frame_token,
+    int process_id) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   DCHECK(!frame_token_);
   frame_token_ = frame_token;
+  process_id_ = process_id;
   g_token_policy_container_map.Get().erase(frame_token);
   g_token_policy_container_map.Get().emplace(frame_token, this);
 }
@@ -79,7 +179,19 @@ PolicyContainerHost* PolicyContainerHost::FromFrameToken(
 
 void PolicyContainerHost::SetReferrerPolicy(
     network::mojom::ReferrerPolicy referrer_policy) {
-  policies_.referrer_policy = referrer_policy;
+  policies_->referrer_policy = referrer_policy;
+  if (frame_token_) {
+    if (RenderFrameHostImpl* rfh = RenderFrameHostImpl::FromFrameToken(
+            process_id_, frame_token_.value())) {
+      rfh->DidChangeReferrerPolicy(referrer_policy);
+    }
+  }
+}
+
+void PolicyContainerHost::AddContentSecurityPolicies(
+    std::vector<network::mojom::ContentSecurityPolicyPtr>
+        content_security_policies) {
+  policies_->AddContentSecurityPolicies(std::move(content_security_policies));
 }
 
 blink::mojom::PolicyContainerPtr
@@ -97,13 +209,14 @@ PolicyContainerHost::CreatePolicyContainerForBlink() {
       remote.InitWithNewEndpointAndPassReceiver()));
 
   return blink::mojom::PolicyContainer::New(
-      blink::mojom::PolicyContainerPolicies::New(policies_.referrer_policy,
-                                                 policies_.ip_address_space),
+      blink::mojom::PolicyContainerPolicies::New(
+          policies_->referrer_policy, policies_->ip_address_space,
+          mojo::Clone(policies_->content_security_policies)),
       std::move(remote));
 }
 
 scoped_refptr<PolicyContainerHost> PolicyContainerHost::Clone() const {
-  return base::MakeRefCounted<PolicyContainerHost>(policies_);
+  return base::MakeRefCounted<PolicyContainerHost>(policies_->Clone());
 }
 
 void PolicyContainerHost::Bind(
@@ -114,8 +227,7 @@ void PolicyContainerHost::Bind(
   // the mojo remote) in the renderer process alive.
   scoped_refptr<PolicyContainerHost> copy = this;
   policy_container_host_receiver_.set_disconnect_handler(base::BindOnce(
-      base::DoNothing::Once<scoped_refptr<PolicyContainerHost>>(),
-      std::move(copy)));
+      [](scoped_refptr<PolicyContainerHost>) {}, std::move(copy)));
 }
 
 void PolicyContainerHost::IssueKeepAliveHandle(

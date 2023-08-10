@@ -10,7 +10,6 @@
 #include <memory>
 
 #include "base/scoped_observation.h"
-#include "base/stl_util.h"
 #include "base/test/task_environment.h"
 #include "build/chromeos_buildflags.h"
 #include "components/signin/public/identity_manager/identity_test_environment.h"
@@ -119,7 +118,9 @@ TEST(SigninErrorControllerTest, UnconsentedPrimaryAccount) {
   signin::IdentityTestEnvironment identity_test_env;
 
   CoreAccountId test_account_id =
-      identity_test_env.MakeUnconsentedPrimaryAccountAvailable(kTestEmail)
+      identity_test_env
+          .MakePrimaryAccountAvailable(kTestEmail,
+                                       signin::ConsentLevel::kSignin)
           .account_id;
   SigninErrorController error_controller(
       SigninErrorController::AccountMode::ANY_ACCOUNT,
@@ -158,8 +159,8 @@ TEST(SigninErrorControllerTest, AuthStatusEnumerateAllErrors) {
       GoogleServiceAuthError::UNEXPECTED_SERVICE_RESPONSE,
       GoogleServiceAuthError::SERVICE_ERROR};
   static_assert(
-      base::size(table) == GoogleServiceAuthError::NUM_STATES -
-                               GoogleServiceAuthError::kDeprecatedStateCount,
+      std::size(table) == GoogleServiceAuthError::NUM_STATES -
+                              GoogleServiceAuthError::kDeprecatedStateCount,
       "table array does not match the number of auth error types");
 
   for (GoogleServiceAuthError::State state : table) {
@@ -246,7 +247,8 @@ TEST(SigninErrorControllerTest,
   signin::IdentityTestEnvironment identity_test_env;
 
   AccountInfo primary_account_info =
-      identity_test_env.MakePrimaryAccountAvailable(kPrimaryAccountEmail);
+      identity_test_env.MakePrimaryAccountAvailable(
+          kPrimaryAccountEmail, signin::ConsentLevel::kSync);
   CoreAccountId secondary_account_id =
       identity_test_env.MakeAccountAvailable(kTestEmail).account_id;
   SigninErrorController error_controller(
@@ -293,7 +295,8 @@ TEST(SigninErrorControllerTest, PrimaryAccountErrorsAreSticky) {
   signin::IdentityTestEnvironment identity_test_env;
 
   AccountInfo primary_account_info =
-      identity_test_env.MakePrimaryAccountAvailable(kPrimaryAccountEmail);
+      identity_test_env.MakePrimaryAccountAvailable(
+          kPrimaryAccountEmail, signin::ConsentLevel::kSync);
   CoreAccountId secondary_account_id =
       identity_test_env.MakeAccountAvailable(kTestEmail).account_id;
   SigninErrorController error_controller(

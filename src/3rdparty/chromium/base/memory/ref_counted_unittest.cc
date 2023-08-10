@@ -7,6 +7,7 @@
 #include <type_traits>
 #include <utility>
 
+#include "base/memory/raw_ptr.h"
 #include "base/test/gtest_util.h"
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -173,7 +174,7 @@ class CheckRefptrNull : public base::RefCounted<CheckRefptrNull> {
  private:
   friend class base::RefCounted<CheckRefptrNull>;
 
-  scoped_refptr<CheckRefptrNull>* ptr_ = nullptr;
+  raw_ptr<scoped_refptr<CheckRefptrNull>> ptr_ = nullptr;
 };
 
 class Overflow : public base::RefCounted<Overflow> {
@@ -693,11 +694,11 @@ TEST(RefCountedDeathTest, TestAdoptRef) {
 
 #if defined(ARCH_CPU_64_BITS)
 TEST(RefCountedDeathTest, TestOverflowCheck) {
-  EXPECT_DCHECK_DEATH({
-    auto p = base::MakeRefCounted<Overflow>();
-    p->ref_count_ = std::numeric_limits<uint32_t>::max();
-    p->AddRef();
-  });
+  auto p = base::MakeRefCounted<Overflow>();
+  p->ref_count_ = std::numeric_limits<uint32_t>::max();
+  EXPECT_CHECK_DEATH(p->AddRef());
+  // Ensure `p` doesn't leak and fail lsan builds.
+  p->ref_count_ = 1;
 }
 #endif
 

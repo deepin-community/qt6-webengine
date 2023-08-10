@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.15)
 
-project(libxslt1 C)
+project(libxslt1 VERSION 1.1.35 LANGUAGES C)
 
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR})
 
@@ -8,27 +8,9 @@ include(CheckCSourceCompiles)
 include(CheckFunctionExists)
 include(CheckIncludeFiles)
 include(CheckLibraryExists)
+include(CheckSymbolExists)
 include(CMakePackageConfigHelpers)
 include(GNUInstallDirs)
-
-set(LIBEXSLT_MAJOR_VERSION 0)
-set(LIBEXSLT_MINOR_VERSION 8)
-set(LIBEXSLT_MICRO_VERSION 20)
-
-set(LIBEXSLT_DOTTED_VERSION ${LIBEXSLT_MAJOR_VERSION}.${LIBEXSLT_MINOR_VERSION}.${LIBEXSLT_MICRO_VERSION})
-math(EXPR LIBEXSLT_VERSION_NUMBER "${LIBEXSLT_MAJOR_VERSION} * 10000 + ${LIBEXSLT_MINOR_VERSION} * 100 + ${LIBEXSLT_MICRO_VERSION}")
-set(LIBEXSLT_VERSION_EXTRA "")
-
-set(LIBXSLT_MAJOR_VERSION 1)
-set(LIBXSLT_MINOR_VERSION 1)
-set(LIBXSLT_MICRO_VERSION 34)
-
-set(LIBXSLT_DOTTED_VERSION "${LIBXSLT_MAJOR_VERSION}.${LIBXSLT_MINOR_VERSION}.${LIBXSLT_MICRO_VERSION}")
-math(EXPR LIBXSLT_VERSION_NUMBER "${LIBXSLT_MAJOR_VERSION} * 10000 + ${LIBXSLT_MINOR_VERSION} * 100 + ${LIBXSLT_MICRO_VERSION}")
-set(LIBXSLT_VERSION_EXTRA "")
-
-set(VERSION ${LIBXSLT_DOTTED_VERSION})
-set(LIBEXSLT_VERSION ${LIBEXSLT_DOTTED_VERSION})
 
 find_package(LibXml2 CONFIG REQUIRED)
 
@@ -44,13 +26,22 @@ option(LIBXSLT_WITH_THREADS "Add multithread support" ON)
 set(LIBXSLT_WITH_TRIO OFF)
 option(LIBXSLT_WITH_XSLT_DEBUG "Add the debugging code" ON)
 
-if(LIBXSLT_WITH_CRYPTO)
+if(LIBXSLT_WITH_CRYPTO AND NOT WIN32)
 	find_package(Gcrypt REQUIRED)
 endif()
 
 if(LIBXSLT_WITH_PYTHON)
-	find_package(Python2 COMPONENTS Interpreter Development REQUIRED)
-	set(LIBXSLT_PYTHON_INSTALL_DIR ${Python2_SITEARCH} CACHE PATH "Python bindings install directory")
+	check_include_files(unistd.h HAVE_UNISTD_H)
+	check_symbol_exists(F_GETFL fcntl.h HAVE_F_GETFL)
+	if(HAVE_UNISTD_H AND HAVE_F_GETFL)
+		find_package(Python COMPONENTS Interpreter Development REQUIRED)
+	else()
+		find_package(Python2 COMPONENTS Interpreter Development REQUIRED)
+		add_library(Python::Python ALIAS Python2::Python)
+		set(Python_EXECUTABLE ${Python2_EXECUTABLE})
+		set(Python_SITEARCH ${Python2_SITEARCH})
+	endif()
+	set(LIBXSLT_PYTHON_INSTALL_DIR ${Python_SITEARCH} CACHE PATH "Python bindings install directory")
 endif()
 
 if(LIBXSLT_WITH_THREADS)
@@ -65,9 +56,28 @@ foreach(VARIABLE IN ITEMS WITH_CRYPTO WITH_DEBUGGER WITH_MEM_DEBUG WITH_MODULES 
 	endif()
 endforeach()
 
+set(LIBEXSLT_MAJOR_VERSION 0)
+set(LIBEXSLT_MINOR_VERSION 8)
+set(LIBEXSLT_MICRO_VERSION 20)
+
+set(LIBEXSLT_DOTTED_VERSION ${LIBEXSLT_MAJOR_VERSION}.${LIBEXSLT_MINOR_VERSION}.${LIBEXSLT_MICRO_VERSION})
+math(EXPR LIBEXSLT_VERSION_NUMBER "${LIBEXSLT_MAJOR_VERSION} * 10000 + ${LIBEXSLT_MINOR_VERSION} * 100 + ${LIBEXSLT_MICRO_VERSION}")
+set(LIBEXSLT_VERSION_EXTRA "")
+
+set(LIBXSLT_MAJOR_VERSION ${PROJECT_VERSION_MAJOR})
+set(LIBXSLT_MINOR_VERSION ${PROJECT_VERSION_MINOR})
+set(LIBXSLT_MICRO_VERSION ${PROJECT_VERSION_PATCH})
+
+set(LIBXSLT_DOTTED_VERSION "${LIBXSLT_MAJOR_VERSION}.${LIBXSLT_MINOR_VERSION}.${LIBXSLT_MICRO_VERSION}")
+math(EXPR LIBXSLT_VERSION_NUMBER "${LIBXSLT_MAJOR_VERSION} * 10000 + ${LIBXSLT_MINOR_VERSION} * 100 + ${LIBXSLT_MICRO_VERSION}")
+set(LIBXSLT_VERSION_EXTRA "")
+
+set(VERSION ${LIBXSLT_DOTTED_VERSION})
+set(LIBEXSLT_VERSION ${LIBEXSLT_DOTTED_VERSION})
+
 set(MODULE_EXTENSION "${CMAKE_SHARED_LIBRARY_SUFFIX}")
 
-if(LIBXSLT_WITH_CRYPTO)
+if(LIBXSLT_WITH_CRYPTO AND NOT WIN32)
 	list(APPEND CMAKE_REQUIRED_LIBRARIES Gcrypt::Gcrypt)
 endif()
 
@@ -135,7 +145,7 @@ else()
 	set(PACKAGE_NAME "libxslt")
 	set(PACKAGE_STRING "libxslt ${LIBXSLT_DOTTED_VERSION}")
 	set(PACKAGE_TARNAME "libxslt")
-	set(PACKAGE_URL "http://www.xmlsoft.org/libxslt")
+	set(PACKAGE_URL "https://gitlab.gnome.org/GNOME/libxslt")
 	set(PACKAGE_VERSION ${LIBXSLT_DOTTED_VERSION})
 	check_include_files("float.h;stdarg.h;stdlib.h;string.h" STDC_HEADERS)
 	set(_ALL_SOURCE ON)
@@ -207,6 +217,7 @@ set(
 )
 
 add_library(LibXslt ${LIBXSLT_HDRS} ${LIBXSLT_SRCS})
+add_library(LibXslt::LibXslt ALIAS LibXslt)
 
 target_include_directories(
 	LibXslt
@@ -230,10 +241,10 @@ set_target_properties(
 	OUTPUT_NAME xslt
 	POSITION_INDEPENDENT_CODE ON
 	PREFIX lib
-	VERSION ${VERSION}
+	VERSION ${PROJECT_VERSION}
 )
 
-if(WIN32)
+if(MSVC)
 	if(BUILD_SHARED_LIBS)
 		set_target_properties(
 			LibXslt
@@ -289,6 +300,7 @@ set(
 )
 
 add_library(LibExslt ${LIBEXSLT_HDRS} ${LIBEXSLT_SRCS})
+add_library(LibXslt::LibExslt ALIAS LibExslt)
 
 target_include_directories(
 	LibExslt
@@ -298,7 +310,7 @@ target_include_directories(
 	$<INSTALL_INTERFACE:$<INSTALL_PREFIX>/${CMAKE_INSTALL_INCLUDEDIR}>
 )
 
-if(LIBXSLT_WITH_CRYPTO)
+if(LIBXSLT_WITH_CRYPTO AND NOT WIN32)
 	target_link_libraries(LibExslt PRIVATE Gcrypt::Gcrypt)
 	set(LIBGCRYPT_LIBS "-lgcrypt")
 endif()
@@ -315,7 +327,7 @@ set_target_properties(
 	VERSION ${LIBEXSLT_VERSION}
 )
 
-if(WIN32)
+if(MSVC)
 	if(BUILD_SHARED_LIBS)
 		set_target_properties(
 			LibExslt
@@ -349,6 +361,7 @@ if(MSVC AND BUILD_SHARED_LIBS)
 endif()
 
 add_executable(xsltproc xsltproc/xsltproc.c)
+add_executable(LibXslt::xsltproc ALIAS xsltproc)
 target_include_directories(xsltproc PRIVATE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>)
 target_link_libraries(xsltproc LibExslt LibXslt)
 install(TARGETS xsltproc EXPORT LibXslt RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT programs)
@@ -366,7 +379,7 @@ if(LIBXSLT_WITH_PYTHON)
 	set(ENV{SRCDIR} ${CMAKE_CURRENT_SOURCE_DIR}/python)
 	execute_process(
 		COMMAND
-		${Python2_EXECUTABLE}
+		${Python_EXECUTABLE}
 		${CMAKE_CURRENT_SOURCE_DIR}/python/generator.py
 		${CMAKE_CURRENT_SOURCE_DIR}/doc/libxslt-api.xml
 		${CMAKE_CURRENT_SOURCE_DIR}/python/libxslt-python-api.xml
@@ -393,14 +406,14 @@ if(LIBXSLT_WITH_PYTHON)
 		PUBLIC
 		$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/python>
 	)
-	target_link_libraries(LibXsltMod LibXslt LibExslt Python2::Python)
+	target_link_libraries(LibXsltMod LibXslt LibExslt Python::Python)
 	set_target_properties(
 		LibXsltMod
 		PROPERTIES
 		IMPORT_PREFIX lib
 		OUTPUT_NAME xsltmod
 		PREFIX lib
-		VERSION ${VERSION}
+		VERSION ${PROJECT_VERSION}
 	)
 	install(
 		TARGETS	LibXsltMod
@@ -419,36 +432,36 @@ install(FILES libxslt/libxslt.3 DESTINATION ${CMAKE_INSTALL_MANDIR}/man3 COMPONE
 install(FILES doc/xsltproc.1 DESTINATION ${CMAKE_INSTALL_MANDIR}/man1 COMPONENT documentation)
 install(DIRECTORY doc/ DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/libxslt COMPONENT documentation PATTERN Makefile.* EXCLUDE)
 
-if(LIBXSLT_WITH_CRYPTO)
-	install(FILES FindGcrypt.cmake DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/libxslt-${VERSION} COMPONENT development)
+if(LIBXSLT_WITH_CRYPTO AND NOT WIN32)
+	install(FILES FindGcrypt.cmake DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/libxslt-${PROJECT_VERSION} COMPONENT development)
 endif()
 
 configure_package_config_file(
 	libxslt-config.cmake.cmake.in libxslt-config.cmake
-	INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/libxslt-${VERSION}
+	INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/libxslt-${PROJECT_VERSION}
 )
 
 install(
 	FILES ${CMAKE_CURRENT_BINARY_DIR}/libxslt-config.cmake
-	DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/libxslt-${VERSION}
+	DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/libxslt-${PROJECT_VERSION}
 	COMPONENT development
 )
 
 write_basic_package_version_file(
 	${CMAKE_CURRENT_BINARY_DIR}/libxslt-config-version.cmake
-	VERSION ${VERSION}
+	VERSION ${PROJECT_VERSION}
 	COMPATIBILITY ExactVersion
 )
 
 install(
 	FILES ${CMAKE_CURRENT_BINARY_DIR}/libxslt-config-version.cmake
-	DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/libxslt-${VERSION}
+	DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/libxslt-${PROJECT_VERSION}
 	COMPONENT development
 )
 
 install(
 	EXPORT LibXslt
-	DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/libxslt-${VERSION}
+	DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/libxslt-${PROJECT_VERSION}
 	NAMESPACE LibXslt::
 	FILE libxslt-export.cmake
 	COMPONENT development
@@ -462,7 +475,6 @@ set(XSLT_PRIVATE_LIBS "${M_LIBS}")
 
 set(EXSLT_INCLUDEDIR "-I\${includedir}")
 set(EXSLT_LIBDIR "-L\${libdir}")
-set(EXSLT_LIBS "-lexslt ${XSLT_LIBS}")
 set(EXSLT_PRIVATE_LIBS "${XSLT_PRIVATE_LIBS} ${LIBGCRYPT_LIBS}")
 
 file(RELATIVE_PATH PACKAGE_RELATIVE_PATH "${CMAKE_INSTALL_FULL_LIBDIR}/pkgconfig" "${CMAKE_INSTALL_PREFIX}")

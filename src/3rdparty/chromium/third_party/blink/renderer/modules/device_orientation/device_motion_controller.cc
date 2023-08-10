@@ -4,17 +4,15 @@
 
 #include "third_party/blink/renderer/modules/device_orientation/device_motion_controller.h"
 
-#include "third_party/blink/public/mojom/feature_policy/feature_policy_feature.mojom-blink.h"
+#include "third_party/blink/public/mojom/permissions_policy/permissions_policy_feature.mojom-blink.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/core/dom/document.h"
-#include "third_party/blink/renderer/core/frame/deprecation.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
 #include "third_party/blink/renderer/modules/device_orientation/device_motion_data.h"
 #include "third_party/blink/renderer/modules/device_orientation/device_motion_event.h"
 #include "third_party/blink/renderer/modules/device_orientation/device_motion_event_pump.h"
 #include "third_party/blink/renderer/modules/device_orientation/device_orientation_controller.h"
 #include "third_party/blink/renderer/modules/event_modules.h"
-#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
 
 namespace blink {
@@ -62,8 +60,8 @@ void DeviceMotionController::DidAddEventListener(
 
   if (!has_event_listener_) {
     if (!CheckPolicyFeatures(
-            {mojom::blink::FeaturePolicyFeature::kAccelerometer,
-             mojom::blink::FeaturePolicyFeature::kGyroscope})) {
+            {mojom::blink::PermissionsPolicyFeature::kAccelerometer,
+             mojom::blink::PermissionsPolicyFeature::kGyroscope})) {
       DeviceOrientationController::LogToConsolePolicyFeaturesDisabled(
           *GetWindow().GetFrame(), EventTypeName());
       return;

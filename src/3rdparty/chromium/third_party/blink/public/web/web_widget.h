@@ -31,47 +31,37 @@
 #ifndef THIRD_PARTY_BLINK_PUBLIC_WEB_WEB_WIDGET_H_
 #define THIRD_PARTY_BLINK_PUBLIC_WEB_WEB_WIDGET_H_
 
-#include "base/callback.h"
-#include "base/time/time.h"
-#include "build/build_config.h"
-#include "cc/input/browser_controls_state.h"
-#include "cc/metrics/begin_main_frame_metrics.h"
-#include "cc/paint/element_id.h"
-#include "cc/trees/layer_tree_host_client.h"
-#include "third_party/blink/public/common/input/web_menu_source_type.h"
 #include "third_party/blink/public/common/metrics/document_update_reason.h"
-#include "third_party/blink/public/common/widget/screen_info.h"
-#include "third_party/blink/public/mojom/input/input_event_result.mojom-shared.h"
-#include "third_party/blink/public/mojom/input/pointer_lock_context.mojom-shared.h"
-#include "third_party/blink/public/mojom/input/pointer_lock_result.mojom-shared.h"
-#include "third_party/blink/public/mojom/manifest/display_mode.mojom-shared.h"
-#include "third_party/blink/public/platform/cross_variant_mojo_util.h"
-#include "third_party/blink/public/platform/input/input_handler_proxy.h"
 #include "third_party/blink/public/platform/scheduler/web_agent_group_scheduler.h"
-#include "third_party/blink/public/platform/web_common.h"
 #include "third_party/blink/public/platform/web_input_event_result.h"
-#include "third_party/blink/public/platform/web_text_input_info.h"
-#include "third_party/blink/public/platform/web_vector.h"
-#include "third_party/blink/public/web/web_hit_test_result.h"
+#include "third_party/blink/public/platform/web_string.h"
 #include "third_party/blink/public/web/web_lifecycle_update.h"
-#include "third_party/blink/public/web/web_range.h"
-#include "third_party/blink/public/web/web_swap_result.h"
+#include "ui/gfx/geometry/size.h"
 
 namespace cc {
 class LayerTreeHost;
 class LayerTreeSettings;
-class TaskGraphRunner;
-class UkmRecorderFactory;
 }
+
+namespace display {
+struct ScreenInfo;
+struct ScreenInfos;
+}  // namespace display
+
+namespace gfx {
+class PointF;
+class Rect;
+class Vector2dF;
+}  // namespace gfx
 
 namespace ui {
 class Cursor;
-class LatencyInfo;
 }
 
 namespace blink {
 struct VisualProperties;
 class WebCoalescedInputEvent;
+class WebHitTestResult;
 
 namespace scheduler {
 class WebRenderWidgetSchedulingState;
@@ -86,9 +76,7 @@ class WebWidget {
   // override the defaults.
   virtual void InitializeCompositing(
       scheduler::WebAgentGroupScheduler& agent_group_scheduler,
-      cc::TaskGraphRunner* task_graph_runner,
-      const ScreenInfo& screen_info,
-      std::unique_ptr<cc::UkmRecorderFactory> ukm_recorder_factory,
+      const display::ScreenInfos& screen_info,
       const cc::LayerTreeSettings* settings) = 0;
 
   // Set the compositor as visible. If |visible| is true, then the compositor
@@ -161,17 +149,9 @@ class WebWidget {
 
   virtual bool ImeCompositionReplacement() = 0;
 
-  using HandledEventCallback = base::OnceCallback<void(
-      mojom::InputEventResultState ack_state,
-      const ui::LatencyInfo& latency_info,
-      std::unique_ptr<InputHandlerProxy::DidOverscrollParams>,
-      base::Optional<cc::TouchAction>)>;
-
-  // Process the input event, invoking the callback when complete. This
-  // method will call the callback synchronously.
+  // Process the input event, blocking until complete.
   virtual void ProcessInputEventSynchronouslyForTesting(
-      const WebCoalescedInputEvent&,
-      HandledEventCallback) = 0;
+      const WebCoalescedInputEvent&) = 0;
 
   virtual void DidOverscrollForTesting(
       const gfx::Vector2dF& overscroll_delta,
@@ -201,11 +181,17 @@ class WebWidget {
 
   // Returns information about the screen where this view's widgets are being
   // displayed.
-  virtual const ScreenInfo& GetScreenInfo() = 0;
+  virtual const display::ScreenInfo& GetScreenInfo() = 0;
+
+  // Returns information about all available screens.
+  virtual const display::ScreenInfos& GetScreenInfos() = 0;
 
   // Returns original (non-emulated) information about the screen where this
   // view's widgets are being displayed.
-  virtual const ScreenInfo& GetOriginalScreenInfo() = 0;
+  virtual const display::ScreenInfo& GetOriginalScreenInfo() = 0;
+
+  // Returns original (non-emulated) information about all available screens.
+  virtual const display::ScreenInfos& GetOriginalScreenInfos() = 0;
 
   // Called to get the position of the widget's window in screen
   // coordinates. Note, the window includes any decorations such as borders,
@@ -234,4 +220,4 @@ class WebWidget {
 
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_PUBLIC_WEB_WEB_WIDGET_H_

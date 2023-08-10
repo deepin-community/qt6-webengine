@@ -8,12 +8,14 @@
 #include <iosfwd>
 #include <vector>
 
-#include "base/feature_list.h"
 #include "base/memory/ref_counted.h"
+#include "components/password_manager/core/browser/fake_password_store_backend.h"
 #include "components/password_manager/core/browser/origin_credential_store.h"
 #include "components/password_manager/core/browser/password_form.h"
 #include "components/password_manager/core/browser/password_hash_data.h"
+#include "components/password_manager/core/browser/password_reuse_detector.h"
 #include "components/password_manager/core/browser/password_reuse_detector_consumer.h"
+#include "components/password_manager/core/browser/password_reuse_manager.h"
 #include "components/password_manager/core/browser/password_store.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "url/gurl.h"
@@ -27,8 +29,15 @@ namespace password_manager {
 template <class Context, class Store>
 scoped_refptr<RefcountedKeyedService> BuildPasswordStore(Context* context) {
   scoped_refptr<password_manager::PasswordStore> store(new Store);
-  if (!store->Init(nullptr))
+  if (!store->Init(/*prefs=*/nullptr, /*affiliated_match_helper=*/nullptr))
     return nullptr;
+  return store;
+}
+
+template <class Context, class Store>
+scoped_refptr<RefcountedKeyedService> BuildPasswordStoreInterface(
+    Context* context) {
+  scoped_refptr<password_manager::PasswordStoreInterface> store(new Store);
   return store;
 }
 
@@ -42,9 +51,20 @@ scoped_refptr<RefcountedKeyedService> BuildPasswordStoreWithArgs(
     Context* context) {
   scoped_refptr<password_manager::PasswordStore> store(
       new Store(std::forward<Args>(args)...));
-  if (!store->Init(nullptr))
+  if (!store->Init(/*prefs=*/nullptr, /*affiliated_match_helper=*/nullptr))
     return nullptr;
   return store;
+}
+
+// Helper function that builds a real password store with a fake backend.
+// Context is the browser context prescribed by TestingFactory.
+template <class Context>
+scoped_refptr<RefcountedKeyedService> BuildPasswordStoreWithFakeBackend(
+    Context* context) {
+  return password_manager::BuildPasswordStoreWithArgs<
+      Context, password_manager::PasswordStore,
+      std::unique_ptr<password_manager::FakePasswordStoreBackend>>(
+      std::make_unique<password_manager::FakePasswordStoreBackend>(), context);
 }
 
 // Struct used for creation of PasswordForms from static arrays of data.
@@ -54,11 +74,11 @@ struct PasswordFormData {
   const char* signon_realm;
   const char* origin;
   const char* action;
-  const wchar_t* submit_element;
-  const wchar_t* username_element;
-  const wchar_t* password_element;
-  const wchar_t* username_value;  // Set to NULL for a blocklist entry.
-  const wchar_t* password_value;
+  const char16_t* submit_element;
+  const char16_t* username_element;
+  const char16_t* password_element;
+  const char16_t* username_value;  // Set to NULL for a blocklist entry.
+  const char16_t* password_value;
   const double last_usage_time;
   const double creation_time;
 };
@@ -99,12 +119,30 @@ MATCHER_P(UnorderedPasswordFormElementsAre, expectations, "") {
                                              result_listener->stream());
 }
 
-class MockPasswordStoreObserver : public PasswordStore::Observer {
+MATCHER_P(LoginsResultsOrErrorAre, expectations, "") {
+  if (absl::holds_alternative<PasswordStoreBackendError>(arg))
+    return false;
+
+  return ContainsEqualPasswordFormsUnordered(
+      *expectations, std::move(absl::get<LoginsResult>(arg)),
+      result_listener->stream());
+}
+
+class MockPasswordStoreObserver : public PasswordStoreInterface::Observer {
  public:
   MockPasswordStoreObserver();
   ~MockPasswordStoreObserver() override;
 
-  MOCK_METHOD1(OnLoginsChanged, void(const PasswordStoreChangeList& changes));
+  MOCK_METHOD((void),
+              OnLoginsChanged,
+              (PasswordStoreInterface * store,
+               const PasswordStoreChangeList& changes),
+              (override));
+  MOCK_METHOD((void),
+              OnLoginsRetained,
+              (PasswordStoreInterface * store,
+               const std::vector<PasswordForm>& retained_passwords),
+              (override));
 };
 
 class MockPasswordReuseDetectorConsumer : public PasswordReuseDetectorConsumer {
@@ -112,35 +150,39 @@ class MockPasswordReuseDetectorConsumer : public PasswordReuseDetectorConsumer {
   MockPasswordReuseDetectorConsumer();
   ~MockPasswordReuseDetectorConsumer() override;
 
-  MOCK_METHOD5(OnReuseCheckDone,
-               void(bool,
-                    size_t,
-                    base::Optional<PasswordHashData>,
-                    const std::vector<MatchingReusedCredential>&,
-                    int));
+  MOCK_METHOD((void),
+              OnReuseCheckDone,
+              (bool,
+               size_t,
+               absl::optional<PasswordHashData>,
+               const std::vector<MatchingReusedCredential>&,
+               int),
+              (override));
 };
 
 // Matcher class used to compare PasswordHashData in tests.
 class PasswordHashDataMatcher
-    : public ::testing::MatcherInterface<base::Optional<PasswordHashData>> {
+    : public ::testing::MatcherInterface<absl::optional<PasswordHashData>> {
  public:
-  explicit PasswordHashDataMatcher(base::Optional<PasswordHashData> expected);
+  explicit PasswordHashDataMatcher(absl::optional<PasswordHashData> expected);
+
+  PasswordHashDataMatcher(const PasswordHashDataMatcher&) = delete;
+  PasswordHashDataMatcher& operator=(const PasswordHashDataMatcher&) = delete;
+
   ~PasswordHashDataMatcher() override = default;
 
   // ::testing::MatcherInterface overrides
-  bool MatchAndExplain(base::Optional<PasswordHashData> hash_data,
+  bool MatchAndExplain(absl::optional<PasswordHashData> hash_data,
                        ::testing::MatchResultListener* listener) const override;
   void DescribeTo(::std::ostream* os) const override;
   void DescribeNegationTo(::std::ostream* os) const override;
 
  private:
-  const base::Optional<PasswordHashData> expected_;
-
-  DISALLOW_COPY_AND_ASSIGN(PasswordHashDataMatcher);
+  const absl::optional<PasswordHashData> expected_;
 };
 
-::testing::Matcher<base::Optional<PasswordHashData>> Matches(
-    base::Optional<PasswordHashData> expected);
+::testing::Matcher<absl::optional<PasswordHashData>> Matches(
+    absl::optional<PasswordHashData> expected);
 
 }  // namespace password_manager
 

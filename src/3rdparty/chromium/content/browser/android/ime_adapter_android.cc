@@ -19,11 +19,10 @@
 #include "content/browser/renderer_host/render_view_host_delegate.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
 #include "content/browser/renderer_host/render_widget_host_view_android.h"
-#include "content/common/frame_messages.h"
+#include "content/browser/web_contents/web_contents_impl.h"
 #include "content/public/android/content_jni_headers/ImeAdapterImpl_jni.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/native_web_keyboard_event.h"
-#include "content/public/browser/web_contents.h"
 #include "third_party/blink/public/common/input/web_input_event.h"
 #include "third_party/blink/public/platform/web_text_input_type.h"
 #include "ui/base/ime/ime_text_span.h"
@@ -55,8 +54,8 @@ NativeWebKeyboardEvent NativeWebKeyboardEventFromKeyEvent(
     int unicode_char) {
   return NativeWebKeyboardEvent(
       env, java_key_event, static_cast<blink::WebInputEvent::Type>(type),
-      modifiers, base::TimeTicks() + base::TimeDelta::FromMilliseconds(time_ms),
-      key_code, scan_code, unicode_char, is_system_key);
+      modifiers, base::TimeTicks() + base::Milliseconds(time_ms), key_code,
+      scan_code, unicode_char, is_system_key);
 }
 
 }  // anonymous namespace
@@ -183,7 +182,7 @@ void ImeAdapterAndroid::UpdateState(const ui::mojom::TextInputState& state) {
     return;
 
   ScopedJavaLocalRef<jstring> jstring_text =
-      ConvertUTF16ToJavaString(env, state.value.value_or(base::string16()));
+      ConvertUTF16ToJavaString(env, state.value.value_or(std::u16string()));
   Java_ImeAdapterImpl_updateState(
       env, obj, static_cast<int>(state.type), state.flags, state.mode,
       static_cast<int>(state.action), state.show_ime_if_needed,
@@ -278,7 +277,7 @@ void ImeAdapterAndroid::SetComposingText(JNIEnv* env,
   if (!rwhi)
     return;
 
-  base::string16 text16 = ConvertJavaStringToUTF16(env, text_str);
+  std::u16string text16 = ConvertJavaStringToUTF16(env, text_str);
 
   std::vector<ui::ImeTextSpan> ime_text_spans =
       GetImeTextSpansFromJava(env, obj, text, text16);
@@ -311,7 +310,7 @@ void ImeAdapterAndroid::CommitText(JNIEnv* env,
   if (!rwhi)
     return;
 
-  base::string16 text16 = ConvertJavaStringToUTF16(env, text_str);
+  std::u16string text16 = ConvertJavaStringToUTF16(env, text_str);
 
   std::vector<ui::ImeTextSpan> ime_text_spans =
       GetImeTextSpansFromJava(env, obj, text, text16);
@@ -352,7 +351,7 @@ void ImeAdapterAndroid::FocusedNodeChanged(bool is_editable_node) {
   }
 }
 
-void ImeAdapterAndroid::AdvanceFocusInForm(JNIEnv* env,
+void ImeAdapterAndroid::AdvanceFocusForIME(JNIEnv* env,
                                            const JavaParamRef<jobject>& obj,
                                            jint focus_type) {
   RenderFrameHostImpl* rfh =
@@ -360,7 +359,7 @@ void ImeAdapterAndroid::AdvanceFocusInForm(JNIEnv* env,
   if (!rfh)
     return;
 
-  rfh->GetAssociatedLocalFrame()->AdvanceFocusInForm(
+  rfh->GetAssociatedLocalFrame()->AdvanceFocusForIME(
       static_cast<blink::mojom::FocusType>(focus_type));
 }
 
@@ -474,10 +473,7 @@ RenderFrameHost* ImeAdapterAndroid::GetFocusedFrame() {
     return nullptr;
   RenderWidgetHostImpl* rwh =
       RenderWidgetHostImpl::From(rwhva_->GetRenderWidgetHost());
-  if (!rwh || !rwh->delegate())
-    return nullptr;
-
-  if (auto* contents = rwh->delegate()->GetAsWebContents())
+  if (auto* contents = WebContentsImpl::FromRenderWidgetHostImpl(rwh))
     return contents->GetFocusedFrame();
 
   return nullptr;
@@ -501,7 +497,7 @@ std::vector<ui::ImeTextSpan> ImeAdapterAndroid::GetImeTextSpansFromJava(
     JNIEnv* env,
     const base::android::JavaParamRef<jobject>& obj,
     const base::android::JavaParamRef<jobject>& text,
-    const base::string16& text16) {
+    const std::u16string& text16) {
   std::vector<ui::ImeTextSpan> ime_text_spans;
   // Iterate over spans in |text|, dispatch those that we care about (e.g.,
   // BackgroundColorSpan) to a matching callback (e.g.,

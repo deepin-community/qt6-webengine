@@ -5,7 +5,6 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_FETCH_BODY_STREAM_BUFFER_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_FETCH_BODY_STREAM_BUFFER_H_
 
-#include <memory>
 #include "base/types/pass_key.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "services/network/public/mojom/chunked_data_pipe_getter.mojom-blink.h"
@@ -17,7 +16,7 @@
 #include "third_party/blink/renderer/core/fetch/fetch_data_loader.h"
 #include "third_party/blink/renderer/core/streams/underlying_source_base.h"
 #include "third_party/blink/renderer/platform/bindings/trace_wrapper_v8_reference.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/loader/fetch/bytes_consumer.h"
 
 namespace blink {
@@ -59,6 +58,9 @@ class CORE_EXPORT BodyStreamBuffer final : public UnderlyingSourceBase,
                    ScriptCachedMetadataHandler* cached_metadata_handler,
                    scoped_refptr<BlobDataHandle> side_data_blob = nullptr);
 
+  BodyStreamBuffer(const BodyStreamBuffer&) = delete;
+  BodyStreamBuffer& operator=(const BodyStreamBuffer&) = delete;
+
   ReadableStream* Stream() { return stream_; }
 
   // Callable only when neither locked nor disturbed.
@@ -68,6 +70,9 @@ class CORE_EXPORT BodyStreamBuffer final : public UnderlyingSourceBase,
   void DrainAsChunkedDataPipeGetter(
       ScriptState*,
       mojo::PendingReceiver<network::mojom::blink::ChunkedDataPipeGetter>);
+  // While loading is in progress, a SelfKeepAlive is used to prevent this
+  // object from being garbage collected. If the context is destroyed, the
+  // SelfKeepAlive is cleared. See https://crbug.com/1292744 for details.
   void StartLoading(FetchDataLoader*,
                     FetchDataLoader::Client* /* client */,
                     ExceptionState&);
@@ -76,7 +81,6 @@ class CORE_EXPORT BodyStreamBuffer final : public UnderlyingSourceBase,
   // UnderlyingSourceBase
   ScriptPromise pull(ScriptState*) override;
   ScriptPromise Cancel(ScriptState*, ScriptValue reason) override;
-  bool HasPendingActivity() const override;
   void ContextDestroyed() override;
 
   // BytesConsumer::Client
@@ -130,6 +134,7 @@ class CORE_EXPORT BodyStreamBuffer final : public UnderlyingSourceBase,
   void Abort();
   void Close();
   void GetError();
+  void RaiseOOMError();
   void CancelConsumer();
   void ProcessData();
   void EndLoading();
@@ -157,7 +162,8 @@ class CORE_EXPORT BodyStreamBuffer final : public UnderlyingSourceBase,
   // TODO(ricea): Remove remaining uses of |stream_broken_|.
   bool stream_broken_ = false;
 
-  DISALLOW_COPY_AND_ASSIGN(BodyStreamBuffer);
+  // Used to remain alive when there's a loader_.
+  SelfKeepAlive<BodyStreamBuffer> keep_alive_;
 };
 
 }  // namespace blink

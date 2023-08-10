@@ -2,10 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import {addSingletonGetter, isChromeOS} from 'chrome://resources/js/cr.m.js';
+import {addSingletonGetter} from 'chrome://resources/js/cr.m.js';
 
 import {BrowserBridge} from './browser_bridge.js';
+// <if expr="chromeos_ash">
 import {CrosView} from './chromeos_view.js';
+// </if>
 import {DnsView} from './dns_view.js';
 import {DomainSecurityPolicyView} from './domain_security_policy_view.js';
 import {EventsView} from './events_view.js';
@@ -64,7 +66,7 @@ export class MainView extends WindowView {
         throw Error('Invalid view class for tab');
       }
 
-      if (tabHash.charAt(0) != '#') {
+      if (tabHash.charAt(0) !== '#') {
         throw Error('Tab hashes must start with a #');
       }
 
@@ -73,17 +75,15 @@ export class MainView extends WindowView {
       this.hashToTabId_[tabHash] = tabId;
     }.bind(this);
 
-    // Populate the main tabs.  Even tabs that don't contain information for
-    // the running OS should be created, so they can load log dumps from other
-    // OSes.
+    // Populate the main tabs.
     addTab(EventsView);
     addTab(ProxyView);
     addTab(DnsView);
     addTab(SocketsView);
     addTab(DomainSecurityPolicyView);
+    // <if expr="chromeos_ash">
     addTab(CrosView);
-
-    this.tabSwitcher_.showTabLink(CrosView.TAB_ID, isChromeOS);
+    // </if>
   }
 
   /**
@@ -95,7 +95,7 @@ export class MainView extends WindowView {
     // Change the URL to match the new tab.
     const newTabHash = this.tabIdToHash_[newTabId];
     const parsed = parseUrlHash_(window.location.hash);
-    if (parsed.tabHash != newTabHash) {
+    if (parsed.tabHash !== newTabHash) {
       window.location.hash = newTabHash;
     }
   }
@@ -117,10 +117,12 @@ export class MainView extends WindowView {
       parsed.tabHash = EventsView.TAB_HASH;
     }
 
+    // <if expr="not chromeos_ash">
     // Don't switch to the chromeos view if not on chromeos.
-    if (!isChromeOS && parsed.tabHash == '#chromeos') {
+    if (parsed.tabHash === '#chromeos') {
       parsed.tabHash = EventsView.TAB_HASH;
     }
+    // </if>
 
     if (!parsed.tabHash) {
       // Default to the events tab.
@@ -151,7 +153,7 @@ function parseUrlHash_(hash) {
   const parameters = hash.split('&');
 
   let tabHash = parameters[0];
-  if (tabHash == '' || tabHash == '#') {
+  if (tabHash === '' || tabHash === '#') {
     tabHash = undefined;
   }
 
@@ -159,7 +161,7 @@ function parseUrlHash_(hash) {
   let paramDict = null;
   for (let i = 1; i < parameters.length; i++) {
     const paramStrings = parameters[i].split('=');
-    if (paramStrings.length != 2) {
+    if (paramStrings.length !== 2) {
       continue;
     }
     if (paramDict == null) {

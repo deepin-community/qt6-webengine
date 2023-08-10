@@ -42,13 +42,14 @@ khmer_features[] =
 {
   /*
    * Basic features.
-   * These features are applied in order, one at a time, after reordering.
+   * These features are applied all at once, before reordering, constrained
+   * to the syllable.
    */
-  {HB_TAG('p','r','e','f'), F_MANUAL_JOINERS},
-  {HB_TAG('b','l','w','f'), F_MANUAL_JOINERS},
-  {HB_TAG('a','b','v','f'), F_MANUAL_JOINERS},
-  {HB_TAG('p','s','t','f'), F_MANUAL_JOINERS},
-  {HB_TAG('c','f','a','r'), F_MANUAL_JOINERS},
+  {HB_TAG('p','r','e','f'), F_MANUAL_JOINERS | F_PER_SYLLABLE},
+  {HB_TAG('b','l','w','f'), F_MANUAL_JOINERS | F_PER_SYLLABLE},
+  {HB_TAG('a','b','v','f'), F_MANUAL_JOINERS | F_PER_SYLLABLE},
+  {HB_TAG('p','s','t','f'), F_MANUAL_JOINERS | F_PER_SYLLABLE},
+  {HB_TAG('c','f','a','r'), F_MANUAL_JOINERS | F_PER_SYLLABLE},
   /*
    * Other features.
    * These features are applied all at once after clearing syllables.
@@ -106,14 +107,15 @@ collect_features_khmer (hb_ot_shape_planner_t *plan)
    *
    * https://github.com/harfbuzz/harfbuzz/issues/974
    */
-  map->enable_feature (HB_TAG('l','o','c','l'));
-  map->enable_feature (HB_TAG('c','c','m','p'));
+  map->enable_feature (HB_TAG('l','o','c','l'), F_PER_SYLLABLE);
+  map->enable_feature (HB_TAG('c','c','m','p'), F_PER_SYLLABLE);
 
   unsigned int i = 0;
   for (; i < KHMER_BASIC_FEATURES; i++)
     map->add_feature (khmer_features[i]);
 
-  map->add_gsub_pause (_hb_clear_syllables);
+  /* https://github.com/harfbuzz/harfbuzz/issues/3531 */
+  map->add_gsub_pause (nullptr);
 
   for (; i < KHMER_NUM_FEATURES; i++)
     map->add_feature (khmer_features[i]);
@@ -147,7 +149,7 @@ struct khmer_shape_plan_t
 static void *
 data_create_khmer (const hb_ot_shape_plan_t *plan)
 {
-  khmer_shape_plan_t *khmer_plan = (khmer_shape_plan_t *) calloc (1, sizeof (khmer_shape_plan_t));
+  khmer_shape_plan_t *khmer_plan = (khmer_shape_plan_t *) hb_calloc (1, sizeof (khmer_shape_plan_t));
   if (unlikely (!khmer_plan))
     return nullptr;
 
@@ -161,7 +163,7 @@ data_create_khmer (const hb_ot_shape_plan_t *plan)
 static void
 data_destroy_khmer (void *data)
 {
-  free (data);
+  hb_free (data);
 }
 
 static void

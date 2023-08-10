@@ -13,6 +13,7 @@ namespace blink {
 
 // Returns true iff back-forward cache and LoadingTasksUnfreezable are enabled.
 PLATFORM_EXPORT bool IsInflightNetworkRequestBackForwardCacheSupportEnabled();
+
 // Returns the param |param_name| of LoadingTasksUnfreezable as int, or
 // |default_value| if not set.
 PLATFORM_EXPORT int GetLoadingTasksUnfreezableParamAsInt(

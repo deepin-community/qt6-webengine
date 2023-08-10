@@ -7,7 +7,6 @@
 #include <iterator>
 #include <string>
 #include <utility>
-#include <vector>
 
 #include "base/strings/utf_string_conversions.h"
 #include "components/password_manager/core/browser/password_form.h"
@@ -108,7 +107,7 @@ TEST(CSVPasswordSequenceTest, Iteration) {
 
   size_t order = 0;
   for (const CSVPassword& pwd : seq) {
-    ASSERT_LT(order, base::size(kExpectedCredentials));
+    ASSERT_LT(order, std::size(kExpectedCredentials));
     PasswordForm parsed = pwd.ParseValid();
     const auto& expected = kExpectedCredentials[order];
     EXPECT_EQ(GURL(expected.url), parsed.url);
@@ -128,8 +127,8 @@ TEST(CSVPasswordSequenceTest, MissingEolAtEof) {
   ASSERT_EQ(1, std::distance(seq.begin(), seq.end()));
   PasswordForm parsed = seq.begin()->ParseValid();
   EXPECT_EQ(GURL("http://a.com"), parsed.url);
-  EXPECT_EQ(base::ASCIIToUTF16("l"), parsed.username_value);
-  EXPECT_EQ(base::ASCIIToUTF16("p"), parsed.password_value);
+  EXPECT_EQ(u"l", parsed.username_value);
+  EXPECT_EQ(u"p", parsed.password_value);
 }
 
 }  // namespace password_manager

@@ -5,7 +5,6 @@
 #ifndef UI_BASE_IME_DUMMY_INPUT_METHOD_H_
 #define UI_BASE_IME_DUMMY_INPUT_METHOD_H_
 
-#include "base/macros.h"
 #include "build/build_config.h"
 #include "ui/base/ime/input_method.h"
 
@@ -16,41 +15,39 @@ class InputMethodObserver;
 class DummyInputMethod : public InputMethod {
  public:
   DummyInputMethod();
+
+  DummyInputMethod(const DummyInputMethod&) = delete;
+  DummyInputMethod& operator=(const DummyInputMethod&) = delete;
+
   ~DummyInputMethod() override;
 
   // InputMethod overrides:
   void SetDelegate(internal::InputMethodDelegate* delegate) override;
   void OnFocus() override;
+  void OnTouch(ui::EventPointerType pointerType) override;
   void OnBlur() override;
 
-#if defined(OS_WIN)
-  bool OnUntranslatedIMEMessage(const MSG event,
+#if BUILDFLAG(IS_WIN)
+  bool OnUntranslatedIMEMessage(const CHROME_MSG event,
                                 NativeEventResult* result) override;
+  void OnInputLocaleChanged() override;
+  bool IsInputLocaleCJK() const override;
 #endif
 
   void SetFocusedTextInputClient(TextInputClient* client) override;
   void DetachTextInputClient(TextInputClient* client) override;
   TextInputClient* GetTextInputClient() const override;
   ui::EventDispatchDetails DispatchKeyEvent(ui::KeyEvent* event) override;
-  void OnTextInputTypeChanged(const TextInputClient* client) override;
+  void OnTextInputTypeChanged(TextInputClient* client) override;
   void OnCaretBoundsChanged(const TextInputClient* client) override;
   void CancelComposition(const TextInputClient* client) override;
-  void OnInputLocaleChanged() override;
-  bool IsInputLocaleCJK() const override;
   TextInputType GetTextInputType() const override;
-  TextInputMode GetTextInputMode() const override;
-  int GetTextInputFlags() const override;
-  bool CanComposeInline() const override;
   bool IsCandidatePopupOpen() const override;
-  bool GetClientShouldDoLearning() override;
-  void ShowVirtualKeyboardIfEnabled() override;
+  void SetVirtualKeyboardVisibilityIfEnabled(bool should_show) override;
 
   void AddObserver(InputMethodObserver* observer) override;
   void RemoveObserver(InputMethodObserver* observer) override;
   VirtualKeyboardController* GetVirtualKeyboardController() override;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(DummyInputMethod);
 };
 
 }  // namespace ui

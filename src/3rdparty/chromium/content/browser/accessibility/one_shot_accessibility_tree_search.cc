@@ -6,8 +6,9 @@
 
 #include <stdint.h>
 
+#include <string>
+
 #include "base/i18n/case_conversion.h"
-#include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
 #include "content/browser/accessibility/browser_accessibility.h"
 #include "content/browser/accessibility/browser_accessibility_manager.h"
@@ -20,8 +21,8 @@ namespace content {
 // Given a node, populate a vector with all of the strings from that node's
 // attributes that might be relevant for a text search.
 void GetNodeStrings(BrowserAccessibility* node,
-                    std::vector<base::string16>* strings) {
-  base::string16 value;
+                    std::vector<std::u16string>* strings) {
+  std::u16string value;
   if (node->GetString16Attribute(ax::mojom::StringAttribute::kName, &value))
     strings->push_back(value);
   if (node->GetString16Attribute(ax::mojom::StringAttribute::kDescription,
@@ -190,8 +191,15 @@ void OneShotAccessibilityTreeSearch::SearchByWalkingTree() {
 }
 
 bool OneShotAccessibilityTreeSearch::Matches(BrowserAccessibility* node) {
-  for (size_t i = 0; i < predicates_.size(); ++i) {
-    if (!predicates_[i](start_node_, node))
+  if (!predicates_.empty()) {
+    bool found_predicate_match = false;
+    for (auto predicate : predicates_) {
+      if (predicate(start_node_, node)) {
+        found_predicate_match = true;
+        break;
+      }
+    }
+    if (!found_predicate_match)
       return false;
   }
 
@@ -202,14 +210,14 @@ bool OneShotAccessibilityTreeSearch::Matches(BrowserAccessibility* node) {
     return false;  // Partly scrolled offscreen.
 
   if (!search_text_.empty()) {
-    base::string16 search_text_lower =
+    std::u16string search_text_lower =
         base::i18n::ToLower(base::UTF8ToUTF16(search_text_));
-    std::vector<base::string16> node_strings;
+    std::vector<std::u16string> node_strings;
     GetNodeStrings(node, &node_strings);
     bool found_text_match = false;
-    for (size_t i = 0; i < node_strings.size(); ++i) {
-      base::string16 node_string_lower = base::i18n::ToLower(node_strings[i]);
-      if (node_string_lower.find(search_text_lower) != base::string16::npos) {
+    for (auto node_string : node_strings) {
+      std::u16string node_string_lower = base::i18n::ToLower(node_string);
+      if (node_string_lower.find(search_text_lower) != std::u16string::npos) {
         found_text_match = true;
         break;
       }
@@ -279,7 +287,7 @@ bool AccessibilityControlPredicate(BrowserAccessibility* start,
 bool AccessibilityFocusablePredicate(BrowserAccessibility* start,
                                      BrowserAccessibility* node) {
   bool focusable = node->HasState(ax::mojom::State::kFocusable);
-  if (ui::IsIframe(node->GetRole()) || node->IsPlatformDocument())
+  if (ui::IsIframe(node->GetRole()) || ui::IsPlatformDocument(node->GetRole()))
     focusable = false;
   return focusable;
 }
@@ -416,6 +424,12 @@ bool AccessibilityRadioGroupPredicate(BrowserAccessibility* start,
   return node->GetRole() == ax::mojom::Role::kRadioGroup;
 }
 
+bool AccessibilitySectionPredicate(BrowserAccessibility* start,
+                                   BrowserAccessibility* node) {
+  return AccessibilityLandmarkPredicate(start, node) ||
+         node->GetRole() == ax::mojom::Role::kHeading;
+}
+
 bool AccessibilityTablePredicate(BrowserAccessibility* start,
                                  BrowserAccessibility* node) {
   return ui::IsTableLike(node->GetRole());
@@ -423,27 +437,27 @@ bool AccessibilityTablePredicate(BrowserAccessibility* start,
 
 bool AccessibilityTextfieldPredicate(BrowserAccessibility* start,
                                      BrowserAccessibility* node) {
-  return (node->IsPlainTextField() || node->IsRichTextField());
+  return node->IsTextField();
 }
 
 bool AccessibilityTextStyleBoldPredicate(BrowserAccessibility* start,
                                          BrowserAccessibility* node) {
-  return node->GetData().HasTextStyle(ax::mojom::TextStyle::kBold);
+  return node->HasTextStyle(ax::mojom::TextStyle::kBold);
 }
 
 bool AccessibilityTextStyleItalicPredicate(BrowserAccessibility* start,
                                            BrowserAccessibility* node) {
-  return node->GetData().HasTextStyle(ax::mojom::TextStyle::kItalic);
+  return node->HasTextStyle(ax::mojom::TextStyle::kItalic);
 }
 
 bool AccessibilityTextStyleUnderlinePredicate(BrowserAccessibility* start,
                                               BrowserAccessibility* node) {
-  return node->GetData().HasTextStyle(ax::mojom::TextStyle::kUnderline);
+  return node->HasTextStyle(ax::mojom::TextStyle::kUnderline);
 }
 
 bool AccessibilityTreePredicate(BrowserAccessibility* start,
                                 BrowserAccessibility* node) {
-  return (node->IsPlainTextField() || node->IsRichTextField());
+  return node->IsTextField();
 }
 
 bool AccessibilityUnvisitedLinkPredicate(BrowserAccessibility* start,

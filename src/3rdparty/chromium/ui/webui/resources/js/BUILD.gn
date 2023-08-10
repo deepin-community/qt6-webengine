@@ -7,6 +7,7 @@ import("//third_party/closure_compiler/compile_js.gni")
 import("//tools/grit/preprocess_if_expr.gni")
 import("//ui/webui/resources/tools/generate_grd.gni")
 import("../tools/js_modulizer.gni")
+import("../tools/js_unmodulizer.gni")
 
 preprocess_folder = "$root_gen_dir/ui/webui/resources/preprocessed/js"
 preprocess_gen_manifest = "preprocessed_gen_manifest.json"
@@ -22,6 +23,9 @@ generate_grd("build_grdp") {
     "$target_gen_dir/$preprocess_gen_manifest",
     "$target_gen_dir/$preprocess_src_manifest",
   ]
+  if (include_polymer) {
+    manifest_files += [ "$target_gen_dir/browser_command/tsconfig.manifest" ]
+  }
   resource_path_prefix = "js"
 }
 
@@ -29,7 +33,25 @@ group("preprocess") {
   public_deps = [
     ":preprocess_generated",
     ":preprocess_src",
+    ":preprocess_src_ts",
     "cr/ui:preprocess",
+  ]
+  if (include_polymer) {
+    public_deps += [ "browser_command:build_ts" ]
+  }
+}
+
+# TS files are passed to a separate target so that they are not listed in the
+# |out_manifest|.
+preprocess_if_expr("preprocess_src_ts") {
+  in_folder = "./"
+  out_folder = "$preprocess_folder"
+  in_files = [
+    "assert_ts.ts",
+    "custom_element.ts",
+    "i18n_mixin.ts",
+    "list_property_update_mixin.ts",
+    "web_ui_listener_mixin.ts",
   ]
 }
 
@@ -41,33 +63,43 @@ preprocess_if_expr("preprocess_src") {
     "action_link.js",
     "assert.js",
     "color_utils.js",
-    "cr/event_target.js",
-    "cr.js",
     "cr.m.js",
-    "cr/ui.js",
-    "event_tracker.js",
     "i18n_template_no_process.js",
     "icon.js",
-    "load_time_data.js",
-    "parse_html_subset.js",
+    "load_time_data.m.js",
     "plural_string_proxy.js",
-    "promise_resolver.js",
+    "static_types.js",
+    "search_highlight_utils.js",
     "test_loader.js",
     "test_loader_util.js",
     "util.js",
     "webui_resource_test.js",
+    "webview_manager.js",
   ]
 
   if (is_chromeos_ash) {
-    in_files += [ "i18n_template_process.js" ]
+    in_files += [
+      "post_message_api_client.js",
+      "post_message_api_request_handler.js",
+      "post_message_api_server.js",
+    ]
+  }
+  if (is_chromeos) {
+    in_files += [ "os_about.js" ]
   }
 
-  if (include_polymer) {
+  # TODO(crbug.com/1184053): Fully remove once no longer used by CrOS.
+  if (is_chromeos_ash) {
     in_files += [
+      "cr/event_target.js",
+      "cr/ui.js",
+      "cr.js",
+      "event_tracker.js",
       "i18n_behavior.js",
       "list_property_update_behavior.js",
+      "parse_html_subset.js",
       "polymer_config.js",
-      "search_highlight_utils.js",
+      "promise_resolver.js",
       "web_ui_listener_behavior.js",
     ]
   }
@@ -81,7 +113,10 @@ preprocess_if_expr("preprocess_src") {
 }
 
 preprocess_if_expr("preprocess_generated") {
-  deps = [ ":modulize" ]
+  deps = [
+    ":modulize",
+    ":unmodulize",
+  ]
   in_folder = target_gen_dir
   out_folder = "$preprocess_folder"
   out_manifest = "$target_gen_dir/$preprocess_gen_manifest"
@@ -90,8 +125,7 @@ preprocess_if_expr("preprocess_generated") {
     "cr/event_target.m.js",
     "cr/ui.m.js",
     "event_tracker.m.js",
-    "icon.m.js",
-    "load_time_data.m.js",
+    "load_time_data.js",
     "parse_html_subset.m.js",
     "promise_resolver.m.js",
     "util.m.js",
@@ -101,8 +135,16 @@ preprocess_if_expr("preprocess_generated") {
     in_files += [
       "i18n_behavior.m.js",
       "list_property_update_behavior.m.js",
-      "search_highlight_utils.m.js",
       "web_ui_listener_behavior.m.js",
+    ]
+  }
+
+  if (is_chromeos_ash) {
+    in_files += [
+      "i18n_template_no_process.m.js",
+      "post_message_api_server.m.js",
+      "post_message_api_request_handler.m.js",
+      "post_message_api_client.m.js",
     ]
   }
 }
@@ -124,19 +166,14 @@ js_type_check("js_resources") {
     ":event_tracker",
     ":i18n_behavior",
     ":i18n_template_no_process",
-    ":icon",
     ":list_property_update_behavior",
     ":load_time_data",
     ":parse_html_subset",
     ":promise_resolver",
-    ":search_highlight_utils",
     ":util",
     ":web_ui_listener_behavior",
     ":webui_resource_test",
   ]
-  if (is_chromeos_ash) {
-    deps += [ ":i18n_template_process" ]
-  }
   if (is_ios) {
     deps += [ "ios:web_ui" ]
   }
@@ -157,43 +194,26 @@ js_library("cr") {
 }
 
 js_library("event_tracker") {
-}
-
-js_library("search_highlight_utils") {
-  deps = [
-    ":assert",
-    ":cr",
-  ]
-}
-
-js_library("icon") {
-  deps = [
-    ":cr",
-    ":util",
-  ]
+  deps = [ ":cr" ]
 }
 
 js_library("i18n_template_no_process") {
   deps = [ ":load_time_data" ]
 }
 
-js_library("i18n_template_process") {
-  deps = [ ":i18n_template_no_process" ]
-}
-
 js_library("i18n_behavior") {
-  deps = [ ":load_time_data" ]
+  deps = [
+    ":load_time_data",
+    ":parse_html_subset",
+  ]
 }
 
 js_library("list_property_update_behavior") {
 }
 
 js_library("load_time_data") {
-  deps = [
-    ":assert",
-    ":parse_html_subset",
-    "//third_party/jstemplate:jstemplate",
-  ]
+  sources = [ "$root_gen_dir/ui/webui/resources/js/load_time_data.js" ]
+  extra_deps = [ ":unmodulize" ]
 }
 
 js_library("parse_html_subset") {
@@ -206,6 +226,9 @@ js_library("promise_resolver") {
 js_library("util") {
   deps = [ ":cr" ]
   externs_list = [ "$externs_path/chrome_send.js" ]
+}
+
+js_library("webview_manager") {
 }
 
 js_library("web_ui_listener_behavior") {
@@ -229,20 +252,31 @@ js_modulizer("modulize_local") {
   input_files = [
     "assert.js",
     "event_tracker.js",
-    "icon.js",
     "i18n_behavior.js",
     "list_property_update_behavior.js",
-    "load_time_data.js",
     "parse_html_subset.js",
     "promise_resolver.js",
-    "search_highlight_utils.js",
     "util.js",
     "web_ui_listener_behavior.js",
   ]
+  if (is_chromeos_ash) {
+    input_files += [
+      "i18n_template_no_process.js",
+      "post_message_api_server.js",
+      "post_message_api_request_handler.js",
+      "post_message_api_client.js",
+    ]
+  }
+
   namespace_rewrites = [
     "cr.search_highlight_utils.Range|Range",
     "Polymer.ArraySplice.calculateSplices|calculateSplices",
   ]
+}
+
+js_unmodulizer("unmodulize") {
+  input_files = [ "load_time_data.m.js" ]
+  output_files = [ "load_time_data.js" ]
 }
 
 group("closure_compile_modules") {
@@ -259,16 +293,25 @@ js_type_check("js_resources_modules") {
     ":cr.m",
     ":event_tracker.m",
     ":i18n_behavior.m",
-    ":icon.m",
+    ":icon",
     ":list_property_update_behavior.m",
     ":load_time_data.m",
     ":parse_html_subset.m",
     ":plural_string_proxy",
     ":promise_resolver.m",
-    ":search_highlight_utils.m",
+    ":search_highlight_utils",
+    ":static_types",
     ":util.m",
     ":web_ui_listener_behavior.m",
   ]
+
+  if (is_chromeos_ash) {
+    deps += [
+      ":i18n_template_no_process.m",
+      ":post_message_api_client.m",
+      ":post_message_api_server.m",
+    ]
+  }
 }
 
 js_library("assert.m") {
@@ -289,10 +332,8 @@ js_library("event_tracker.m") {
   extra_deps = [ ":modulize_local" ]
 }
 
-js_library("icon.m") {
-  sources = [ "$root_gen_dir/ui/webui/resources/js/icon.m.js" ]
+js_library("icon") {
   deps = [ ":cr.m" ]
-  extra_deps = [ ":modulize_local" ]
 }
 
 js_library("i18n_behavior.m") {
@@ -315,13 +356,6 @@ js_library("list_property_update_behavior.m") {
 }
 
 js_library("load_time_data.m") {
-  sources = [ "$root_gen_dir/ui/webui/resources/js/load_time_data.m.js" ]
-  deps = [
-    ":assert.m",
-    ":parse_html_subset.m",
-    "//third_party/jstemplate:jstemplate",
-  ]
-  extra_deps = [ ":modulize_local" ]
 }
 
 js_library("parse_html_subset.m") {
@@ -333,17 +367,46 @@ js_library("plural_string_proxy") {
   deps = [ ":cr.m" ]
 }
 
+if (is_chromeos_ash) {
+  js_library("i18n_template_no_process.m") {
+    sources =
+        [ "$root_gen_dir/ui/webui/resources/js/i18n_template_no_process.m.js" ]
+    deps = [ ":load_time_data" ]
+    extra_deps = [ ":modulize_local" ]
+  }
+
+  js_library("post_message_api_server.m") {
+    sources =
+        [ "$root_gen_dir/ui/webui/resources/js/post_message_api_server.m.js" ]
+    deps = [ ":post_message_api_request_handler.m" ]
+    extra_deps = [ ":modulize_local" ]
+  }
+
+  js_library("post_message_api_client.m") {
+    sources =
+        [ "$root_gen_dir/ui/webui/resources/js/post_message_api_client.m.js" ]
+    deps = [ ":post_message_api_request_handler.m" ]
+    extra_deps = [ ":modulize_local" ]
+  }
+
+  js_library("post_message_api_request_handler.m") {
+    sources = [ "$root_gen_dir/ui/webui/resources/js/post_message_api_request_handler.m.js" ]
+    extra_deps = [ ":modulize_local" ]
+  }
+}
+
 js_library("promise_resolver.m") {
   sources = [ "$root_gen_dir/ui/webui/resources/js/promise_resolver.m.js" ]
   deps = [ ":assert.m" ]
   extra_deps = [ ":modulize_local" ]
 }
 
-js_library("search_highlight_utils.m") {
-  sources =
-      [ "$root_gen_dir/ui/webui/resources/js/search_highlight_utils.m.js" ]
+js_library("search_highlight_utils") {
   deps = [ ":assert.m" ]
-  extra_deps = [ ":modulize_local" ]
+}
+
+js_library("static_types") {
+  deps = [ ":assert.m" ]
 }
 
 js_library("util.m") {

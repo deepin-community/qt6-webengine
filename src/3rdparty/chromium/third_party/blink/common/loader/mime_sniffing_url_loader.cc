@@ -9,6 +9,7 @@
 #include "base/strings/string_piece.h"
 #include "mojo/public/cpp/bindings/self_owned_receiver.h"
 #include "net/base/mime_sniffer.h"
+#include "services/network/public/mojom/early_hints.mojom.h"
 #include "services/network/public/mojom/url_response_head.mojom.h"
 #include "third_party/blink/public/common/loader/mime_sniffing_throttle.h"
 
@@ -66,14 +67,25 @@ MimeSniffingURLLoader::~MimeSniffingURLLoader() = default;
 void MimeSniffingURLLoader::Start(
     mojo::PendingRemote<network::mojom::URLLoader> source_url_loader_remote,
     mojo::PendingReceiver<network::mojom::URLLoaderClient>
-        source_url_client_receiver) {
+        source_url_client_receiver,
+    mojo::ScopedDataPipeConsumerHandle body) {
   source_url_loader_.Bind(std::move(source_url_loader_remote));
   source_url_client_receiver_.Bind(std::move(source_url_client_receiver),
                                    task_runner_);
+  if (body)
+    OnStartLoadingResponseBody(std::move(body));
+}
+
+void MimeSniffingURLLoader::OnReceiveEarlyHints(
+    network::mojom::EarlyHintsPtr early_hints) {
+  // OnReceiveEarlyHints() shouldn't be called. See the comment in
+  // OnReceiveResponse().
+  NOTREACHED();
 }
 
 void MimeSniffingURLLoader::OnReceiveResponse(
-    network::mojom::URLResponseHeadPtr response_head) {
+    network::mojom::URLResponseHeadPtr response_head,
+    mojo::ScopedDataPipeConsumerHandle body) {
   // OnReceiveResponse() shouldn't be called because MimeSniffingURLLoader is
   // created by MimeSniffingThrottle::WillProcessResponse(), which is equivalent
   // to OnReceiveResponse().
@@ -153,7 +165,7 @@ void MimeSniffingURLLoader::FollowRedirect(
     const std::vector<std::string>& removed_headers,
     const net::HttpRequestHeaders& modified_headers,
     const net::HttpRequestHeaders& modified_cors_exempt_headers,
-    const base::Optional<GURL>& new_url) {
+    const absl::optional<GURL>& new_url) {
   // MimeSniffingURLLoader starts handling the request after
   // OnReceivedResponse(). A redirect response is not expected.
   NOTREACHED();

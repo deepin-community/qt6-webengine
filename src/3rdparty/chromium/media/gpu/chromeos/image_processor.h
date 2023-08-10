@@ -12,14 +12,16 @@
 #include <vector>
 
 #include "base/callback_forward.h"
-#include "base/macros.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/sequence_checker.h"
-#include "base/sequenced_task_runner.h"
+#include "base/task/sequenced_task_runner.h"
 #include "media/base/video_frame.h"
+#include "media/gpu/chromeos/fourcc.h"
 #include "media/gpu/chromeos/image_processor_backend.h"
 #include "media/gpu/media_gpu_export.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "ui/gfx/native_pixmap_handle.h"
 
 namespace media {
 
@@ -29,6 +31,18 @@ namespace media {
 // in a format different from what the rest of the pipeline expects.
 class MEDIA_GPU_EXPORT ImageProcessor {
  public:
+  struct PixelLayoutCandidate {
+    Fourcc fourcc;
+    gfx::Size size;
+    uint64_t modifier = gfx::NativePixmapHandle::kNoModifier;
+
+    // For testing.
+    bool operator==(const PixelLayoutCandidate& candidate) const {
+      return this->fourcc == candidate.fourcc && this->size == candidate.size &&
+             this->modifier == candidate.modifier;
+    }
+  };
+
   using PortConfig = ImageProcessorBackend::PortConfig;
   using OutputMode = ImageProcessorBackend::OutputMode;
   using ErrorCB = ImageProcessorBackend::ErrorCB;
@@ -41,7 +55,7 @@ class MEDIA_GPU_EXPORT ImageProcessor {
       base::RepeatingCallback<std::unique_ptr<ImageProcessorBackend>(
           const PortConfig& input_config,
           const PortConfig& output_config,
-          const std::vector<OutputMode>& preferred_output_modes,
+          OutputMode output_mode,
           VideoRotation relative_rotation,
           ErrorCB error_cb,
           scoped_refptr<base::SequencedTaskRunner> backend_task_runner)>;
@@ -50,15 +64,20 @@ class MEDIA_GPU_EXPORT ImageProcessor {
       CreateBackendCB create_backend_cb,
       const PortConfig& input_config,
       const PortConfig& output_config,
-      const std::vector<OutputMode>& preferred_output_modes,
+      OutputMode output_mode,
       VideoRotation relative_rotation,
       ErrorCB error_cb,
       scoped_refptr<base::SequencedTaskRunner> client_task_runner);
 
+  ImageProcessor() = delete;
+  ImageProcessor(const ImageProcessor&) = delete;
+  ImageProcessor& operator=(const ImageProcessor&) = delete;
+
   virtual ~ImageProcessor();
 
-  const PortConfig& input_config() const { return backend_->input_config(); }
-  const PortConfig& output_config() const { return backend_->output_config(); }
+  virtual const PortConfig& input_config() const;
+  virtual const PortConfig& output_config() const;
+
   OutputMode output_mode() const { return backend_->output_mode(); }
 
   // Called by client to process |frame|. The resulting processed frame will be
@@ -86,6 +105,12 @@ class MEDIA_GPU_EXPORT ImageProcessor {
   // Reset() must be called on |client_task_runner_|.
   bool Reset();
 
+  // Returns true if and only if, in IMPORT mode, the image processor requires
+  // the output video frames to be CPU-readable with a linear view of the data.
+  bool needs_linear_output_buffers() const {
+    return needs_linear_output_buffers_;
+  }
+
  protected:
   // Container for both FrameReadyCB and LegacyFrameReadyCB. With this class,
   // we could store both kind of callback in the same container.
@@ -108,12 +133,12 @@ class MEDIA_GPU_EXPORT ImageProcessor {
   // Callbacks of processing frames.
   static void OnProcessDoneThunk(
       scoped_refptr<base::SequencedTaskRunner> task_runner,
-      base::Optional<base::WeakPtr<ImageProcessor>> weak_this,
+      absl::optional<base::WeakPtr<ImageProcessor>> weak_this,
       int cb_index,
       scoped_refptr<VideoFrame> frame);
   static void OnProcessLegacyDoneThunk(
       scoped_refptr<base::SequencedTaskRunner> task_runner,
-      base::Optional<base::WeakPtr<ImageProcessor>> weak_this,
+      absl::optional<base::WeakPtr<ImageProcessor>> weak_this,
       int cb_index,
       size_t buffer_id,
       scoped_refptr<VideoFrame> frame);
@@ -143,11 +168,11 @@ class MEDIA_GPU_EXPORT ImageProcessor {
   // The sequence for interacting with |backend_|.
   scoped_refptr<base::SequencedTaskRunner> backend_task_runner_;
 
+  const bool needs_linear_output_buffers_;
+
   // The weak pointer of this, bound to |client_task_runner_|.
   base::WeakPtr<ImageProcessor> weak_this_;
   base::WeakPtrFactory<ImageProcessor> weak_this_factory_{this};
-
-  DISALLOW_IMPLICIT_CONSTRUCTORS(ImageProcessor);
 };
 
 }  // namespace media

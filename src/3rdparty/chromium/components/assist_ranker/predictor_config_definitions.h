@@ -5,10 +5,6 @@
 #ifndef COMPONENTS_ASSIST_RANKER_PREDICTOR_CONFIG_DEFINITIONS_H_
 #define COMPONENTS_ASSIST_RANKER_PREDICTOR_CONFIG_DEFINITIONS_H_
 
-#include <memory>
-#include <string>
-#include <unordered_map>
-
 #include "base/feature_list.h"
 #include "base/metrics/field_trial_params.h"
 #include "build/build_config.h"
@@ -16,10 +12,10 @@
 
 namespace assist_ranker {
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 extern const base::Feature kContextualSearchRankerQuery;
 const PredictorConfig GetContextualSearchPredictorConfig();
-#endif  // OS_ANDROID
+#endif  // BUILDFLAG(IS_ANDROID)
 
 }  // namespace assist_ranker
 

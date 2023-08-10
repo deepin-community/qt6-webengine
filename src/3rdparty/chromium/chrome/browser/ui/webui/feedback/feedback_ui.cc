@@ -4,16 +4,23 @@
 
 #include "chrome/browser/ui/webui/feedback/feedback_ui.h"
 
+#include "build/chromeos_buildflags.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/webui_url_constants.h"
-#include "chrome/grit/feedback_resources.h"
-#include "chrome/grit/feedback_resources_map.h"
+#include "chrome/grit/browser_resources.h"
+#include "chrome/grit/feedback_webui_resources.h"
+#include "chrome/grit/feedback_webui_resources_map.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/strings/grit/components_strings.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_data_source.h"
 
-void AddStringResources(content::WebUIDataSource* source) {
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+#include "chrome/browser/ash/arc/arc_util.h"
+#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+
+void AddStringResources(content::WebUIDataSource* source,
+                        const Profile* profile) {
   static constexpr webui::LocalizedString kStrings[] = {
     {"additionalInfo", IDS_FEEDBACK_ADDITIONAL_INFO_LABEL},
     {"anonymousUser", IDS_FEEDBACK_ANONYMOUS_EMAIL_OPTION},
@@ -26,7 +33,6 @@ void AddStringResources(content::WebUIDataSource* source) {
     {"bluetoothLogsInfo", IDS_FEEDBACK_BLUETOOTH_LOGS_CHECKBOX},
     {"bluetoothLogsMessage", IDS_FEEDBACK_BLUETOOTH_LOGS_MESSAGE},
     {"cancel", IDS_CANCEL},
-    {"closeBtnLabel", IDS_FEEDBACK_CLOSE_BUTTON_LABEL},
     {"freeFormText", IDS_FEEDBACK_FREE_TEXT_LABEL},
     {"minimizeBtnLabel", IDS_FEEDBACK_MINIMIZE_BUTTON_LABEL},
     {"noDescription", IDS_FEEDBACK_NO_DESCRIPTION},
@@ -37,11 +43,6 @@ void AddStringResources(content::WebUIDataSource* source) {
     {"screenshot", IDS_FEEDBACK_SCREENSHOT_LABEL},
     {"screenshotA11y", IDS_FEEDBACK_SCREENSHOT_A11Y_TEXT},
     {"sendReport", IDS_FEEDBACK_SEND_REPORT},
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-    {"sysInfo", IDS_FEEDBACK_INCLUDE_SYSTEM_INFORMATION_AND_METRICS_CHKBOX},
-#else
-    {"sysInfo", IDS_FEEDBACK_INCLUDE_SYSTEM_INFORMATION_CHKBOX},
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
     {"sysinfoPageCollapseAllBtn", IDS_ABOUT_SYS_COLLAPSE_ALL},
     {"sysinfoPageCollapseBtn", IDS_ABOUT_SYS_COLLAPSE},
     {"sysinfoPageDescription", IDS_ABOUT_SYS_DESC},
@@ -54,24 +55,39 @@ void AddStringResources(content::WebUIDataSource* source) {
   };
 
   source->AddLocalizedStrings(kStrings);
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+  source->AddLocalizedString(
+      "sysInfo",
+      arc::IsArcPlayStoreEnabledForProfile(profile)
+          ? IDS_FEEDBACK_INCLUDE_SYSTEM_INFORMATION_AND_METRICS_CHKBOX_ARC
+          : IDS_FEEDBACK_INCLUDE_SYSTEM_INFORMATION_AND_METRICS_CHKBOX);
+#else
+  source->AddLocalizedString("sysInfo",
+                             IDS_FEEDBACK_INCLUDE_SYSTEM_INFORMATION_CHKBOX);
+#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 }
 
-content::WebUIDataSource* CreateFeedbackHTMLSource() {
+content::WebUIDataSource* CreateFeedbackHTMLSource(const Profile* profile) {
   content::WebUIDataSource* source =
       content::WebUIDataSource::Create(chrome::kChromeUIFeedbackHost);
   source->AddResourcePaths(
-      base::make_span(kFeedbackResources, kFeedbackResourcesSize));
-  source->AddResourcePath("", IDR_FEEDBACK_DEFAULT_HTML);
+      base::make_span(kFeedbackWebuiResources, kFeedbackWebuiResourcesSize));
+  source->AddResourcePath("", IDR_FEEDBACK_WEBUI_HTML_DEFAULT_HTML);
+
+  // Register the CSS file from chrome://system manually as that style is
+  // re-used by chrome://feedback/html/sys_info.html.
+  source->AddResourcePath("css/about_sys.css", IDR_ABOUT_SYS_CSS);
+
   source->UseStringsJs();
 
-  AddStringResources(source);
+  AddStringResources(source, profile);
 
   return source;
 }
 
-FeedbackUI::FeedbackUI(content::WebUI* web_ui) : WebUIController(web_ui) {
+FeedbackUI::FeedbackUI(content::WebUI* web_ui) : WebDialogUI(web_ui) {
   Profile* profile = Profile::FromWebUI(web_ui);
-  content::WebUIDataSource::Add(profile, CreateFeedbackHTMLSource());
+  content::WebUIDataSource::Add(profile, CreateFeedbackHTMLSource(profile));
 }
 
 FeedbackUI::~FeedbackUI() = default;

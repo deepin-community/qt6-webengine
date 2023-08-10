@@ -6,7 +6,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_INSTRUMENTATION_USE_COUNTER_H_
 
 #include "third_party/blink/public/mojom/web_feature/web_feature.mojom-blink-forward.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 
 namespace blink {
 
@@ -42,16 +42,24 @@ class UseCounter : public GarbageCollectedMixin {
   static void Count(UseCounter& use_counter, mojom::WebFeature feature) {
     use_counter.CountUse(feature);
   }
+  static void CountDeprecation(UseCounter* use_counter,
+                               mojom::WebFeature feature) {
+    if (use_counter) {
+      use_counter->CountDeprecation(feature);
+    }
+  }
 
- public:
   UseCounter() = default;
+  UseCounter(const UseCounter&) = delete;
+  UseCounter& operator=(const UseCounter&) = delete;
   virtual ~UseCounter() = default;
 
   // Counts a use of the given feature. Repeated calls are ignored.
   virtual void CountUse(mojom::WebFeature feature) = 0;
 
- private:
-  DISALLOW_COPY_AND_ASSIGN(UseCounter);
+  // Counts a use of the given feature which is being deprecated. Repeated
+  // calls are ignored.
+  virtual void CountDeprecation(mojom::WebFeature feature) = 0;
 };
 
 }  // namespace blink

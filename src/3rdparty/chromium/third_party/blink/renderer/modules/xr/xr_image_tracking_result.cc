@@ -13,14 +13,6 @@
 
 namespace blink {
 
-class XRImageSpace : public XRObjectSpace<XRImageTrackingResult> {
- public:
-  XRImageSpace(XRSession* session, const XRImageTrackingResult* object)
-      : XRObjectSpace<XRImageTrackingResult>(session, object) {}
-
-  bool IsStationary() const override { return false; }
-};
-
 XRImageTrackingResult::XRImageTrackingResult(
     XRSession* session,
     const device::mojom::blink::XRTrackedImageData& result)
@@ -36,21 +28,27 @@ XRImageTrackingResult::XRImageTrackingResult(
   }
 }
 
-base::Optional<TransformationMatrix> XRImageTrackingResult::MojoFromObject()
+absl::optional<TransformationMatrix> XRImageTrackingResult::MojoFromObject()
     const {
   if (!mojo_from_this_) {
-    return base::nullopt;
+    return absl::nullopt;
   }
 
-  return TransformationMatrix(mojo_from_this_->ToTransform().matrix());
+  return TransformationMatrix(mojo_from_this_->ToTransform());
 }
 
 XRSpace* XRImageTrackingResult::imageSpace() const {
   if (!image_space_) {
-    image_space_ = MakeGarbageCollected<XRImageSpace>(session_, this);
+    image_space_ = MakeGarbageCollected<XRObjectSpace<XRImageTrackingResult>>(
+        session_, this);
   }
 
   return image_space_;
+}
+
+device::mojom::blink::XRNativeOriginInformationPtr
+XRImageTrackingResult::NativeOrigin() const {
+  return device::mojom::blink::XRNativeOriginInformation::NewImageIndex(index_);
 }
 
 void XRImageTrackingResult::Trace(Visitor* visitor) const {

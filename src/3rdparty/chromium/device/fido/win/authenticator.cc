@@ -5,6 +5,7 @@
 #include "device/fido/win/authenticator.h"
 
 #include <windows.h>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -13,11 +14,7 @@
 #include "base/containers/flat_map.h"
 #include "base/memory/ref_counted.h"
 #include "base/notreached.h"
-#include "base/optional.h"
-#include "base/stl_util.h"
-#include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task/post_task.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
 #include "device/fido/authenticator_supported_options.h"
@@ -27,6 +24,7 @@
 #include "device/fido/fido_transport_protocol.h"
 #include "device/fido/win/type_conversions.h"
 #include "device/fido/win/webauthn_api.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/microsoft_webauthn/webauthn.h"
 
 namespace device {
@@ -70,6 +68,7 @@ void WinWebAuthnApiAuthenticator::InitializeAuthenticator(
 
 void WinWebAuthnApiAuthenticator::MakeCredential(
     CtapMakeCredentialRequest request,
+    MakeCredentialOptions options,
     MakeCredentialCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (is_pending_) {
@@ -81,7 +80,8 @@ void WinWebAuthnApiAuthenticator::MakeCredential(
   base::ThreadPool::PostTaskAndReplyWithResult(
       FROM_HERE, {base::TaskPriority::USER_BLOCKING, base::MayBlock()},
       base::BindOnce(&AuthenticatorMakeCredentialBlocking, win_api_,
-                     current_window_, cancellation_id_, std::move(request)),
+                     current_window_, cancellation_id_, std::move(request),
+                     std::move(options)),
       base::BindOnce(&WinWebAuthnApiAuthenticator::MakeCredentialDone,
                      weak_factory_.GetWeakPtr(), std::move(callback)));
 }
@@ -89,7 +89,7 @@ void WinWebAuthnApiAuthenticator::MakeCredential(
 void WinWebAuthnApiAuthenticator::MakeCredentialDone(
     MakeCredentialCallback callback,
     std::pair<CtapDeviceResponseCode,
-              base::Optional<AuthenticatorMakeCredentialResponse>> result) {
+              absl::optional<AuthenticatorMakeCredentialResponse>> result) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(is_pending_);
   is_pending_ = false;
@@ -100,12 +100,12 @@ void WinWebAuthnApiAuthenticator::MakeCredentialDone(
     return;
   }
   if (result.first != CtapDeviceResponseCode::kSuccess) {
-    std::move(callback).Run(result.first, base::nullopt);
+    std::move(callback).Run(result.first, absl::nullopt);
     return;
   }
   if (!result.second) {
     std::move(callback).Run(CtapDeviceResponseCode::kCtap2ErrInvalidCBOR,
-                            base::nullopt);
+                            absl::nullopt);
     return;
   }
   std::move(callback).Run(result.first, std::move(result.second));
@@ -133,7 +133,7 @@ void WinWebAuthnApiAuthenticator::GetAssertion(CtapGetAssertionRequest request,
 void WinWebAuthnApiAuthenticator::GetAssertionDone(
     GetAssertionCallback callback,
     std::pair<CtapDeviceResponseCode,
-              base::Optional<AuthenticatorGetAssertionResponse>> result) {
+              absl::optional<AuthenticatorGetAssertionResponse>> result) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(is_pending_);
   is_pending_ = false;
@@ -142,12 +142,12 @@ void WinWebAuthnApiAuthenticator::GetAssertionDone(
     return;
   }
   if (result.first != CtapDeviceResponseCode::kSuccess) {
-    std::move(callback).Run(result.first, base::nullopt);
+    std::move(callback).Run(result.first, absl::nullopt);
     return;
   }
   if (!result.second) {
     std::move(callback).Run(CtapDeviceResponseCode::kCtap2ErrInvalidCBOR,
-                            base::nullopt);
+                            absl::nullopt);
     return;
   }
   std::move(callback).Run(result.first, std::move(result.second));
@@ -166,6 +166,10 @@ void WinWebAuthnApiAuthenticator::Cancel() {
   win_api_->CancelCurrentOperation(&cancellation_id_);
 }
 
+FidoAuthenticator::Type WinWebAuthnApiAuthenticator::GetType() const {
+  return Type::kWinNative;
+}
+
 std::string WinWebAuthnApiAuthenticator::GetId() const {
   return "WinWebAuthnApiAuthenticator";
 }
@@ -182,15 +186,11 @@ bool WinWebAuthnApiAuthenticator::RequiresBlePairingPin() const {
   return false;
 }
 
-base::Optional<FidoTransportProtocol>
+absl::optional<FidoTransportProtocol>
 WinWebAuthnApiAuthenticator::AuthenticatorTransport() const {
   // The Windows API could potentially use any external or
   // platform authenticator.
-  return base::nullopt;
-}
-
-bool WinWebAuthnApiAuthenticator::IsWinNativeApiAuthenticator() const {
-  return true;
+  return absl::nullopt;
 }
 
 bool WinWebAuthnApiAuthenticator::SupportsCredProtectExtension() const {
@@ -201,13 +201,22 @@ bool WinWebAuthnApiAuthenticator::SupportsHMACSecretExtension() const {
   return true;
 }
 
-const base::Optional<AuthenticatorSupportedOptions>&
+bool WinWebAuthnApiAuthenticator::SupportsEnterpriseAttestation() const {
+  return win_api_->Version() >= WEBAUTHN_API_VERSION_3;
+}
+
+bool WinWebAuthnApiAuthenticator::SupportsCredBlobOfSize(
+    size_t num_bytes) const {
+  return win_api_->Version() >= WEBAUTHN_API_VERSION_3;
+}
+
+const absl::optional<AuthenticatorSupportedOptions>&
 WinWebAuthnApiAuthenticator::Options() const {
   // The request can potentially be fulfilled by any device that Windows
   // communicates with, so returning AuthenticatorSupportedOptions really
   // doesn't make much sense.
-  static const base::Optional<AuthenticatorSupportedOptions> no_options =
-      base::nullopt;
+  static const absl::optional<AuthenticatorSupportedOptions> no_options =
+      absl::nullopt;
   return no_options;
 }
 

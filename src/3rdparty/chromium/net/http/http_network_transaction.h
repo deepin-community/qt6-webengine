@@ -11,7 +11,7 @@
 #include <string>
 
 #include "base/gtest_prod_util.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/time/time.h"
 #include "build/buildflag.h"
@@ -53,6 +53,9 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
   HttpNetworkTransaction(RequestPriority priority,
                          HttpNetworkSession* session);
 
+  HttpNetworkTransaction(const HttpNetworkTransaction&) = delete;
+  HttpNetworkTransaction& operator=(const HttpNetworkTransaction&) = delete;
+
   ~HttpNetworkTransaction() override;
 
   // HttpTransaction methods:
@@ -87,6 +90,8 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
       BeforeNetworkStartCallback callback) override;
   void SetConnectedCallback(const ConnectedCallback& callback) override;
   void SetRequestHeadersCallback(RequestHeadersCallback callback) override;
+  void SetEarlyResponseHeadersCallback(
+      ResponseHeadersCallback callback) override;
   void SetResponseHeadersCallback(ResponseHeadersCallback callback) override;
   int ResumeNetworkStart() override;
   void CloseConnectionOnDestruction() override;
@@ -119,7 +124,7 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
                          SSLCertRequestInfo* cert_info) override;
 
   void OnQuicBroken() override;
-  void GetConnectionAttempts(ConnectionAttempts* out) const override;
+  ConnectionAttempts GetConnectionAttempts() const override;
 
  private:
   FRIEND_TEST_ALL_PREFIXES(HttpNetworkTransactionTest, ResetStateForRestart);
@@ -140,6 +145,8 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
     STATE_CREATE_STREAM_COMPLETE,
     STATE_INIT_STREAM,
     STATE_INIT_STREAM_COMPLETE,
+    STATE_CONNECTED_CALLBACK,
+    STATE_CONNECTED_CALLBACK_COMPLETE,
     STATE_GENERATE_PROXY_AUTH_TOKEN,
     STATE_GENERATE_PROXY_AUTH_TOKEN_COMPLETE,
     STATE_GENERATE_SERVER_AUTH_TOKEN,
@@ -180,6 +187,8 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
   int DoCreateStreamComplete(int result);
   int DoInitStream();
   int DoInitStreamComplete(int result);
+  int DoConnectedCallback();
+  int DoConnectedCallbackComplete(int result);
   int DoGenerateProxyAuthToken();
   int DoGenerateProxyAuthTokenComplete(int result);
   int DoGenerateServerAuthToken();
@@ -301,6 +310,8 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
   // "Accept-Encoding".
   bool ContentEncodingsValid() const;
 
+  void ResumeAfterConnected(int result);
+
   scoped_refptr<HttpAuthController>
       auth_controllers_[HttpAuth::AUTH_NUM_TARGETS];
 
@@ -312,12 +323,12 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
   CompletionRepeatingCallback io_callback_;
   CompletionOnceCallback callback_;
 
-  HttpNetworkSession* session_;
+  raw_ptr<HttpNetworkSession> session_;
 
   NetLogWithSource net_log_;
 
   // Reset to null at the start of the Read state machine.
-  const HttpRequestInfo* request_;
+  raw_ptr<const HttpRequestInfo> request_;
 
   // The requested URL.
   GURL url_;
@@ -386,7 +397,8 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
   int64_t total_sent_bytes_;
 
   // When the transaction started / finished sending the request, including
-  // the body, if present.
+  // the body, if present. |send_start_time_| is set to |base::TimeTicks()|
+  // until |SendRequest()| is called on |stream_|, and reset for auth restarts.
   base::TimeTicks send_start_time_;
   base::TimeTicks send_end_time_;
 
@@ -410,12 +422,13 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
 
   // The helper object to use to create WebSocketHandshakeStreamBase
   // objects. Only relevant when establishing a WebSocket connection.
-  WebSocketHandshakeStreamBase::CreateHelper*
+  raw_ptr<WebSocketHandshakeStreamBase::CreateHelper>
       websocket_handshake_stream_base_create_helper_;
 
   BeforeNetworkStartCallback before_network_start_callback_;
   ConnectedCallback connected_callback_;
   RequestHeadersCallback request_headers_callback_;
+  ResponseHeadersCallback early_response_headers_callback_;
   ResponseHeadersCallback response_headers_callback_;
 
   ConnectionAttempts connection_attempts_;
@@ -436,8 +449,6 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
   size_t num_restarts_;
 
   bool close_connection_on_destruction_ = false;
-
-  DISALLOW_COPY_AND_ASSIGN(HttpNetworkTransaction);
 };
 
 }  // namespace net

@@ -14,6 +14,7 @@
 #include "base/time/time.h"
 #import "content/browser/accessibility/browser_accessibility_cocoa.h"
 #import "content/browser/accessibility/browser_accessibility_mac.h"
+#include "content/browser/renderer_host/render_frame_host_impl.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/web_contents.h"
@@ -54,11 +55,9 @@ BrowserAccessibilityManagerMac::BrowserAccessibilityManagerMac(
     BrowserAccessibilityDelegate* delegate)
     : BrowserAccessibilityManager(delegate) {
   Initialize(initial_tree);
-  // Some tests are temporarily allowed disable extra mac nodes.
-  ax_tree()->SetEnableExtraMacNodes(!GetExtraMacNodesDisabled());
 }
 
-BrowserAccessibilityManagerMac::~BrowserAccessibilityManagerMac() {}
+BrowserAccessibilityManagerMac::~BrowserAccessibilityManagerMac() = default;
 
 // static
 ui::AXTreeUpdate BrowserAccessibilityManagerMac::GetEmptyDocument() {
@@ -83,10 +82,11 @@ void BrowserAccessibilityManagerMac::FireFocusEvent(
                             node);
 }
 
-void BrowserAccessibilityManagerMac::FireBlinkEvent(
-    ax::mojom::Event event_type,
-    BrowserAccessibility* node) {
-  BrowserAccessibilityManager::FireBlinkEvent(event_type, node);
+void BrowserAccessibilityManagerMac::FireBlinkEvent(ax::mojom::Event event_type,
+                                                    BrowserAccessibility* node,
+                                                    int action_request_id) {
+  BrowserAccessibilityManager::FireBlinkEvent(event_type, node,
+                                              action_request_id);
   NSString* mac_notification = nullptr;
   switch (event_type) {
     case ax::mojom::Event::kAutocorrectionOccured:
@@ -126,7 +126,7 @@ void BrowserAccessibilityManagerMac::FireGeneratedEvent(
     ui::AXEventGenerator::Event event_type,
     BrowserAccessibility* node) {
   BrowserAccessibilityManager::FireGeneratedEvent(event_type, node);
-  auto native_node = ToBrowserAccessibilityCocoa(node);
+  BrowserAccessibilityCocoa* native_node = node->GetNativeViewAccessible();
   DCHECK(native_node);
 
   // Refer to |AXObjectCache::postPlatformNotification| in WebKit source code.
@@ -160,6 +160,9 @@ void BrowserAccessibilityManagerMac::FireGeneratedEvent(
       // There currently is none:
       // https://www.w3.org/TR/core-aam-1.2/#details-id-186
       return;
+    case ui::AXEventGenerator::Event::BUSY_CHANGED:
+      mac_notification = ui::NSAccessibilityElementBusyChangedNotification;
+      break;
     case ui::AXEventGenerator::Event::CHECKED_STATE_CHANGED:
       mac_notification = NSAccessibilityValueChangedNotification;
       break;
@@ -189,9 +192,9 @@ void BrowserAccessibilityManagerMac::FireGeneratedEvent(
         return;
 
       NSAccessibilityPostNotificationWithUserInfo(
-          ToBrowserAccessibilityCocoa(focus), mac_notification, user_info);
+          focus->GetNativeViewAccessible(), mac_notification, user_info);
       NSAccessibilityPostNotificationWithUserInfo(
-          ToBrowserAccessibilityCocoa(root), mac_notification, user_info);
+          root->GetNativeViewAccessible(), mac_notification, user_info);
       return;
     }
     case ui::AXEventGenerator::Event::EXPANDED:
@@ -240,7 +243,7 @@ void BrowserAccessibilityManagerMac::FireGeneratedEvent(
                 }
               },
               std::move(retained_node)),
-          base::TimeDelta::FromMilliseconds(kLiveRegionChangeIntervalMS));
+          base::Milliseconds(kLiveRegionChangeIntervalMS));
       return;
     }
     case ui::AXEventGenerator::Event::LIVE_REGION_CREATED:
@@ -267,6 +270,22 @@ void BrowserAccessibilityManagerMac::FireGeneratedEvent(
         return;
       }
       break;
+    case ui::AXEventGenerator::Event::MENU_POPUP_END:
+      // Calling NSAccessibilityPostNotification on a menu which is about to be
+      // closed/destroyed is possible, but the event does not appear to be
+      // emitted reliably by the NSAccessibility stack. If VoiceOver is not
+      // notified that a given menu has been closed, it might fail to present
+      // subsequent changes to the user. WebKit seems to address this by firing
+      // AXMenuClosed on the document itself when an accessible menu is being
+      // detached. See WebKit's AccessibilityObject::detachRemoteParts
+      if (BrowserAccessibilityManager* root_manager = GetRootManager()) {
+        if (BrowserAccessibility* root = root_manager->GetRoot())
+          FireNativeMacNotification((NSString*)kAXMenuClosedNotification, root);
+      }
+      return;
+    case ui::AXEventGenerator::Event::MENU_POPUP_START:
+      mac_notification = (NSString*)kAXMenuOpenedNotification;
+      break;
     case ui::AXEventGenerator::Event::MENU_ITEM_SELECTED:
       mac_notification = ui::NSAccessibilityMenuItemSelectedNotification;
       break;
@@ -287,7 +306,7 @@ void BrowserAccessibilityManagerMac::FireGeneratedEvent(
         // selection change if the focus did not change.
         BrowserAccessibility* focus = GetFocus();
         BrowserAccessibility* container =
-            focus->PlatformGetSelectionContainer();
+            focus ? focus->PlatformGetSelectionContainer() : nullptr;
 
         if (focus && node == container &&
             container->HasState(ax::mojom::State::kMultiselectable) &&
@@ -317,8 +336,8 @@ void BrowserAccessibilityManagerMac::FireGeneratedEvent(
       DCHECK(node->IsTextField());
       mac_notification = NSAccessibilityValueChangedNotification;
       if (!text_edits_.empty()) {
-        base::string16 deleted_text;
-        base::string16 inserted_text;
+        std::u16string deleted_text;
+        std::u16string inserted_text;
         int32_t node_id = node->GetId();
         const auto iterator = text_edits_.find(node_id);
         id edit_text_marker = nil;
@@ -339,9 +358,12 @@ void BrowserAccessibilityManagerMac::FireGeneratedEvent(
         NSAccessibilityPostNotificationWithUserInfo(
             native_node, mac_notification, user_info);
         NSAccessibilityPostNotificationWithUserInfo(
-            ToBrowserAccessibilityCocoa(root), mac_notification, user_info);
+            root->GetNativeViewAccessible(), mac_notification, user_info);
         return;
       }
+      break;
+    case ui::AXEventGenerator::Event::NAME_CHANGED:
+      mac_notification = NSAccessibilityTitleChangedNotification;
       break;
 
     // Currently unused events on this platform.
@@ -349,10 +371,12 @@ void BrowserAccessibilityManagerMac::FireGeneratedEvent(
     case ui::AXEventGenerator::Event::ATK_TEXT_OBJECT_ATTRIBUTE_CHANGED:
     case ui::AXEventGenerator::Event::ATOMIC_CHANGED:
     case ui::AXEventGenerator::Event::AUTO_COMPLETE_CHANGED:
-    case ui::AXEventGenerator::Event::BUSY_CHANGED:
+    case ui::AXEventGenerator::Event::CARET_BOUNDS_CHANGED:
+    case ui::AXEventGenerator::Event::CHECKED_STATE_DESCRIPTION_CHANGED:
     case ui::AXEventGenerator::Event::CHILDREN_CHANGED:
     case ui::AXEventGenerator::Event::CONTROLS_CHANGED:
     case ui::AXEventGenerator::Event::CLASS_NAME_CHANGED:
+    case ui::AXEventGenerator::Event::DETAILS_CHANGED:
     case ui::AXEventGenerator::Event::DESCRIBED_BY_CHANGED:
     case ui::AXEventGenerator::Event::DESCRIPTION_CHANGED:
     case ui::AXEventGenerator::Event::DOCUMENT_TITLE_CHANGED:
@@ -377,7 +401,6 @@ void BrowserAccessibilityManagerMac::FireGeneratedEvent(
     case ui::AXEventGenerator::Event::LOAD_START:
     case ui::AXEventGenerator::Event::MULTILINE_STATE_CHANGED:
     case ui::AXEventGenerator::Event::MULTISELECTABLE_STATE_CHANGED:
-    case ui::AXEventGenerator::Event::NAME_CHANGED:
     case ui::AXEventGenerator::Event::OBJECT_ATTRIBUTE_CHANGED:
     case ui::AXEventGenerator::Event::OTHER_ATTRIBUTE_CHANGED:
     case ui::AXEventGenerator::Event::PARENT_CHANGED:
@@ -411,7 +434,7 @@ void BrowserAccessibilityManagerMac::FireNativeMacNotification(
     NSString* mac_notification,
     BrowserAccessibility* node) {
   DCHECK(mac_notification);
-  auto native_node = ToBrowserAccessibilityCocoa(node);
+  BrowserAccessibilityCocoa* native_node = node->GetNativeViewAccessible();
   DCHECK(native_node);
   NSAccessibilityPostNotification(native_node, mac_notification);
 }
@@ -431,12 +454,15 @@ void BrowserAccessibilityManagerMac::OnAtomicUpdateFinished(
 
   std::set<const BrowserAccessibilityCocoa*> changed_editable_roots;
   for (const auto& change : changes) {
-    const BrowserAccessibility* obj = GetFromAXNode(change.node);
-    if (obj && obj->HasState(ax::mojom::State::kEditable)) {
-      const BrowserAccessibilityCocoa* editable_root =
-          [ToBrowserAccessibilityCocoa(obj) editableAncestor];
-      if (editable_root && [editable_root instanceActive])
-        changed_editable_roots.insert(editable_root);
+    if (change.node->HasState(ax::mojom::State::kEditable)) {
+      auto* ancestor = change.node->GetTextFieldAncestor();
+      if (ancestor) {
+        BrowserAccessibility* obj = GetFromAXNode(ancestor);
+        const BrowserAccessibilityCocoa* editable_root =
+            obj->GetNativeViewAccessible();
+        if ([editable_root instanceActive])
+          changed_editable_roots.insert(editable_root);
+      }
     }
   }
 
@@ -478,7 +504,8 @@ NSDictionary* BrowserAccessibilityManagerMac::
   }
 
   focus_object = focus_object->PlatformGetLowestPlatformAncestor();
-  auto native_focus_object = ToBrowserAccessibilityCocoa(focus_object);
+  BrowserAccessibilityCocoa* native_focus_object =
+      focus_object->GetNativeViewAccessible();
   if (native_focus_object && [native_focus_object instanceActive]) {
     [user_info setObject:native_focus_object
                   forKey:ui::NSAccessibilityTextChangeElement];
@@ -498,8 +525,8 @@ NSDictionary* BrowserAccessibilityManagerMac::
 NSDictionary*
 BrowserAccessibilityManagerMac::GetUserInfoForValueChangedNotification(
     const BrowserAccessibilityCocoa* native_node,
-    const base::string16& deleted_text,
-    const base::string16& inserted_text,
+    const std::u16string& deleted_text,
+    const std::u16string& inserted_text,
     id edit_text_marker) const {
   DCHECK(native_node);
   if (deleted_text.empty() && inserted_text.empty())
@@ -556,7 +583,10 @@ id BrowserAccessibilityManagerMac::GetWindow() {
 bool BrowserAccessibilityManagerMac::IsChromeNewTabPage() {
   if (!delegate() || !IsRootTree())
     return false;
-  content::WebContents* web_contents = delegate()->AccessibilityWebContents();
+  content::WebContents* web_contents = WebContents::FromRenderFrameHost(
+      delegate()->AccessibilityRenderFrameHost());
+  if (!web_contents)
+    return false;
   const GURL& url = web_contents->GetVisibleURL();
   return url == GURL("chrome://newtab/") ||
          url == GURL("chrome://new-tab-page") ||

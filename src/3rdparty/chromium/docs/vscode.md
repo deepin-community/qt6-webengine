@@ -43,8 +43,8 @@ Here's what works well:
 Please keep this doc up-to-date. VS Code is still in active development and
 subject to changes. This doc is checked into the Chromium git repo, so if you
 make changes, read the [documentation
-guidelines](https://chromium.googlesource.com/chromium/src/+/master/docs/documentation_guidelines.md)
-and [submit a change list](https://www.chromium.org/developers/contributing-code).
+guidelines](documentation_guidelines.md)
+and [submit a change list](contributing.md).
 
 All file paths and commands have been tested on Linux. Windows and Mac might
 require a slightly different setup (e.g. `Ctrl` -> `Cmd`). Please update this
@@ -97,8 +97,7 @@ every day:
 *   [***Mojom IDL support***](https://github.com/GoogleChromeLabs/mojom-language-support) -
     Syntax highlighting and a
     [language server](https://microsoft.github.io/language-server-protocol/)
-    for .mojom files. This isn't available on the VS Code marketplace for now.
-    You need to install it manually.
+    for .mojom files.
 *   ***vscode-clangd*** -
     If you do not plan to use VSCode for debugging, vscode-clangd is a great
     alternative to C/C++ IntelliSense. It knows about how to compile Chromium,
@@ -145,7 +144,7 @@ marketplace](https://marketplace.visualstudio.com/search?target=VSCode&category=
 *   `Ctrl+K, Ctrl+S` opens the key bindings editor.
 *   ``Ctrl+` `` toggles the built-in terminal.
 *   `Ctrl+Shift+M` toggles the problems view (linter warnings, compile errors
-    and warnings). You'll swicth a lot between terminal and problem view during
+    and warnings). You'll switch a lot between terminal and problem view during
     compilation.
 *   `Alt+O` switches between the source/header file.
 *   `Ctrl+G` jumps to a line.
@@ -163,10 +162,20 @@ marketplace](https://marketplace.visualstudio.com/search?target=VSCode&category=
     the line.
 
 ### Java/Android Support
-To get Java support in VS Code, you'll need to install the
-'Java Extension Pack' extension, but you'll want to immediately uninstall or
-disable the Maven for Java extension so it stops nagging you as we won't need
-it.
+
+*Before anything*, add these to your settings.json.
+```
+// LightWeight is the language support, the feature we care about. The other
+// modes include build functionality with Maven and Gradle. They try to build
+// on their own and end up showing thousands of errors.
+"java.server.launchMode": "LightWeight",
+// Avoids overwriting the custom .classpath file (c.f. next section).
+"java.configuration.updateBuildConfiguration": "disabled",
+```
+Then install the "Language Support for Java" extension. If you installed it
+before setting the configs above, uninstall, delete the <project> folder (c.f.
+next section) and reinstall. You also don't need any of the remaining extensions
+in "Extension Pack for Java".
 
 #### Setting up code completion/reference finding/etc.
 You'll need to generate a placeholder .classpath file and locate it. In order
@@ -315,12 +324,21 @@ Google-specific instructions for setting up remote development on chromebooks
 without using Crostini.
 
 #### Windows & SSH
-This currently is difficult on Windows because VSCode remote tools assumes
-'sshd' is installed, which isn't the case on Windows. If someone figures out
-how to get vscode remote working on windows with ssh please update this
-document :)
+
+VSCode remote tools requires 'sshd' which isn't installed on Windows by default.
+
+For Googlers, sshd should already be installed on your workstation, and VSCode
+should work remotely if you followed the setup instructions at
+[go/building-chrome-win](http://go/building-chrome-win). If you are still having
+problems, please refer to
+[go/vscode-remote#windows](http://go/vscode-remote#windows).
+
+Non-Googlers may follow may follow Microsoft's instructions for
+[installing the OpenSSH server](https://docs.microsoft.com/en-us/windows-server/administration/openssh/openssh_install_firstuse).
+VSCode should work remotely after following this step.
 
 ### Snippets
+
 There are some useful snippets provided in
 [//tools/vscode/cpp.json5](/tools/vscode/cpp.json5).
 
@@ -330,11 +348,9 @@ platform):
 $ cp tools/vscode/cpp.json5 ~/.config/Code/User/snippets/cpp.json
 ```
 
-Or install them as project snippets after installing the [Project
-Snippets](https://marketplace.visualstudio.com/items?itemName=rebornix.project-snippets)
-extension:
+Or install them as project snippets:
 ```
-$ cp tools/vscode/cpp.json5 .vscode/snippets/cpp.json
+$ cp tools/vscode/cpp.json5 .vscode/cpp.code-snippets
 ```
 
 ### Tips
@@ -381,6 +397,26 @@ You might want to disable git status autorefresh to save battery.
 
 ```
 "git.autorefresh": false,
+```
+
+#### Editing in multiple Git repositories
+If you frequently work in multiple Git repositories that are part of the Chromium repository, you might find that the built-in tooling does not work as expected for files that exist below folders that are part of a `.gitignore` file checked in to Chromium.
+
+To work around this, you can add the directories you edit as separate `folders` entries in your workspace configuration, and ensure that the directories that are ignored in Chromium are listed **before** the Chromium `src` path.
+
+To edit this, go to `Settings` -> Select the `Workspace` tab, and choose to open as JSON (button in the top right), and configure `folders` like this (change paths to match your local setup and usage):
+
+```
+{
+  "folders": [
+    {
+      "path": "chromium/src/third_party/perfetto"
+    },
+    {
+      "path": "chromium/src"
+    }
+  ]
+}
 ```
 
 ### Unable to open $File resource is not available when debugging Chromium on Linux

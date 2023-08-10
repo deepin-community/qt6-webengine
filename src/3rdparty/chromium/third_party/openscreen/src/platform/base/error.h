@@ -132,6 +132,9 @@ class Error {
     // The pathlen constraint of the root certificate was exceeded.
     kErrCertsPathlen,
 
+    // The certificate provided could not be serialized.
+    kErrCertSerialize,
+
     // Cast authentication errors.
     kCastV2PeerCertEmpty,
     kCastV2WrongPayloadType,
@@ -186,7 +189,14 @@ class Error {
     // Cast streaming errors
     kTypeError,
     kUnknownCodec,
-    kSocketFailure
+    kInvalidCodecParameter,
+    kSocketFailure,
+    kUnencryptedOffer,
+    kRemotingNotSupported,
+
+    // A negotiation failure means that the current negotiation must be
+    // restarted by the sender.
+    kNegotiationFailure,
   };
 
   Error();

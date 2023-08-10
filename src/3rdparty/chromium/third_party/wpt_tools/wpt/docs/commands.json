@@ -1,12 +1,12 @@
 {
   "build-docs": {
     "path": "frontend.py",
+    "parser": "get_parser",
     "script": "build",
     "help": "Build documentation",
-    "py3only": true,
     "virtualenv": true,
     "requirements": [
-      "./requirements.txt"
+      "requirements.txt"
     ]
   }
 }

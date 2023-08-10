@@ -4,8 +4,8 @@
 
 #include "components/safe_browsing/core/browser/sync/sync_utils.h"
 
+#include "components/signin/public/base/consent_level.h"
 #include "components/signin/public/identity_manager/account_info.h"
-#include "components/signin/public/identity_manager/consent_level.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/sync/base/user_selectable_type.h"
 #include "components/sync/driver/sync_service.h"
@@ -18,8 +18,7 @@ namespace safe_browsing {
 bool SyncUtils::IsPrimaryAccountSignedIn(
     signin::IdentityManager* identity_manager) {
   CoreAccountInfo primary_account_info =
-      identity_manager->GetPrimaryAccountInfo(
-          signin::ConsentLevel::kNotRequired);
+      identity_manager->GetPrimaryAccountInfo(signin::ConsentLevel::kSignin);
   return !primary_account_info.account_id.empty();
 }
 
@@ -44,7 +43,7 @@ bool SyncUtils::AreSigninAndSyncSetUpForSafeBrowsingTokenFetches(
          (syncer::GetUploadToGoogleState(
               sync_service, syncer::ModelType::HISTORY_DELETE_DIRECTIVES) ==
           syncer::UploadState::ACTIVE) &&
-         !sync_service->GetUserSettings()->IsUsingSecondaryPassphrase();
+         !sync_service->GetUserSettings()->IsUsingExplicitPassphrase();
 }
 
 // TODO(bdea): Migrate other SB classes that define this method to call the one

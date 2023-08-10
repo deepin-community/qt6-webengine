@@ -8,11 +8,15 @@
 #include <string>
 
 #include "base/base64.h"
+#include "base/containers/contains.h"
+#include "base/run_loop.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_piece.h"
+#include "base/strings/stringprintf.h"
 #include "base/test/bind.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/threading/thread_restrictions.h"
+#include "build/build_config.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/public/browser/network_service_instance.h"
 #include "content/public/test/browser_test.h"
@@ -20,6 +24,7 @@
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
 #include "content/public/test/test_navigation_observer.h"
+#include "content/public/test/url_loader_interceptor.h"
 #include "content/public/test/url_loader_monitor.h"
 #include "content/shell/browser/shell.h"
 #include "crypto/sha2.h"
@@ -34,10 +39,10 @@
 #include "services/network/public/cpp/trust_token_http_headers.h"
 #include "services/network/public/cpp/trust_token_parameterization.h"
 #include "services/network/public/mojom/trust_tokens.mojom.h"
+#include "services/network/test/trust_token_request_handler.h"
+#include "services/network/test/trust_token_test_server_handler_registration.h"
+#include "services/network/test/trust_token_test_util.h"
 #include "services/network/trust_tokens/test/signed_request_verification_util.h"
-#include "services/network/trust_tokens/test/test_server_handler_registration.h"
-#include "services/network/trust_tokens/test/trust_token_request_handler.h"
-#include "services/network/trust_tokens/test/trust_token_test_util.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
@@ -151,6 +156,7 @@ MATCHER(
       AllOf(
           HasHeader(network::kTrustTokensRequestHeaderSecRedemptionRecord,
                     StrEq("")),
+          Not(HasHeader(network::kTrustTokensSecTrustTokenVersionHeader)),
           Not(HasHeader(network::kTrustTokensRequestHeaderSecTime)),
           Not(HasHeader(
               network::
@@ -246,6 +252,7 @@ IN_PROC_BROWSER_TEST_F(TrustTokenBrowsertest, FetchEndToEnd) {
       Optional(AllOf(
           Not(HasHeader(network::kTrustTokensRequestHeaderSecTime)),
           HasHeader(network::kTrustTokensRequestHeaderSecRedemptionRecord),
+          HasHeader(network::kTrustTokensSecTrustTokenVersionHeader),
           SignaturesAreWellFormedAndVerify(),
           SecSignatureHeaderKeyHashes(IsSubsetOf(
               request_handler_.hashes_of_redemption_bound_public_keys())))));
@@ -308,6 +315,7 @@ IN_PROC_BROWSER_TEST_F(TrustTokenBrowsertest, XhrEndToEnd) {
       Optional(AllOf(
           Not(HasHeader(network::kTrustTokensRequestHeaderSecTime)),
           HasHeader(network::kTrustTokensRequestHeaderSecRedemptionRecord),
+          HasHeader(network::kTrustTokensSecTrustTokenVersionHeader),
           SignaturesAreWellFormedAndVerify(),
           SecSignatureHeaderKeyHashes(IsSubsetOf(
               request_handler_.hashes_of_redemption_bound_public_keys())))));
@@ -345,6 +353,7 @@ IN_PROC_BROWSER_TEST_F(TrustTokenBrowsertest, IframeEndToEnd) {
       Optional(AllOf(
           Not(HasHeader(network::kTrustTokensRequestHeaderSecTime)),
           HasHeader(network::kTrustTokensRequestHeaderSecRedemptionRecord),
+          HasHeader(network::kTrustTokensSecTrustTokenVersionHeader),
           SignaturesAreWellFormedAndVerify(),
           SecSignatureHeaderKeyHashes(IsSubsetOf(
               request_handler_.hashes_of_redemption_bound_public_keys())))));
@@ -402,7 +411,7 @@ IN_PROC_BROWSER_TEST_F(TrustTokenBrowsertest,
 IN_PROC_BROWSER_TEST_F(TrustTokenBrowsertest, FetchEndToEndInIsolatedWorld) {
   // Ensure an isolated world can execute Trust Tokens operations when its
   // window's main world can. In particular, this ensures that the
-  // redemtion-and-signing feature policy is appropriately propagated by the
+  // redemtion-and-signing permissions policy is appropriately propagated by the
   // browser process.
 
   ProvideRequestHandlerKeyCommitmentsToNetworkService({"a.test"});
@@ -432,6 +441,7 @@ IN_PROC_BROWSER_TEST_F(TrustTokenBrowsertest, FetchEndToEndInIsolatedWorld) {
       Optional(AllOf(
           Not(HasHeader(network::kTrustTokensRequestHeaderSecTime)),
           HasHeader(network::kTrustTokensRequestHeaderSecRedemptionRecord),
+          HasHeader(network::kTrustTokensSecTrustTokenVersionHeader),
           SignaturesAreWellFormedAndVerify(),
           SecSignatureHeaderKeyHashes(IsSubsetOf(
               request_handler_.hashes_of_redemption_bound_public_keys())))));
@@ -439,6 +449,30 @@ IN_PROC_BROWSER_TEST_F(TrustTokenBrowsertest, FetchEndToEndInIsolatedWorld) {
 
 IN_PROC_BROWSER_TEST_F(TrustTokenBrowsertest, RecordsTimers) {
   base::HistogramTester histograms;
+
+  // |completion_waiter| adds a synchronization point so that we can
+  // safely fetch all of the relevant histograms from the network process.
+  //
+  // Without this, there's a race between the fetch() promises resolving and the
+  // NetErrorForTrustTokenOperation histogram being logged. This likely has no
+  // practical impact during normal operation, but it makes this test flake: see
+  // https://crbug.com/1165862.
+  //
+  // The URLLoaderInterceptor's completion callback receives its
+  // URLLoaderCompletionStatus from URLLoaderClient::OnComplete, which happens
+  // after CorsURLLoader::NotifyCompleted, which records the final histogram.
+  base::RunLoop run_loop;
+  content::URLLoaderInterceptor completion_waiter(
+      base::BindRepeating([](URLLoaderInterceptor::RequestParams*) {
+        return false;  // Don't intercept outbound requests.
+      }),
+      base::BindLambdaForTesting(
+          [&run_loop](const GURL& url,
+                      const network::URLLoaderCompletionStatus& status) {
+            if (url.spec().find("sign") != std::string::npos)
+              run_loop.Quit();
+          }),
+      /*ready_callback=*/base::NullCallback());
 
   ProvideRequestHandlerKeyCommitmentsToNetworkService({"a.test"});
 
@@ -460,10 +494,12 @@ IN_PROC_BROWSER_TEST_F(TrustTokenBrowsertest, RecordsTimers) {
       "Success",
       EvalJs(shell(), JsReplace(command, IssuanceOriginFromHost("a.test"))));
 
+  run_loop.Run();
+  content::FetchHistogramsFromChildProcesses();
+
   // Just check that the timers were populated: since we can't mock a clock in
   // this browser test, it's hard to check the recorded values for
   // reasonableness.
-  content::FetchHistogramsFromChildProcesses();
   for (const std::string& op : {"Issuance", "Redemption", "Signing"}) {
     histograms.ExpectTotalCount(
         "Net.TrustTokens.OperationBeginTime.Success." + op, 1);
@@ -707,7 +743,7 @@ IN_PROC_BROWSER_TEST_F(TrustTokenBrowsertest, OverlongAdditionalSigningData) {
   // network::kTrustTokenAdditionalSigningDataMaxSizeBytes code units, once it's
   // converted to UTF-8 it will contain more than that many bytes, so we expect
   // that it will get rejected by the network service.
-  base::string16 overlong_signing_data(
+  std::u16string overlong_signing_data(
       network::kTrustTokenAdditionalSigningDataMaxSizeBytes,
       u'€' /* char16 literal */);
   ASSERT_LE(overlong_signing_data.size(),
@@ -996,8 +1032,8 @@ IN_PROC_BROWSER_TEST_F(TrustTokenBrowsertest,
       shell(), server_.GetURL("a.test", "/page_with_sandboxed_iframe.html")));
 
   FrameTreeNode* root = static_cast<WebContentsImpl*>(shell()->web_contents())
-                            ->GetFrameTree()
-                            ->root();
+                            ->GetPrimaryFrameTree()
+                            .root();
 
   EXPECT_EQ("Success",
             EvalJs(root->child_at(0)->current_frame_host(),
@@ -1016,8 +1052,8 @@ IN_PROC_BROWSER_TEST_F(TrustTokenBrowsertest,
       shell(), server_.GetURL("a.test", "/page_with_sandboxed_iframe.html")));
 
   FrameTreeNode* root = static_cast<WebContentsImpl*>(shell()->web_contents())
-                            ->GetFrameTree()
-                            ->root();
+                            ->GetPrimaryFrameTree()
+                            .root();
 
   EXPECT_EQ("Success", EvalJs(root->child_at(0)->current_frame_host(),
                               JsReplace(R"(
@@ -1070,8 +1106,8 @@ IN_PROC_BROWSER_TEST_F(TrustTokenBrowsertest,
   // For good measure, make sure the analogous signing operation works from
   // fetch, too, even though it wasn't broken by the same bug.
   FrameTreeNode* root = static_cast<WebContentsImpl*>(shell()->web_contents())
-                            ->GetFrameTree()
-                            ->root();
+                            ->GetPrimaryFrameTree()
+                            .root();
 
   EXPECT_EQ("Success", EvalJs(root->child_at(0)->current_frame_host(),
                               JsReplace(R"(
@@ -1210,7 +1246,7 @@ IN_PROC_BROWSER_TEST_F(TrustTokenBrowsertest,
 }
 
 // Redemption with `refresh-policy: 'refresh'` from a non-issuer context should
-// fail.
+// still work.
 IN_PROC_BROWSER_TEST_F(TrustTokenBrowsertest,
                        RefreshPolicyRefreshRequiresIssuerContext) {
   ProvideRequestHandlerKeyCommitmentsToNetworkService({"b.test"});
@@ -1218,7 +1254,8 @@ IN_PROC_BROWSER_TEST_F(TrustTokenBrowsertest,
   ASSERT_TRUE(NavigateToURL(shell(), server_.GetURL("a.test", "/title1.html")));
 
   // Execute the operations against issuer https://b.test:<port> from a
-  // different context; attempting to use refreshPolicy: 'refresh' should error.
+  // different context; attempting to use refreshPolicy: 'refresh' should still
+  // succeed.
   EXPECT_EQ("Success",
             EvalJs(shell(), JsReplace(R"(fetch($1,
         { trustToken: { type: 'token-request' } })
@@ -1231,7 +1268,7 @@ IN_PROC_BROWSER_TEST_F(TrustTokenBrowsertest,
         .then(()=>'Success'); )",
                                       server_.GetURL("b.test", "/redeem"))));
 
-  EXPECT_EQ("InvalidStateError",
+  EXPECT_EQ("Success",
             EvalJs(shell(), JsReplace(R"(fetch($1,
         { trustToken: { type: 'token-redemption',
                         refreshPolicy: 'refresh' } })
@@ -1661,7 +1698,7 @@ class TrustTokenBrowsertestWithPlatformIssuance : public TrustTokenBrowsertest {
   base::test::ScopedFeatureList features_;
 };
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 HandlerWrappingLocalTrustTokenFulfiller::
     HandlerWrappingLocalTrustTokenFulfiller(TrustTokenRequestHandler& handler)
     : handler_(handler) {
@@ -1676,7 +1713,7 @@ HandlerWrappingLocalTrustTokenFulfiller::
 void HandlerWrappingLocalTrustTokenFulfiller::FulfillTrustTokenIssuance(
     network::mojom::FulfillTrustTokenIssuanceRequestPtr request,
     FulfillTrustTokenIssuanceCallback callback) {
-  base::Optional<std::string> maybe_result =
+  absl::optional<std::string> maybe_result =
       handler_.Issue(std::move(request->request));
   if (maybe_result) {
     std::move(callback).Run(
@@ -1794,8 +1831,8 @@ IN_PROC_BROWSER_TEST_F(TrustTokenBrowsertestWithPlatformIssuance,
                     "PlatformProvided"}),
       1);
 }
-#endif  // defined(OS_ANDROID)
-#if !defined(OS_ANDROID)
+#endif  // BUILDFLAG(IS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
 IN_PROC_BROWSER_TEST_F(
     TrustTokenBrowsertestWithPlatformIssuance,
     IssuanceOnOsNotSpecifiedInKeyCommitmentsReturnsErrorIfConfiguredToDoSo) {
@@ -1886,6 +1923,6 @@ IN_PROC_BROWSER_TEST_F(
                     "PlatformProvided"}),
       0);  // No platform-provided operation was attempted.
 }
-#endif  // !defined(OS_ANDROID)
+#endif  // !BUILDFLAG(IS_ANDROID)
 
 }  // namespace content

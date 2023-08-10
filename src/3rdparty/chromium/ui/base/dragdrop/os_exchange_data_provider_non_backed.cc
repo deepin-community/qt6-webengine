@@ -5,11 +5,13 @@
 #include "ui/base/dragdrop/os_exchange_data_provider_non_backed.h"
 
 #include <memory>
+#include <string>
 
 #include "base/check.h"
+#include "base/containers/contains.h"
 #include "base/files/file_path.h"
-#include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
 #include "net/base/filename_util.h"
 #include "ui/base/clipboard/clipboard_format_type.h"
@@ -27,23 +29,7 @@ OSExchangeDataProviderNonBacked::~OSExchangeDataProviderNonBacked() = default;
 std::unique_ptr<OSExchangeDataProvider> OSExchangeDataProviderNonBacked::Clone()
     const {
   auto clone = std::make_unique<OSExchangeDataProviderNonBacked>();
-
-  clone->formats_ = formats_;
-  clone->string_ = string_;
-  clone->url_ = url_;
-  clone->title_ = title_;
-  clone->filenames_ = filenames_;
-  clone->pickle_data_ = pickle_data_;
-  // We skip copying the drag images.
-  clone->html_ = html_;
-  clone->base_url_ = base_url_;
-  clone->source_ =
-      source_ ? std::make_unique<ui::DataTransferEndpoint>(*source_.get())
-              : nullptr;
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
-  clone->originated_from_renderer_ = originated_from_renderer_;
-#endif
-
+  CopyData(clone.get());
   return clone;
 }
 
@@ -63,7 +49,15 @@ bool OSExchangeDataProviderNonBacked::DidOriginateFromRenderer() const {
 #endif
 }
 
-void OSExchangeDataProviderNonBacked::SetString(const base::string16& data) {
+void OSExchangeDataProviderNonBacked::MarkAsFromPrivileged() {
+  is_from_privileged_ = true;
+}
+
+bool OSExchangeDataProviderNonBacked::IsFromPrivileged() const {
+  return is_from_privileged_;
+}
+
+void OSExchangeDataProviderNonBacked::SetString(const std::u16string& data) {
   if (HasString())
     return;
 
@@ -72,7 +66,7 @@ void OSExchangeDataProviderNonBacked::SetString(const base::string16& data) {
 }
 
 void OSExchangeDataProviderNonBacked::SetURL(const GURL& url,
-                                             const base::string16& title) {
+                                             const std::u16string& title) {
   url_ = url;
   title_ = title;
   formats_ |= OSExchangeData::URL;
@@ -99,15 +93,15 @@ void OSExchangeDataProviderNonBacked::SetPickledData(
   formats_ |= OSExchangeData::PICKLED_DATA;
 }
 
-bool OSExchangeDataProviderNonBacked::GetString(base::string16* data) const {
-#if defined(OS_LINUX) || defined(OS_CHROMEOS)
+bool OSExchangeDataProviderNonBacked::GetString(std::u16string* data) const {
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
   if (HasFile()) {
     // Various Linux file managers both pass a list of file:// URIs and set the
     // string representation to the URI. We explicitly don't want to return use
     // this representation.
     return false;
   }
-#endif  // defined(OS_LINUX) || defined(OS_CHROMEOS)
+#endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
 
   if ((formats_ & OSExchangeData::STRING) == 0)
     return false;
@@ -118,7 +112,7 @@ bool OSExchangeDataProviderNonBacked::GetString(base::string16* data) const {
 bool OSExchangeDataProviderNonBacked::GetURLAndTitle(
     FilenameToURLPolicy policy,
     GURL* url,
-    base::string16* title) const {
+    std::u16string* title) const {
   if ((formats_ & OSExchangeData::URL) == 0) {
     title->clear();
     return GetPlainTextURL(url) ||
@@ -184,22 +178,36 @@ bool OSExchangeDataProviderNonBacked::HasCustomFormat(
   return base::Contains(pickle_data_, format);
 }
 
-#if (defined(OS_LINUX) || defined(OS_CHROMEOS)) && !defined(TOOLKIT_QT)
 void OSExchangeDataProviderNonBacked::SetFileContents(
     const base::FilePath& filename,
     const std::string& file_contents) {
-  NOTIMPLEMENTED();
+  file_contents_filename_ = filename;
+  file_contents_ = file_contents;
 }
-#endif
 
-void OSExchangeDataProviderNonBacked::SetHtml(const base::string16& html,
+bool OSExchangeDataProviderNonBacked::GetFileContents(
+    base::FilePath* filename,
+    std::string* file_contents) const {
+  if (file_contents_filename_.empty()) {
+    return false;
+  }
+  *filename = file_contents_filename_;
+  *file_contents = file_contents_;
+  return true;
+}
+
+bool OSExchangeDataProviderNonBacked::HasFileContents() const {
+  return !file_contents_filename_.empty();
+}
+
+void OSExchangeDataProviderNonBacked::SetHtml(const std::u16string& html,
                                               const GURL& base_url) {
   formats_ |= OSExchangeData::HTML;
   html_ = html;
   base_url_ = base_url;
 }
 
-bool OSExchangeDataProviderNonBacked::GetHtml(base::string16* html,
+bool OSExchangeDataProviderNonBacked::GetHtml(std::u16string* html,
                                               GURL* base_url) const {
   if ((formats_ & OSExchangeData::HTML) == 0)
     return false;
@@ -261,6 +269,28 @@ void OSExchangeDataProviderNonBacked::SetSource(
 
 DataTransferEndpoint* OSExchangeDataProviderNonBacked::GetSource() const {
   return source_.get();
+}
+
+void OSExchangeDataProviderNonBacked::CopyData(
+    OSExchangeDataProviderNonBacked* provider) const {
+  DCHECK(provider);
+  provider->formats_ = formats_;
+  provider->string_ = string_;
+  provider->url_ = url_;
+  provider->title_ = title_;
+  provider->filenames_ = filenames_;
+  provider->pickle_data_ = pickle_data_;
+  provider->file_contents_filename_ = file_contents_filename_;
+  provider->file_contents_ = file_contents_;
+  provider->html_ = html_;
+  provider->base_url_ = base_url_;
+  provider->source_ =
+      source_ ? std::make_unique<DataTransferEndpoint>(*source_.get())
+              : nullptr;
+  provider->is_from_privileged_ = is_from_privileged_;
+#if !BUILDFLAG(IS_CHROMEOS_ASH)
+  provider->originated_from_renderer_ = originated_from_renderer_;
+#endif
 }
 
 }  // namespace ui

@@ -8,10 +8,9 @@
 #include <map>
 #include <memory>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/sequence_checker.h"
-#include "base/time/time.h"
 #include "base/values.h"
 #include "net/base/net_export.h"
 #include "net/nqe/cached_network_quality.h"
@@ -46,6 +45,11 @@ class NET_EXPORT NetworkQualitiesPrefsManager
   // |pref_delegate| is taken by this class.
   explicit NetworkQualitiesPrefsManager(
       std::unique_ptr<PrefDelegate> pref_delegate);
+
+  NetworkQualitiesPrefsManager(const NetworkQualitiesPrefsManager&) = delete;
+  NetworkQualitiesPrefsManager& operator=(const NetworkQualitiesPrefsManager&) =
+      delete;
+
   ~NetworkQualitiesPrefsManager() override;
 
   // Initialize on the Network thread. Must be called after pref service has
@@ -77,14 +81,12 @@ class NET_EXPORT NetworkQualitiesPrefsManager
       const nqe::internal::CachedNetworkQuality& cached_network_quality)
       override;
 
-  NetworkQualityEstimator* network_quality_estimator_;
+  raw_ptr<NetworkQualityEstimator> network_quality_estimator_;
 
   // Network quality prefs read from the disk at the time of startup.
   ParsedPrefs read_prefs_startup_;
 
   SEQUENCE_CHECKER(sequence_checker_);
-
-  DISALLOW_COPY_AND_ASSIGN(NetworkQualitiesPrefsManager);
 };
 
 }  // namespace net

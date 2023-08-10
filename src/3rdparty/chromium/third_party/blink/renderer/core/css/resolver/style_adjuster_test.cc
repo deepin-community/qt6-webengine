@@ -110,77 +110,6 @@ TEST_F(StyleAdjusterTest, TouchActionRestrictedByLowerAncestor) {
             target->GetComputedStyle()->GetEffectiveTouchAction());
 }
 
-TEST_F(StyleAdjusterTest, AdjustOverflow) {
-  ScopedOverflowClipForTest overflow_clip_feature_enabler(true);
-  GetDocument().SetBaseURLOverride(KURL("http://test.com"));
-  SetBodyInnerHTML(R"HTML(
-    <div id='clipauto' style='overflow-x: clip; overflow-y: auto;
-         overflow-clip-margin: 1px;'>
-    <div id='autoclip' style='overflow-x: auto; overflow-y: clip;
-         overflow-clip-margin: 1px;'>
-    <div id='clipclip' style='overflow-x: clip; overflow-y: clip;
-         overflow-clip-margin: 1px;'>
-    <div id='visclip' style='overflow-x: visible; overflow-y: clip;
-         overflow-clip-margin: 1px;'>
-    <div id='clipvis' style='overflow-x: clip; overflow-y: visible;
-         overflow-clip-margin: 1px;'>
-    <div id='hiddenvis' style='overflow-x: hidden; overflow-y: visible;
-         overflow-clip-margin: 1px;'>
-    <div id='vishidden' style='overflow-x: visible; overflow-y: hidden;
-         overflow-clip-margin: 1px;'>
-    <div id='containpaint' style='contain: paint; overflow-clip-margin: 1px;'>
-    </div>
-  )HTML");
-  UpdateAllLifecyclePhasesForTest();
-
-  Element* target = GetDocument().getElementById("clipauto");
-  ASSERT_TRUE(target);
-  EXPECT_EQ(EOverflow::kHidden, target->GetComputedStyle()->OverflowX());
-  EXPECT_EQ(EOverflow::kAuto, target->GetComputedStyle()->OverflowY());
-  EXPECT_EQ(LayoutUnit(), target->GetComputedStyle()->OverflowClipMargin());
-
-  target = GetDocument().getElementById("autoclip");
-  ASSERT_TRUE(target);
-  EXPECT_EQ(EOverflow::kAuto, target->GetComputedStyle()->OverflowX());
-  EXPECT_EQ(EOverflow::kHidden, target->GetComputedStyle()->OverflowY());
-  EXPECT_EQ(LayoutUnit(), target->GetComputedStyle()->OverflowClipMargin());
-
-  target = GetDocument().getElementById("clipclip");
-  ASSERT_TRUE(target);
-  EXPECT_EQ(EOverflow::kClip, target->GetComputedStyle()->OverflowX());
-  EXPECT_EQ(EOverflow::kClip, target->GetComputedStyle()->OverflowY());
-  EXPECT_EQ(LayoutUnit(1), target->GetComputedStyle()->OverflowClipMargin());
-
-  target = GetDocument().getElementById("visclip");
-  ASSERT_TRUE(target);
-  EXPECT_EQ(EOverflow::kVisible, target->GetComputedStyle()->OverflowX());
-  EXPECT_EQ(EOverflow::kClip, target->GetComputedStyle()->OverflowY());
-  EXPECT_EQ(LayoutUnit(), target->GetComputedStyle()->OverflowClipMargin());
-
-  target = GetDocument().getElementById("clipvis");
-  ASSERT_TRUE(target);
-  EXPECT_EQ(EOverflow::kClip, target->GetComputedStyle()->OverflowX());
-  EXPECT_EQ(EOverflow::kVisible, target->GetComputedStyle()->OverflowY());
-  EXPECT_EQ(LayoutUnit(), target->GetComputedStyle()->OverflowClipMargin());
-
-  target = GetDocument().getElementById("vishidden");
-  ASSERT_TRUE(target);
-  EXPECT_EQ(EOverflow::kAuto, target->GetComputedStyle()->OverflowX());
-  EXPECT_EQ(EOverflow::kHidden, target->GetComputedStyle()->OverflowY());
-  EXPECT_EQ(LayoutUnit(), target->GetComputedStyle()->OverflowClipMargin());
-
-  target = GetDocument().getElementById("hiddenvis");
-  ASSERT_TRUE(target);
-  EXPECT_EQ(EOverflow::kHidden, target->GetComputedStyle()->OverflowX());
-  EXPECT_EQ(EOverflow::kAuto, target->GetComputedStyle()->OverflowY());
-  EXPECT_EQ(LayoutUnit(), target->GetComputedStyle()->OverflowClipMargin());
-
-  target = GetDocument().getElementById("containpaint");
-  ASSERT_TRUE(target);
-  EXPECT_TRUE(target->GetComputedStyle()->ContainsPaint());
-  EXPECT_EQ(LayoutUnit(1), target->GetComputedStyle()->OverflowClipMargin());
-}
-
 TEST_F(StyleAdjusterTest, TouchActionContentEditableArea) {
   base::test::ScopedFeatureList feature_list;
   feature_list.InitWithFeatures({::features::kSwipeToMoveCursor}, {});
@@ -273,6 +202,27 @@ TEST_F(StyleAdjusterTest, OverflowClipUseCount) {
   UpdateAllLifecyclePhasesForTest();
   EXPECT_TRUE(
       GetDocument().IsUseCounted(WebFeature::kOverflowClipAlongEitherAxis));
+}
+
+// crbug.com/1216721
+TEST_F(StyleAdjusterTest, AdjustForSVGCrash) {
+  SetBodyInnerHTML(R"HTML(
+<style>
+.class1 { dominant-baseline: hanging; }
+</style>
+<svg>
+<tref>
+<text id="text5" style="dominant-baseline: no-change;"/>
+</svg>
+<svg>
+<use id="use1" xlink:href="#text5" class="class1" />
+  )HTML");
+  UpdateAllLifecyclePhasesForTest();
+  Element* text =
+      GetDocument().getElementById("use1")->GetShadowRoot()->getElementById(
+          "text5");
+  EXPECT_EQ(EDominantBaseline::kHanging,
+            text->GetComputedStyle()->CssDominantBaseline());
 }
 
 }  // namespace blink

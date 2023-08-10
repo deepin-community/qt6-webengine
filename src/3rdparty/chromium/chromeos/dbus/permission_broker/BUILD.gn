@@ -4,7 +4,8 @@
 
 import("//third_party/protobuf/proto_library.gni")
 
-assert(is_chromeos, "Non-ChromeOS builds cannot depend on //chromeos")
+assert(is_chromeos,
+       "Non-Chrome-OS or Lacros builds must not depend on //chromeos")
 
 component("permission_broker") {
   defines = [ "IS_PERMISSION_BROKER_IMPL" ]

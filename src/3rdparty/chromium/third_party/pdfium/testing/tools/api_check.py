@@ -12,6 +12,8 @@ fpdf_view_c_api_test.c is alphabetical within each section.
 
 """
 
+from __future__ import print_function
+
 import os
 import re
 import sys
@@ -99,16 +101,16 @@ def _GetFunctionsFromTest(api_test_path):
 
 
 def _FindDuplicates(functions):
-  return set([f for f in functions if functions.count(f) > 1])
+  return {f for f in functions if functions.count(f) > 1}
 
 
 def _CheckAndPrintFailures(failure_list, failure_message):
   if not failure_list:
     return True
 
-  print '%s:' % failure_message
+  print('%s:' % failure_message)
   for f in sorted(failure_list):
-    print f
+    print(f)
   return False
 
 

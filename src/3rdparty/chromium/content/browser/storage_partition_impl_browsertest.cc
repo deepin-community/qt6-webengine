@@ -60,6 +60,9 @@ class ClientCertBrowserClient : public ContentBrowserClient {
       : select_certificate_callback_(std::move(select_certificate_callback)),
         delete_delegate_callback_(std::move(delete_delegate_callback)) {}
 
+  ClientCertBrowserClient(const ClientCertBrowserClient&) = delete;
+  ClientCertBrowserClient& operator=(const ClientCertBrowserClient&) = delete;
+
   ~ClientCertBrowserClient() override = default;
 
   // Returns a cancellation callback for the imaginary client certificate
@@ -84,7 +87,6 @@ class ClientCertBrowserClient : public ContentBrowserClient {
   scoped_refptr<base::SequencedTaskRunner> task_runner_;
   base::OnceClosure select_certificate_callback_;
   base::OnceClosure delete_delegate_callback_;
-  DISALLOW_COPY_AND_ASSIGN(ClientCertBrowserClient);
 };
 
 class ClientCertBrowserTest : public ContentBrowserTest {
@@ -167,8 +169,10 @@ IN_PROC_BROWSER_TEST_F(StoragePartitionImplBrowsertest, NetworkContext) {
   params->automatically_assign_isolation_info = true;
   params->is_corb_enabled = false;
   mojo::Remote<network::mojom::URLLoaderFactory> loader_factory;
-  BrowserContext::GetDefaultStoragePartition(
-      shell()->web_contents()->GetBrowserContext())
+  shell()
+      ->web_contents()
+      ->GetBrowserContext()
+      ->GetDefaultStoragePartition()
       ->GetNetworkContext()
       ->CreateURLLoaderFactory(loader_factory.BindNewPipeAndPassReceiver(),
                                std::move(params));
@@ -179,7 +183,7 @@ IN_PROC_BROWSER_TEST_F(StoragePartitionImplBrowsertest, NetworkContext) {
   request.method = "GET";
   mojo::PendingRemote<network::mojom::URLLoader> loader;
   loader_factory->CreateLoaderAndStart(
-      loader.InitWithNewPipeAndPassReceiver(), 2, 1,
+      loader.InitWithNewPipeAndPassReceiver(), 1,
       network::mojom::kURLLoadOptionNone, request, client.CreateRemote(),
       net::MutableNetworkTrafficAnnotationTag(TRAFFIC_ANNOTATION_FOR_TESTS));
 
@@ -203,8 +207,10 @@ IN_PROC_BROWSER_TEST_F(StoragePartitionImplBrowsertest,
 
   base::ScopedAllowBlockingForTesting allow_blocking;
   auto pending_shared_url_loader_factory =
-      BrowserContext::GetDefaultStoragePartition(
-          shell()->web_contents()->GetBrowserContext())
+      shell()
+          ->web_contents()
+          ->GetBrowserContext()
+          ->GetDefaultStoragePartition()
           ->GetURLLoaderFactoryForBrowserProcessIOThread();
 
   auto factory_owner = IOThreadSharedURLLoaderFactoryOwner::Create(
@@ -223,8 +229,7 @@ IN_PROC_BROWSER_TEST_F(StoragePartitionImplBrowsertest,
   base::ScopedAllowBlockingForTesting allow_blocking;
   std::unique_ptr<ShellBrowserContext> browser_context =
       std::make_unique<ShellBrowserContext>(true);
-  auto* partition =
-      BrowserContext::GetDefaultStoragePartition(browser_context.get());
+  auto* partition = browser_context->GetDefaultStoragePartition();
   auto pending_shared_url_loader_factory =
       partition->GetURLLoaderFactoryForBrowserProcessIOThread();
 
@@ -247,8 +252,7 @@ IN_PROC_BROWSER_TEST_F(StoragePartitionImplBrowsertest,
   base::ScopedAllowBlockingForTesting allow_blocking;
   std::unique_ptr<ShellBrowserContext> browser_context =
       std::make_unique<ShellBrowserContext>(true);
-  auto* partition =
-      BrowserContext::GetDefaultStoragePartition(browser_context.get());
+  auto* partition = browser_context->GetDefaultStoragePartition();
   auto factory_owner = IOThreadSharedURLLoaderFactoryOwner::Create(
       partition->GetURLLoaderFactoryForBrowserProcessIOThread());
 
@@ -269,8 +273,7 @@ IN_PROC_BROWSER_TEST_F(StoragePartitionImplBrowsertest, URLLoaderInterceptor) {
   base::ScopedAllowBlockingForTesting allow_blocking;
   std::unique_ptr<ShellBrowserContext> browser_context =
       std::make_unique<ShellBrowserContext>(true);
-  auto* partition =
-      BrowserContext::GetDefaultStoragePartition(browser_context.get());
+  auto* partition = browser_context->GetDefaultStoragePartition();
 
   // Run a request the first time without the interceptor set, as the
   // StoragePartitionImpl lazily creates the factory and we want to make sure

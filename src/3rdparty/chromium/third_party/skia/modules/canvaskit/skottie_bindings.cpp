@@ -9,25 +9,20 @@
 #include "include/core/SkImage.h"
 #include "include/core/SkString.h"
 #include "include/core/SkTypes.h"
+#include "modules/canvaskit/WasmCommon.h"
 #include "modules/skottie/include/Skottie.h"
+#include "modules/skottie/include/SkottieProperty.h"
+#include "modules/skottie/utils/SkottieUtils.h"
+#include "modules/skresources/include/SkResources.h"
 #include "modules/sksg/include/SkSGInvalidationController.h"
 
 #include <string>
 #include <vector>
-
 #include <emscripten.h>
 #include <emscripten/bind.h>
-#include "modules/canvaskit/WasmCommon.h"
-
-#if SK_INCLUDE_MANAGED_SKOTTIE
-#include "modules/skottie/include/SkottieProperty.h"
-#include "modules/skottie/utils/SkottieUtils.h"
-#include "modules/skresources/include/SkResources.h"
-#endif // SK_INCLUDE_MANAGED_SKOTTIE
 
 using namespace emscripten;
 
-#if SK_INCLUDE_MANAGED_SKOTTIE
 namespace {
 
 // WebTrack wraps a JS object that has a 'seek' method.
@@ -140,8 +135,8 @@ private:
         fLogger.call<void>(func, std::string(msg), std::string(json));
     }
 
-    static constexpr char kWrnFunc[] = "onWarning",
-                          kErrFunc[] = "onError";
+    inline static constexpr char kWrnFunc[] = "onWarning",
+                                 kErrFunc[] = "onError";
 
     const emscripten::val fLogger;
 };
@@ -219,12 +214,41 @@ public:
         return props;
     }
 
+    JSArray getTextProps() const {
+        JSArray props = emscripten::val::array();
+
+        for (const auto& key : fPropMgr->getTextProps()) {
+            const auto txt = fPropMgr->getText(key);
+            JSObject txt_val = emscripten::val::object();
+            txt_val.set("text", txt.fText.c_str());
+            txt_val.set("size", txt.fTextSize);
+
+            JSObject prop = emscripten::val::object();
+            prop.set("key", key);
+            prop.set("value", std::move(txt_val));
+
+            props.call<void>("push", prop);
+        }
+
+        return props;
+    }
+
     bool setColor(const std::string& key, SkColor c) {
         return fPropMgr->setColor(key, c);
     }
 
     bool setOpacity(const std::string& key, float o) {
         return fPropMgr->setOpacity(key, o);
+    }
+
+    bool setText(const std::string& key, std::string text, float size) {
+        // preserve all other text fields
+        auto t = fPropMgr->getText(key);
+
+        t.fText     = SkString(text);
+        t.fTextSize = size;
+
+        return fPropMgr->setText(key, t);
     }
 
     JSArray getMarkers() const {
@@ -251,7 +275,6 @@ private:
 };
 
 } // anonymous ns
-#endif // SK_INCLUDE_MANAGED_SKOTTIE
 
 EMSCRIPTEN_BINDINGS(Skottie) {
     // Animation things (may eventually go in own library)
@@ -261,7 +284,7 @@ EMSCRIPTEN_BINDINGS(Skottie) {
             return std::string(self.version().c_str());
         }))
         .function("_size", optional_override([](skottie::Animation& self,
-                                                uintptr_t /* float* */ oPtr)->void {
+                                                WASMPointerF32 oPtr)->void {
             SkSize* output = reinterpret_cast<SkSize*>(oPtr);
             *output = self.size();
         }))
@@ -274,7 +297,7 @@ EMSCRIPTEN_BINDINGS(Skottie) {
             self.seekFrame(t);
         }))
         .function("_render", optional_override([](skottie::Animation& self, SkCanvas* canvas,
-                                                  uintptr_t /* float* */ fPtr)->void {
+                                                  WASMPointerF32 fPtr)->void {
             const SkRect* dst = reinterpret_cast<const SkRect*>(fPtr);
             self.render(canvas, dst);
         }), allow_raw_pointers());
@@ -284,53 +307,53 @@ EMSCRIPTEN_BINDINGS(Skottie) {
     }));
     constant("skottie", true);
 
-#if SK_INCLUDE_MANAGED_SKOTTIE
     class_<ManagedAnimation>("ManagedAnimation")
         .smart_ptr<sk_sp<ManagedAnimation>>("sk_sp<ManagedAnimation>")
         .function("version"   , &ManagedAnimation::version)
         .function("_size", optional_override([](ManagedAnimation& self,
-                                                uintptr_t /* float* */ oPtr)->void {
+                                                WASMPointerF32 oPtr)->void {
             SkSize* output = reinterpret_cast<SkSize*>(oPtr);
             *output = self.size();
         }))
         .function("duration"  , &ManagedAnimation::duration)
         .function("fps"       , &ManagedAnimation::fps)
         .function("_render", optional_override([](ManagedAnimation& self, SkCanvas* canvas,
-                                                  uintptr_t /* float* */ fPtr)->void {
+                                                  WASMPointerF32 fPtr)->void {
             const SkRect* dst = reinterpret_cast<const SkRect*>(fPtr);
             self.render(canvas, dst);
         }), allow_raw_pointers())
         .function("_seek", optional_override([](ManagedAnimation& self, SkScalar t,
-                                                uintptr_t /* float* */ fPtr) {
+                                                WASMPointerF32 fPtr) {
             SkRect* damageRect = reinterpret_cast<SkRect*>(fPtr);
             damageRect[0] = self.seek(t);
         }))
         .function("_seekFrame", optional_override([](ManagedAnimation& self, double frame,
-                                                     uintptr_t /* float* */ fPtr) {
+                                                     WASMPointerF32 fPtr) {
             SkRect* damageRect = reinterpret_cast<SkRect*>(fPtr);
             damageRect[0] = self.seekFrame(frame);
         }))
         .function("seekFrame" , &ManagedAnimation::seekFrame)
-        .function("_setColor"  , optional_override([](ManagedAnimation& self, const std::string& key, uintptr_t /* float* */ cPtr) {
+        .function("_setColor"  , optional_override([](ManagedAnimation& self, const std::string& key, WASMPointerF32 cPtr) {
             float* fourFloats = reinterpret_cast<float*>(cPtr);
             SkColor4f color = { fourFloats[0], fourFloats[1], fourFloats[2], fourFloats[3] };
-            self.setColor(key, color.toSkColor());
+            return self.setColor(key, color.toSkColor());
         }))
         .function("setOpacity", &ManagedAnimation::setOpacity)
         .function("getMarkers", &ManagedAnimation::getMarkers)
         .function("getColorProps"  , &ManagedAnimation::getColorProps)
-        .function("getOpacityProps", &ManagedAnimation::getOpacityProps);
+        .function("getOpacityProps", &ManagedAnimation::getOpacityProps)
+        .function("getTextProps"   , &ManagedAnimation::getTextProps)
+        .function("setText"        , &ManagedAnimation::setText);
 
     function("_MakeManagedAnimation", optional_override([](std::string json,
                                                            size_t assetCount,
-                                                           uintptr_t /* char**     */ nptr,
-                                                           uintptr_t /* uint8_t**  */ dptr,
-                                                           uintptr_t /* size_t*    */ sptr,
+                                                           WASMPointerU32 nptr,
+                                                           WASMPointerU32 dptr,
+                                                           WASMPointerU32 sptr,
                                                            std::string prop_prefix,
                                                            emscripten::val soundMap,
                                                            emscripten::val logger)
                                                         ->sk_sp<ManagedAnimation> {
-        // See the comment in canvaskit_bindings.cpp about the use of uintptr_t
         const auto assetNames = reinterpret_cast<char**   >(nptr);
         const auto assetDatas = reinterpret_cast<uint8_t**>(dptr);
         const auto assetSizes = reinterpret_cast<size_t*  >(sptr);
@@ -351,5 +374,4 @@ EMSCRIPTEN_BINDINGS(Skottie) {
                                       prop_prefix, std::move(logger));
     }));
     constant("managed_skottie", true);
-#endif // SK_INCLUDE_MANAGED_SKOTTIE
 }

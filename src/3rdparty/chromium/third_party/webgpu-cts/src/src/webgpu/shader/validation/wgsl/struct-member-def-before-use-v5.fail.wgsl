@@ -2,15 +2,15 @@
 // used.
 
 struct goo {
-  b : f32;
+  b : f32
 };
 
 struct foo {
-  a : f32;
+  a : f32
 };
 
-[[stage(vertex)]]
-fn main() -> void {
+@stage(fragment)
+fn main() {
   var f : foo;
   f.a = 2.0;
   f.b = 5.0;

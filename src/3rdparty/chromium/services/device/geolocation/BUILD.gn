@@ -82,13 +82,10 @@ source_set("geolocation") {
   }
 
   if (is_mac) {
-    frameworks = [
-      "CoreLocation.framework",
-      "Security.framework",
-    ]
+    frameworks = [ "Security.framework" ]
     sources += [
+      "core_location_provider.cc",
       "core_location_provider.h",
-      "core_location_provider.mm",
     ]
   }
 
@@ -107,12 +104,21 @@ source_set("geolocation") {
       "wifi_data_provider_chromeos.h",
     ]
     deps += [ "//chromeos/network" ]
-  } else if ((is_linux || is_chromeos_lacros) && use_dbus) {
+  } else if (is_linux && use_dbus) {
     sources += [
       "wifi_data_provider_linux.cc",
       "wifi_data_provider_linux.h",
     ]
     deps += [ "//dbus" ]
+  } else if (is_chromeos_lacros) {
+    sources += [
+      "wifi_data_provider_lacros.cc",
+      "wifi_data_provider_lacros.h",
+    ]
+    deps += [
+      "//chromeos/crosapi/mojom",
+      "//chromeos/lacros",
+    ]
   } else if (is_mac) {
     frameworks += [
       "CoreWLAN.framework",
@@ -162,7 +168,6 @@ if (is_android) {
       "$google_play_services_package:google_play_services_basement_java",
       "$google_play_services_package:google_play_services_location_java",
       "//base:base_java",
-      "//base:jni_java",
       "//components/location/android:location_java",
       "//services/device/public/java:geolocation_java",
       "//third_party/android_deps:chromium_play_services_availability_java",

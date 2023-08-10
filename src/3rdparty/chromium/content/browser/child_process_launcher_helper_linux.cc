@@ -25,10 +25,10 @@
 namespace content {
 namespace internal {
 
-base::Optional<mojo::NamedPlatformChannel>
+absl::optional<mojo::NamedPlatformChannel>
 ChildProcessLauncherHelper::CreateNamedPlatformChannelOnClientThread() {
   DCHECK(client_task_runner_->RunsTasksInCurrentSequence());
-  return base::nullopt;
+  return absl::nullopt;
 }
 
 void ChildProcessLauncherHelper::BeforeLaunchOnClientThread() {
@@ -81,7 +81,7 @@ ChildProcessLauncherHelper::LaunchProcessOnLauncherThread(
         GetProcessType());
     *launch_result = LAUNCH_RESULT_SUCCESS;
 
-#if !defined(OS_OPENBSD)
+#if !BUILDFLAG(IS_OPENBSD)
     if (handle) {
       // It could be a renderer process or an utility process.
       int oom_score = content::kMiscOomScore;

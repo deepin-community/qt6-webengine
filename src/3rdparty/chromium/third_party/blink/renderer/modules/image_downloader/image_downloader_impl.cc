@@ -12,7 +12,6 @@
 #include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom-blink.h"
 #include "third_party/blink/public/platform/interface_registry.h"
 #include "third_party/blink/public/platform/web_data.h"
-#include "third_party/blink/public/platform/web_size.h"
 #include "third_party/blink/public/platform/web_string.h"
 #include "third_party/blink/public/platform/web_vector.h"
 #include "third_party/blink/public/web/web_image.h"
@@ -30,7 +29,7 @@ namespace {
 
 WTF::Vector<SkBitmap> DecodeImageData(const std::string& data,
                                       const std::string& mime_type,
-                                      const blink::WebSize& preferred_size) {
+                                      const gfx::Size& preferred_size) {
   // Decode the image using Blink's image decoder.
   blink::WebData buffer(data.data(), data.size());
   WTF::Vector<SkBitmap> bitmaps;
@@ -50,7 +49,7 @@ WTF::Vector<SkBitmap> DecodeImageData(const std::string& data,
 
 // Decodes a data: URL into one or more images, or no images in case of failure.
 WTF::Vector<SkBitmap> ImagesFromDataUrl(const blink::KURL& url,
-                                        const blink::WebSize& preferred_size) {
+                                        const gfx::Size& preferred_size) {
   std::string mime_type, data;
   if (!blink::network_utils::IsDataURLMimeTypeSupported(url, &data,
                                                         &mime_type) ||
@@ -167,29 +166,33 @@ void ImageDownloaderImpl::CreateMojoService(
 // ImageDownloader methods:
 void ImageDownloaderImpl::DownloadImage(const KURL& image_url,
                                         bool is_favicon,
-                                        uint32_t preferred_size,
+                                        const gfx::Size& preferred_size,
                                         uint32_t max_bitmap_size,
                                         bool bypass_cache,
                                         DownloadImageCallback callback) {
   // Constrain the preferred size by the max bitmap size. This will prevent
   // resizing of the resulting image if the preferred size is used.
-  if (max_bitmap_size)
-    preferred_size = std::min(preferred_size, max_bitmap_size);
+  gfx::Size constrained_preferred_size(preferred_size);
+  uint32_t max_preferred_dimension =
+      std::max(preferred_size.width(), preferred_size.height());
+  if (max_bitmap_size && max_bitmap_size < max_preferred_dimension) {
+    float scale = float(max_bitmap_size) / max_preferred_dimension;
+    constrained_preferred_size = gfx::ScaleToFlooredSize(preferred_size, scale);
+  }
 
   auto download_callback =
       WTF::Bind(&ImageDownloaderImpl::DidDownloadImage, WrapPersistent(this),
                 max_bitmap_size, std::move(callback));
 
-  const WebSize preferred_dimensions(preferred_size, preferred_size);
   if (!image_url.ProtocolIsData()) {
-    FetchImage(image_url, is_favicon, preferred_dimensions, bypass_cache,
+    FetchImage(image_url, is_favicon, constrained_preferred_size, bypass_cache,
                std::move(download_callback));
     // Will complete asynchronously via ImageDownloaderImpl::DidFetchImage.
     return;
   }
 
   WTF::Vector<SkBitmap> result_images =
-      ImagesFromDataUrl(image_url, preferred_dimensions);
+      ImagesFromDataUrl(image_url, constrained_preferred_size);
   std::move(download_callback).Run(0, result_images);
 }
 
@@ -215,7 +218,7 @@ void ImageDownloaderImpl::Dispose() {
 
 void ImageDownloaderImpl::FetchImage(const KURL& image_url,
                                      bool is_favicon,
-                                     const WebSize& preferred_size,
+                                     const gfx::Size& preferred_size,
                                      bool bypass_cache,
                                      DownloadCallback callback) {
   // Create an image resource fetcher and assign it with a call back object.
@@ -230,7 +233,7 @@ void ImageDownloaderImpl::FetchImage(const KURL& image_url,
 
 void ImageDownloaderImpl::DidFetchImage(
     DownloadCallback callback,
-    const WebSize& preferred_size,
+    const gfx::Size& preferred_size,
     MultiResolutionImageResourceFetcher* fetcher,
     const std::string& image_data,
     const WebString& mime_type) {

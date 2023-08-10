@@ -5,6 +5,7 @@
 #include "third_party/blink/renderer/modules/xr/xr_input_source.h"
 
 #include "base/time/time.h"
+#include "third_party/blink/public/mojom/frame/user_activation_notification_type.mojom-blink.h"
 #include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/core/dom/events/event_dispatcher.h"
 #include "third_party/blink/renderer/core/dom/events/event_path.h"
@@ -27,9 +28,9 @@ namespace blink {
 
 namespace {
 std::unique_ptr<TransformationMatrix> TryGetTransformationMatrix(
-    const base::Optional<gfx::Transform>& transform) {
+    const absl::optional<gfx::Transform>& transform) {
   if (transform) {
-    return std::make_unique<TransformationMatrix>(transform->matrix());
+    return std::make_unique<TransformationMatrix>(*transform);
   }
 
   return nullptr;
@@ -107,10 +108,7 @@ XRInputSource* XRInputSource::CreateOrUpdateFrom(
   }
 
   if (updated_source->state_.is_visible) {
-    if (state->hand_tracking_data.get()) {
-      updated_source->hand_ = MakeGarbageCollected<XRHand>(
-          state->hand_tracking_data.get(), updated_source);
-    }
+    updated_source->UpdateHand(state->hand_tracking_data.get());
   }
 
   updated_source->state_.emulated_position = state->emulated_position;
@@ -210,6 +208,11 @@ bool XRInputSource::InvalidatesSameObject(
     }
   }
 
+  if ((state->hand_tracking_data.get() && !hand_) ||
+      (!state->hand_tracking_data.get() && hand_)) {
+    return true;
+  }
+
   return false;
 }
 
@@ -226,36 +229,47 @@ void XRInputSource::SetGamepadConnected(bool state) {
 }
 
 void XRInputSource::UpdateGamepad(
-    const base::Optional<device::Gamepad>& gamepad) {
+    const absl::optional<device::Gamepad>& gamepad) {
   if (gamepad) {
     if (!gamepad_) {
       gamepad_ = MakeGarbageCollected<Gamepad>(this, -1, state_.base_timestamp,
                                                base::TimeTicks::Now());
     }
 
-    gamepad_->UpdateFromDeviceState(*gamepad);
+    LocalDOMWindow* window = session_->xr()->DomWindow();
+    bool cross_origin_isolated_capability =
+        window ? window->CrossOriginIsolatedCapability() : false;
+    gamepad_->UpdateFromDeviceState(*gamepad, cross_origin_isolated_capability);
   } else {
     gamepad_ = nullptr;
   }
 }
 
-base::Optional<TransformationMatrix> XRInputSource::MojoFromInput() const {
+void XRInputSource::UpdateHand(
+    const device::mojom::blink::XRHandTrackingData* hand_tracking_data) {
+  if (hand_tracking_data) {
+    if (!hand_) {
+      hand_ = MakeGarbageCollected<XRHand>(hand_tracking_data, this);
+    } else {
+      hand_->updateFromHandTrackingData(hand_tracking_data, this);
+    }
+  } else {
+    hand_ = nullptr;
+  }
+}
+
+absl::optional<TransformationMatrix> XRInputSource::MojoFromInput() const {
   if (!mojo_from_input_.get()) {
-    return base::nullopt;
+    return absl::nullopt;
   }
   return *(mojo_from_input_.get());
 }
 
-base::Optional<TransformationMatrix> XRInputSource::InputFromPointer() const {
+absl::optional<TransformationMatrix> XRInputSource::InputFromPointer() const {
   if (!input_from_pointer_.get()) {
-    return base::nullopt;
+    return absl::nullopt;
   }
   return *(input_from_pointer_.get());
-}
-
-base::Optional<device::mojom::blink::XRNativeOriginInformation>
-XRInputSource::nativeOrigin() const {
-  return XRNativeOriginInformation::Create(this);
 }
 
 void XRInputSource::OnSelectStart() {
@@ -482,9 +496,9 @@ void XRInputSource::ProcessOverlayHitTest(
   // Do a hit test at the overlay pointer position to see if the pointer
   // intersects a cross origin iframe. If yes, set the visibility to false which
   // causes targetRaySpace and gripSpace to return null poses.
-  FloatPoint point(new_state->overlay_pointer_position->x(),
-                   new_state->overlay_pointer_position->y());
-  DVLOG(3) << __func__ << ": hit test point=" << point;
+  gfx::PointF point(new_state->overlay_pointer_position->x(),
+                    new_state->overlay_pointer_position->y());
+  DVLOG(3) << __func__ << ": hit test point=" << point.ToString();
 
   HitTestRequest::HitTestRequestType hit_type = HitTestRequest::kTouchEvent |
                                                 HitTestRequest::kReadOnly |
@@ -511,7 +525,12 @@ void XRInputSource::ProcessOverlayHitTest(
     if (hit_document) {
       Frame* hit_frame = hit_document->GetFrame();
       DCHECK(hit_frame);
-      if (hit_frame->IsCrossOriginToMainFrame()) {
+      // TODO(crbug.com/1318055): With MPArch there may be multiple main frames
+      // so we should use IsCrossOriginToOutermostMainFrame when we intend to
+      // check if any embedded frame (eg, iframe or fenced frame) is
+      // cross-origin with respect to the outermost main frame. Follow up to
+      // confirm correctness.
+      if (hit_frame->IsCrossOriginToOutermostMainFrame()) {
         // Mark the input source as invisible until the primary button is
         // released.
         state_.is_visible = false;

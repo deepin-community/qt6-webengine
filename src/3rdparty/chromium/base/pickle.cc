@@ -4,13 +4,11 @@
 
 #include "base/pickle.h"
 
-#include <stdlib.h>
-
 #include <algorithm>  // for max()
+#include <cstdlib>
 #include <limits>
 
 #include "base/bits.h"
-#include "base/macros.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/numerics/safe_math.h"
 #include "build/build_config.h"
@@ -25,8 +23,7 @@ static const size_t kCapacityReadOnly = static_cast<size_t>(-1);
 PickleIterator::PickleIterator(const Pickle& pickle)
     : payload_(pickle.payload()),
       read_index_(0),
-      end_index_(pickle.payload_size()) {
-}
+      end_index_(pickle.payload_size()) {}
 
 template <typename Type>
 inline bool PickleIterator::ReadBuiltinType(Type* result) {
@@ -49,7 +46,7 @@ inline void PickleIterator::Advance(size_t size) {
   }
 }
 
-template<typename Type>
+template <typename Type>
 inline const char* PickleIterator::GetReadPointerAndAdvance() {
   if (sizeof(Type) > end_index_ - read_index_) {
     read_index_ = end_index_;
@@ -165,15 +162,15 @@ bool PickleIterator::ReadStringPiece(StringPiece* result) {
   return true;
 }
 
-bool PickleIterator::ReadString16(string16* result) {
+bool PickleIterator::ReadString16(std::u16string* result) {
   int len;
   if (!ReadInt(&len))
     return false;
-  const char* read_from = GetReadPointerAndAdvance(len, sizeof(char16));
+  const char* read_from = GetReadPointerAndAdvance(len, sizeof(char16_t));
   if (!read_from)
     return false;
 
-  result->assign(reinterpret_cast<const char16*>(read_from), len);
+  result->assign(reinterpret_cast<const char16_t*>(read_from), len);
   return true;
 }
 
@@ -181,11 +178,11 @@ bool PickleIterator::ReadStringPiece16(StringPiece16* result) {
   int len;
   if (!ReadInt(&len))
     return false;
-  const char* read_from = GetReadPointerAndAdvance(len, sizeof(char16));
+  const char* read_from = GetReadPointerAndAdvance(len, sizeof(char16_t));
   if (!read_from)
     return false;
 
-  *result = StringPiece16(reinterpret_cast<const char16*>(read_from), len);
+  *result = StringPiece16(reinterpret_cast<const char16_t*>(read_from), len);
   return true;
 }
 
@@ -270,8 +267,10 @@ Pickle::Pickle(const Pickle& other)
       header_size_(other.header_size_),
       capacity_after_header_(0),
       write_offset_(other.write_offset_) {
-  Resize(other.header_->payload_size);
-  memcpy(header_, other.header_, header_size_ + other.header_->payload_size);
+  if (other.header_) {
+    Resize(other.header_->payload_size);
+    memcpy(header_, other.header_, header_size_ + other.header_->payload_size);
+  }
 }
 
 Pickle::~Pickle() {
@@ -292,10 +291,12 @@ Pickle& Pickle::operator=(const Pickle& other) {
     header_ = nullptr;
     header_size_ = other.header_size_;
   }
-  Resize(other.header_->payload_size);
-  memcpy(header_, other.header_,
-         other.header_size_ + other.header_->payload_size);
-  write_offset_ = other.write_offset_;
+  if (other.header_) {
+    Resize(other.header_->payload_size);
+    memcpy(header_, other.header_,
+           other.header_size_ + other.header_->payload_size);
+    write_offset_ = other.write_offset_;
+  }
   return *this;
 }
 
@@ -306,7 +307,7 @@ void Pickle::WriteString(const StringPiece& value) {
 
 void Pickle::WriteString16(const StringPiece16& value) {
   WriteInt(static_cast<int>(value.size()));
-  WriteBytes(value.data(), static_cast<int>(value.size()) * sizeof(char16));
+  WriteBytes(value.data(), static_cast<int>(value.size()) * sizeof(char16_t));
 }
 
 void Pickle::WriteData(const char* data, int length) {
@@ -402,7 +403,8 @@ bool Pickle::PeekNext(size_t header_size,
   return true;
 }
 
-template <size_t length> void Pickle::WriteBytesStatic(const void* data) {
+template <size_t length>
+void Pickle::WriteBytesStatic(const void* data) {
   WriteBytesCommon(data, length);
 }
 

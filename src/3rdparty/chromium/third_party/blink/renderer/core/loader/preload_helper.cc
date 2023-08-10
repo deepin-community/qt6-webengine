@@ -21,14 +21,17 @@
 #include "third_party/blink/renderer/core/frame/settings.h"
 #include "third_party/blink/renderer/core/frame/viewport_data.h"
 #include "third_party/blink/renderer/core/frame/web_local_frame_impl.h"
+#include "third_party/blink/renderer/core/html/blocking_attribute.h"
 #include "third_party/blink/renderer/core/html/parser/html_preload_scanner.h"
 #include "third_party/blink/renderer/core/html/parser/html_srcset_parser.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
 #include "third_party/blink/renderer/core/loader/alternate_signed_exchange_resource_info.h"
-#include "third_party/blink/renderer/core/loader/importance_attribute.h"
+#include "third_party/blink/renderer/core/loader/document_loader.h"
+#include "third_party/blink/renderer/core/loader/fetch_priority_attribute.h"
 #include "third_party/blink/renderer/core/loader/link_load_parameters.h"
 #include "third_party/blink/renderer/core/loader/modulescript/module_script_creation_params.h"
 #include "third_party/blink/renderer/core/loader/modulescript/module_script_fetch_request.h"
+#include "third_party/blink/renderer/core/loader/pending_link_preload.h"
 #include "third_party/blink/renderer/core/loader/resource/css_style_sheet_resource.h"
 #include "third_party/blink/renderer/core/loader/resource/font_resource.h"
 #include "third_party/blink/renderer/core/loader/resource/image_resource.h"
@@ -38,7 +41,7 @@
 #include "third_party/blink/renderer/core/page/viewport_description.h"
 #include "third_party/blink/renderer/core/script/modulator.h"
 #include "third_party/blink/renderer/core/script/script_loader.h"
-#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_initiator_type_names.h"
 #include "third_party/blink/renderer/platform/loader/fetch/raw_resource.h"
@@ -92,18 +95,18 @@ bool IsSupportedType(ResourceType resource_type, const String& mime_type) {
   return false;
 }
 
-MediaValues* CreateMediaValues(
+MediaValuesCached* CreateMediaValues(
     Document& document,
     const ViewportDescription* viewport_description) {
-  MediaValues* media_values =
-      MediaValues::CreateDynamicIfFrameExists(document.GetFrame());
+  MediaValuesCached* media_values =
+      MakeGarbageCollected<MediaValuesCached>(document);
   if (viewport_description) {
-    FloatSize initial_viewport(media_values->DeviceWidth(),
-                               media_values->DeviceHeight());
+    gfx::SizeF initial_viewport(media_values->DeviceWidth(),
+                                media_values->DeviceHeight());
     PageScaleConstraints constraints = viewport_description->Resolve(
         initial_viewport, document.GetViewportData().ViewportDefaultMinWidth());
-    media_values->OverrideViewportDimensions(constraints.layout_size.Width(),
-                                             constraints.layout_size.Height());
+    media_values->OverrideViewportDimensions(constraints.layout_size.width(),
+                                             constraints.layout_size.height());
   }
   return media_values;
 }
@@ -113,7 +116,7 @@ bool MediaMatches(const String& media,
                   const ExecutionContext* execution_context) {
   scoped_refptr<MediaQuerySet> media_queries =
       MediaQuerySet::Create(media, execution_context);
-  MediaQueryEvaluator evaluator(*media_values);
+  MediaQueryEvaluator evaluator(media_values);
   return evaluator.Eval(*media_queries);
 }
 
@@ -150,6 +153,9 @@ void PreloadHelper::DnsPrefetchIfNeeded(
     Document* document,
     LocalFrame* frame,
     LinkCaller caller) {
+  if (document && document->Loader() && document->Loader()->Archive()) {
+    return;
+  }
   if (params.rel.IsDNSPrefetch()) {
     UseCounter::Count(document, WebFeature::kLinkRelDnsPrefetch);
     if (caller == kLinkCalledFromHeader)
@@ -182,6 +188,9 @@ void PreloadHelper::PreconnectIfNeeded(
     Document* document,
     LocalFrame* frame,
     LinkCaller caller) {
+  if (document && document->Loader() && document->Loader()->Archive()) {
+    return;
+  }
   if (params.rel.IsPreconnect() && params.href.IsValid() &&
       params.href.ProtocolIsInHTTPFamily()) {
     UseCounter::Count(document, WebFeature::kLinkRelPreconnect);
@@ -222,7 +231,7 @@ void PreloadHelper::PreconnectIfNeeded(
 // served from the cache correctly. Until
 // https://github.com/w3c/preload/issues/97 is resolved and implemented we need
 // to disable these preloads.
-base::Optional<ResourceType> PreloadHelper::GetResourceTypeFromAsAttribute(
+absl::optional<ResourceType> PreloadHelper::GetResourceTypeFromAsAttribute(
     const String& as) {
   DCHECK_EQ(as.DeprecatedLower(), as);
   if (as == "image")
@@ -237,7 +246,7 @@ base::Optional<ResourceType> PreloadHelper::GetResourceTypeFromAsAttribute(
     return ResourceType::kFont;
   if (as == "fetch")
     return ResourceType::kRaw;
-  return base::nullopt;
+  return absl::nullopt;
 }
 
 // |base_url| is used in Link HTTP Header based preloads to resolve relative
@@ -250,14 +259,15 @@ Resource* PreloadHelper::PreloadIfNeeded(
     const KURL& base_url,
     LinkCaller caller,
     const ViewportDescription* viewport_description,
-    ParserDisposition parser_disposition) {
+    ParserDisposition parser_disposition,
+    PendingLinkPreload* pending_preload) {
   if (!document.Loader() || !params.rel.IsLinkPreload())
     return nullptr;
 
-  base::Optional<ResourceType> resource_type =
+  absl::optional<ResourceType> resource_type =
       PreloadHelper::GetResourceTypeFromAsAttribute(params.as);
 
-  MediaValues* media_values = nullptr;
+  MediaValuesCached* media_values = nullptr;
   KURL url;
   if (resource_type == ResourceType::kImage && !params.image_srcset.IsEmpty()) {
     UseCounter::Count(document, WebFeature::kLinkRelPreloadImageSrcset);
@@ -288,7 +298,7 @@ Resource* PreloadHelper::PreloadIfNeeded(
 
   if (caller == kLinkCalledFromHeader)
     UseCounter::Count(document, WebFeature::kLinkHeaderPreload);
-  if (resource_type == base::nullopt) {
+  if (resource_type == absl::nullopt) {
     String message;
     if (IsValidButUnsupportedAsAttribute(params.as)) {
       message = String("<link rel=preload> uses an unsupported `as` value");
@@ -315,8 +325,8 @@ Resource* PreloadHelper::PreloadIfNeeded(
 
   resource_request.SetReferrerPolicy(params.referrer_policy);
 
-  resource_request.SetFetchImportanceMode(
-      GetFetchImportanceAttributeValue(params.importance));
+  resource_request.SetFetchPriorityHint(
+      GetFetchPriorityAttributeValue(params.fetch_priority_hint));
 
   ResourceLoaderOptions options(
       document.GetExecutionContext()->GetCurrentWorld());
@@ -325,6 +335,8 @@ Resource* PreloadHelper::PreloadIfNeeded(
   options.parser_disposition = parser_disposition;
   FetchParameters link_fetch_params(std::move(resource_request), options);
   link_fetch_params.SetCharset(document.Encoding());
+  link_fetch_params.SetRenderBlockingBehavior(
+      RenderBlockingBehavior::kNonBlocking);
 
   if (params.cross_origin != kCrossOriginAttributeNotSet) {
     link_fetch_params.SetCrossOriginAccessControl(
@@ -371,8 +383,27 @@ Resource* PreloadHelper::PreloadIfNeeded(
         String("Preload triggered for " + url.Host() + url.GetPath())));
   }
   link_fetch_params.SetLinkPreload(true);
-  return PreloadHelper::StartPreload(resource_type.value(), link_fetch_params,
-                                     document);
+
+  if (pending_preload) {
+    if (RenderBlockingResourceManager* manager =
+            document.GetRenderBlockingResourceManager()) {
+      if (BlockingAttribute::IsRenderBlocking(params.blocking)) {
+        manager->AddPendingPreload(
+            *pending_preload,
+            RenderBlockingResourceManager::PreloadType::kRegular);
+      } else if (EqualIgnoringASCIICase(params.as, "font")) {
+        manager->AddPendingPreload(
+            *pending_preload,
+            RenderBlockingResourceManager::PreloadType::kShortBlockingFont);
+      }
+    }
+  }
+
+  Resource* resource = PreloadHelper::StartPreload(resource_type.value(),
+                                                   link_fetch_params, document);
+  if (pending_preload)
+    pending_preload->AddResource(resource);
+  return resource;
 }
 
 // https://html.spec.whatwg.org/C/#link-type-modulepreload
@@ -380,7 +411,7 @@ void PreloadHelper::ModulePreloadIfNeeded(
     const LinkLoadParameters& params,
     Document& document,
     const ViewportDescription* viewport_description,
-    SingleModuleClient* client) {
+    PendingLinkPreload* client) {
   if (!document.Loader() || !params.rel.IsModulePreload())
     return;
 
@@ -449,7 +480,7 @@ void PreloadHelper::ModulePreloadIfNeeded(
   // Preload only if media matches.
   // https://html.spec.whatwg.org/C/#processing-the-media-attribute
   if (!params.media.IsEmpty()) {
-    MediaValues* media_values =
+    MediaValuesCached* media_values =
         CreateMediaValues(document, viewport_description);
     if (!MediaMatches(params.media, media_values,
                       document.GetExecutionContext()))
@@ -491,11 +522,19 @@ void PreloadHelper::ModulePreloadIfNeeded(
       ScriptFetchOptions(params.nonce, integrity_metadata, params.integrity,
                          kNotParserInserted, credentials_mode,
                          params.referrer_policy,
-                         mojom::blink::FetchImportanceMode::kImportanceAuto,
+                         mojom::blink::FetchPriorityHint::kAuto,
                          RenderBlockingBehavior::kNonBlocking),
       Referrer::NoReferrer(), TextPosition::MinimumPosition());
 
-  // Step 11. "Fetch a single module script given url, settings object,
+  // Step 11. "If element is render-blocking, then block rendering on element."
+  if (client && BlockingAttribute::IsRenderBlocking(params.blocking)) {
+    if (document.GetRenderBlockingResourceManager()) {
+      document.GetRenderBlockingResourceManager()->AddPendingPreload(
+          *client, RenderBlockingResourceManager::PreloadType::kRegular);
+    }
+  }
+
+  // Step 12. "Fetch a single module script given url, settings object,
   // destination, options, settings object, "client", and with the top-level
   // module fetch flag set. Wait until algorithm asynchronously completes with
   // result." [spec text]
@@ -517,7 +556,12 @@ void PreloadHelper::ModulePreloadIfNeeded(
 }
 
 Resource* PreloadHelper::PrefetchIfNeeded(const LinkLoadParameters& params,
-                                          Document& document) {
+                                          Document& document,
+                                          PendingLinkPreload* pending_preload) {
+  if (document.Loader() && document.Loader()->Archive()) {
+    return nullptr;
+  }
+
   if (params.rel.IsLinkPrefetch() && params.href.IsValid() &&
       document.GetFrame()) {
     UseCounter::Count(document, WebFeature::kLinkRelPrefetch);
@@ -541,8 +585,8 @@ Resource* PreloadHelper::PrefetchIfNeeded(const LinkLoadParameters& params,
     resource_request.SetRecursivePrefetchToken(params.recursive_prefetch_token);
 
     resource_request.SetReferrerPolicy(params.referrer_policy);
-    resource_request.SetFetchImportanceMode(
-        GetFetchImportanceAttributeValue(params.importance));
+    resource_request.SetFetchPriorityHint(
+        GetFetchPriorityAttributeValue(params.fetch_priority_hint));
 
     if (base::FeatureList::IsEnabled(features::kPrefetchPrivacyChanges)) {
       resource_request.SetRedirectMode(network::mojom::RedirectMode::kError);
@@ -563,11 +607,13 @@ Resource* PreloadHelper::PrefetchIfNeeded(const LinkLoadParameters& params,
           params.cross_origin);
     }
     link_fetch_params.SetSignedExchangePrefetchCacheEnabled(
-        RuntimeEnabledFeatures::
-            SignedExchangePrefetchCacheForNavigationsEnabled() ||
         RuntimeEnabledFeatures::SignedExchangeSubresourcePrefetchEnabled(
             document.GetExecutionContext()));
-    return LinkPrefetchResource::Fetch(link_fetch_params, document.Fetcher());
+    Resource* resource =
+        LinkPrefetchResource::Fetch(link_fetch_params, document.Fetcher());
+    if (pending_preload)
+      pending_preload->AddResource(resource);
+    return resource;
   }
   return nullptr;
 }
@@ -611,7 +657,7 @@ void PreloadHelper::LoadLinksFromHeader(
       DCHECK(RuntimeEnabledFeatures::SignedExchangeSubresourcePrefetchEnabled(
           document->GetExecutionContext()));
       KURL url = params.href;
-      base::Optional<ResourceType> resource_type =
+      absl::optional<ResourceType> resource_type =
           PreloadHelper::GetResourceTypeFromAsAttribute(params.as);
       if (resource_type == ResourceType::kImage &&
           !params.image_srcset.IsEmpty()) {
@@ -620,7 +666,7 @@ void PreloadHelper::LoadLinksFromHeader(
         // content.
         // TODO(crbug/935267): Consider supporting Viewport HTTP response
         // header. https://discourse.wicg.io/t/proposal-viewport-http-header/
-        MediaValues* media_values =
+        MediaValuesCached* media_values =
             CreateMediaValues(*document, viewport_description);
         url = GetBestFitImageURL(*document, base_url, media_values, params.href,
                                  params.image_srcset, params.image_sizes);
@@ -647,6 +693,11 @@ void PreloadHelper::LoadLinksFromHeader(
         // used by the next navigation only when they requested the same URL
         // with the same association mapping.
         change_rel_to_prefetch = true;
+        // Prefetch requests for alternate SXG should be made with no-cors,
+        // regardless of the crossorigin attribute of Link:rel=preload header
+        // that triggered the prefetch. See step 19.6.8 of
+        // https://wicg.github.io/webpackage/loading.html#mp-link-type-prefetch.
+        params.cross_origin = kCrossOriginAttributeNotSet;
       }
     }
 
@@ -663,10 +714,16 @@ void PreloadHelper::LoadLinksFromHeader(
     }
     if (can_load_resources != kDoNotLoadResources) {
       DCHECK(document);
+      PendingLinkPreload* pending_preload =
+          MakeGarbageCollected<PendingLinkPreload>(*document,
+                                                   nullptr /* LinkLoader */);
+      document->AddPendingLinkHeaderPreload(*pending_preload);
       PreloadIfNeeded(params, *document, base_url, kLinkCalledFromHeader,
-                      viewport_description, kNotParserInserted);
-      PrefetchIfNeeded(params, *document);
-      ModulePreloadIfNeeded(params, *document, viewport_description, nullptr);
+                      viewport_description, kNotParserInserted,
+                      pending_preload);
+      PrefetchIfNeeded(params, *document, pending_preload);
+      ModulePreloadIfNeeded(params, *document, viewport_description,
+                            pending_preload);
     }
     if (params.rel.IsServiceWorker()) {
       UseCounter::Count(document, WebFeature::kLinkHeaderServiceWorker);
@@ -696,8 +753,10 @@ Resource* PreloadHelper::StartPreload(ResourceType type,
       break;
     case ResourceType::kFont:
       resource = FontResource::Fetch(params, resource_fetcher, nullptr);
-      document.GetFontPreloadManager().FontPreloadingStarted(
-          To<FontResource>(resource));
+      if (document.GetRenderBlockingResourceManager()) {
+        document.GetRenderBlockingResourceManager()
+            ->EnsureStartFontPreloadTimer();
+      }
       break;
     case ResourceType::kAudio:
     case ResourceType::kVideo:
@@ -709,11 +768,6 @@ Resource* PreloadHelper::StartPreload(ResourceType type,
       params.MutableResourceRequest().SetUseStreamOnResponse(true);
       params.MutableOptions().data_buffering_policy = kDoNotBufferData;
       resource = RawResource::FetchTextTrack(params, resource_fetcher, nullptr);
-      break;
-    case ResourceType::kImportResource:
-      params.MutableResourceRequest().SetUseStreamOnResponse(true);
-      params.MutableOptions().data_buffering_policy = kDoNotBufferData;
-      resource = RawResource::FetchImport(params, resource_fetcher, nullptr);
       break;
     case ResourceType::kRaw:
       params.MutableResourceRequest().SetUseStreamOnResponse(true);

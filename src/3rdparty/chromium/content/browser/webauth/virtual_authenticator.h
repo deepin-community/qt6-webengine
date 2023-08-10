@@ -10,11 +10,8 @@
 #include <vector>
 
 #include "base/containers/span.h"
-#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
-#include "base/optional.h"
-#include "content/common/content_export.h"
 #include "device/fido/fido_constants.h"
 #include "device/fido/virtual_fido_device.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
@@ -29,16 +26,14 @@ namespace content {
 // This class has very little logic itself, it merely stores a unique ID and the
 // state of the authenticator, whereas performing all cryptographic operations
 // is delegated to the VirtualFidoDevice class.
-class CONTENT_EXPORT VirtualAuthenticator
-    : public blink::test::mojom::VirtualAuthenticator {
+class VirtualAuthenticator : public blink::test::mojom::VirtualAuthenticator {
  public:
-  VirtualAuthenticator(device::ProtocolVersion protocol,
-                       device::Ctap2Version ctap2_version,
-                       device::FidoTransportProtocol transport,
-                       device::AuthenticatorAttachment attachment,
-                       bool has_resident_key,
-                       bool has_user_verification,
-                       bool has_large_blob);
+  explicit VirtualAuthenticator(
+      const blink::test::mojom::VirtualAuthenticatorOptions& options);
+
+  VirtualAuthenticator(const VirtualAuthenticator&) = delete;
+  VirtualAuthenticator& operator=(const VirtualAuthenticator&) = delete;
+
   ~VirtualAuthenticator() override;
 
   void AddReceiver(
@@ -135,6 +130,8 @@ class CONTENT_EXPORT VirtualAuthenticator
   const bool has_resident_key_;
   const bool has_user_verification_;
   const bool has_large_blob_;
+  const bool has_cred_blob_;
+  const bool has_min_pin_length_;
   bool is_user_verified_ = true;
   const std::string unique_id_;
   bool is_user_present_;
@@ -143,8 +140,6 @@ class CONTENT_EXPORT VirtualAuthenticator
   mojo::ReceiverSet<blink::test::mojom::VirtualAuthenticator> receiver_set_;
 
   base::WeakPtrFactory<VirtualAuthenticator> weak_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(VirtualAuthenticator);
 };
 
 }  // namespace content

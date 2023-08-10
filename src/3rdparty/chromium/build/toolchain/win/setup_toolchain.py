@@ -151,9 +151,12 @@ def _LoadToolchainEnv(cpu, toolchain_root, sdk_dir, target_store):
       # doesn't seem to cause problems.
       if 'VSINSTALLDIR' in os.environ:
         del os.environ['VSINSTALLDIR']
-        del os.environ['INCLUDE']
-        del os.environ['LIB']
-        del os.environ['LIBPATH']
+        if 'INCLUDE' in os.environ:
+          del os.environ['INCLUDE']
+        if 'LIB' in os.environ:
+          del os.environ['LIB']
+        if 'LIBPATH' in os.environ:
+          del os.environ['LIBPATH']
       other_path = os.path.normpath(os.path.join(
                                         os.environ['GYP_MSVS_OVERRIDE_PATH'],
                                         'VC/Auxiliary/Build/vcvarsall.bat'))
@@ -172,7 +175,7 @@ def _LoadToolchainEnv(cpu, toolchain_root, sdk_dir, target_store):
     # Explicitly specifying the SDK version to build with to avoid accidentally
     # building with a new and untested SDK. This should stay in sync with the
     # packaged toolchain in build/vs_toolchain.py.
-    args.append('10.0.19041.0')
+    args.append('10.0.20348.0')
     variables = _LoadEnvFromBat(args)
   return _ExtractImportantEnvironment(variables)
 
@@ -220,7 +223,6 @@ def main():
     print('or setup_toolchain.py <target_os> <target_cpu>'
           '<environment block name|none>')
     sys.exit(2)
-  win_sdk_path = ''
   if len(sys.argv) == 7:
     # toolchain_root and win_sdk_path are only read if the hermetic Windows
     # toolchain is set, that is if DEPOT_TOOLS_WIN_TOOLCHAIN is not set to 0.
@@ -251,9 +253,6 @@ def main():
   cpus = ('x86', 'x64', 'arm', 'arm64')
   assert target_cpu in cpus
   vc_bin_dir = ''
-  vc_lib_path = ''
-  vc_lib_atlmfc_path = ''
-  vc_lib_um_path = ''
   include = ''
   lib = ''
 
@@ -261,7 +260,7 @@ def main():
 
   def relflag(s):  # Make s relative to builddir when cwd and sdk on same drive.
     try:
-      return os.path.relpath(s)
+      return os.path.relpath(s).replace('\\', '/')
     except ValueError:
       return s
 
@@ -278,10 +277,6 @@ def main():
         env['PATH'] = runtime_dirs + os.pathsep + env['PATH']
 
       vc_bin_dir = FindFileInEnvList(env, 'PATH', os.pathsep, 'cl.exe')
-      vc_lib_path = FindFileInEnvList(env, 'LIB', ';', 'msvcrt.lib')
-      vc_lib_atlmfc_path = FindFileInEnvList(
-          env, 'LIB', ';', 'atls.lib', optional=True)
-      vc_lib_um_path = FindFileInEnvList(env, 'LIB', ';', 'user32.lib')
 
       # The separator for INCLUDE here must match the one used in
       # _LoadToolchainEnv() above.
@@ -309,15 +304,14 @@ def main():
           gn_helpers.ToGNString(q('/winsysroot' + relflag(toolchain_root))))
   else:
     print('include_flags_imsvc = ' + gn_helpers.ToGNString(include_imsvc))
-  print('vc_lib_path = ' + gn_helpers.ToGNString(vc_lib_path))
-  # Possible atlmfc library path gets introduced in the future for store thus
-  # output result if a result exists.
-  if (vc_lib_atlmfc_path != ''):
-    print('vc_lib_atlmfc_path = ' + gn_helpers.ToGNString(vc_lib_atlmfc_path))
-  print('vc_lib_um_path = ' + gn_helpers.ToGNString(vc_lib_um_path))
   print('paths = ' + gn_helpers.ToGNString(env['PATH']))
   assert libpath_flags
   print('libpath_flags = ' + gn_helpers.ToGNString(libpath_flags))
+  if bool(int(os.environ.get('DEPOT_TOOLS_WIN_TOOLCHAIN', 1))) and win_sdk_path:
+    print('libpath_lldlink_flags = ' +
+          gn_helpers.ToGNString(q('/winsysroot:' + relflag(toolchain_root))))
+  else:
+    print('libpath_lldlink_flags = ' + gn_helpers.ToGNString(libpath_flags))
 
 
 if __name__ == '__main__':

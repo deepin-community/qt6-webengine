@@ -9,12 +9,16 @@
 
 namespace content {
 
-BucketManager::BucketManager() = default;
+BucketManager::BucketManager(
+    scoped_refptr<storage::QuotaManagerProxy> quota_manager_proxy)
+    : quota_manager_proxy_(std::move(quota_manager_proxy)) {}
+
 BucketManager::~BucketManager() = default;
 
 void BucketManager::BindReceiver(
     const url::Origin& origin,
-    mojo::PendingReceiver<blink::mojom::BucketManagerHost> receiver) {
+    mojo::PendingReceiver<blink::mojom::BucketManagerHost> receiver,
+    mojo::ReportBadMessageCallback bad_message_callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   auto it = hosts_.find(origin);
@@ -24,15 +28,15 @@ void BucketManager::BindReceiver(
   }
 
   if (!network::IsOriginPotentiallyTrustworthy(origin)) {
-    mojo::ReportBadMessage("Called Buckets from an insecure context");
+    std::move(bad_message_callback)
+        .Run("Called Buckets from an insecure context");
     return;
   }
 
-  bool insert_succeeded;
-  std::tie(it, insert_succeeded) = hosts_.insert(
+  auto [insert_it, insert_succeeded] = hosts_.insert(
       {origin, std::make_unique<BucketManagerHost>(this, origin)});
   DCHECK(insert_succeeded);
-  it->second->BindReceiver(std::move(receiver));
+  insert_it->second->BindReceiver(std::move(receiver));
 }
 
 void BucketManager::OnHostReceiverDisconnect(BucketManagerHost* host,

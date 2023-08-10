@@ -16,9 +16,10 @@
 #include <thread>
 #include <unistd.h>
 
+#include "include/core/SkColorSpace.h"
 #include "include/core/SkGraphics.h"
 #include "include/core/SkSurface.h"
-#include "src/core/SkRemoteGlyphCache.h"
+#include "include/private/chromium/SkChromeRemoteGlyphCache.h"
 #include "src/core/SkScalerContext.h"
 
 static std::string gSkpName;
@@ -36,6 +37,8 @@ public:
         return handleId > lastPurgedHandleId;
     }
     void purgeAll() { lastPurgedHandleId = nextHandleId; }
+
+    bool isHandleDeleted(SkDiscardableHandleId id) override { return false; }
 
 private:
     SkDiscardableHandleId nextHandleId = 0u;
@@ -61,6 +64,8 @@ public:
     ~ClientDiscardableManager() override = default;
 
     bool deleteHandle(SkDiscardableHandleId) override { return allowPurging; }
+
+    void notifyCacheMiss(SkStrikeClient::CacheMissType type, int fontSize) override { }
 
 private:
     bool allowPurging = false;
@@ -136,9 +141,9 @@ static bool push_font_data(const SkPicture& pic, SkStrikeServer* strikeServer,
                            sk_sp<SkColorSpace> colorSpace, int writeFd) {
     const SkIRect bounds = pic.cullRect().round();
     const SkSurfaceProps props(0, kRGB_H_SkPixelGeometry);
-    SkTextBlobCacheDiffCanvas filter(bounds.width(), bounds.height(), props,
-                                     strikeServer, std::move(colorSpace), true);
-    pic.playback(&filter);
+    std::unique_ptr<SkCanvas> filter = strikeServer->makeAnalysisCanvas(
+            bounds.width(), bounds.height(), props, std::move(colorSpace), true);
+    pic.playback(filter.get());
 
     std::vector<uint8_t> fontData;
     strikeServer->writeStrikeData(&fontData);
@@ -324,4 +329,3 @@ int main(int argc, char** argv) {
 
     return 0;
 }
-

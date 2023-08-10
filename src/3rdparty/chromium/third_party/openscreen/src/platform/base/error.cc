@@ -166,6 +166,8 @@ std::ostream& operator<<(std::ostream& os, const Error::Code& code) {
       return os << "ErrCertsRevoked";
     case Error::Code::kErrCertsPathlen:
       return os << "ErrCertsPathlen";
+    case Error::Code::kErrCertSerialize:
+      return os << "ErrCertSerialize";
     case Error::Code::kUnknownError:
       return os << "UnknownError";
     case Error::Code::kNotImplemented:
@@ -254,8 +256,16 @@ std::ostream& operator<<(std::ostream& os, const Error::Code& code) {
       return os << "ProcessReceivedRecordFailure";
     case Error::Code::kUnknownCodec:
       return os << "UnknownCodec";
+    case Error::Code::kInvalidCodecParameter:
+      return os << "InvalidCodecParameter";
     case Error::Code::kSocketFailure:
       return os << "SocketFailure";
+    case Error::Code::kUnencryptedOffer:
+      return os << "UnencryptedOffer";
+    case Error::Code::kRemotingNotSupported:
+      return os << "RemotingNotSupported";
+    case Error::Code::kNegotiationFailure:
+      return os << "NegotiationFailure";
     case Error::Code::kNone:
       break;
   }

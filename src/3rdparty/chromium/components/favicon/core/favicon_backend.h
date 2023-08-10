@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "base/containers/flat_set.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "components/favicon/core/favicon_types.h"
 #include "components/favicon_base/favicon_types.h"
@@ -130,6 +131,10 @@ class FaviconBackend {
   // with it.
   bool SetFaviconsOutOfDateForPage(const GURL& page_url);
 
+  // Mark all favicons as out of date that have been modified at or after
+  // |begin| and before |end|.
+  bool SetFaviconsOutOfDateBetween(base::Time begin, base::Time end);
+
   // See function of same name in HistoryService for details.
   void TouchOnDemandFavicon(const GURL& icon_url);
 
@@ -210,7 +215,7 @@ class FaviconBackend {
                                  favicon_base::FaviconID icon_id);
 
   std::unique_ptr<FaviconDatabase> db_;
-  FaviconBackendDelegate* delegate_;
+  raw_ptr<FaviconBackendDelegate> delegate_;
 };
 
 }  // namespace favicon

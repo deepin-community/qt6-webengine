@@ -5,6 +5,7 @@
 #include "components/performance_manager/execution_context/execution_context_registry_impl.h"
 
 #include "base/check.h"
+#include "base/observer_list.h"
 #include "components/performance_manager/execution_context/execution_context_impl.h"
 #include "components/performance_manager/public/execution_context/execution_context.h"
 #include "url/gurl.h"
@@ -175,7 +176,7 @@ ExecutionContextRegistryImpl::GetExecutionContextForWorkerNodeImpl(
 
 void ExecutionContextRegistryImpl::OnPassedToGraph(Graph* graph) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  DCHECK(graph->IsEmpty());
+  DCHECK(graph->HasOnlySystemNode());
   graph->RegisterObject(this);
   graph->AddFrameNodeObserver(this);
   graph->AddWorkerNodeObserver(this);

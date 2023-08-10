@@ -5,9 +5,9 @@
 #include "chrome/browser/ui/webui/chromeos/login/gaia_password_changed_screen_handler.h"
 
 #include "base/values.h"
+#include "chrome/browser/ash/login/oobe_screen.h"
 #include "chrome/browser/ash/login/screens/gaia_password_changed_screen.h"
-#include "chrome/browser/chromeos/login/oobe_screen.h"
-#include "chrome/browser/chromeos/login/ui/login_display_host.h"
+#include "chrome/browser/ash/login/ui/login_display_host.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/login/localized_values_builder.h"
@@ -17,10 +17,10 @@ namespace chromeos {
 
 constexpr StaticOobeScreenId GaiaPasswordChangedView::kScreenId;
 
-GaiaPasswordChangedScreenHandler::GaiaPasswordChangedScreenHandler(
-    JSCallsContainer* js_calls_container)
-    : BaseScreenHandler(kScreenId, js_calls_container) {
-  set_user_acted_method_path("login.GaiaPasswordChangedScreen.userActed");
+GaiaPasswordChangedScreenHandler::GaiaPasswordChangedScreenHandler()
+    : BaseScreenHandler(kScreenId) {
+  set_user_acted_method_path_deprecated(
+      "login.GaiaPasswordChangedScreen.userActed");
 }
 
 GaiaPasswordChangedScreenHandler::~GaiaPasswordChangedScreenHandler() {
@@ -45,27 +45,27 @@ void GaiaPasswordChangedScreenHandler::DeclareLocalizedValues(
   builder->Add("passwordChangedTryAgain", IDS_LOGIN_PASSWORD_CHANGED_TRY_AGAIN);
 }
 
-void GaiaPasswordChangedScreenHandler::Initialize() {
+void GaiaPasswordChangedScreenHandler::InitializeDeprecated() {
   AddCallback("migrateUserData",
               &GaiaPasswordChangedScreenHandler::HandleMigrateUserData);
 }
 
 void GaiaPasswordChangedScreenHandler::Show(const std::string& email,
                                             bool has_error) {
-  base::DictionaryValue data;
-  data.SetStringPath("email", email);
-  data.SetBoolPath("showError", has_error);
-  ShowScreenWithData(kScreenId, &data);
+  base::Value::Dict data;
+  data.Set("email", email);
+  data.Set("showError", has_error);
+  ShowInWebUI(std::move(data));
 }
 
 void GaiaPasswordChangedScreenHandler::Bind(GaiaPasswordChangedScreen* screen) {
   screen_ = screen;
-  BaseScreenHandler::SetBaseScreen(screen_);
+  BaseScreenHandler::SetBaseScreenDeprecated(screen_);
 }
 
 void GaiaPasswordChangedScreenHandler::Unbind() {
   screen_ = nullptr;
-  BaseScreenHandler::SetBaseScreen(nullptr);
+  BaseScreenHandler::SetBaseScreenDeprecated(nullptr);
 }
 
 void GaiaPasswordChangedScreenHandler::HandleMigrateUserData(

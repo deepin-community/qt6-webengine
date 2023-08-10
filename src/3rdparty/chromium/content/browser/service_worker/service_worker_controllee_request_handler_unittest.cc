@@ -4,6 +4,7 @@
 
 #include "content/browser/service_worker/service_worker_controllee_request_handler.h"
 
+#include <memory>
 #include <utility>
 #include <vector>
 
@@ -11,7 +12,6 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/run_loop.h"
 #include "base/test/bind.h"
-#include "base/test/metrics/histogram_tester.h"
 #include "components/offline_pages/buildflags/buildflags.h"
 #include "content/browser/service_worker/embedded_worker_test_helper.h"
 #include "content/browser/service_worker/service_worker_container_host.h"
@@ -23,13 +23,18 @@
 #include "content/public/common/content_client.h"
 #include "content/public/test/browser_task_environment.h"
 #include "content/test/test_content_browser_client.h"
+#include "net/cookies/site_for_cookies.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "net/url_request/url_request_context.h"
+#include "net/url_request/url_request_context_builder.h"
 #include "net/url_request/url_request_test_util.h"
 #include "services/network/public/cpp/resource_request_body.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/common/storage_key/storage_key.h"
 #include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom.h"
 #include "third_party/blink/public/mojom/service_worker/service_worker_registration.mojom.h"
+#include "third_party/blink/public/mojom/service_worker/service_worker_registration_options.mojom.h"
+#include "url/origin.h"
 
 namespace content {
 namespace service_worker_controllee_request_handler_unittest {
@@ -45,7 +50,7 @@ class ServiceWorkerControlleeRequestHandlerTest : public testing::Test {
         network::mojom::RequestMode request_mode =
             network::mojom::RequestMode::kNoCors)
         : destination_(destination),
-          request_(test->url_request_context_.CreateRequest(
+          request_(test->url_request_context_->CreateRequest(
               url,
               net::DEFAULT_PRIORITY,
               &test->url_request_delegate_,
@@ -55,6 +60,7 @@ class ServiceWorkerControlleeRequestHandlerTest : public testing::Test {
               test->container_host_,
               destination,
               /*skip_service_worker=*/false,
+              /*frame_tree_node_id=*/RenderFrameHost::kNoFrameTreeNodeId,
               base::DoNothing())) {}
 
     void MaybeCreateLoader() {
@@ -62,8 +68,10 @@ class ServiceWorkerControlleeRequestHandlerTest : public testing::Test {
       resource_request.url = request_->url();
       resource_request.destination = destination_;
       resource_request.headers = request()->extra_request_headers();
-      handler_->MaybeCreateLoader(resource_request, nullptr, base::DoNothing(),
-                                  base::DoNothing());
+      handler_->MaybeCreateLoader(
+          resource_request,
+          blink::StorageKey(url::Origin::Create(resource_request.url)), nullptr,
+          base::DoNothing(), base::DoNothing());
     }
 
     ServiceWorkerMainResourceLoader* loader() { return handler_->loader(); }
@@ -84,20 +92,23 @@ class ServiceWorkerControlleeRequestHandlerTest : public testing::Test {
   };
 
   ServiceWorkerControlleeRequestHandlerTest()
-      : task_environment_(BrowserTaskEnvironment::IO_MAINLOOP) {}
+      : task_environment_(BrowserTaskEnvironment::IO_MAINLOOP),
+        url_request_context_(
+            net::CreateTestURLRequestContextBuilder()->Build()) {}
 
   void SetUp() override { SetUpWithHelper(/*is_parent_frame_secure=*/true); }
 
   void SetUpWithHelper(bool is_parent_frame_secure) {
-    helper_.reset(new EmbeddedWorkerTestHelper(base::FilePath()));
+    helper_ = std::make_unique<EmbeddedWorkerTestHelper>(base::FilePath());
 
     // A new unstored registration/version.
     scope_ = GURL("https://host/scope/");
     script_url_ = GURL("https://host/script.js");
     blink::mojom::ServiceWorkerRegistrationOptions options;
     options.scope = scope_;
-    registration_ =
-        new ServiceWorkerRegistration(options, 1L, context()->AsWeakPtr());
+    registration_ = new ServiceWorkerRegistration(
+        options, blink::StorageKey(url::Origin::Create(scope_)), 1L,
+        context()->AsWeakPtr());
     version_ = new ServiceWorkerVersion(
         registration_.get(), script_url_, blink::mojom::ScriptType::kClassic,
         1L, mojo::PendingRemote<storage::mojom::ServiceWorkerLiveVersionRef>(),
@@ -114,8 +125,10 @@ class ServiceWorkerControlleeRequestHandlerTest : public testing::Test {
     // An empty host.
     remote_endpoints_.emplace_back();
     container_host_ = CreateContainerHostForWindow(
-        helper_->mock_render_process_id(), is_parent_frame_secure,
-        helper_->context()->AsWeakPtr(), &remote_endpoints_.back());
+        GlobalRenderFrameHostId(helper_->mock_render_process_id(),
+                                /*mock frame_routing_id=*/1),
+        is_parent_frame_secure, helper_->context()->AsWeakPtr(),
+        &remote_endpoints_.back());
   }
 
   void TearDown() override {
@@ -137,7 +150,7 @@ class ServiceWorkerControlleeRequestHandlerTest : public testing::Test {
   scoped_refptr<ServiceWorkerRegistration> registration_;
   scoped_refptr<ServiceWorkerVersion> version_;
   base::WeakPtr<ServiceWorkerContainerHost> container_host_;
-  net::URLRequestContext url_request_context_;
+  std::unique_ptr<net::URLRequestContext> url_request_context_;
   net::TestDelegate url_request_delegate_;
   GURL scope_;
   GURL script_url_;
@@ -149,8 +162,8 @@ class ServiceWorkerTestContentBrowserClient : public TestContentBrowserClient {
   ServiceWorkerTestContentBrowserClient() = default;
   AllowServiceWorkerResult AllowServiceWorker(
       const GURL& scope,
-      const GURL& site_for_cookies,
-      const base::Optional<url::Origin>& top_frame_origin,
+      const net::SiteForCookies& site_for_cookies,
+      const absl::optional<url::Origin>& top_frame_origin,
       const GURL& script_url,
       content::BrowserContext* context) override {
     return AllowServiceWorkerResult::No();
@@ -158,8 +171,6 @@ class ServiceWorkerTestContentBrowserClient : public TestContentBrowserClient {
 };
 
 TEST_F(ServiceWorkerControlleeRequestHandlerTest, Basic) {
-  base::HistogramTester histogram_tester;
-
   // Prepare a valid version and registration.
   version_->set_fetch_handler_existence(
       ServiceWorkerVersion::FetchHandlerExistence::EXISTS);
@@ -179,9 +190,6 @@ TEST_F(ServiceWorkerControlleeRequestHandlerTest, Basic) {
     loop.Run();
   }
 
-  histogram_tester.ExpectTotalCount(
-      "ServiceWorker.LookupRegistration.MainResource.Time.Exists", 0);
-
   // Conduct a main resource load.
   ServiceWorkerRequestTestResources test_resources(
       this, GURL("https://host/scope/doc"),
@@ -193,17 +201,11 @@ TEST_F(ServiceWorkerControlleeRequestHandlerTest, Basic) {
 
   EXPECT_TRUE(test_resources.loader());
   EXPECT_TRUE(version_->HasControllee());
-  histogram_tester.ExpectTotalCount(
-      "ServiceWorker.LookupRegistration.MainResource.Time.Exists", 1);
 
   test_resources.ResetHandler();
 }
 
 TEST_F(ServiceWorkerControlleeRequestHandlerTest, DoesNotExist) {
-  base::HistogramTester histogram_tester;
-  histogram_tester.ExpectTotalCount(
-      "ServiceWorker.LookupRegistration.MainResource.Time.DoesNotExist", 0);
-
   // No version and registration exists in the scope.
 
   // Conduct a main resource load.
@@ -215,20 +217,14 @@ TEST_F(ServiceWorkerControlleeRequestHandlerTest, DoesNotExist) {
 
   base::RunLoop().RunUntilIdle();
 
-  histogram_tester.ExpectTotalCount(
-      "ServiceWorker.LookupRegistration.MainResource.Time.DoesNotExist", 1);
-
+  EXPECT_FALSE(test_resources.loader());
+  EXPECT_FALSE(version_->HasControllee());
   test_resources.ResetHandler();
 }
 
 TEST_F(ServiceWorkerControlleeRequestHandlerTest, Error) {
-  base::HistogramTester histogram_tester;
-
   // Disabling the storage makes looking up the registration return an error.
   context()->registry()->DisableStorageForTesting(base::DoNothing());
-
-  histogram_tester.ExpectTotalCount(
-      "ServiceWorker.LookupRegistration.MainResource.Time.Error", 0);
 
   // Conduct a main resource load.
   ServiceWorkerRequestTestResources test_resources(
@@ -239,9 +235,8 @@ TEST_F(ServiceWorkerControlleeRequestHandlerTest, Error) {
 
   base::RunLoop().RunUntilIdle();
 
-  histogram_tester.ExpectTotalCount(
-      "ServiceWorker.LookupRegistration.MainResource.Time.Error", 1);
-
+  EXPECT_FALSE(test_resources.loader());
+  EXPECT_FALSE(version_->HasControllee());
   test_resources.ResetHandler();
 }
 
@@ -406,7 +401,9 @@ TEST_F(ServiceWorkerControlleeRequestHandlerTest, SkipServiceWorker) {
       std::make_unique<ServiceWorkerControlleeRequestHandler>(
           context()->AsWeakPtr(), container_host_,
           network::mojom::RequestDestination::kDocument,
-          /*skip_service_worker=*/true, base::DoNothing()));
+          /*skip_service_worker=*/true,
+          /*frame_tree_node_id=*/RenderFrameHost::kNoFrameTreeNodeId,
+          base::DoNothing()));
 
   // Conduct a main resource load.
   test_resources.MaybeCreateLoader();
@@ -447,7 +444,9 @@ TEST_F(ServiceWorkerControlleeRequestHandlerTest, NullContext) {
       std::make_unique<ServiceWorkerControlleeRequestHandler>(
           context()->AsWeakPtr(), container_host_,
           network::mojom::RequestDestination::kDocument,
-          /*skip_service_worker=*/false, base::DoNothing()));
+          /*skip_service_worker=*/false,
+          /*frame_tree_node_id=*/RenderFrameHost::kNoFrameTreeNodeId,
+          base::DoNothing()));
 
   // Destroy the context and make a new one.
   helper_->context_wrapper()->DeleteAndStartOver();

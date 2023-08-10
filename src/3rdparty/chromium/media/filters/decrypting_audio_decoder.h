@@ -8,10 +8,9 @@
 #include <memory>
 
 #include "base/callback.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
-#include "base/time/time.h"
 #include "media/base/audio_decoder.h"
 #include "media/base/callback_registry.h"
 #include "media/base/cdm_context.h"
@@ -38,12 +37,15 @@ class MEDIA_EXPORT DecryptingAudioDecoder : public AudioDecoder {
   DecryptingAudioDecoder(
       const scoped_refptr<base::SequencedTaskRunner>& task_runner,
       MediaLog* media_log);
+
+  DecryptingAudioDecoder(const DecryptingAudioDecoder&) = delete;
+  DecryptingAudioDecoder& operator=(const DecryptingAudioDecoder&) = delete;
+
   ~DecryptingAudioDecoder() override;
 
   // Decoder implementation
   bool SupportsDecryption() const override;
   AudioDecoderType GetDecoderType() const override;
-  std::string GetDisplayName() const override;
 
   // AudioDecoder implementation.
   void Initialize(const AudioDecoderConfig& config,
@@ -93,7 +95,7 @@ class MEDIA_EXPORT DecryptingAudioDecoder : public AudioDecoder {
 
   // Set in constructor.
   scoped_refptr<base::SequencedTaskRunner> const task_runner_;
-  MediaLog* const media_log_;
+  const raw_ptr<MediaLog> media_log_;
 
   State state_ = kUninitialized;
 
@@ -106,7 +108,7 @@ class MEDIA_EXPORT DecryptingAudioDecoder : public AudioDecoder {
   // The current decoder configuration.
   AudioDecoderConfig config_;
 
-  Decryptor* decryptor_ = nullptr;
+  raw_ptr<Decryptor> decryptor_ = nullptr;
 
   // The buffer that needs decrypting/decoding.
   scoped_refptr<media::DecoderBuffer> pending_buffer_to_decode_;
@@ -128,8 +130,6 @@ class MEDIA_EXPORT DecryptingAudioDecoder : public AudioDecoder {
   std::unique_ptr<CallbackRegistration> event_cb_registration_;
 
   base::WeakPtrFactory<DecryptingAudioDecoder> weak_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(DecryptingAudioDecoder);
 };
 
 }  // namespace media

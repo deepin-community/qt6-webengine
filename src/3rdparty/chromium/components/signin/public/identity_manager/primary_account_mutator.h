@@ -5,8 +5,6 @@
 #ifndef COMPONENTS_SIGNIN_PUBLIC_IDENTITY_MANAGER_PRIMARY_ACCOUNT_MUTATOR_H_
 #define COMPONENTS_SIGNIN_PUBLIC_IDENTITY_MANAGER_PRIMARY_ACCOUNT_MUTATOR_H_
 
-#include <string>
-
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
 
@@ -18,6 +16,7 @@ enum class SignoutDelete;
 struct CoreAccountId;
 
 namespace signin {
+enum class ConsentLevel;
 
 // PrimaryAccountMutator is the interface to set and clear the primary account
 // (see IdentityManager for more information).
@@ -28,6 +27,18 @@ namespace signin {
 // available at runtime (thus accessors may return null).
 class PrimaryAccountMutator {
  public:
+  // Error returned by SetPrimaryAccount().
+  enum class PrimaryAccountError {
+    // No error, the operation was successful.
+    kNoError = 0,
+    // Account info is empty.
+    kAccountInfoEmpty = 1,
+    // Sync consent was already set.
+    kSyncConsentAlreadySet = 2,
+    // Sign-in is disallowed.
+    kSigninNotAllowed = 4,
+  };
+
   PrimaryAccountMutator() = default;
   virtual ~PrimaryAccountMutator() = default;
 
@@ -40,6 +51,7 @@ class PrimaryAccountMutator {
   PrimaryAccountMutator const& operator=(const PrimaryAccountMutator& other) =
       delete;
 
+  // For ConsentLevel::kSync -
   // Marks the account with |account_id| as the primary account, and returns
   // whether the operation succeeded or not. To succeed, this requires that:
   //    - the account is known by the IdentityManager.
@@ -49,20 +61,20 @@ class PrimaryAccountMutator {
   //    - there is not already a primary account set.
   // TODO(https://crbug.com/983124): Investigate adding all the extra
   // requirements on ChromeOS as well.
-  virtual bool SetPrimaryAccount(const CoreAccountId& account_id) = 0;
-
+  //
+  // For ConsentLevel::kSignin -
   // Sets the account with |account_id| as the unconsented primary account
   // (i.e. without implying browser sync consent). Requires that the account
   // is known by the IdentityManager. See README.md for details on the meaning
-  // of "unconsented".
-  virtual void SetUnconsentedPrimaryAccount(
-      const CoreAccountId& account_id) = 0;
+  // of "unconsented". Returns whether the operation succeeded or not.
+  virtual PrimaryAccountError SetPrimaryAccount(const CoreAccountId& account_id,
+                                                ConsentLevel consent_level) = 0;
 
   // Revokes sync consent from the primary account. We distinguish the following
   // cases:
-  // a. If transitioning from ConsentLevel::kSync to ConsentLevel::kNotRequired
+  // a. If transitioning from ConsentLevel::kSync to ConsentLevel::kSignin
   //    is supported (e.g. for DICE), then this method only revokes the sync
-  //    consent and the primary account is left at ConsentLevel::kNotRequired
+  //    consent and the primary account is left at ConsentLevel::kSignin
   //    level.
   // b. Otherwise this method revokes the sync consent and it also  clears the
   //    primary account and removes all other accounts via a call to

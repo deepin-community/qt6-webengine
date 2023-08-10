@@ -44,6 +44,60 @@ namespace {
 // pid == 2 on Linux and Android.
 const uint32_t kKthreaddPid = 2;
 const char kKthreaddName[] = "kthreadd";
+
+base::Optional<int> VersionStringToSdkVersion(const std::string& version) {
+  // TODO(lalitm): remove this when the SDK version polling saturates
+  // S/T traces in practice.
+  if (base::StartsWith(version, "T") || base::StartsWith(version, "S")) {
+    return 31;
+  }
+
+  // Documentation for this mapping can be found at
+  // https://source.android.com/compatibility/cdd.
+  if (version == "12") {
+    return 31;
+  } else if (version == "11") {
+    return 30;
+  } else if (version == "10") {
+    return 29;
+  } else if (version == "9") {
+    return 28;
+  } else if (version == "8.1") {
+    return 27;
+  } else if (version == "8.0") {
+    return 26;
+  } else if (version == "7.1") {
+    return 25;
+  } else if (version == "7.0") {
+    return 24;
+  } else if (version == "6.0") {
+    return 23;
+  } else if (version == "5.1" || version == "5.1.1") {
+    return 22;
+  } else if (version == "5.0" || version == "5.0.1" || version == "5.0.2") {
+    return 21;
+  }
+  // If we reached this point, we don't know how to parse this version
+  // so just return null.
+  return base::nullopt;
+}
+
+base::Optional<int> FingerprintToSdkVersion(const std::string& fingerprint) {
+  // Try to parse the SDK version from the fingerprint.
+  // Examples of fingerprints:
+  // google/shamu/shamu:7.0/NBD92F/3753956:userdebug/dev-keys
+  // google/coral/coral:12/SP1A.210812.015/7679548:userdebug/dev-keys
+  size_t colon = fingerprint.find(':');
+  if (colon == std::string::npos)
+    return base::nullopt;
+
+  size_t slash = fingerprint.find('/', colon);
+  if (slash == std::string::npos)
+    return base::nullopt;
+
+  std::string version = fingerprint.substr(colon + 1, slash - (colon + 1));
+  return VersionStringToSdkVersion(version);
+}
 }  // namespace
 
 SystemProbesParser::SystemProbesParser(TraceProcessorContext* context)
@@ -69,12 +123,6 @@ SystemProbesParser::SystemProbesParser(TraceProcessorContext* context)
       cpu_times_softirq_ns_id_(
           context->storage->InternString("cpu.times.softirq_ns")),
       oom_score_adj_id_(context->storage->InternString("oom_score_adj")),
-      is_peak_rss_resettable_id_(
-          context->storage->InternString("is_peak_rss_resettable")),
-      chrome_private_footprint_kb_(
-          context->storage->InternString("chrome.private_footprint_kb")),
-      chrome_peak_resident_set_kb_(
-          context->storage->InternString("chrome.peak_resident_set_kb")),
       thread_time_in_state_id_(context->storage->InternString("time_in_state")),
       thread_time_in_state_cpu_id_(
           context_->storage->InternString("time_in_state_cpu_id")),
@@ -105,12 +153,6 @@ SystemProbesParser::SystemProbesParser(TraceProcessorContext* context)
       context->storage->InternString("mem.rss.watermark");
   proc_stats_process_names_[ProcessStats::Process::kOomScoreAdjFieldNumber] =
       oom_score_adj_id_;
-  proc_stats_process_names_
-      [ProcessStats::Process::kChromePrivateFootprintKbFieldNumber] =
-          chrome_private_footprint_kb_;
-  proc_stats_process_names_
-      [ProcessStats::Process::kChromePeakResidentSetKbFieldNumber] =
-          chrome_peak_resident_set_kb_;
 }
 
 void SystemProbesParser::ParseSysStats(int64_t ts, ConstBytes blob) {
@@ -129,6 +171,29 @@ void SystemProbesParser::ParseSysStats(int64_t ts, ConstBytes blob) {
         meminfo_strs_id_[key]);
     context_->event_tracker->PushCounter(
         ts, static_cast<double>(mi.value()) * 1024., track);
+  }
+
+  for (auto it = sys_stats.devfreq(); it; ++it) {
+    protos::pbzero::SysStats::DevfreqValue::Decoder vm(*it);
+    auto key = static_cast<base::StringView>(vm.key());
+    // Append " Frequency" to align names with
+    // FtraceParser::ParseClockSetRate
+    base::StringView devfreq_subtitle("Frequency");
+    base::StackString<255> counter_name(
+        "%.*s %.*s", int(key.size()), key.data(), int(devfreq_subtitle.size()),
+        devfreq_subtitle.data());
+    StringId name = context_->storage->InternString(counter_name.string_view());
+    TrackId track = context_->track_tracker->InternGlobalCounterTrack(name);
+    context_->event_tracker->PushCounter(ts, static_cast<double>(vm.value()),
+                                         track);
+  }
+
+  int c = 0;
+  for (auto it = sys_stats.cpufreq_khz(); it; ++it, ++c) {
+    base::StackString<255> counter_name("CPU %d Freq in kHz", c);
+    StringId name = context_->storage->InternString(counter_name.string_view());
+    TrackId track = context_->track_tracker->InternGlobalCounterTrack(name);
+    context_->event_tracker->PushCounter(ts, static_cast<double>(*it), track);
   }
 
   for (auto it = sys_stats.vmstat(); it; ++it) {
@@ -239,8 +304,17 @@ void SystemProbesParser::ParseProcessTree(ConstBytes blob) {
     auto pid = static_cast<uint32_t>(proc.pid());
     auto ppid = static_cast<uint32_t>(proc.ppid());
 
+    if (proc.has_nspid()) {
+      std::vector<uint32_t> nspid;
+      for (auto nspid_it = proc.nspid(); nspid_it; nspid_it++) {
+        nspid.emplace_back(static_cast<uint32_t>(*nspid_it));
+      }
+      context_->process_tracker->UpdateNamespacedProcess(pid, std::move(nspid));
+    }
+
     // If the parent pid is kthreadd's pid, even though this pid is of a
-    // "process", we want to treat it as being a child thread of kthreadd.
+    // "process", we want to treat it as being a child thread of
+    // kthreadd.
     if (ppid == kKthreaddPid) {
       context_->process_tracker->SetProcessMetadata(
           kKthreaddPid, base::nullopt, kKthreaddName, base::StringView());
@@ -248,6 +322,14 @@ void SystemProbesParser::ParseProcessTree(ConstBytes blob) {
     } else {
       auto raw_cmdline = proc.cmdline();
       base::StringView argv0 = raw_cmdline ? *raw_cmdline : base::StringView();
+      // Chrome child process overwrites /proc/self/cmdline and replaces all
+      // '\0' with ' '. This makes argv0 contain the full command line. Extract
+      // the actual argv0 if it's Chrome.
+      static const char kChromeBinary[] = "/chrome ";
+      auto pos = argv0.find(kChromeBinary);
+      if (pos != base::StringView::npos) {
+        argv0 = argv0.substr(0, pos + strlen(kChromeBinary) - 1);
+      }
 
       std::string cmdline_str;
       for (auto cmdline_it = raw_cmdline; cmdline_it;) {
@@ -278,10 +360,20 @@ void SystemProbesParser::ParseProcessTree(ConstBytes blob) {
       context_->process_tracker->UpdateThreadName(
           tid, thread_name_id, ThreadNamePriority::kProcessTree);
     }
+
+    if (thd.has_nstid()) {
+      std::vector<uint32_t> nstid;
+      for (auto nstid_it = thd.nstid(); nstid_it; nstid_it++) {
+        nstid.emplace_back(static_cast<uint32_t>(*nstid_it));
+      }
+      context_->process_tracker->UpdateNamespacedThread(tgid, tid,
+                                                        std::move(nstid));
+    }
   }
 }
 
 void SystemProbesParser::ParseProcessStats(int64_t ts, ConstBytes blob) {
+  using Process = protos::pbzero::ProcessStats::Process;
   protos::pbzero::ProcessStats::Decoder stats(blob.data, blob.size);
   const auto kOomScoreAdjFieldNumber =
       protos::pbzero::ProcessStats::Process::kOomScoreAdjFieldNumber;
@@ -293,17 +385,9 @@ void SystemProbesParser::ParseProcessStats(int64_t ts, ConstBytes blob) {
 
     protozero::ProtoDecoder proc(*it);
     uint32_t pid = 0;
-    bool is_peak_rss_resettable = false;
-    bool has_peak_rrs_resettable = false;
     for (auto fld = proc.ReadField(); fld.valid(); fld = proc.ReadField()) {
       if (fld.id() == protos::pbzero::ProcessStats::Process::kPidFieldNumber) {
         pid = fld.as_uint32();
-        continue;
-      }
-      if (fld.id() == protos::pbzero::ProcessStats::Process::
-                          kIsPeakRssResettableFieldNumber) {
-        is_peak_rss_resettable = fld.as_bool();
-        has_peak_rrs_resettable = true;
         continue;
       }
       if (fld.id() ==
@@ -327,16 +411,16 @@ void SystemProbesParser::ParseProcessStats(int64_t ts, ConstBytes blob) {
                                        : fld.as_int64() * 1024;
         has_counter[fld.id()] = true;
       } else {
+        // Chrome fields are processed by ChromeSystemProbesParser.
+        if (fld.id() == Process::kIsPeakRssResettableFieldNumber ||
+            fld.id() == Process::kChromePrivateFootprintKbFieldNumber ||
+            fld.id() == Process::kChromePrivateFootprintKbFieldNumber) {
+          continue;
+        }
         context_->storage->IncrementStats(stats::proc_stat_unknown_counters);
       }
     }
 
-    if (has_peak_rrs_resettable) {
-      UniquePid upid = context_->process_tracker->GetOrCreateProcess(pid);
-      context_->process_tracker->AddArgsTo(upid).AddArg(
-          is_peak_rss_resettable_id_,
-          Variadic::Boolean(is_peak_rss_resettable));
-    }
     // Skip field_id 0 (invalid) and 1 (pid).
     for (size_t field_id = 2; field_id < counter_values.size(); field_id++) {
       if (!has_counter[field_id] || field_id ==
@@ -347,7 +431,7 @@ void SystemProbesParser::ParseProcessStats(int64_t ts, ConstBytes blob) {
 
       // Lookup the interned string id from the field name using the
       // pre-cached |proc_stats_process_names_| map.
-      StringId name = proc_stats_process_names_[field_id];
+      const StringId& name = proc_stats_process_names_[field_id];
       UniquePid upid = context_->process_tracker->GetOrCreateProcess(pid);
       TrackId track =
           context_->track_tracker->InternProcessCounterTrack(name, upid);
@@ -453,14 +537,29 @@ void SystemProbesParser::ParseSystemInfo(ConstBytes blob) {
             packet.android_build_fingerprint())));
   }
 
+  // If we have the SDK version in the trace directly just use that.
+  // Otherwise, try and parse it from the fingerprint.
+  base::Optional<int64_t> opt_sdk_version;
+  if (packet.has_android_sdk_version()) {
+    opt_sdk_version = static_cast<int64_t>(packet.android_sdk_version());
+  } else if (packet.has_android_build_fingerprint()) {
+    opt_sdk_version = FingerprintToSdkVersion(
+        packet.android_build_fingerprint().ToStdString());
+  }
+
+  if (opt_sdk_version) {
+    context_->metadata_tracker->SetMetadata(
+        metadata::android_sdk_version, Variadic::Integer(*opt_sdk_version));
+  }
+
   int64_t hz = packet.hz();
   if (hz > 0)
     ms_per_tick_ = 1000u / static_cast<uint64_t>(hz);
 }
 
 void SystemProbesParser::ParseCpuInfo(ConstBytes blob) {
-  // invalid_freq is used as the guard in thread_time_in_state_cpu_freq_ids_,
-  // see IsValidCpuFreqIndex.
+  // invalid_freq is used as the guard in
+  // thread_time_in_state_cpu_freq_ids_, see IsValidCpuFreqIndex.
   uint32_t invalid_freq = 0;
   thread_time_in_state_cpu_freqs_.push_back(invalid_freq);
 

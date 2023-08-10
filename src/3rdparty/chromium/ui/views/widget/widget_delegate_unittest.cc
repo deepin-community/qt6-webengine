@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "base/test/bind.h"
+#include "ui/base/models/image_model.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/image/image_unittest_util.h"
 #include "ui/views/test/views_test_base.h"
@@ -17,20 +18,6 @@ namespace views {
 namespace {
 
 using WidgetDelegateTest = views::ViewsTestBase;
-
-TEST_F(WidgetDelegateTest, ClientOwnedContentsViewOwnershipNotHeld) {
-  std::unique_ptr<View> view = std::make_unique<View>();
-  view->set_owned_by_client();
-  ViewTracker tracker(view.get());
-
-  auto delegate = std::make_unique<WidgetDelegate>();
-  delegate->SetContentsView(view.get());
-  delegate.reset();
-
-  ASSERT_TRUE(tracker.view());
-  view.reset();
-  EXPECT_FALSE(tracker.view());
-}
 
 TEST_F(WidgetDelegateTest, ContentsViewOwnershipHeld) {
   std::unique_ptr<View> view = std::make_unique<View>();
@@ -122,8 +109,11 @@ TEST_F(WidgetDelegateTest, AppIconCanDifferFromWindowIcon) {
   delegate->SetIcon(window_icon);
   gfx::ImageSkia app_icon = gfx::test::CreateImageSkia(48, 48);
   delegate->SetAppIcon(app_icon);
-  EXPECT_TRUE(delegate->GetWindowIcon().BackedBySameObjectAs(window_icon));
-  EXPECT_TRUE(delegate->GetWindowAppIcon().BackedBySameObjectAs(app_icon));
+  EXPECT_TRUE(delegate->GetWindowIcon().Rasterize(nullptr).BackedBySameObjectAs(
+      window_icon));
+  EXPECT_TRUE(
+      delegate->GetWindowAppIcon().Rasterize(nullptr).BackedBySameObjectAs(
+          app_icon));
 }
 
 TEST_F(WidgetDelegateTest, AppIconFallsBackToWindowIcon) {
@@ -132,7 +122,9 @@ TEST_F(WidgetDelegateTest, AppIconFallsBackToWindowIcon) {
   gfx::ImageSkia window_icon = gfx::test::CreateImageSkia(16, 16);
   delegate->SetIcon(window_icon);
   // Don't set an independent app icon.
-  EXPECT_TRUE(delegate->GetWindowAppIcon().BackedBySameObjectAs(window_icon));
+  EXPECT_TRUE(
+      delegate->GetWindowAppIcon().Rasterize(nullptr).BackedBySameObjectAs(
+          window_icon));
 }
 
 }  // namespace

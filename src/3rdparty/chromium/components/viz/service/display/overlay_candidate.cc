@@ -8,19 +8,27 @@
 #include <cmath>
 #include <limits>
 
+#include "base/containers/contains.h"
+#include "base/cxx17_backports.h"
 #include "build/build_config.h"
 #include "cc/base/math_util.h"
 #include "components/viz/common/quads/aggregated_render_pass_draw_quad.h"
+#include "components/viz/common/quads/shared_quad_state.h"
 #include "components/viz/common/quads/solid_color_draw_quad.h"
 #include "components/viz/common/quads/stream_video_draw_quad.h"
 #include "components/viz/common/quads/texture_draw_quad.h"
 #include "components/viz/common/quads/tile_draw_quad.h"
 #include "components/viz/common/quads/video_hole_draw_quad.h"
 #include "components/viz/common/quads/yuv_video_draw_quad.h"
+#include "components/viz/service/debugger/viz_debugger.h"
 #include "components/viz/service/display/display_resource_provider.h"
 #include "components/viz/service/display/overlay_processor_interface.h"
+#include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/buffer_format_util.h"
+#include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/rect_conversions.h"
+#include "ui/gfx/geometry/rect_f.h"
+#include "ui/gfx/geometry/size.h"
 #include "ui/gfx/geometry/vector3d_f.h"
 #include "ui/gfx/video_types.h"
 
@@ -29,6 +37,7 @@ namespace viz {
 // There is a bug in |base::optional| which causes the 'value_or' function to
 // capture parameters (even constexpr parameters) as a reference.
 constexpr uint32_t OverlayCandidate::kInvalidDamageIndex;
+constexpr OverlayCandidate::TrackingId OverlayCandidate::kDefaultTrackingId;
 
 namespace {
 
@@ -126,44 +135,48 @@ OverlayCandidate::OverlayCandidate(const OverlayCandidate& other) = default;
 OverlayCandidate::~OverlayCandidate() = default;
 
 // static
-bool OverlayCandidate::FromDrawQuad(
+OverlayCandidate::CandidateStatus OverlayCandidate::FromDrawQuad(
     DisplayResourceProvider* resource_provider,
     SurfaceDamageRectList* surface_damage_rect_list,
-    const SkMatrix44& output_color_matrix,
+    const SkM44& output_color_matrix,
     const DrawQuad* quad,
     const gfx::RectF& primary_rect,
-    OverlayCandidate* candidate) {
+    OverlayCandidate* candidate,
+    bool is_delegated_context) {
   // It is currently not possible to set a color conversion matrix on an HW
   // overlay plane.
   // TODO(https://crbug.com/792757): Remove this check once the bug is resolved.
-  if (!output_color_matrix.isIdentity())
-    return false;
+  if (output_color_matrix != SkM44())
+    return CandidateStatus::kFailColorMatrix;
 
   const SharedQuadState* sqs = quad->shared_quad_state;
 
   // We don't support an opacity value different than one for an overlay plane.
-  if (sqs->opacity != 1.f)
-    return false;
+  // Render pass quads should have their |sqs| opacity integrated directly into
+  // their final output buffers.
+  if (!cc::MathUtil::IsWithinEpsilon(sqs->opacity, 1.0f) &&
+      !is_delegated_context) {
+    return CandidateStatus::kFailOpacity;
+  }
+  candidate->opacity = sqs->opacity;
+  candidate->rounded_corners = sqs->mask_filter_info.rounded_corner_bounds();
 
-  // We can't support overlays with mask filter.
-  if (!sqs->mask_filter_info.IsEmpty())
-    return false;
   // We support only kSrc (no blending) and kSrcOver (blending with premul).
   if (!(sqs->blend_mode == SkBlendMode::kSrc ||
         sqs->blend_mode == SkBlendMode::kSrcOver)) {
-    return false;
+    return CandidateStatus::kFailBlending;
   }
 
-  candidate->requires_overlay = OverlayCandidate::RequiresOverlay(quad);
+  candidate->requires_overlay =
+      OverlayCandidate::RequiresOverlay(quad);
   candidate->overlay_damage_index =
       sqs->overlay_damage_index.value_or(kInvalidDamageIndex);
-  candidate->assume_damaged = !sqs->no_damage;
 
   switch (quad->material) {
     case DrawQuad::Material::kTextureContent:
       return FromTextureQuad(resource_provider, surface_damage_rect_list,
                              TextureDrawQuad::MaterialCast(quad), primary_rect,
-                             candidate);
+                             candidate, is_delegated_context);
     case DrawQuad::Material::kVideoHole:
       return FromVideoHoleQuad(resource_provider, surface_damage_rect_list,
                                VideoHoleDrawQuad::MaterialCast(quad),
@@ -171,12 +184,31 @@ bool OverlayCandidate::FromDrawQuad(
     case DrawQuad::Material::kStreamVideoContent:
       return FromStreamVideoQuad(resource_provider, surface_damage_rect_list,
                                  StreamVideoDrawQuad::MaterialCast(quad),
-                                 candidate);
+                                 candidate, is_delegated_context, primary_rect);
+    case DrawQuad::Material::kSolidColor:
+      if (!is_delegated_context)
+        return CandidateStatus::kFailQuadNotSupported;
+      return candidate->FromSolidColorQuad(
+          resource_provider, surface_damage_rect_list,
+          SolidColorDrawQuad::MaterialCast(quad), primary_rect, candidate);
+    case DrawQuad::Material::kAggregatedRenderPass:
+      if (!is_delegated_context)
+        return CandidateStatus::kFailQuadNotSupported;
+      return candidate->FromAggregateQuad(
+          resource_provider, surface_damage_rect_list,
+          AggregatedRenderPassDrawQuad::MaterialCast(quad), primary_rect,
+          candidate);
+    case DrawQuad::Material::kTiledContent:
+      if (!is_delegated_context)
+        return CandidateStatus::kFailQuadNotSupported;
+      return candidate->FromTileQuad(
+          resource_provider, surface_damage_rect_list,
+          TileDrawQuad::MaterialCast(quad), primary_rect, candidate);
     default:
       break;
   }
 
-  return false;
+  return CandidateStatus::kFailQuadNotSupported;
 }
 
 // static
@@ -246,10 +278,13 @@ int OverlayCandidate::EstimateVisibleDamage(
 
 // static
 bool OverlayCandidate::RequiresOverlay(const DrawQuad* quad) {
+  // Regular priority hint.
   switch (quad->material) {
     case DrawQuad::Material::kTextureContent:
       return TextureDrawQuad::MaterialCast(quad)->protected_video_type ==
-             gfx::ProtectedVideoType::kHardwareProtected;
+                 gfx::ProtectedVideoType::kHardwareProtected ||
+             TextureDrawQuad::MaterialCast(quad)->overlay_priority_hint ==
+                 OverlayPriority::kRequired;
     case DrawQuad::Material::kVideoHole:
       return true;
     case DrawQuad::Material::kYuvVideoContent:
@@ -286,52 +321,125 @@ bool OverlayCandidate::IsOccludedByFilteredQuad(
 }
 
 // static
-bool OverlayCandidate::FromDrawQuadResource(
+OverlayCandidate::CandidateStatus OverlayCandidate::FromDrawQuadResource(
     DisplayResourceProvider* resource_provider,
     SurfaceDamageRectList* surface_damage_rect_list,
     const DrawQuad* quad,
     ResourceId resource_id,
     bool y_flipped,
-    OverlayCandidate* candidate) {
-  if (!resource_provider->IsOverlayCandidate(resource_id))
-    return false;
-  if (quad->visible_rect.IsEmpty())
-    return false;
+    OverlayCandidate* candidate,
+    bool is_delegated_context,
+    const gfx::RectF& primary_rect) {
+  if (resource_id != kInvalidResourceId &&
+      !resource_provider->IsOverlayCandidate(resource_id))
+    return CandidateStatus::kFailNotOverlay;
 
-  candidate->format = resource_provider->GetBufferFormat(resource_id);
-  candidate->color_space = resource_provider->GetColorSpace(resource_id);
-  if (!base::Contains(kOverlayFormats, candidate->format))
-    return false;
+  if (quad->visible_rect.IsEmpty())
+    return CandidateStatus::kFailVisible;
+
+  if (resource_id != kInvalidResourceId) {
+    candidate->format = resource_provider->GetBufferFormat(resource_id);
+    candidate->color_space = resource_provider->GetColorSpace(resource_id);
+    candidate->hdr_metadata = resource_provider->GetHDRMetadata(resource_id);
+
+    if (!base::Contains(kOverlayFormats, candidate->format))
+      return CandidateStatus::kFailBufferFormat;
+  }
 
   const SharedQuadState* sqs = quad->shared_quad_state;
+
   gfx::OverlayTransform overlay_transform =
       GetOverlayTransform(sqs->quad_to_target_transform, y_flipped);
   if (overlay_transform == gfx::OVERLAY_TRANSFORM_INVALID)
-    return false;
+    return CandidateStatus::kFailNotAxisAligned;
+  candidate->transform = overlay_transform;
 
   auto& transform = sqs->quad_to_target_transform;
   candidate->display_rect = gfx::RectF(quad->rect);
   transform.TransformRect(&candidate->display_rect);
 
   candidate->clip_rect = sqs->clip_rect;
-  candidate->is_clipped = sqs->is_clipped;
-  candidate->is_opaque = !quad->ShouldDrawWithBlending();
-  // For underlays the function 'EstimateVisibleDamage()' is called to update
-  // |damage_area_estimate| to more accurately reflect the actual visible
-  // damage.
-  candidate->damage_area_estimate =
-      GetDamageRect(quad, surface_damage_rect_list).size().GetArea();
-  candidate->resource_id = resource_id;
-  candidate->transform = overlay_transform;
-  candidate->mailbox = resource_provider->GetMailbox(resource_id);
+  candidate->is_opaque =
+      !quad->ShouldDrawWithBlendingForReasonOtherThanMaskFilter();
+  candidate->has_mask_filter = !sqs->mask_filter_info.IsEmpty();
 
-  return true;
+  if (resource_id != kInvalidResourceId) {
+    candidate->resource_size_in_pixels =
+        resource_provider->GetResourceBackedSize(resource_id);
+  } else {
+    candidate->resource_size_in_pixels =
+        gfx::Size(candidate->display_rect.size().width(),
+                  candidate->display_rect.size().height());
+  }
+
+  AssignDamage(quad, surface_damage_rect_list, candidate);
+  candidate->resource_id = resource_id;
+
+  struct TrackingIdData {
+    gfx::Rect rect;
+    FrameSinkId frame_sink_id;
+  };
+
+  TrackingIdData track_data{quad->rect, FrameSinkId()};
+  if (resource_id != kInvalidResourceId) {
+    candidate->mailbox = resource_provider->GetMailbox(resource_id);
+    track_data.frame_sink_id =
+        resource_provider->GetSurfaceId(resource_id).frame_sink_id();
+  }
+
+  // Delegated compositing does not yet support |clip_rect| so it is applied
+  // here to the |display_rect| and |uv_rect| directly.
+  if (is_delegated_context) {
+    if (candidate->clip_rect.has_value())
+      ApplyClip(candidate, gfx::RectF(*candidate->clip_rect));
+
+    // TODO(https://crbug.com/1300552) : Tile quads can overlay other quads and
+    // the window by one pixel. Exo does not yet clip these quads so we need to
+    // clip here with the |primary_rect|.
+    ApplyClip(candidate, primary_rect);
+  }
+
+  candidate->tracking_id = base::Hash(&track_data, sizeof(track_data));
+  return CandidateStatus::kSuccess;
+}
+
+// static
+OverlayCandidate::CandidateStatus OverlayCandidate::FromAggregateQuad(
+    DisplayResourceProvider* resource_provider,
+    SurfaceDamageRectList* surface_damage_rect_list,
+    const AggregatedRenderPassDrawQuad* quad,
+    const gfx::RectF& primary_rect,
+    OverlayCandidate* candidate) {
+  auto rtn = FromDrawQuadResource(resource_provider, surface_damage_rect_list,
+                                  quad, kInvalidResourceId, false, candidate,
+                                  true, primary_rect);
+  if (rtn == CandidateStatus::kSuccess) {
+    candidate->rpdq = quad;
+  }
+  return rtn;
+}
+
+// static
+OverlayCandidate::CandidateStatus OverlayCandidate::FromSolidColorQuad(
+    DisplayResourceProvider* resource_provider,
+    SurfaceDamageRectList* surface_damage_rect_list,
+    const SolidColorDrawQuad* quad,
+    const gfx::RectF& primary_rect,
+    OverlayCandidate* candidate) {
+  auto rtn = FromDrawQuadResource(resource_provider, surface_damage_rect_list,
+                                  quad, kInvalidResourceId, false, candidate,
+                                  true, primary_rect);
+
+  if (rtn == CandidateStatus::kSuccess) {
+    candidate->solid_color = quad->color;
+  }
+  return rtn;
 }
 
 // static
 // For VideoHoleDrawQuad, only calculate geometry information
 // and put it in the |candidate|.
-bool OverlayCandidate::FromVideoHoleQuad(
+OverlayCandidate::CandidateStatus OverlayCandidate::FromVideoHoleQuad(
     DisplayResourceProvider* resource_provider,
     SurfaceDamageRectList* surface_damage_rect_list,
     const VideoHoleDrawQuad* quad,
@@ -339,67 +447,107 @@ bool OverlayCandidate::FromVideoHoleQuad(
   gfx::OverlayTransform overlay_transform = GetOverlayTransform(
       quad->shared_quad_state->quad_to_target_transform, false);
   if (overlay_transform == gfx::OVERLAY_TRANSFORM_INVALID)
-    return false;
+    return CandidateStatus::kFailNotAxisAligned;
 
   auto& transform = quad->shared_quad_state->quad_to_target_transform;
   candidate->display_rect = gfx::RectF(quad->rect);
   transform.TransformRect(&candidate->display_rect);
   candidate->transform = overlay_transform;
-  // For underlays the function 'EstimateVisibleDamage()' is called to update
-  // |damage_area_estimate| to more accurately reflect the actual visible
-  // damage.
-  candidate->damage_area_estimate =
-      GetDamageRect(quad, surface_damage_rect_list).size().GetArea();
-  return true;
+  candidate->is_opaque =
+      !quad->ShouldDrawWithBlendingForReasonOtherThanMaskFilter();
+  candidate->has_mask_filter =
+      !quad->shared_quad_state->mask_filter_info.IsEmpty();
+
+  AssignDamage(quad, surface_damage_rect_list, candidate);
+  candidate->tracking_id = base::FastHash(quad->overlay_plane_id.AsBytes());
+
+  return CandidateStatus::kSuccess;
+}
+
+OverlayCandidate::CandidateStatus OverlayCandidate::FromTileQuad(
+    DisplayResourceProvider* resource_provider,
+    SurfaceDamageRectList* surface_damage_rect_list,
+    const TileDrawQuad* quad,
+    const gfx::RectF& primary_rect,
+    OverlayCandidate* candidate) {
+  if (quad->nearest_neighbor)
+    return CandidateStatus::kFailNearFilter;
+
+  candidate->resource_size_in_pixels =
+      resource_provider->GetResourceBackedSize(quad->resource_id());
+  candidate->uv_rect = gfx::ScaleRect(
+      quad->tex_coord_rect, 1.f / candidate->resource_size_in_pixels.width(),
+      1.f / candidate->resource_size_in_pixels.height());
+
+  auto rtn = FromDrawQuadResource(resource_provider, surface_damage_rect_list,
+                                  quad, quad->resource_id(), false, candidate,
+                                  true, primary_rect);
+  return rtn;
 }
 
 // static
-bool OverlayCandidate::FromTextureQuad(
+OverlayCandidate::CandidateStatus OverlayCandidate::FromTextureQuad(
     DisplayResourceProvider* resource_provider,
     SurfaceDamageRectList* surface_damage_rect_list,
     const TextureDrawQuad* quad,
     const gfx::RectF& primary_rect,
-    OverlayCandidate* candidate) {
+    OverlayCandidate* candidate,
+    bool is_delegated_context) {
+  if (!is_delegated_context &&
+      quad->overlay_priority_hint == OverlayPriority::kLow) {
+    // For current implementation low priority means this does not promote to
+    // overlay.
+    return CandidateStatus::kFailPriority;
+  }
+
   if (quad->nearest_neighbor)
-    return false;
+    return CandidateStatus::kFailNearFilter;
+
   if (quad->background_color != SK_ColorTRANSPARENT &&
       (quad->background_color != SK_ColorBLACK ||
        quad->ShouldDrawWithBlending()))
-    return false;
+    return CandidateStatus::kFailBlending;
 
-  if (!FromDrawQuadResource(resource_provider, surface_damage_rect_list, quad,
-                            quad->resource_id(), quad->y_flipped, candidate)) {
-    return false;
-  }
-  candidate->resource_size_in_pixels = quad->resource_size_in_pixels();
   candidate->uv_rect = BoundingRect(quad->uv_top_left, quad->uv_bottom_right);
-  // Only handle clip rect for required overlays
-  if (candidate->requires_overlay) {
-    HandleClipAndSubsampling(candidate, primary_rect);
-    candidate->hw_protected_validation_id = quad->hw_protected_validation_id;
+
+  auto rtn = FromDrawQuadResource(
+      resource_provider, surface_damage_rect_list, quad, quad->resource_id(),
+      quad->y_flipped, candidate, is_delegated_context, primary_rect);
+  if (rtn == CandidateStatus::kSuccess) {
+    // Only handle clip rect for required overlays
+    if (!is_delegated_context && candidate->requires_overlay)
+      HandleClipAndSubsampling(candidate, primary_rect);
+
+    // Texture quads for UI elements like scroll bars have empty
+    // |size_in_pixels| as 'set_resource_size_in_pixels' is not called as these
+    // quads are not intended to become overlays.
+    if (!quad->resource_size_in_pixels().IsEmpty())
+      candidate->priority_hint = gfx::OverlayPriorityHint::kRegular;
   }
-  return true;
+  return rtn;
 }
 
 // static
-bool OverlayCandidate::FromStreamVideoQuad(
+OverlayCandidate::CandidateStatus OverlayCandidate::FromStreamVideoQuad(
     DisplayResourceProvider* resource_provider,
     SurfaceDamageRectList* surface_damage_rect_list,
     const StreamVideoDrawQuad* quad,
-    OverlayCandidate* candidate) {
-  if (!FromDrawQuadResource(resource_provider, surface_damage_rect_list, quad,
-                            quad->resource_id(), false, candidate)) {
-    return false;
-  }
+    OverlayCandidate* candidate,
+    bool is_delegated_context,
+    const gfx::RectF& primary_rect) {
+  auto rtn = FromDrawQuadResource(resource_provider, surface_damage_rect_list,
+                                  quad, quad->resource_id(), false, candidate,
+                                  is_delegated_context, primary_rect);
 
-  candidate->resource_id = quad->resource_id();
-  candidate->resource_size_in_pixels = quad->resource_size_in_pixels();
-  candidate->uv_rect = BoundingRect(quad->uv_top_left, quad->uv_bottom_right);
-#if defined(OS_ANDROID)
-  candidate->is_backed_by_surface_texture =
-      resource_provider->IsBackedBySurfaceTexture(quad->resource_id());
+  if (rtn == CandidateStatus::kSuccess) {
+    candidate->resource_size_in_pixels = quad->resource_size_in_pixels();
+    candidate->uv_rect = BoundingRect(quad->uv_top_left, quad->uv_bottom_right);
+#if BUILDFLAG(IS_ANDROID)
+    candidate->is_backed_by_surface_texture =
+        resource_provider->IsBackedBySurfaceTexture(quad->resource_id());
 #endif
-  return true;
+  }
+  return rtn;
 }
 
 // static
@@ -412,7 +560,7 @@ void OverlayCandidate::HandleClipAndSubsampling(
   // the Intel DRM driver. This should not be used in cases where the surface
   // will not always be promoted to an overlay as it will lead to shifting of
   // the content when it switches between composition and overlay.
-  if (!candidate->is_clipped)
+  if (!candidate->clip_rect)
     return;
 
   // Make sure it's in a format we can deal with, we only support YUV and P010.
@@ -424,20 +572,24 @@ void OverlayCandidate::HandleClipAndSubsampling(
   // a single display, so we want to perform our calculations within the bounds
   // of that display.
   if (!primary_rect.IsEmpty())
-    candidate->clip_rect.Intersect(gfx::ToNearestRect(primary_rect));
+    candidate->clip_rect->Intersect(gfx::ToNearestRect(primary_rect));
 
   // Calculate |uv_rect| of |clip_rect| in |display_rect|
   gfx::RectF uv_rect = cc::MathUtil::ScaleRectProportional(
       candidate->uv_rect, candidate->display_rect,
-      gfx::RectF(candidate->clip_rect));
+      gfx::RectF(*candidate->clip_rect));
 
   // In case that |uv_rect| of candidate is not (0, 0, 1, 1)
   candidate->uv_rect.Intersect(uv_rect);
 
   // Update |display_rect| to avoid unexpected scaling and the candidate should
   // not be regarded as clippped after this.
-  candidate->display_rect.Intersect(gfx::RectF(candidate->clip_rect));
-  candidate->is_clipped = false;
+  candidate->display_rect.Intersect(gfx::RectF(*candidate->clip_rect));
+  candidate->clip_rect.reset();
+  gfx::Rect rounded_display_rect = gfx::ToRoundedRect(candidate->display_rect);
+  candidate->display_rect.SetRect(
+      rounded_display_rect.x(), rounded_display_rect.y(),
+      rounded_display_rect.width(), rounded_display_rect.height());
 
   // Now correct |uv_rect| if required so that the source rect aligns on a pixel
   // boundary that is a multiple of the chroma subsampling.
@@ -460,6 +612,65 @@ void OverlayCandidate::HandleClipAndSubsampling(
   candidate->uv_rect = gfx::ScaleRect(
       src_rect, 1.0f / candidate->resource_size_in_pixels.width(),
       1.0f / candidate->resource_size_in_pixels.height());
+}
+
+// static
+void OverlayCandidate::AssignDamage(
+    const DrawQuad* quad,
+    SurfaceDamageRectList* surface_damage_rect_list,
+    OverlayCandidate* candidate) {
+  auto& transform = quad->shared_quad_state->quad_to_target_transform;
+  const auto damage_rect = GetDamageRect(quad, surface_damage_rect_list);
+  auto transformed_damage = gfx::RectF(damage_rect);
+  gfx::Transform inv;
+  if (transform.GetInverse(&inv)) {
+    inv.TransformRect(&transformed_damage);
+    // The quad's |rect| is in content space. To get to buffer space we need
+    // to remove the |rect|'s pixel offset.
+    auto buffer_damage_origin =
+        transformed_damage.origin() - gfx::PointF(quad->rect.origin());
+    transformed_damage.set_origin(
+        gfx::PointF(buffer_damage_origin.x(), buffer_damage_origin.y()));
+
+    if (!quad->rect.IsEmpty()) {
+      // Normalize damage to be in UVs.
+      transformed_damage.Scale(1.0f / quad->rect.width(),
+                               1.0f / quad->rect.height());
+    }
+
+    // The normalization above is not enough if the |uv_rect| is not 0,0-1x1.
+    // This is because texture uvs can effectively magnify damage.
+    if (!candidate->uv_rect.IsEmpty()) {
+      transformed_damage.Scale(candidate->uv_rect.width(),
+                               candidate->uv_rect.height());
+      transformed_damage.Offset(candidate->uv_rect.OffsetFromOrigin());
+    }
+
+    // Buffer damage is in texels not UVs so scale by resource size.
+    transformed_damage.Scale(candidate->resource_size_in_pixels.width(),
+                             candidate->resource_size_in_pixels.height());
+  } else {
+    // If not invertible, set to full damage.
+    // TODO(https://crbug.com/1279965): |resource_size_in_pixels| might not be
+    // properly initialized at this stage.
+    transformed_damage =
+        gfx::RectF(gfx::SizeF(candidate->resource_size_in_pixels));
+  }
+  // For underlays the function 'EstimateVisibleDamage()' is called to update
+  // |damage_area_estimate| to more accurately reflect the actual visible
+  // damage.
+  candidate->damage_area_estimate = damage_rect.size().GetArea();
+  candidate->damage_rect = transformed_damage;
+}
+
+void OverlayCandidate::ApplyClip(OverlayCandidate* candidate,
+                                 const gfx::RectF& clip_rect) {
+  gfx::RectF intersect_clip_display = clip_rect;
+  intersect_clip_display.Intersect(candidate->display_rect);
+  gfx::RectF uv_rect = cc::MathUtil::ScaleRectProportional(
+      candidate->uv_rect, candidate->display_rect, intersect_clip_display);
+  candidate->display_rect = intersect_clip_display;
+  candidate->uv_rect = uv_rect;
 }
 
 }  // namespace viz

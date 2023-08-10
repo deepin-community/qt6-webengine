@@ -6,7 +6,6 @@
 #define COMPONENTS_VIZ_SERVICE_FRAME_SINKS_VIDEO_CAPTURE_IN_FLIGHT_FRAME_DELIVERY_H_
 
 #include "base/callback.h"
-#include "base/macros.h"
 #include "components/viz/service/viz_service_export.h"
 #include "services/viz/privileged/mojom/compositing/frame_sink_video_capture.mojom.h"
 
@@ -20,20 +19,22 @@ class VIZ_SERVICE_EXPORT InFlightFrameDelivery final
  public:
   InFlightFrameDelivery(
       base::OnceClosure post_delivery_callback,
-      base::OnceCallback<void(const media::VideoFrameFeedback&)>
+      base::OnceCallback<void(const media::VideoCaptureFeedback&)>
           feedback_callback);
+
+  InFlightFrameDelivery(const InFlightFrameDelivery&) = delete;
+  InFlightFrameDelivery& operator=(const InFlightFrameDelivery&) = delete;
 
   ~InFlightFrameDelivery() final;
 
   // mojom::FrameSinkVideoConsumerFrameCallbacks implementation:
   void Done() final;
-  void ProvideFeedback(const media::VideoFrameFeedback&) final;
+  void ProvideFeedback(const media::VideoCaptureFeedback&) final;
 
  private:
   base::OnceClosure post_delivery_callback_;
-  base::OnceCallback<void(const media::VideoFrameFeedback&)> feedback_callback_;
-
-  DISALLOW_COPY_AND_ASSIGN(InFlightFrameDelivery);
+  base::OnceCallback<void(const media::VideoCaptureFeedback&)>
+      feedback_callback_;
 };
 
 }  // namespace viz

@@ -16,8 +16,10 @@
 
 #include <unistd.h>
 
+#include "perfetto/ext/base/file_utils.h"
 #include "perfetto/ext/base/temp_file.h"
 #include "src/base/test/test_task_runner.h"
+#include "src/traced/probes/common/cpu_freq_info_for_testing.h"
 #include "src/traced/probes/sys_stats/sys_stats_data_source.h"
 #include "src/tracing/core/trace_writer_for_testing.h"
 #include "test/gtest_and_gmock.h"
@@ -186,6 +188,28 @@ procs_running 1
 procs_blocked 0
 softirq 84611084 10220177 28299167 155083 3035679 6390543 66234 4396819 15604187 0 16443195)";
 
+const char kDevfreq1[] = "1000000";
+const char kDevfreq2[] = "20000000";
+
+class TestSysStatsDataSource : public SysStatsDataSource {
+ public:
+  TestSysStatsDataSource(base::TaskRunner* task_runner,
+                         TracingSessionID id,
+                         std::unique_ptr<TraceWriter> writer,
+                         const DataSourceConfig& config,
+                         std::unique_ptr<CpuFreqInfo> cpu_freq_info,
+                         OpenFunction open_fn)
+      : SysStatsDataSource(task_runner,
+                           id,
+                           std::move(writer),
+                           config,
+                           std::move(cpu_freq_info),
+                           open_fn) {}
+
+  MOCK_METHOD0(OpenDevfreqDir, base::ScopedDir());
+  MOCK_METHOD1(ReadDevfreqCurFreq, const char*(const std::string& deviceName));
+};
+
 base::ScopedFile MockOpenReadOnly(const char* path) {
   base::TempFile tmp_ = base::TempFile::CreateUnlinked();
   if (!strcmp(path, "/proc/meminfo")) {
@@ -202,13 +226,15 @@ base::ScopedFile MockOpenReadOnly(const char* path) {
 
 class SysStatsDataSourceTest : public ::testing::Test {
  protected:
-  std::unique_ptr<SysStatsDataSource> GetSysStatsDataSource(
+  std::unique_ptr<TestSysStatsDataSource> GetSysStatsDataSource(
       const DataSourceConfig& cfg) {
     auto writer =
         std::unique_ptr<TraceWriterForTesting>(new TraceWriterForTesting());
     writer_raw_ = writer.get();
-    auto instance = std::unique_ptr<SysStatsDataSource>(new SysStatsDataSource(
-        &task_runner_, 0, std::move(writer), cfg, MockOpenReadOnly));
+    auto instance =
+        std::unique_ptr<TestSysStatsDataSource>(new TestSysStatsDataSource(
+            &task_runner_, 0, std::move(writer), cfg,
+            cpu_freq_info_for_testing_.GetInstance(), MockOpenReadOnly));
     instance->set_ns_per_user_hz_for_testing(1000000000ull / 100);  // 100 Hz.
     instance->Start();
     return instance;
@@ -230,6 +256,7 @@ class SysStatsDataSourceTest : public ::testing::Test {
 
   TraceWriterForTesting* writer_raw_ = nullptr;
   base::TestTaskRunner task_runner_;
+  CpuFreqInfoForTesting cpu_freq_info_for_testing_;
 };
 
 TEST_F(SysStatsDataSourceTest, Meminfo) {
@@ -252,6 +279,7 @@ TEST_F(SysStatsDataSourceTest, Meminfo) {
   const auto& sys_stats = packet.sys_stats();
   EXPECT_EQ(sys_stats.vmstat_size(), 0);
   EXPECT_EQ(sys_stats.cpu_stat_size(), 0);
+  EXPECT_EQ(sys_stats.devfreq_size(), 0);
 
   using KV = std::pair<int, uint64_t>;
   std::vector<KV> kvs;
@@ -280,6 +308,7 @@ TEST_F(SysStatsDataSourceTest, MeminfoAll) {
   const auto& sys_stats = packet.sys_stats();
   EXPECT_EQ(sys_stats.vmstat_size(), 0);
   EXPECT_EQ(sys_stats.cpu_stat_size(), 0);
+  EXPECT_EQ(sys_stats.devfreq_size(), 0);
   EXPECT_GE(sys_stats.meminfo_size(), 10);
 }
 
@@ -302,6 +331,7 @@ TEST_F(SysStatsDataSourceTest, Vmstat) {
   const auto& sys_stats = packet.sys_stats();
   EXPECT_EQ(sys_stats.meminfo_size(), 0);
   EXPECT_EQ(sys_stats.cpu_stat_size(), 0);
+  EXPECT_EQ(sys_stats.devfreq_size(), 0);
 
   using KV = std::pair<int, uint64_t>;
   std::vector<KV> kvs;
@@ -329,7 +359,68 @@ TEST_F(SysStatsDataSourceTest, VmstatAll) {
   const auto& sys_stats = packet.sys_stats();
   EXPECT_EQ(sys_stats.meminfo_size(), 0);
   EXPECT_EQ(sys_stats.cpu_stat_size(), 0);
+  EXPECT_EQ(sys_stats.devfreq_size(), 0);
   EXPECT_GE(sys_stats.vmstat_size(), 10);
+}
+
+TEST_F(SysStatsDataSourceTest, DevfreqAll) {
+  DataSourceConfig config;
+  protos::gen::SysStatsConfig sys_cfg;
+  sys_cfg.set_devfreq_period_ms(10);
+  config.set_sys_stats_config_raw(sys_cfg.SerializeAsString());
+  auto data_source = GetSysStatsDataSource(config);
+
+  // Create dirs and symlinks, but only read the symlinks.
+  std::vector<std::string> dirs_to_delete;
+  std::vector<std::string> symlinks_to_delete;
+  auto make_devfreq_paths = [&symlinks_to_delete, &dirs_to_delete](
+                                base::TempDir& temp_dir, base::TempDir& sym_dir,
+                                const char* name) {
+    char path[256];
+    sprintf(path, "%s/%s", temp_dir.path().c_str(), name);
+    dirs_to_delete.push_back(path);
+    mkdir(path, 0755);
+    char sym_path[256];
+    sprintf(sym_path, "%s/%s", sym_dir.path().c_str(), name);
+    symlinks_to_delete.push_back(sym_path);
+    symlink(path, sym_path);
+  };
+  auto fake_devfreq = base::TempDir::Create();
+  auto fake_devfreq_symdir = base::TempDir::Create();
+  static const char* const devfreq_names[] = {"10010.devfreq_device_a",
+                                              "10020.devfreq_device_b"};
+  for (auto dev : devfreq_names) {
+    make_devfreq_paths(fake_devfreq, fake_devfreq_symdir, dev);
+  }
+
+  EXPECT_CALL(*data_source, OpenDevfreqDir())
+      .WillRepeatedly(Invoke([&fake_devfreq_symdir] {
+        return base::ScopedDir(opendir(fake_devfreq_symdir.path().c_str()));
+      }));
+  EXPECT_CALL(*data_source, ReadDevfreqCurFreq("10010.devfreq_device_a"))
+      .WillRepeatedly(Return(kDevfreq1));
+  EXPECT_CALL(*data_source, ReadDevfreqCurFreq("10020.devfreq_device_b"))
+      .WillRepeatedly(Return(kDevfreq2));
+
+  WaitTick(data_source.get());
+
+  protos::gen::TracePacket packet = writer_raw_->GetOnlyTracePacket();
+  ASSERT_TRUE(packet.has_sys_stats());
+  const auto& sys_stats = packet.sys_stats();
+  EXPECT_EQ(sys_stats.meminfo_size(), 0);
+  EXPECT_EQ(sys_stats.cpu_stat_size(), 0);
+
+  using KV = std::pair<std::string, uint64_t>;
+  std::vector<KV> kvs;
+  for (const auto& kv : sys_stats.devfreq())
+    kvs.push_back({kv.key(), kv.value()});
+  EXPECT_THAT(kvs,
+              UnorderedElementsAre(KV{"10010.devfreq_device_a", 1000000},
+                                   KV{"10020.devfreq_device_b", 20000000}));
+  for (const std::string& path : dirs_to_delete)
+    base::Rmdir(path);
+  for (const std::string& path : symlinks_to_delete)
+    remove(path.c_str());
 }
 
 TEST_F(SysStatsDataSourceTest, StatAll) {
@@ -394,6 +485,32 @@ TEST_F(SysStatsDataSourceTest, StatForksOnly) {
   ASSERT_EQ(sys_stats.num_irq_size(), 0);
   EXPECT_EQ(sys_stats.num_softirq_total(), 0u);
   ASSERT_EQ(sys_stats.num_softirq_size(), 0);
+}
+
+TEST_F(SysStatsDataSourceTest, Cpufreq) {
+  protos::gen::SysStatsConfig cfg;
+  cfg.set_cpufreq_period_ms(10);
+  DataSourceConfig config_obj;
+  config_obj.set_sys_stats_config_raw(cfg.SerializeAsString());
+  auto data_source = GetSysStatsDataSource(config_obj);
+
+  WaitTick(data_source.get());
+
+  protos::gen::TracePacket packet = writer_raw_->GetOnlyTracePacket();
+  ASSERT_TRUE(packet.has_sys_stats());
+  const auto& sys_stats = packet.sys_stats();
+  EXPECT_GT(sys_stats.cpufreq_khz_size(), 0);
+  EXPECT_EQ(sys_stats.cpufreq_khz()[0], 2650000u);
+  if (sys_stats.cpufreq_khz_size() > 1) {
+    // We emulated 2 CPUs but it is possible the test system is single core.
+    EXPECT_EQ(sys_stats.cpufreq_khz()[1], 3698200u);
+  }
+  for (unsigned int i = 2;
+       i < static_cast<unsigned int>(sys_stats.cpufreq_khz_size()); i++) {
+    // For cpux which scaling_cur_freq was not emulated in unittest, cpufreq
+    // should be recorded as 0
+    EXPECT_EQ(sys_stats.cpufreq_khz()[i], 0u);
+  }
 }
 
 }  // namespace

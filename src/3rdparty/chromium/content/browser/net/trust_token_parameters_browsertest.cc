@@ -2,23 +2,29 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/containers/contains.h"
+#include "base/strings/stringprintf.h"
 #include "base/test/bind.h"
 #include "base/test/scoped_feature_list.h"
 #include "content/public/common/network_service_util.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
+#include "content/public/test/fenced_frame_test_util.h"
 #include "content/public/test/url_loader_monitor.h"
+#include "content/shell/browser/shell.h"
 #include "content/shell/browser/shell_content_browser_client.h"
 #include "net/base/escape.h"
 #include "net/dns/mock_host_resolver.h"
 #include "services/network/public/cpp/features.h"
 #include "services/network/public/cpp/resource_request.h"
+#include "services/network/public/mojom/network_context.mojom.h"
 #include "services/network/public/mojom/trust_tokens.mojom.h"
 #include "services/network/public/mojom/url_loader.mojom-shared.h"
-#include "services/network/trust_tokens/test/trust_token_test_util.h"
+#include "services/network/test/trust_token_test_util.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/common/features.h"
 
 // These integration tests verify that calling the Fetch API with Trust Tokens
 // parameters results in the parameters' counterparts appearing downstream in
@@ -79,13 +85,12 @@ IN_PROC_BROWSER_TEST_P(TrustTokenParametersBrowsertest,
 
   EXPECT_TRUE(NavigateToURL(shell(), url));
 
-  EXPECT_TRUE(
-      ExecJs(shell(), JsReplace("fetch($1, {trustToken: ", trust_token_url) +
-                          expected_params_and_serialization.serialized_params +
-                          "});"));
+  ExecuteScriptAsync(
+      shell(), JsReplace("fetch($1, {trustToken: ", trust_token_url) +
+                   expected_params_and_serialization.serialized_params + "});");
 
   monitor.WaitForUrls();
-  base::Optional<network::ResourceRequest> request =
+  absl::optional<network::ResourceRequest> request =
       monitor.GetRequestInfo(trust_token_url);
   ASSERT_TRUE(request);
   ASSERT_TRUE(request->trust_token_params);
@@ -118,7 +123,7 @@ IN_PROC_BROWSER_TEST_P(TrustTokenParametersBrowsertest,
                          expected_params_and_serialization.serialized_params)));
 
   monitor.WaitForUrls();
-  base::Optional<network::ResourceRequest> request =
+  absl::optional<network::ResourceRequest> request =
       monitor.GetRequestInfo(trust_token_url);
   ASSERT_TRUE(request);
   ASSERT_TRUE(request->trust_token_params);
@@ -155,7 +160,7 @@ IN_PROC_BROWSER_TEST_P(TrustTokenParametersBrowsertest,
                  expected_params_and_serialization.serialized_params.c_str())));
 
   monitor.WaitForUrls();
-  base::Optional<network::ResourceRequest> request =
+  absl::optional<network::ResourceRequest> request =
       monitor.GetRequestInfo(trust_token_url);
   ASSERT_TRUE(request);
 
@@ -163,9 +168,9 @@ IN_PROC_BROWSER_TEST_P(TrustTokenParametersBrowsertest,
       expected_params_and_serialization.params));
 }
 
-class TrustTokenFeaturePolicyBrowsertest : public ContentBrowserTest {
+class TrustTokenPermissionsPolicyBrowsertest : public ContentBrowserTest {
  public:
-  TrustTokenFeaturePolicyBrowsertest() {
+  TrustTokenPermissionsPolicyBrowsertest() {
     features_.InitAndEnableFeature(network::features::kTrustTokens);
   }
 
@@ -177,9 +182,9 @@ class TrustTokenFeaturePolicyBrowsertest : public ContentBrowserTest {
   base::test::ScopedFeatureList features_;
 };
 
-IN_PROC_BROWSER_TEST_F(TrustTokenFeaturePolicyBrowsertest,
+IN_PROC_BROWSER_TEST_F(TrustTokenPermissionsPolicyBrowsertest,
                        PassesNegativeValueToFactoryParams) {
-  // Since the trust-token-redemption Feature Policy feature is disabled by
+  // Since the trust-token-redemption Permissions Policy feature is disabled by
   // default in cross-site frames, the child's URLLoaderFactoryParams should be
   // populated with TrustTokenRedemptionPolicy::kForbid.
 
@@ -206,12 +211,12 @@ IN_PROC_BROWSER_TEST_F(TrustTokenFeaturePolicyBrowsertest,
   run_loop.Run();
 }
 
-IN_PROC_BROWSER_TEST_F(TrustTokenFeaturePolicyBrowsertest,
+IN_PROC_BROWSER_TEST_F(TrustTokenPermissionsPolicyBrowsertest,
                        PassesPositiveValueToFactoryParams) {
-  // Even though the trust-token-redemption Feature Policy feature is disabled
-  // by default in cross-site frames, the allow attribute on the iframe enables
-  // it for the b.com frame, so the child's URLLoaderFactoryParams should be
-  // populated with TrustTokenRedemptionPolicy::kPotentiallyPermit.
+  // Even though the trust-token-redemption Permissions Policy feature is
+  // disabled by default in cross-site frames, the allow attribute on the iframe
+  // enables it for the b.com frame, so the child's URLLoaderFactoryParams
+  // should be populated with TrustTokenRedemptionPolicy::kPotentiallyPermit.
 
   ASSERT_TRUE(embedded_test_server()->Start());
   GURL url(embedded_test_server()->GetURL(
@@ -239,9 +244,9 @@ IN_PROC_BROWSER_TEST_F(TrustTokenFeaturePolicyBrowsertest,
   run_loop.Run();
 }
 
-IN_PROC_BROWSER_TEST_F(TrustTokenFeaturePolicyBrowsertest,
+IN_PROC_BROWSER_TEST_F(TrustTokenPermissionsPolicyBrowsertest,
                        PassesNegativeValueToFactoryParamsAfterCrash) {
-  // Since the trust-token-redemption Feature Policy feature is disabled by
+  // Since the trust-token-redemption Permissions Policy feature is disabled by
   // default in cross-site frames, the child's URLLoaderFactoryParams should be
   // populated with TrustTokenRedemptionPolicy::kForbid.
   //
@@ -275,12 +280,12 @@ IN_PROC_BROWSER_TEST_F(TrustTokenFeaturePolicyBrowsertest,
   run_loop.Run();
 }
 
-IN_PROC_BROWSER_TEST_F(TrustTokenFeaturePolicyBrowsertest,
+IN_PROC_BROWSER_TEST_F(TrustTokenPermissionsPolicyBrowsertest,
                        PassesPositiveValueToFactoryParamsAfterCrash) {
-  // Even though the trust-token-redemption Feature Policy feature is disabled
-  // by default in cross-site frames, the allow attribute on the iframe enables
-  // it for the b.com frame, so the child's URLLoaderFactoryParams should be
-  // populated with TrustTokenRedemptionPolicy::kPotentiallyPermit.
+  // Even though the trust-token-redemption Permissions Policy feature is
+  // disabled by default in cross-site frames, the allow attribute on the iframe
+  // enables it for the b.com frame, so the child's URLLoaderFactoryParams
+  // should be populated with TrustTokenRedemptionPolicy::kPotentiallyPermit.
   //
   // In particular, this should be true for factory params repopulated after a
   // network service crash!
@@ -312,6 +317,70 @@ IN_PROC_BROWSER_TEST_F(TrustTokenFeaturePolicyBrowsertest,
           }));
 
   SimulateNetworkServiceCrash();
+  run_loop.Run();
+}
+
+constexpr char kTrustTokenHeader[] =
+    "/set-header?Feature-Policy: trust-token-redemption 'self'";
+
+class TrustTokenPermissionsPolicyFencedFrameTest
+    : public TrustTokenPermissionsPolicyBrowsertest,
+      public ::testing::WithParamInterface<std::tuple<bool, bool>> {
+ public:
+  TrustTokenPermissionsPolicyFencedFrameTest()
+      : policy_header_in_primary_page_(std::get<0>(GetParam())),
+        policy_header_in_fenced_frame_page_(std::get<1>(GetParam())) {}
+
+  content::test::FencedFrameTestHelper& fenced_frame_test_helper() {
+    return fenced_frame_helper_;
+  }
+
+ protected:
+  const bool policy_header_in_primary_page_;
+  const bool policy_header_in_fenced_frame_page_;
+
+ private:
+  content::test::FencedFrameTestHelper fenced_frame_helper_;
+  base::test::ScopedFeatureList features_;
+};
+
+INSTANTIATE_TEST_SUITE_P(All,
+                         TrustTokenPermissionsPolicyFencedFrameTest,
+                         ::testing::Combine(::testing::Bool(),
+                                            ::testing::Bool()));
+
+IN_PROC_BROWSER_TEST_P(TrustTokenPermissionsPolicyFencedFrameTest,
+                       PassesNegativeValueToFactoryParams) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+
+  GURL primary_url(embedded_test_server()->GetURL(
+      "a.com",
+      policy_header_in_primary_page_ ? kTrustTokenHeader : "/title1.html"));
+
+  GURL fenced_frame_url(embedded_test_server()->GetURL(
+      "b.com", policy_header_in_fenced_frame_page_
+                   ? std::string(kTrustTokenHeader) +
+                         "&Supports-Loading-Mode: fenced-frame"
+                   : "/fenced_frames/title1.html"));
+
+  EXPECT_TRUE(NavigateToURL(shell(), primary_url));
+
+  base::RunLoop run_loop;
+  ShellContentBrowserClient::Get()->set_url_loader_factory_params_callback(
+      base::BindLambdaForTesting(
+          [&](const network::mojom::URLLoaderFactoryParams* params,
+              const url::Origin& origin, bool unused_is_for_isolated_world) {
+            if (origin.host() != "b.com")
+              return;
+            EXPECT_TRUE(params);
+            EXPECT_THAT(params->trust_token_redemption_policy,
+                        network::mojom::TrustTokenRedemptionPolicy::kForbid);
+            run_loop.Quit();
+          }));
+
+  ASSERT_TRUE(fenced_frame_test_helper().CreateFencedFrame(
+      shell()->web_contents()->GetMainFrame(), fenced_frame_url));
+
   run_loop.Run();
 }
 

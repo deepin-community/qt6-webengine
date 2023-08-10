@@ -26,7 +26,10 @@ namespace viz {
 SoftwareOutputSurface::SoftwareOutputSurface(
     std::unique_ptr<SoftwareOutputDevice> software_device)
     : OutputSurface(std::move(software_device)) {
-  capabilities_.max_frames_pending = software_device_->MaxFramesPending();
+  capabilities_.pending_swap_params.max_pending_swaps =
+      software_device_->MaxFramesPending();
+  capabilities_.resize_based_on_root_surface =
+      software_device_->SupportsOverridePlatformSize();
 }
 
 SoftwareOutputSurface::~SoftwareOutputSurface() = default;
@@ -104,18 +107,18 @@ uint32_t SoftwareOutputSurface::GetFramebufferCopyTextureFormat() {
 
 void SoftwareOutputSurface::SwapBuffersCallback(base::TimeTicks swap_time,
                                                 const gfx::Size& pixel_size) {
-  auto& latency_info = stored_latency_info_.front();
-  latency_tracker_.OnGpuSwapBuffersCompleted(latency_info);
-  std::vector<ui::LatencyInfo>().swap(latency_info);
-  client_->DidReceiveSwapBuffersAck({swap_time, swap_time});
+  latency_tracker_.OnGpuSwapBuffersCompleted(
+      std::move(stored_latency_info_.front()));
   stored_latency_info_.pop();
+  client_->DidReceiveSwapBuffersAck({swap_time, swap_time},
+                                    /*release_fence=*/gfx::GpuFenceHandle());
 
   base::TimeTicks now = base::TimeTicks::Now();
   base::TimeDelta interval_to_next_refresh =
       now.SnappedToNextTick(refresh_timebase_, refresh_interval_) - now;
 // TODO(crbug.com/1052397): Revisit the macro expression once build flag switch
 // of lacros-chrome is complete.
-#if defined(OS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS)
   if (needs_swap_size_notifications_)
     client_->DidSwapWithSize(pixel_size);
 #endif
@@ -146,7 +149,7 @@ gfx::OverlayTransform SoftwareOutputSurface::GetDisplayTransform() {
 
 // TODO(crbug.com/1052397): Revisit the macro expression once build flag switch
 // of lacros-chrome is complete.
-#if defined(OS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS)
 void SoftwareOutputSurface::SetNeedsSwapSizeNotifications(
     bool needs_swap_size_notifications) {
   needs_swap_size_notifications_ = needs_swap_size_notifications;

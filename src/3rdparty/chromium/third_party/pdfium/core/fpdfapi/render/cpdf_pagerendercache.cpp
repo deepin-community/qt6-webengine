@@ -13,6 +13,7 @@
 #include "core/fpdfapi/page/cpdf_page.h"
 #include "core/fpdfapi/render/cpdf_imagecacheentry.h"
 #include "core/fpdfapi/render/cpdf_renderstatus.h"
+#include "core/fxcrt/stl_util.h"
 #include "core/fxge/dib/cfx_dibitmap.h"
 
 namespace {
@@ -36,7 +37,7 @@ void CPDF_PageRenderCache::CacheOptimization(int32_t dwLimitCacheSize) {
   if (m_nCacheSize <= (uint32_t)dwLimitCacheSize)
     return;
 
-  size_t nCount = m_ImageCache.size();
+  uint32_t nCount = fxcrt::CollectionSize<uint32_t>(m_ImageCache);
   std::vector<CacheInfo> cache_info;
   cache_info.reserve(nCount);
   for (const auto& it : m_ImageCache) {
@@ -46,11 +47,11 @@ void CPDF_PageRenderCache::CacheOptimization(int32_t dwLimitCacheSize) {
   std::sort(cache_info.begin(), cache_info.end());
 
   // Check if time value is about to roll over and reset all entries.
-  // The comparision is legal because uint32_t is an unsigned type.
+  // The comparison is legal because uint32_t is an unsigned type.
   uint32_t nTimeCount = m_nTimeCount;
   if (nTimeCount + 1 < nTimeCount) {
-    for (size_t i = 0; i < nCount; i++)
-      m_ImageCache[cache_info[i].pStream]->m_dwTimeCount = i;
+    for (uint32_t i = 0; i < nCount; i++)
+      m_ImageCache[cache_info[i].pStream]->SetTimeCount(i);
     m_nTimeCount = nCount;
   }
 
@@ -85,7 +86,7 @@ bool CPDF_PageRenderCache::StartGetCachedBitmap(
         std::make_unique<CPDF_ImageCacheEntry>(m_pPage->GetDocument(), pImage);
   }
   CPDF_DIB::LoadState ret = m_pCurImageCacheEntry->StartGetCachedBitmap(
-      m_pPage->m_pPageResources.Get(), pRenderStatus, bStdCS);
+      m_pPage->GetPageResources(), pRenderStatus, bStdCS);
   if (ret == CPDF_DIB::LoadState::kContinue)
     return true;
 

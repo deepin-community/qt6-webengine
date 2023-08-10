@@ -28,6 +28,7 @@
 #include "base/posix/global_descriptors.h"
 #include "base/posix/unix_domain_socket.h"
 #include "base/synchronization/lock.h"
+#include "base/time/time.h"
 
 namespace sandbox {
 
@@ -114,7 +115,7 @@ void WriteTimeStruct(base::Pickle* pickle, const struct tm& time) {
 }
 
 // See
-// https://chromium.googlesource.com/chromium/src/+/master/docs/linux/zygote.md
+// https://chromium.googlesource.com/chromium/src/+/main/docs/linux/zygote.md
 void ProxyLocaltimeCallToBrowser(time_t input,
                                  struct tm* output,
                                  char* timezone_out,

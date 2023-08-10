@@ -2,15 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "ui/gl/gl_image_io_surface.h"
+
 #include <stddef.h>
 #include <stdint.h>
 
-#include "base/stl_util.h"
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/buffer_format_util.h"
 #include "ui/gfx/mac/io_surface.h"
-#include "ui/gl/gl_image_io_surface.h"
 #include "ui/gl/test/gl_image_bind_test_template.h"
 #include "ui/gl/test/gl_image_test_template.h"
 #include "ui/gl/test/gl_image_zero_initialize_test_template.h"
@@ -27,8 +27,9 @@ class GLImageIOSurfaceTestDelegate : public GLImageTestDelegateBase {
     scoped_refptr<GLImageIOSurface> image(GLImageIOSurface::Create(
         size, GLImageIOSurface::GetInternalFormatForTesting(format)));
     IOSurfaceRef surface_ref = gfx::CreateIOSurface(size, format);
-    bool rv =
-        image->Initialize(surface_ref, gfx::GenericSharedMemoryId(1), format);
+    const uint32_t surface_plane = 0;
+    bool rv = image->Initialize(surface_ref, surface_plane,
+                                gfx::GenericSharedMemoryId(1), format);
     EXPECT_TRUE(rv);
     return image;
   }
@@ -38,6 +39,7 @@ class GLImageIOSurfaceTestDelegate : public GLImageTestDelegateBase {
     scoped_refptr<GLImageIOSurface> image(GLImageIOSurface::Create(
         size, GLImageIOSurface::GetInternalFormatForTesting(format)));
     IOSurfaceRef surface_ref = gfx::CreateIOSurface(size, format);
+    const uint32_t surface_plane = 0;
     IOReturn status = IOSurfaceLock(surface_ref, 0, nullptr);
     EXPECT_NE(status, kIOReturnCannotLock);
 
@@ -51,7 +53,7 @@ class GLImageIOSurfaceTestDelegate : public GLImageTestDelegateBase {
       corrected_color[2] = color[0];
       corrected_color[3] = color[3];
     } else {
-      memcpy(corrected_color, color, base::size(corrected_color));
+      memcpy(corrected_color, color, std::size(corrected_color));
     }
 
     for (size_t plane = 0; plane < NumberOfPlanesForLinearBufferFormat(format);
@@ -64,8 +66,8 @@ class GLImageIOSurfaceTestDelegate : public GLImageTestDelegateBase {
     }
     IOSurfaceUnlock(surface_ref, 0, nullptr);
 
-    bool rv =
-        image->Initialize(surface_ref, gfx::GenericSharedMemoryId(1), format);
+    bool rv = image->Initialize(surface_ref, surface_plane,
+                                gfx::GenericSharedMemoryId(1), format);
     EXPECT_TRUE(rv);
 
     return image;

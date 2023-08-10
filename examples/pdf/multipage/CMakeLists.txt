@@ -1,28 +1,36 @@
 cmake_minimum_required(VERSION 3.16)
 project(multipage LANGUAGES CXX)
 
-set(CMAKE_INCLUDE_CURRENT_DIR ON)
-
 set(CMAKE_AUTOMOC ON)
-set(CMAKE_AUTORCC ON)
-set(CMAKE_AUTOUIC ON)
 
 if(NOT DEFINED INSTALL_EXAMPLESDIR)
-  set(INSTALL_EXAMPLESDIR "examples")
+    set(INSTALL_EXAMPLESDIR "examples")
 endif()
 
 set(INSTALL_EXAMPLEDIR "${INSTALL_EXAMPLESDIR}/pdf/multipage")
 
-find_package(Qt6 COMPONENTS Gui)
-find_package(Qt6 COMPONENTS Qml)
+find_package(Qt6 REQUIRED COMPONENTS Gui Qml)
 
 qt_add_executable(multipage
     main.cpp
+    pdfapplication.h
+    pdfapplication.cpp
 )
+
+if (APPLE AND NOT IOS)
+    set(MACOSX_BUNDLE_ICON_FILE multipage.icns)
+    set(app_icon_macos "${CMAKE_CURRENT_SOURCE_DIR}/resources/multipage.icns")
+    set_source_files_properties(${app_icon_macos} PROPERTIES
+           MACOSX_PACKAGE_LOCATION "Resources")
+    target_sources(multipage PRIVATE ${app_icon_macos})
+    set(MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/resources/macos/Info.plist")
+endif()
+
 set_target_properties(multipage PROPERTIES
     WIN32_EXECUTABLE TRUE
     MACOSX_BUNDLE TRUE
 )
+
 target_link_libraries(multipage PUBLIC
     Qt::Gui
     Qt::Qml
@@ -39,6 +47,8 @@ set(viewer_resource_files
     "resources/go-up-search.svg"
     "resources/rotate-left.svg"
     "resources/rotate-right.svg"
+    "resources/sidebar-collapse-left.svg"
+    "resources/sidebar-expand-left.svg"
     "resources/test.pdf"
     "resources/zoom-fit-best.svg"
     "resources/zoom-fit-width.svg"

@@ -27,6 +27,7 @@
 
 #include "build/build_config.h"
 #include "third_party/blink/public/common/browser_interface_broker_proxy.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/strings/grit/blink_strings.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
@@ -37,14 +38,13 @@
 #include "third_party/blink/renderer/core/page/chrome_client.h"
 #include "third_party/blink/renderer/core/page/color_page_popup_controller.h"
 #include "third_party/blink/renderer/core/page/page_popup.h"
-#include "third_party/blink/renderer/platform/geometry/int_rect.h"
 #include "ui/base/ui_base_features.h"
+#include "ui/gfx/geometry/rect.h"
 
 namespace blink {
 
 // Keep in sync with Actions in colorSuggestionPicker.js.
 enum ColorPickerPopupAction {
-  kColorPickerPopupActionChooseOtherColor = -2,
   kColorPickerPopupActionCancel = -1,
   kColorPickerPopupActionSetValue = 0
 };
@@ -71,14 +71,10 @@ void ColorChooserPopupUIController::Trace(Visitor* visitor) const {
 
 void ColorChooserPopupUIController::OpenUI() {
 #if !defined(TOOLKIT_QT)
-  if (client_->ShouldShowSuggestions() ||
-      features::IsFormControlsRefreshEnabled())
+  OpenPopup();
 #else
-  if (client_->ShouldShowSuggestions())
-#endif // !defined(TOOLKIT_QT)
-    OpenPopup();
-  else
-    OpenColorChooser();
+  OpenColorChooser();
+#endif
 }
 
 void ColorChooserPopupUIController::EndChooser() {
@@ -100,9 +96,7 @@ void ColorChooserPopupUIController::WriteDocument(SharedBuffer* data) {
 
 void ColorChooserPopupUIController::WriteColorPickerDocument(
     SharedBuffer* data) {
-  DCHECK(features::IsFormControlsRefreshEnabled());
-
-  IntRect anchor_rect_in_screen = chrome_client_->ViewportToScreen(
+  gfx::Rect anchor_rect_in_screen = chrome_client_->ViewportToScreen(
       client_->ElementRectRelativeToViewport(), frame_->View());
 
   PagePopupClient::AddString(
@@ -121,15 +115,19 @@ void ColorChooserPopupUIController::WriteColorPickerDocument(
   AddProperty("anchorRectInScreen", anchor_rect_in_screen, data);
   AddProperty("zoomFactor", ScaledZoomFactor(), data);
   AddProperty("shouldShowColorSuggestionPicker", false, data);
-  AddProperty("isEyeDropperEnabled", features::IsEyeDropperEnabled(), data);
-#if defined(OS_MAC)
-  AddProperty("isBorderTransparent", features::IsFormControlsRefreshEnabled(),
-              data);
+  AddProperty("isEyeDropperEnabled", ::features::IsEyeDropperEnabled(), data);
+#if BUILDFLAG(IS_MAC)
+  AddProperty("isBorderTransparent", true, data);
+  if (base::FeatureList::IsEnabled(features::kSystemColorChooser)) {
+    AddProperty("isSystemColorChooserEnabled", true, data);
+    AddLocalizedProperty("systemColorChooserLabel", IDS_SYSTEM_COLOR_CHOOSER,
+                         data);
+  }
 #endif
   // We don't create PagePopups on Android, so these strings are excluded
   // from blink_strings.grd on Android to save binary size.  We have to
   // exclude them here as well to avoid an Android build break.
-#if !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
   AddLocalizedProperty("axColorWellLabel", IDS_AX_COLOR_WELL, data);
   AddLocalizedProperty("axColorWellRoleDescription",
                        IDS_AX_COLOR_WELL_ROLEDESCRIPTION, data);
@@ -164,7 +162,7 @@ void ColorChooserPopupUIController::WriteColorSuggestionPickerDocument(
   Vector<String> suggestion_values;
   for (auto& suggestion : client_->Suggestions())
     suggestion_values.push_back(Color(suggestion->color).Serialized());
-  IntRect anchor_rect_in_screen = chrome_client_->ViewportToScreen(
+  gfx::Rect anchor_rect_in_screen = chrome_client_->ViewportToScreen(
       client_->ElementRectRelativeToViewport(), frame_->View());
 
   PagePopupClient::AddString(
@@ -173,8 +171,7 @@ void ColorChooserPopupUIController::WriteColorSuggestionPickerDocument(
       data);
   data->Append(ChooserResourceLoader::GetPickerCommonStyleSheet());
   data->Append(ChooserResourceLoader::GetColorSuggestionPickerStyleSheet());
-  if (features::IsFormControlsRefreshEnabled())
-    data->Append(ChooserResourceLoader::GetColorPickerStyleSheet());
+  data->Append(ChooserResourceLoader::GetColorPickerStyleSheet());
   PagePopupClient::AddString(
       "</style></head><body>\n"
       "<div id='main'>Loading...</div><script>\n"
@@ -183,25 +180,19 @@ void ColorChooserPopupUIController::WriteColorSuggestionPickerDocument(
   PagePopupClient::AddProperty("values", suggestion_values, data);
   PagePopupClient::AddLocalizedProperty("otherColorLabel",
                                         IDS_FORM_OTHER_COLOR_LABEL, data);
-  if (features::IsFormControlsRefreshEnabled()) {
-    PagePopupClient::AddProperty("selectedColor",
-                                 client_->CurrentColor().Serialized(), data);
-  }
+  PagePopupClient::AddProperty("selectedColor",
+                               client_->CurrentColor().Serialized(), data);
   AddProperty("anchorRectInScreen", anchor_rect_in_screen, data);
   AddProperty("zoomFactor", ScaledZoomFactor(), data);
   AddProperty("shouldShowColorSuggestionPicker", true, data);
-  AddProperty("isFormControlsRefreshEnabled",
-              features::IsFormControlsRefreshEnabled(), data);
-  AddProperty("isEyeDropperEnabled", features::IsEyeDropperEnabled(), data);
-#if defined(OS_MAC)
-  AddProperty("isBorderTransparent", features::IsFormControlsRefreshEnabled(),
-              data);
+  AddProperty("isEyeDropperEnabled", ::features::IsEyeDropperEnabled(), data);
+#if BUILDFLAG(IS_MAC)
+  AddProperty("isBorderTransparent", true, data);
 #endif
   PagePopupClient::AddString("};\n", data);
   data->Append(ChooserResourceLoader::GetPickerCommonJS());
   data->Append(ChooserResourceLoader::GetColorSuggestionPickerJS());
-  if (features::IsFormControlsRefreshEnabled())
-    data->Append(ChooserResourceLoader::GetColorPickerJS());
+  data->Append(ChooserResourceLoader::GetColorPickerJS());
   data->Append(ChooserResourceLoader::GetColorPickerCommonJS());
   PagePopupClient::AddString("</script></body>\n", data);
 }
@@ -217,10 +208,6 @@ void ColorChooserPopupUIController::SetValueAndClosePopup(
   DCHECK(client_);
   if (num_value == kColorPickerPopupActionSetValue)
     SetValue(string_value);
-  if (num_value == kColorPickerPopupActionChooseOtherColor) {
-    DCHECK(!features::IsFormControlsRefreshEnabled());
-    OpenColorChooser();
-  }
   CancelPopup();
 }
 
@@ -295,6 +282,19 @@ void ColorChooserPopupUIController::OpenEyeDropper() {
   eye_dropper_chooser_->Choose(
       WTF::Bind(&ColorChooserPopupUIController::EyeDropperResponseHandler,
                 WrapWeakPersistent(this)));
+}
+
+void ColorChooserPopupUIController::OpenSystemColorChooser() {
+#if BUILDFLAG(IS_MAC)
+  OpenColorChooser();
+#else
+  NOTREACHED() << "ColorChooserPopupUIController -> ColorChooserUIController "
+                  "should only be used on macOS";
+#endif
+}
+
+void ColorChooserPopupUIController::AdjustSettings(Settings& popup_settings) {
+  AdjustSettingsFromOwnerColorScheme(popup_settings);
 }
 
 }  // namespace blink

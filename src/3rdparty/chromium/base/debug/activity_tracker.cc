@@ -19,6 +19,7 @@
 #include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/notreached.h"
 #include "base/pending_task.h"
 #include "base/pickle.h"
 #include "base/process/process.h"
@@ -28,6 +29,10 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/platform_thread.h"
 #include "build/build_config.h"
+
+#if BUILDFLAG(IS_WIN)
+#include <windows.h>
+#endif
 
 namespace base {
 namespace debug {
@@ -100,12 +105,12 @@ Time WallTimeFromTickTime(int64_t ticks_start, int64_t ticks, Time time_start) {
 
 union ThreadRef {
   int64_t as_id;
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   // On Windows, the handle itself is often a pseudo-handle with a common
   // value meaning "this thread" and so the thread-id is used. The former
   // can be converted to a thread-id with a system call.
   PlatformThreadId as_tid;
-#elif defined(OS_POSIX) || defined(OS_FUCHSIA)
+#elif BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
   // On Posix and Fuchsia, the handle is always a unique identifier so no
   // conversion needs to be done. However, its value is officially opaque so
   // there is no one correct way to convert it to a numerical identifier.
@@ -151,9 +156,9 @@ const ActivityData kNullActivityData = {};
 ActivityData ActivityData::ForThread(const PlatformThreadHandle& handle) {
   ThreadRef thread_ref;
   thread_ref.as_id = 0;  // Zero the union in case other is smaller.
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   thread_ref.as_tid = ::GetThreadId(handle.platform_handle());
-#elif defined(OS_POSIX)
+#elif BUILDFLAG(IS_POSIX)
   thread_ref.as_handle = handle.platform_handle();
 #endif
   return ForThread(thread_ref.as_id);
@@ -253,7 +258,7 @@ void Activity::FillFrom(Activity* activity,
   activity->activity_type = type;
   activity->data = data;
 
-#if (!defined(OS_NACL) && DCHECK_IS_ON()) || defined(ADDRESS_SANITIZER)
+#if (!BUILDFLAG(IS_NACL) && DCHECK_IS_ON()) || defined(ADDRESS_SANITIZER)
   // Create a stacktrace from the current location and get the addresses for
   // improved debuggability.
   StackTrace stack_trace;
@@ -376,13 +381,13 @@ bool ActivityUserData::CreateSnapshot(Snapshot* output_snapshot) const {
     switch (entry.second.type) {
       case RAW_VALUE:
       case STRING_VALUE:
-        value.long_value_ =
-            std::string(reinterpret_cast<char*>(entry.second.memory), size);
+        value.long_value_ = std::string(
+            reinterpret_cast<char*>(entry.second.memory.get()), size);
         break;
       case RAW_VALUE_REFERENCE:
       case STRING_VALUE_REFERENCE: {
         ReferenceRecord* ref =
-            reinterpret_cast<ReferenceRecord*>(entry.second.memory);
+            reinterpret_cast<ReferenceRecord*>(entry.second.memory.get());
         value.ref_value_ = StringPiece(
             reinterpret_cast<char*>(static_cast<uintptr_t>(ref->address)),
             static_cast<size_t>(ref->size));
@@ -390,13 +395,13 @@ bool ActivityUserData::CreateSnapshot(Snapshot* output_snapshot) const {
       case BOOL_VALUE:
       case CHAR_VALUE:
         value.short_value_ =
-            reinterpret_cast<std::atomic<char>*>(entry.second.memory)
+            reinterpret_cast<std::atomic<char>*>(entry.second.memory.get())
                 ->load(std::memory_order_relaxed);
         break;
       case SIGNED_VALUE:
       case UNSIGNED_VALUE:
         value.short_value_ =
-            reinterpret_cast<std::atomic<uint64_t>*>(entry.second.memory)
+            reinterpret_cast<std::atomic<uint64_t>*>(entry.second.memory.get())
                 ->load(std::memory_order_relaxed);
         break;
       case END_OF_VALUES:  // Included for completeness purposes.
@@ -499,7 +504,7 @@ void* ActivityUserData::Set(StringPiece name,
     }
 
     // Allocate a chunk of memory.
-    FieldHeader* header = reinterpret_cast<FieldHeader*>(memory_);
+    FieldHeader* header = reinterpret_cast<FieldHeader*>(memory_.get());
     memory_ += full_size;
     available_ -= full_size;
 
@@ -559,7 +564,7 @@ void ActivityUserData::ImportExistingData() const {
     return;
 
   while (available_ > sizeof(FieldHeader)) {
-    FieldHeader* header = reinterpret_cast<FieldHeader*>(memory_);
+    FieldHeader* header = reinterpret_cast<FieldHeader*>(memory_.get());
     ValueType type =
         static_cast<ValueType>(header->type.load(std::memory_order_acquire));
     if (type == END_OF_VALUES)
@@ -737,9 +742,9 @@ ThreadActivityTracker::ThreadActivityTracker(void* base, size_t size)
     DCHECK_EQ(0U, stack_[0].call_stack[0]);
     DCHECK_EQ(0U, stack_[0].data.task.sequence_id);
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
     header_->thread_ref.as_tid = PlatformThread::CurrentId();
-#elif defined(OS_POSIX) || defined(OS_FUCHSIA)
+#elif BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
     header_->thread_ref.as_handle =
         PlatformThread::CurrentHandle().platform_handle();
 #endif
@@ -968,7 +973,7 @@ bool ThreadActivityTracker::CreateSnapshot(Snapshot* output_snapshot) const {
     memcpy(&output_snapshot->last_exception, &header_->last_exception,
            sizeof(Activity));
 
-    // TODO(bcwhite): Snapshot other things here.
+    // Snapshot other things here.
 
     // Retry if something changed during the copy. A "cst" operation ensures
     // it must happen after all the above operations.
@@ -1087,9 +1092,8 @@ ThreadActivityTracker::CreateUserDataForActivity(
 // but that's best since PersistentMemoryAllocator objects (that underlie
 // GlobalActivityTracker objects) are explicitly forbidden from doing anything
 // essential at exit anyway due to the fact that they depend on data managed
-// elsewhere and which could be destructed first. An AtomicWord is used instead
-// of std::atomic because the latter can create global ctors and dtors.
-subtle::AtomicWord GlobalActivityTracker::g_tracker_ = 0;
+// elsewhere and which could be destructed first.
+std::atomic<GlobalActivityTracker*> GlobalActivityTracker::g_tracker_{nullptr};
 
 GlobalActivityTracker::ModuleInfo::ModuleInfo() = default;
 GlobalActivityTracker::ModuleInfo::ModuleInfo(ModuleInfo&& rhs) = default;
@@ -1256,7 +1260,7 @@ GlobalActivityTracker::ManagedActivityTracker::~ManagedActivityTracker() {
   // The global |g_tracker_| must point to the owner of this class since all
   // objects of this type must be destructed before |g_tracker_| can be changed
   // (something that only occurs in tests).
-  DCHECK(g_tracker_);
+  DCHECK(g_tracker_.load(std::memory_order_relaxed));
   GlobalActivityTracker::Get()->ReturnTrackerMemory(this);
 }
 
@@ -1271,7 +1275,7 @@ void GlobalActivityTracker::CreateWithAllocator(
   global_tracker->CreateTrackerForCurrentThread();
 }
 
-#if !defined(OS_NACL)
+#if !BUILDFLAG(IS_NACL)
 // static
 bool GlobalActivityTracker::CreateWithFile(const FilePath& file_path,
                                            size_t size,
@@ -1285,7 +1289,7 @@ bool GlobalActivityTracker::CreateWithFile(const FilePath& file_path,
   std::unique_ptr<MemoryMappedFile> mapped_file(new MemoryMappedFile());
   bool success = mapped_file->Initialize(
       File(file_path, File::FLAG_CREATE_ALWAYS | File::FLAG_READ |
-                          File::FLAG_WRITE | File::FLAG_SHARE_DELETE),
+                          File::FLAG_WRITE | File::FLAG_WIN_SHARE_DELETE),
       {0, size}, MemoryMappedFile::READ_WRITE_EXTEND);
   if (!success)
     return false;
@@ -1296,7 +1300,7 @@ bool GlobalActivityTracker::CreateWithFile(const FilePath& file_path,
                       stack_depth, 0);
   return true;
 }
-#endif  // !defined(OS_NACL)
+#endif  // !BUILDFLAG(IS_NACL)
 
 // static
 bool GlobalActivityTracker::CreateWithLocalMemory(size_t size,
@@ -1330,9 +1334,8 @@ bool GlobalActivityTracker::CreateWithSharedMemory(
 // static
 void GlobalActivityTracker::SetForTesting(
     std::unique_ptr<GlobalActivityTracker> tracker) {
-  CHECK(!subtle::NoBarrier_Load(&g_tracker_));
-  subtle::Release_Store(&g_tracker_,
-                        reinterpret_cast<uintptr_t>(tracker.release()));
+  CHECK(!g_tracker_.load(std::memory_order_relaxed));
+  g_tracker_.store(tracker.release(), std::memory_order_release);
 }
 
 // static
@@ -1347,7 +1350,7 @@ GlobalActivityTracker::ReleaseForTesting() {
   tracker->ReleaseTrackerForCurrentThreadForTesting();
   DCHECK_EQ(0, tracker->thread_tracker_count_.load(std::memory_order_relaxed));
 
-  subtle::Release_Store(&g_tracker_, 0);
+  g_tracker_.store(nullptr, std::memory_order_release);
   return WrapUnique(tracker);
 }
 
@@ -1423,7 +1426,6 @@ void GlobalActivityTracker::RecordProcessLaunch(
 
   base::AutoLock lock(global_tracker_lock_);
   if (base::Contains(known_processes_, pid)) {
-    // TODO(bcwhite): Measure this in UMA.
     NOTREACHED() << "Process #" << process_id
                  << " was previously recorded as \"launched\""
                  << " with no corresponding exit.\n"
@@ -1431,7 +1433,7 @@ void GlobalActivityTracker::RecordProcessLaunch(
     known_processes_.erase(pid);
   }
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   known_processes_.insert(std::make_pair(pid, WideToUTF8(cmd)));
 #else
   known_processes_.insert(std::make_pair(pid, cmd));
@@ -1656,8 +1658,8 @@ GlobalActivityTracker::GlobalActivityTracker(
   DCHECK_NE(0, process_id_);
 
   // Ensure that there is no other global object and then make this one such.
-  DCHECK(!g_tracker_);
-  subtle::Release_Store(&g_tracker_, reinterpret_cast<uintptr_t>(this));
+  DCHECK(!g_tracker_.load(std::memory_order_relaxed));
+  g_tracker_.store(this, std::memory_order_release);
 
   // The data records must be iterable in order to be found by an analyzer.
   allocator_->MakeIterable(allocator_->GetAsReference(
@@ -1670,7 +1672,7 @@ GlobalActivityTracker::GlobalActivityTracker(
 GlobalActivityTracker::~GlobalActivityTracker() {
   DCHECK(Get() == nullptr || Get() == this);
   DCHECK_EQ(0, thread_tracker_count_.load(std::memory_order_relaxed));
-  subtle::Release_Store(&g_tracker_, 0);
+  g_tracker_.store(nullptr, std::memory_order_release);
 }
 
 void GlobalActivityTracker::ReturnTrackerMemory(
@@ -1777,7 +1779,7 @@ ScopedThreadJoinActivity::ScopedThreadJoinActivity(
           ActivityData::ForThread(*thread),
           /*lock_allowed=*/true) {}
 
-#if !defined(OS_NACL) && !defined(OS_IOS)
+#if !BUILDFLAG(IS_NACL) && !BUILDFLAG(IS_IOS)
 ScopedProcessWaitActivity::ScopedProcessWaitActivity(
     const void* program_counter,
     const base::Process* process)

@@ -7,6 +7,7 @@
 
 #include <memory>
 
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "build/chromeos_buildflags.h"
 #include "components/feedback/system_logs/system_logs_source.h"
@@ -15,10 +16,6 @@
 #include "extensions/browser/extension_function.h"
 #include "extensions/common/api/feedback_private.h"
 #include "ui/gfx/geometry/rect.h"
-
-namespace feedback {
-class FeedbackData;
-}  // namespace feedback
 
 namespace extensions {
 
@@ -29,13 +26,30 @@ class LogSourceAccessManager;
 class FeedbackPrivateAPI : public BrowserContextKeyedAPI {
  public:
   explicit FeedbackPrivateAPI(content::BrowserContext* context);
+
+  FeedbackPrivateAPI(const FeedbackPrivateAPI&) = delete;
+  FeedbackPrivateAPI& operator=(const FeedbackPrivateAPI&) = delete;
+
   ~FeedbackPrivateAPI() override;
 
-  FeedbackService* GetService() const;
+  scoped_refptr<FeedbackService> GetService() const;
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
   LogSourceAccessManager* GetLogSourceAccessManager() const;
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+
+  // Create a FeedbackInfo to be passed to UI/JS
+  std::unique_ptr<api::feedback_private::FeedbackInfo> CreateFeedbackInfo(
+      const std::string& description_template,
+      const std::string& description_placeholder_text,
+      const std::string& category_tag,
+      const std::string& extra_diagnostics,
+      const GURL& page_url,
+      api::feedback_private::FeedbackFlow flow,
+      bool from_assistant,
+      bool include_bluetooth_logs,
+      bool show_questionnaire,
+      bool from_chrome_labs_or_kaleidoscope);
 
   void RequestFeedbackForFlow(const std::string& description_template,
                               const std::string& description_placeholder_text,
@@ -45,15 +59,16 @@ class FeedbackPrivateAPI : public BrowserContextKeyedAPI {
                               api::feedback_private::FeedbackFlow flow,
                               bool from_assistant = false,
                               bool include_bluetooth_logs = false,
-                              bool from_kaleidoscope = false);
+                              bool show_questionnaire = false,
+                              bool from_chrome_labs_or_kaleidoscope = false);
 
   // BrowserContextKeyedAPI implementation.
   static BrowserContextKeyedAPIFactory<FeedbackPrivateAPI>*
   GetFactoryInstance();
 
   // Use a custom FeedbackService implementation for tests.
-  void SetFeedbackServiceForTesting(std::unique_ptr<FeedbackService> service) {
-    service_ = std::move(service);
+  void SetFeedbackServiceForTesting(scoped_refptr<FeedbackService> service) {
+    service_ = service;
   }
 
  private:
@@ -64,14 +79,12 @@ class FeedbackPrivateAPI : public BrowserContextKeyedAPI {
 
   static const bool kServiceHasOwnInstanceInIncognito = true;
 
-  content::BrowserContext* const browser_context_;
-  std::unique_ptr<FeedbackService> service_;
+  const raw_ptr<content::BrowserContext> browser_context_;
+  scoped_refptr<FeedbackService> service_;
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
   std::unique_ptr<LogSourceAccessManager> log_source_access_manager_;
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
-
-  DISALLOW_COPY_AND_ASSIGN(FeedbackPrivateAPI);
 };
 
 // Feedback strings.
@@ -116,6 +129,8 @@ class FeedbackPrivateGetSystemInformationFunction : public ExtensionFunction {
 
  private:
   void OnCompleted(std::unique_ptr<system_logs::SystemLogsResponse> sys_info);
+
+  bool send_all_crash_report_ids_;
 };
 
 // This function only reads from actual log sources on Chrome OS. On other
@@ -144,26 +159,7 @@ class FeedbackPrivateSendFeedbackFunction : public ExtensionFunction {
  protected:
   ~FeedbackPrivateSendFeedbackFunction() override {}
   ResponseAction Run() override;
-
- private:
-  void OnAllLogsFetched(bool send_histograms,
-                        bool send_bluetooth_logs,
-                        bool send_tab_titles,
-                        scoped_refptr<feedback::FeedbackData> feedback_data);
   void OnCompleted(api::feedback_private::LandingPageType type, bool success);
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  void OnAshLogsFetched(bool send_histograms,
-                        bool send_bluetooth_logs,
-                        bool send_tab_titles,
-                        scoped_refptr<feedback::FeedbackData> feedback_data);
-  void OnLacrosHistogramsFetched(
-      bool send_histograms,
-      bool send_bluetooth_logs,
-      bool send_tab_titles,
-      scoped_refptr<feedback::FeedbackData> feedback_data,
-      const std::string& compressed_histograms);
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 };
 
 class FeedbackPrivateLoginFeedbackCompleteFunction : public ExtensionFunction {

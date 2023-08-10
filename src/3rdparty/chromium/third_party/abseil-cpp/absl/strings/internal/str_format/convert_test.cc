@@ -229,6 +229,9 @@ TEST_F(FormatConvertTest, BasicString) {
   TestStringConvert(static_cast<const char*>("hello"));
   TestStringConvert(std::string("hello"));
   TestStringConvert(string_view("hello"));
+#if defined(ABSL_HAVE_STD_STRING_VIEW)
+  TestStringConvert(std::string_view("hello"));
+#endif  // ABSL_HAVE_STD_STRING_VIEW
 }
 
 TEST_F(FormatConvertTest, NullString) {
@@ -470,7 +473,7 @@ TYPED_TEST_P(TypedFormatConvertTest, Char) {
   }
 }
 
-REGISTER_TYPED_TEST_CASE_P(TypedFormatConvertTest, AllIntsWithFlags, Char);
+REGISTER_TYPED_TEST_SUITE_P(TypedFormatConvertTest, AllIntsWithFlags, Char);
 
 typedef ::testing::Types<
     int, unsigned, volatile int,
@@ -479,8 +482,8 @@ typedef ::testing::Types<
     long long, unsigned long long,
     signed char, unsigned char, char>
     AllIntTypes;
-INSTANTIATE_TYPED_TEST_CASE_P(TypedFormatConvertTestWithAllIntTypes,
-                              TypedFormatConvertTest, AllIntTypes);
+INSTANTIATE_TYPED_TEST_SUITE_P(TypedFormatConvertTestWithAllIntTypes,
+                               TypedFormatConvertTest, AllIntTypes);
 TEST_F(FormatConvertTest, VectorBool) {
   // Make sure vector<bool>'s values behave as bools.
   std::vector<bool> v = {true, false};

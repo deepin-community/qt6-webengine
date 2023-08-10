@@ -55,10 +55,21 @@ def make_header_include_directives(accumulator):
             self._accumulator = accumulator
 
         def __str__(self):
-            return "\n".join([
+            lines = []
+
+            if self._accumulator.stdcpp_include_headers:
+                lines.extend([
+                    "#include <{}>".format(header) for header in sorted(
+                        self._accumulator.stdcpp_include_headers)
+                ])
+                lines.append("")
+
+            lines.extend([
                 "#include \"{}\"".format(header)
                 for header in sorted(self._accumulator.include_headers)
             ])
+
+            return "\n".join(lines)
 
     return LiteralNode(HeaderIncludeDirectives(accumulator))
 
@@ -82,17 +93,19 @@ def collect_forward_decls_and_include_headers(idl_types):
             header_include_headers.update([
                 "third_party/blink/renderer/core/typed_arrays/array_buffer_view_helpers.h",
                 "third_party/blink/renderer/core/typed_arrays/dom_typed_array.h",
+                "third_party/blink/renderer/platform/heap/member.h",
             ])
         elif idl_type.is_nullable:
             if not blink_type_info(idl_type.inner_type).has_null_value:
-                header_include_headers.add("base/optional.h")
+                header_include_headers.add("third_party/abseil-cpp/absl/types/optional.h")
         elif idl_type.is_promise:
             header_include_headers.add(
                 "third_party/blink/renderer/bindings/core/v8/script_promise.h")
-        elif (idl_type.is_sequence or idl_type.is_record
-              or idl_type.is_frozen_array or idl_type.is_variadic):
+        elif (idl_type.is_sequence or idl_type.is_frozen_array
+              or idl_type.is_record or idl_type.is_variadic):
             header_include_headers.add(
-                "third_party/blink/renderer/platform/heap/heap_allocator.h")
+                "third_party/blink/renderer/platform/heap/collection_support/heap_vector.h"
+            )
         elif idl_type.is_string:
             header_include_headers.add(
                 "third_party/blink/renderer/platform/wtf/text/wtf_string.h")
@@ -107,15 +120,22 @@ def collect_forward_decls_and_include_headers(idl_types):
                     PathManager(type_def_obj).api_path(ext="h"))
             elif type_def_obj.is_interface:
                 header_forward_decls.add(blink_class_name(type_def_obj))
+                header_include_headers.add(
+                    "third_party/blink/renderer/platform/heap/member.h")
                 source_include_headers.add(
                     PathManager(type_def_obj).blink_path(ext="h"))
             else:
                 header_forward_decls.add(blink_class_name(type_def_obj))
+                header_include_headers.add(
+                    "third_party/blink/renderer/platform/heap/member.h")
                 source_include_headers.add(
                     PathManager(type_def_obj).api_path(ext="h"))
         elif idl_type.union_definition_object:
             union_def_obj = idl_type.union_definition_object
+            header_forward_decls.add(blink_class_name(union_def_obj))
             header_include_headers.add(
+                "third_party/blink/renderer/platform/heap/member.h")
+            source_include_headers.add(
                 PathManager(union_def_obj).api_path(ext="h"))
         else:
             assert False, "Unknown type: {}".format(idl_type.syntactic_form)
@@ -146,6 +166,8 @@ def component_export_header(component, for_testing):
         return "third_party/blink/renderer/core/core_export.h"
     elif component == "modules":
         return "third_party/blink/renderer/modules/modules_export.h"
+    elif component == "extensions_chromeos":
+        return "third_party/blink/renderer/extensions/chromeos/extensions_chromeos_export.h"
     else:
         assert False
 
@@ -182,4 +204,5 @@ def write_code_node_to_file(code_node, filepath):
 #
 #    web_idl.file_io.write_to_file_if_changed(
 #        filepath, format_result.contents.encode('utf-8'))
-    web_idl.file_io.write_to_file_if_changed(filepath, rendered_text)
+    web_idl.file_io.write_to_file_if_changed(
+        filepath, rendered_text.encode('utf-8'))

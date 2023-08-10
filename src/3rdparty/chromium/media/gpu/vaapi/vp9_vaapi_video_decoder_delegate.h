@@ -5,6 +5,7 @@
 #ifndef MEDIA_GPU_VAAPI_VP9_VAAPI_VIDEO_DECODER_DELEGATE_H_
 #define MEDIA_GPU_VAAPI_VP9_VAAPI_VIDEO_DECODER_DELEGATE_H_
 
+#include "base/callback_helpers.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/sequence_checker.h"
 #include "media/filters/vp9_parser.h"
@@ -26,6 +27,11 @@ class VP9VaapiVideoDecoderDelegate : public VP9Decoder::VP9Accelerator,
           base::DoNothing(),
       CdmContext* cdm_context = nullptr,
       EncryptionScheme encryption_scheme = EncryptionScheme::kUnencrypted);
+
+  VP9VaapiVideoDecoderDelegate(const VP9VaapiVideoDecoderDelegate&) = delete;
+  VP9VaapiVideoDecoderDelegate& operator=(const VP9VaapiVideoDecoderDelegate&) =
+      delete;
+
   ~VP9VaapiVideoDecoderDelegate() override;
 
   // VP9Decoder::VP9Accelerator implementation.
@@ -37,7 +43,7 @@ class VP9VaapiVideoDecoderDelegate : public VP9Decoder::VP9Accelerator,
                       base::OnceClosure done_cb) override;
 
   bool OutputPicture(scoped_refptr<VP9Picture> pic) override;
-  bool IsFrameContextRequired() const override;
+  bool NeedsCompressedHeaderParsed() const override;
   bool GetFrameContext(scoped_refptr<VP9Picture> pic,
                        Vp9FrameContext* frame_ctx) override;
 
@@ -48,9 +54,7 @@ class VP9VaapiVideoDecoderDelegate : public VP9Decoder::VP9Accelerator,
   std::unique_ptr<ScopedVABuffer> picture_params_;
   std::unique_ptr<ScopedVABuffer> slice_params_;
   std::unique_ptr<ScopedVABuffer> crypto_params_;
-  std::unique_ptr<ScopedVABuffer> proc_params_;
-
-  DISALLOW_COPY_AND_ASSIGN(VP9VaapiVideoDecoderDelegate);
+  std::unique_ptr<ScopedVABuffer> protected_params_;
 };
 
 }  // namespace media

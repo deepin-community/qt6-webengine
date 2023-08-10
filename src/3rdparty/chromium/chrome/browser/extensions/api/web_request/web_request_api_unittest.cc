@@ -16,16 +16,13 @@
 #include "base/files/file_path.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_string_value_serializer.h"
-#include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
-#include "base/single_thread_task_runner.h"
-#include "base/stl_util.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_split.h"
-#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
@@ -73,7 +70,6 @@ namespace web_request = extensions::api::web_request;
 using base::DictionaryValue;
 using base::ListValue;
 using base::Time;
-using base::TimeDelta;
 using base::Value;
 using helpers::CalculateOnAuthRequiredDelta;
 using helpers::CalculateOnBeforeRequestDelta;
@@ -143,7 +139,7 @@ bool GenerateInfoSpec(content::BrowserContext* browser_context,
   for (const std::string& cur :
        base::SplitString(values, ",", base::KEEP_WHITESPACE,
                          base::SPLIT_WANT_NONEMPTY))
-    list_value.AppendString(cur);
+    list_value.Append(cur);
   return ExtraInfoSpec::InitFromValue(browser_context, list_value, result);
 }
 
@@ -192,6 +188,83 @@ TEST_F(ExtensionWebRequestTest, AddAndRemoveListeners) {
       0u,
       ExtensionWebRequestEventRouter::GetInstance()->GetListenerCountForTesting(
           &profile_, kEventName));
+}
+
+// Tests that when a browser_context shuts down, all data keyed to that
+// context is removed.
+TEST_F(ExtensionWebRequestTest, BrowserContextShutdown) {
+  ExtensionWebRequestEventRouter* const event_router =
+      ExtensionWebRequestEventRouter::GetInstance();
+  ASSERT_TRUE(event_router);
+
+  std::string ext_id("abcdefghijklmnopabcdefghijklmnop");
+  ExtensionWebRequestEventRouter::RequestFilter filter;
+  const std::string kEventName(web_request::OnBeforeRequest::kEventName);
+  const std::string kSubEventName = kEventName + "/1";
+  EXPECT_EQ(0u,
+            event_router->GetListenerCountForTesting(&profile_, kEventName));
+  EXPECT_FALSE(event_router->HasAnyExtraHeadersListenerImpl(&profile_));
+
+  // Add two listeners for the main profile.
+  event_router->AddEventListener(
+      &profile_, ext_id, ext_id, events::FOR_TEST, kEventName, kSubEventName,
+      filter, 0, 1 /* render_process_id */, 0, extensions::kMainThreadId,
+      blink::mojom::kInvalidServiceWorkerVersionId);
+  event_router->AddEventListener(
+      &profile_, ext_id, ext_id, events::FOR_TEST, kEventName, kSubEventName,
+      filter, 0, 2 /* render_process_id */, 0, extensions::kMainThreadId,
+      blink::mojom::kInvalidServiceWorkerVersionId);
+  event_router->IncrementExtraHeadersListenerCount(&profile_);
+  EXPECT_EQ(2u,
+            event_router->GetListenerCountForTesting(&profile_, kEventName));
+  EXPECT_TRUE(event_router->HasAnyExtraHeadersListenerImpl(&profile_));
+
+  // Create an off-the-record profile.
+  auto otr_profile_id = Profile::OTRProfileID::CreateUniqueForTesting();
+  Profile* const otr_profile =
+      profile_.GetOffTheRecordProfile(otr_profile_id,
+                                      /*create_if_needed=*/true);
+  ASSERT_TRUE(otr_profile);
+
+  // Because the ExtensionWebRequestEventRouter is a singleton, there are hooks
+  // in the off-the-record profile for notifying it when an OTR profile is
+  // created and destroyed. Unfortunately, that doesn't work with test profiles,
+  // so the test needs to simulate those calls
+  event_router->OnOTRBrowserContextCreated(&profile_, otr_profile);
+  EXPECT_EQ(2u, event_router->cross_browser_context_map_.size());
+  EXPECT_EQ(0u,
+            event_router->GetListenerCountForTesting(otr_profile, kEventName));
+  EXPECT_FALSE(event_router->HasAnyExtraHeadersListenerImpl(otr_profile));
+
+  // Add two listeners for the otr profile.
+  event_router->AddEventListener(
+      otr_profile, ext_id, ext_id, events::FOR_TEST, kEventName, kSubEventName,
+      filter, 0, 1 /* render_process_id */, 0, extensions::kMainThreadId,
+      blink::mojom::kInvalidServiceWorkerVersionId);
+  event_router->AddEventListener(
+      otr_profile, ext_id, ext_id, events::FOR_TEST, kEventName, kSubEventName,
+      filter, 0, 2 /* render_process_id */, 0, extensions::kMainThreadId,
+      blink::mojom::kInvalidServiceWorkerVersionId);
+  event_router->IncrementExtraHeadersListenerCount(otr_profile);
+  EXPECT_EQ(2u,
+            event_router->GetListenerCountForTesting(otr_profile, kEventName));
+  EXPECT_TRUE(event_router->HasAnyExtraHeadersListenerImpl(otr_profile));
+
+  // Simulate the OTR being destroyed.
+  event_router->OnOTRBrowserContextDestroyed(&profile_, otr_profile);
+  EXPECT_EQ(0u, event_router->cross_browser_context_map_.size());
+  EXPECT_EQ(0u,
+            event_router->GetListenerCountForTesting(otr_profile, kEventName));
+  EXPECT_FALSE(event_router->HasAnyExtraHeadersListenerImpl(otr_profile));
+
+  // We can't just delete the profile, because the call comes through the
+  // WebRequestAPI instance for that profile, and creating that requires
+  // more infrastucture than it's worth. Instead, simulate it with a call
+  // into the event router directly.
+  event_router->OnBrowserContextShutdown(&profile_);
+  EXPECT_EQ(0u,
+            event_router->GetListenerCountForTesting(&profile_, kEventName));
+  EXPECT_FALSE(event_router->HasAnyExtraHeadersListenerImpl(&profile_));
 }
 
 namespace {
@@ -247,22 +320,22 @@ TEST(ExtensionWebRequestHelpersTest,
 }
 
 TEST(ExtensionWebRequestHelpersTest, TestStringToCharList) {
-  base::ListValue list_value;
-  list_value.AppendInteger('1');
-  list_value.AppendInteger('2');
-  list_value.AppendInteger('3');
-  list_value.AppendInteger(0xFE);
-  list_value.AppendInteger(0xD1);
+  base::Value list_value(base::Value::Type::LIST);
+  list_value.Append('1');
+  list_value.Append('2');
+  list_value.Append('3');
+  list_value.Append(0xFE);
+  list_value.Append(0xD1);
 
   unsigned char char_value[] = {'1', '2', '3', 0xFE, 0xD1};
   std::string string_value(reinterpret_cast<char *>(char_value), 5);
 
-  std::unique_ptr<base::ListValue> converted_list(
-      StringToCharList(string_value));
-  EXPECT_TRUE(list_value.Equals(converted_list.get()));
+  base::Value converted_list(StringToCharList(string_value));
+  EXPECT_EQ(list_value, converted_list);
 
   std::string converted_string;
-  EXPECT_TRUE(CharListToString(&list_value, &converted_string));
+  EXPECT_TRUE(
+      CharListToString(list_value.GetListDeprecated(), &converted_string));
   EXPECT_EQ(string_value, converted_string);
 }
 
@@ -475,8 +548,8 @@ TEST(ExtensionWebRequestHelpersTest,
 TEST(ExtensionWebRequestHelpersTest, TestCalculateOnAuthRequiredDelta) {
   const bool cancel = true;
 
-  base::string16 username = base::ASCIIToUTF16("foo");
-  base::string16 password = base::ASCIIToUTF16("bar");
+  std::u16string username = u"foo";
+  std::u16string password = u"bar";
   net::AuthCredentials credentials(username, password);
 
   EventResponseDelta delta = CalculateOnAuthRequiredDelta(
@@ -489,7 +562,7 @@ TEST(ExtensionWebRequestHelpersTest, TestCalculateOnAuthRequiredDelta) {
 
 TEST(ExtensionWebRequestHelpersTest, TestMergeCancelOfResponses) {
   EventResponseDeltas deltas;
-  base::Optional<extensions::ExtensionId> canceled_by_extension;
+  absl::optional<extensions::ExtensionId> canceled_by_extension;
 
   // Single event that does not cancel.
   {
@@ -845,7 +918,7 @@ TEST(ExtensionWebRequestHelpersTest, TestMergeOnBeforeSendHeadersResponses) {
   modify_headers_action.request_headers_to_modify = {
       DNRRequestAction::HeaderInfo(
           "key5", api::declarative_net_request::HEADER_OPERATION_REMOVE,
-          base::nullopt)};
+          absl::nullopt)};
   info.dnr_actions = std::vector<DNRRequestAction>();
   info.dnr_actions->push_back(std::move(modify_headers_action));
 
@@ -936,14 +1009,14 @@ TEST(ExtensionWebRequestHelpersTest,
           "dnr_action_1"),
       DNRRequestAction::HeaderInfo(
           "key3", api::declarative_net_request::HEADER_OPERATION_REMOVE,
-          base::nullopt)};
+          absl::nullopt)};
 
   DNRRequestAction action_2 =
       CreateRequestActionForTesting(DNRRequestAction::Type::MODIFY_HEADERS);
   action_2.request_headers_to_modify = {
       DNRRequestAction::HeaderInfo(
           "referer", api::declarative_net_request::HEADER_OPERATION_REMOVE,
-          base::nullopt),
+          absl::nullopt),
       DNRRequestAction::HeaderInfo(
           "cookie", api::declarative_net_request::HEADER_OPERATION_SET,
           "dnr_action_2"),
@@ -1111,25 +1184,7 @@ TEST(ExtensionWebRequestHelpersTest,
 namespace {
 
 std::string GetCookieExpirationDate(int delta_secs) {
-  const char* const kWeekDays[] = {
-    "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"
-  };
-  const char* const kMonthNames[] = {
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
-  };
-
-  Time::Exploded exploded_time;
-  (Time::Now() + TimeDelta::FromSeconds(delta_secs)).UTCExplode(&exploded_time);
-
-  return base::StringPrintf("%s, %d %s %d %.2d:%.2d:%.2d GMT",
-                            kWeekDays[exploded_time.day_of_week],
-                            exploded_time.day_of_month,
-                            kMonthNames[exploded_time.month - 1],
-                            exploded_time.year,
-                            exploded_time.hour,
-                            exploded_time.minute,
-                            exploded_time.second);
+  return base::TimeFormatHTTP(Time::Now() + base::Seconds(delta_secs));
 }
 
 }  // namespace
@@ -1183,7 +1238,7 @@ TEST(ExtensionWebRequestHelpersTest,
   edit_cookie.filter.emplace();
   edit_cookie.filter->name = "name2";
   edit_cookie.modification.emplace();
-  edit_cookie.modification->value = "new value";
+  edit_cookie.modification->value = "newvalue";
 
   ResponseCookieModification edit_cookie_2;
   edit_cookie_2.type = helpers::EDIT;
@@ -1261,9 +1316,9 @@ TEST(ExtensionWebRequestHelpersTest,
   edit_cookie_9.type = helpers::EDIT;
   edit_cookie_9.filter.emplace();
   edit_cookie_9.filter->name = "uBound4";
-  edit_cookie_9.filter->age_upper_bound = 2501;
+  edit_cookie_9.filter->age_upper_bound = 2499;
   edit_cookie_9.modification.emplace();
-  edit_cookie_9.modification->value = "Will not change";
+  edit_cookie_9.modification->value = "Willnotchange";
 
   // Tests 'ageUpperBound' filter when both 'max-age' and 'expires' cookie
   // attributes are provided. 'expires' value matches the filter, however
@@ -1273,9 +1328,9 @@ TEST(ExtensionWebRequestHelpersTest,
   edit_cookie_10.type = helpers::EDIT;
   edit_cookie_10.filter.emplace();
   edit_cookie_10.filter->name = "uBound5";
-  edit_cookie_10.filter->age_upper_bound = 800;
+  edit_cookie_10.filter->age_upper_bound = 599;
   edit_cookie_10.modification.emplace();
-  edit_cookie_10.modification->value = "Will not change";
+  edit_cookie_10.modification->value = "Willnotchange";
 
   ResponseCookieModification remove_cookie;
   remove_cookie.type = helpers::REMOVE;
@@ -1325,7 +1380,7 @@ TEST(ExtensionWebRequestHelpersTest,
   std::string cookie_string;
   std::set<std::string> expected_cookies;
   expected_cookies.insert("name=value; domain=google.com; secure");
-  expected_cookies.insert("name2=value2; secure");
+  expected_cookies.insert("name2=newvalue; secure");
   expected_cookies.insert("name4=\"value4\"; secure");
   expected_cookies.insert(
       "lBound1=greater_1; expires=" + cookie_expiration + "; secure");
@@ -1456,7 +1511,7 @@ TEST(ExtensionWebRequestHelpersTest, TestMergeOnHeadersReceivedResponses) {
   modify_headers_action.response_headers_to_modify = {
       DNRRequestAction::HeaderInfo(
           "key3", api::declarative_net_request::HEADER_OPERATION_REMOVE,
-          base::nullopt)};
+          absl::nullopt)};
 
   info.dnr_actions = std::vector<DNRRequestAction>();
   info.dnr_actions->push_back(std::move(modify_headers_action));
@@ -1697,9 +1752,9 @@ TEST(ExtensionWebRequestHelpersTest,
                  "dnr_action_1"),
 
       HeaderInfo("key7", api::declarative_net_request::HEADER_OPERATION_REMOVE,
-                 base::nullopt),
+                 absl::nullopt),
       HeaderInfo("key8", api::declarative_net_request::HEADER_OPERATION_REMOVE,
-                 base::nullopt),
+                 absl::nullopt),
 
       HeaderInfo("same_ext_key",
                  api::declarative_net_request::HEADER_OPERATION_SET,
@@ -1721,14 +1776,14 @@ TEST(ExtensionWebRequestHelpersTest,
       HeaderInfo("key2", api::declarative_net_request::HEADER_OPERATION_SET,
                  "dnr_action_3"),
       HeaderInfo("key3", api::declarative_net_request::HEADER_OPERATION_REMOVE,
-                 base::nullopt),
+                 absl::nullopt),
 
       HeaderInfo("key4", api::declarative_net_request::HEADER_OPERATION_APPEND,
                  "dnr_action_3"),
       HeaderInfo("key5", api::declarative_net_request::HEADER_OPERATION_SET,
                  "dnr_action_3"),
       HeaderInfo("key6", api::declarative_net_request::HEADER_OPERATION_REMOVE,
-                 base::nullopt),
+                 absl::nullopt),
 
       HeaderInfo("key7", api::declarative_net_request::HEADER_OPERATION_APPEND,
                  "dnr_action_3"),
@@ -1828,10 +1883,10 @@ TEST(ExtensionWebRequestHelpersTest,
                  "dnr_action_1"),
       HeaderInfo("set-cookie",
                  api::declarative_net_request::HEADER_OPERATION_REMOVE,
-                 base::nullopt),
+                 absl::nullopt),
       HeaderInfo("warning",
                  api::declarative_net_request::HEADER_OPERATION_REMOVE,
-                 base::nullopt)};
+                 absl::nullopt)};
 
   DNRRequestAction action_2 =
       CreateRequestActionForTesting(DNRRequestAction::Type::MODIFY_HEADERS);
@@ -1910,9 +1965,9 @@ TEST(ExtensionWebRequestHelpersTest,
 TEST(ExtensionWebRequestHelpersTest, TestMergeOnAuthRequiredResponses) {
   helpers::IgnoredActions ignored_actions;
   EventResponseDeltas deltas;
-  base::string16 username = base::ASCIIToUTF16("foo");
-  base::string16 password = base::ASCIIToUTF16("bar");
-  base::string16 password2 = base::ASCIIToUTF16("baz");
+  std::u16string username = u"foo";
+  std::u16string password = u"bar";
+  std::u16string password2 = u"baz";
 
   // Check that we can handle if not returning credentials.
   {

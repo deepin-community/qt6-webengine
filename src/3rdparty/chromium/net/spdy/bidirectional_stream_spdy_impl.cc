@@ -16,7 +16,7 @@
 #include "net/spdy/spdy_buffer.h"
 #include "net/spdy/spdy_http_utils.h"
 #include "net/spdy/spdy_stream.h"
-#include "net/third_party/quiche/src/spdy/core/spdy_header_block.h"
+#include "net/third_party/quiche/src/quiche/spdy/core/spdy_header_block.h"
 
 namespace net {
 
@@ -81,7 +81,8 @@ void BidirectionalStreamSpdyImpl::Start(
       request_info_->socket_tag, net_log,
       base::BindOnce(&BidirectionalStreamSpdyImpl::OnStreamInitialized,
                      weak_factory_.GetWeakPtr()),
-      traffic_annotation);
+      traffic_annotation, request_info_->detect_broken_connection,
+      request_info_->heartbeat_interval);
   if (rv != ERR_IO_PENDING)
     OnStreamInitialized(rv);
 }
@@ -204,6 +205,12 @@ void BidirectionalStreamSpdyImpl::OnHeadersSent() {
   negotiated_protocol_ = kProtoHTTP2;
   if (delegate_)
     delegate_->OnStreamReady(/*request_headers_sent=*/true);
+}
+
+void BidirectionalStreamSpdyImpl::OnEarlyHintsReceived(
+    const spdy::Http2HeaderBlock& headers) {
+  DCHECK(stream_);
+  // TODO(crbug.com/671310): Plumb Early Hints to `delegate_` if needed.
 }
 
 void BidirectionalStreamSpdyImpl::OnHeadersReceived(
@@ -357,7 +364,7 @@ void BidirectionalStreamSpdyImpl::ScheduleBufferedRead() {
   }
 
   more_read_data_pending_ = false;
-  timer_->Start(FROM_HERE, base::TimeDelta::FromMilliseconds(kBufferTimeMs),
+  timer_->Start(FROM_HERE, base::Milliseconds(kBufferTimeMs),
                 base::BindOnce(&BidirectionalStreamSpdyImpl::DoBufferedRead,
                                weak_factory_.GetWeakPtr()));
 }

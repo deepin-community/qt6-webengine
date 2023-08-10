@@ -19,15 +19,16 @@
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/logging.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/task_runner_util.h"
+#include "base/task/task_runner_util.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/task_environment.h"
 #include "base/test/test_simple_task_runner.h"
+#include "base/threading/sequenced_task_runner_handle.h"
 #include "build/build_config.h"
 #include "components/prefs/testing_pref_service.h"
 #include "components/subresource_filter/content/browser/ruleset_publisher.h"
@@ -64,13 +65,14 @@ class ScopedFunctionOverride {
     std::swap(*target_, replacement_);
   }
 
+  ScopedFunctionOverride(const ScopedFunctionOverride&) = delete;
+  ScopedFunctionOverride& operator=(const ScopedFunctionOverride&) = delete;
+
   ~ScopedFunctionOverride() { std::swap(*target_, replacement_); }
 
  private:
-  Fun* target_;
+  raw_ptr<Fun> target_;
   Fun replacement_;
-
-  DISALLOW_COPY_AND_ASSIGN(ScopedFunctionOverride);
 };
 
 template <typename Fun>
@@ -98,12 +100,16 @@ class MockRulesetPublisherImpl : public RulesetPublisher {
       scoped_refptr<base::TestSimpleTaskRunner> best_effort_task_runner)
       : blocking_task_runner_(std::move(blocking_task_runner)),
         best_effort_task_runner_(std::move(best_effort_task_runner)) {}
+
+  MockRulesetPublisherImpl(const MockRulesetPublisherImpl&) = delete;
+  MockRulesetPublisherImpl& operator=(const MockRulesetPublisherImpl&) = delete;
+
   ~MockRulesetPublisherImpl() override = default;
 
   void TryOpenAndSetRulesetFile(
       const base::FilePath& path,
       int expected_checksum,
-      base::OnceCallback<void(base::File)> callback) override {
+      base::OnceCallback<void(RulesetFilePtr)> callback) override {
     // Emulate |VerifiedRulesetDealer::Handle| behaviour:
     //   1. Open file on task runner.
     //   2. Reply with result on current thread runner.
@@ -113,7 +119,7 @@ class MockRulesetPublisherImpl : public RulesetPublisher {
         std::move(callback));
   }
 
-  void PublishNewRulesetVersion(base::File ruleset_data) override {
+  void PublishNewRulesetVersion(RulesetFilePtr ruleset_data) override {
     published_rulesets_.push_back(std::move(ruleset_data));
   }
 
@@ -126,7 +132,9 @@ class MockRulesetPublisherImpl : public RulesetPublisher {
   void SetRulesetPublishedCallbackForTesting(
       base::OnceClosure callback) override {}
 
-  std::vector<base::File>& published_rulesets() { return published_rulesets_; }
+  std::vector<RulesetFilePtr>& published_rulesets() {
+    return published_rulesets_;
+  }
 
   void RunBestEffortUntilIdle() {
     best_effort_task_runner_->RunUntilIdle();
@@ -134,16 +142,17 @@ class MockRulesetPublisherImpl : public RulesetPublisher {
   }
 
  private:
-  static base::File OpenRulesetFile(base::FilePath file_path) {
-    return base::File(file_path, base::File::FLAG_OPEN | base::File::FLAG_READ |
-                                     base::File::FLAG_SHARE_DELETE);
+  static RulesetFilePtr OpenRulesetFile(base::FilePath file_path) {
+    return RulesetFilePtr(
+        new base::File(file_path, base::File::FLAG_OPEN |
+                                      base::File::FLAG_READ |
+                                      base::File::FLAG_WIN_SHARE_DELETE),
+        base::OnTaskRunnerDeleter(base::SequencedTaskRunnerHandle::Get()));
   }
 
-  std::vector<base::File> published_rulesets_;
+  std::vector<RulesetFilePtr> published_rulesets_;
   scoped_refptr<base::TestSimpleTaskRunner> blocking_task_runner_;
   scoped_refptr<base::TestSimpleTaskRunner> best_effort_task_runner_;
-
-  DISALLOW_COPY_AND_ASSIGN(MockRulesetPublisherImpl);
 };
 
 bool MockFailingReplaceFile(const base::FilePath&,
@@ -185,6 +194,11 @@ class SubresourceFilteringRulesetServiceTest : public ::testing::Test {
         best_effort_task_runner_(
             base::MakeRefCounted<base::TestSimpleTaskRunner>()) {}
 
+  SubresourceFilteringRulesetServiceTest(
+      const SubresourceFilteringRulesetServiceTest&) = delete;
+  SubresourceFilteringRulesetServiceTest& operator=(
+      const SubresourceFilteringRulesetServiceTest&) = delete;
+
  protected:
   void SetUp() override {
     IndexedRulesetVersion::RegisterPrefs(pref_service_.registry());
@@ -202,6 +216,15 @@ class SubresourceFilteringRulesetServiceTest : public ::testing::Test {
     ASSERT_NO_FATAL_FAILURE(
         ruleset_creator_.CreateRulesetToDisallowURLsWithPathSuffix(
             kTestDisallowedSuffix3, &test_ruleset_3_));
+  }
+
+  void TearDown() override {
+    // Destroy the service to schedule deletion of files.
+    service_.reset();
+    // Run the messageloops to ensure the files are deleted.
+    task_environment_.RunUntilIdle();
+    blocking_task_runner_->RunUntilIdle();
+    ::testing::Test::TearDown();
   }
 
   virtual void SetUpTempDir() {
@@ -426,8 +449,6 @@ class SubresourceFilteringRulesetServiceTest : public ::testing::Test {
   TestRulesetPair test_ruleset_3_;
 
   std::unique_ptr<RulesetService> service_;
-
-  DISALLOW_COPY_AND_ASSIGN(SubresourceFilteringRulesetServiceTest);
 };
 
 // Specialized test fixture for death tests. It exposes the temporary directory
@@ -440,6 +461,11 @@ class SubresourceFilteringRulesetServiceDeathTest
  public:
   SubresourceFilteringRulesetServiceDeathTest()
       : environment_(base::Environment::Create()) {}
+
+  SubresourceFilteringRulesetServiceDeathTest(
+      const SubresourceFilteringRulesetServiceDeathTest&) = delete;
+  SubresourceFilteringRulesetServiceDeathTest& operator=(
+      const SubresourceFilteringRulesetServiceDeathTest&) = delete;
 
  protected:
   void SetUpTempDir() override {
@@ -471,8 +497,6 @@ class SubresourceFilteringRulesetServiceDeathTest
 
   std::unique_ptr<base::Environment> environment_;
   base::FilePath inherited_temp_dir_;
-
-  DISALLOW_COPY_AND_ASSIGN(SubresourceFilteringRulesetServiceDeathTest);
 };
 
 // static
@@ -650,7 +674,7 @@ TEST_F(SubresourceFilteringRulesetServiceTest,
 
   ASSERT_EQ(1u, mock_publisher()->published_rulesets().size());
   ASSERT_NO_FATAL_FAILURE(AssertValidRulesetFileWithContents(
-      &mock_publisher()->published_rulesets()[0],
+      mock_publisher()->published_rulesets()[0].get(),
       test_ruleset_1().indexed.contents));
 
   SimulateStartupCompletedAndWaitForTasks();
@@ -667,7 +691,7 @@ TEST_F(SubresourceFilteringRulesetServiceTest, NewRuleset_Published) {
 
   ASSERT_EQ(1u, mock_publisher()->published_rulesets().size());
   ASSERT_NO_FATAL_FAILURE(AssertValidRulesetFileWithContents(
-      &mock_publisher()->published_rulesets()[0],
+      mock_publisher()->published_rulesets()[0].get(),
       test_ruleset_1().indexed.contents));
 }
 
@@ -680,7 +704,7 @@ TEST_F(SubresourceFilteringRulesetServiceTest,
 
   ASSERT_EQ(1u, mock_publisher()->published_rulesets().size());
   ASSERT_NO_FATAL_FAILURE(AssertValidRulesetFileWithContents(
-      &mock_publisher()->published_rulesets()[0],
+      mock_publisher()->published_rulesets()[0].get(),
       test_ruleset_1().indexed.contents));
 }
 
@@ -703,7 +727,7 @@ TEST_F(SubresourceFilteringRulesetServiceTest,
 
   ASSERT_EQ(1u, mock_publisher()->published_rulesets().size());
   ASSERT_NO_FATAL_FAILURE(AssertValidRulesetFileWithContents(
-      &mock_publisher()->published_rulesets()[0],
+      mock_publisher()->published_rulesets()[0].get(),
       test_ruleset_1().indexed.contents));
 }
 
@@ -741,7 +765,7 @@ TEST_F(SubresourceFilteringRulesetServiceTest, NewRuleset_Persisted) {
 
   ASSERT_EQ(1u, mock_publisher()->published_rulesets().size());
   ASSERT_NO_FATAL_FAILURE(AssertValidRulesetFileWithContents(
-      &mock_publisher()->published_rulesets()[0],
+      mock_publisher()->published_rulesets()[0].get(),
       test_ruleset_1().indexed.contents));
 
   SimulateStartupCompletedAndWaitForTasks();
@@ -787,7 +811,7 @@ TEST_F(SubresourceFilteringRulesetServiceTest,
 
   ASSERT_EQ(1u, mock_publisher()->published_rulesets().size());
   ASSERT_NO_FATAL_FAILURE(AssertValidRulesetFileWithContents(
-      &mock_publisher()->published_rulesets()[0],
+      mock_publisher()->published_rulesets()[0].get(),
       test_ruleset_1().indexed.contents));
 }
 
@@ -861,9 +885,7 @@ TEST_F(SubresourceFilteringRulesetServiceTest, NewRuleset_ParseFailure) {
   mock_publisher()->RunBestEffortUntilIdle();
 
   const std::string kGarbage(10000, '\xff');
-  ASSERT_TRUE(base::AppendToFile(test_ruleset_1().unindexed.path,
-                                 kGarbage.data(),
-                                 static_cast<int>(kGarbage.size())));
+  ASSERT_TRUE(base::AppendToFile(test_ruleset_1().unindexed.path, kGarbage));
   WaitForIndexAndStoreAndPublishUpdatedRuleset(test_ruleset_1(),
                                                kTestContentVersion1);
 
@@ -987,10 +1009,10 @@ TEST_F(SubresourceFilteringRulesetServiceTest,
   // can still be read after it has been deprecated.
   ASSERT_EQ(2u, mock_publisher()->published_rulesets().size());
   ASSERT_NO_FATAL_FAILURE(AssertValidRulesetFileWithContents(
-      &mock_publisher()->published_rulesets()[0],
+      mock_publisher()->published_rulesets()[0].get(),
       test_ruleset_1().indexed.contents));
   ASSERT_NO_FATAL_FAILURE(AssertValidRulesetFileWithContents(
-      &mock_publisher()->published_rulesets()[1],
+      mock_publisher()->published_rulesets()[1].get(),
       test_ruleset_2().indexed.contents));
 
   IndexedRulesetVersion stored_version;
@@ -1011,7 +1033,7 @@ TEST_F(SubresourceFilteringRulesetServiceTest,
 
   ASSERT_EQ(1u, mock_publisher()->published_rulesets().size());
   ASSERT_NO_FATAL_FAILURE(AssertValidRulesetFileWithContents(
-      &mock_publisher()->published_rulesets()[0],
+      mock_publisher()->published_rulesets()[0].get(),
       test_ruleset_1().indexed.contents));
 
   IndexedRulesetVersion stored_version;
@@ -1037,7 +1059,7 @@ TEST_F(SubresourceFilteringRulesetServiceTest,
 
   // Make sure the active ruleset is test_ruleset_3.
   ASSERT_NO_FATAL_FAILURE(AssertValidRulesetFileWithContents(
-      &mock_publisher()->published_rulesets().back(),
+      mock_publisher()->published_rulesets().back().get(),
       test_ruleset_3().indexed.contents));
 }
 
@@ -1084,7 +1106,7 @@ TEST_F(SubresourceFilteringRulesetServiceTest,
     ASSERT_LE(1u, mock_publisher()->published_rulesets().size());
     ASSERT_GE(2u, mock_publisher()->published_rulesets().size());
     if (mock_publisher()->published_rulesets().size() == 2) {
-      base::File* file = &mock_publisher()->published_rulesets()[0];
+      base::File* file = mock_publisher()->published_rulesets()[0].get();
       ASSERT_TRUE(file->IsValid());
       EXPECT_THAT(
           ReadFileContentsToVector(file),
@@ -1092,7 +1114,7 @@ TEST_F(SubresourceFilteringRulesetServiceTest,
                            ::testing::Eq(test_ruleset_2().indexed.contents)));
     }
     ASSERT_NO_FATAL_FAILURE(AssertValidRulesetFileWithContents(
-        &mock_publisher()->published_rulesets().back(),
+        mock_publisher()->published_rulesets().back().get(),
         test_ruleset_2().indexed.contents));
 
     IndexedRulesetVersion stored_version;
@@ -1114,8 +1136,8 @@ TEST_F(SubresourceFilteringRulesetServiceTest, RulesetIsReadonly) {
                                                kTestContentVersion1);
 
   ASSERT_EQ(1u, mock_publisher()->published_rulesets().size());
-  ASSERT_NO_FATAL_FAILURE(
-      AssertReadonlyRulesetFile(&mock_publisher()->published_rulesets()[0]));
+  ASSERT_NO_FATAL_FAILURE(AssertReadonlyRulesetFile(
+      mock_publisher()->published_rulesets()[0].get()));
 }
 
 TEST_F(SubresourceFilteringRulesetServiceTest, ParallelOpenOfTwoFiles) {
@@ -1143,10 +1165,10 @@ TEST_F(SubresourceFilteringRulesetServiceTest, ParallelOpenOfTwoFiles) {
   base::RunLoop().RunUntilIdle();
   ASSERT_EQ(2u, mock_publisher()->published_rulesets().size());
   ASSERT_NO_FATAL_FAILURE(AssertValidRulesetFileWithContents(
-      &mock_publisher()->published_rulesets()[0],
+      mock_publisher()->published_rulesets()[0].get(),
       test_ruleset_1().indexed.contents));
   ASSERT_NO_FATAL_FAILURE(AssertValidRulesetFileWithContents(
-      &mock_publisher()->published_rulesets()[1],
+      mock_publisher()->published_rulesets()[1].get(),
       test_ruleset_2().indexed.contents));
 }
 

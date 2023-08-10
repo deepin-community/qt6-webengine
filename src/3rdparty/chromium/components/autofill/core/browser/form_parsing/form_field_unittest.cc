@@ -3,19 +3,19 @@
 // found in the LICENSE file.
 
 #include <memory>
+#include <string>
 #include <vector>
 
-#include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_feature_list.h"
 #include "components/autofill/core/browser/autofill_field.h"
 #include "components/autofill/core/browser/form_parsing/form_field.h"
 #include "components/autofill/core/browser/form_structure.h"
 #include "components/autofill/core/common/autofill_features.h"
+#include "components/autofill/core/common/autofill_payments_features.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using autofill::features::kAutofillFixFillableFieldTypes;
-using base::ASCIIToUTF16;
 
 namespace autofill {
 
@@ -26,102 +26,93 @@ FieldRendererId MakeFieldRendererId() {
 }
 
 // Sets both the field label and parseable label to |label|.
-void SetFieldLabels(AutofillField* field, const std::string& label) {
-  field->label = base::UTF8ToUTF16(label);
-  field->set_parseable_label(base::UTF8ToUTF16(label));
+void SetFieldLabels(AutofillField* field, const std::u16string& label) {
+  field->label = label;
+  field->set_parseable_label(label);
 }
 
 }  // namespace
 
 TEST(FormFieldTest, Match) {
+  constexpr MatchParams kMatchLabel{{MatchAttribute::kLabel}, {}};
+
   AutofillField field;
 
   // Empty strings match.
-  EXPECT_TRUE(FormField::Match(&field, base::string16(), MATCH_LABEL));
+  EXPECT_TRUE(FormField::Match(&field, std::u16string(), kMatchLabel));
 
   // Empty pattern matches non-empty string.
-  SetFieldLabels(&field, "a");
-  EXPECT_TRUE(FormField::Match(&field, base::string16(), MATCH_LABEL));
+  SetFieldLabels(&field, u"a");
+  EXPECT_TRUE(FormField::Match(&field, std::u16string(), kMatchLabel));
 
   // Strictly empty pattern matches empty string.
-  SetFieldLabels(&field, "");
-  EXPECT_TRUE(FormField::Match(&field, ASCIIToUTF16("^$"), MATCH_LABEL));
+  SetFieldLabels(&field, u"");
+  EXPECT_TRUE(FormField::Match(&field, u"^$", kMatchLabel));
 
   // Strictly empty pattern does not match non-empty string.
-  SetFieldLabels(&field, "a");
-  EXPECT_FALSE(FormField::Match(&field, ASCIIToUTF16("^$"), MATCH_LABEL));
+  SetFieldLabels(&field, u"a");
+  EXPECT_FALSE(FormField::Match(&field, u"^$", kMatchLabel));
 
   // Non-empty pattern doesn't match empty string.
-  SetFieldLabels(&field, "");
-  EXPECT_FALSE(FormField::Match(&field, ASCIIToUTF16("a"), MATCH_LABEL));
+  SetFieldLabels(&field, u"");
+  EXPECT_FALSE(FormField::Match(&field, u"a", kMatchLabel));
 
   // Beginning of line.
-  SetFieldLabels(&field, "head_tail");
-  EXPECT_TRUE(FormField::Match(&field, ASCIIToUTF16("^head"), MATCH_LABEL));
-  EXPECT_FALSE(FormField::Match(&field, ASCIIToUTF16("^tail"), MATCH_LABEL));
+  SetFieldLabels(&field, u"head_tail");
+  EXPECT_TRUE(FormField::Match(&field, u"^head", kMatchLabel));
+  EXPECT_FALSE(FormField::Match(&field, u"^tail", kMatchLabel));
 
   // End of line.
-  SetFieldLabels(&field, "head_tail");
-  EXPECT_FALSE(FormField::Match(&field, ASCIIToUTF16("head$"), MATCH_LABEL));
-  EXPECT_TRUE(FormField::Match(&field, ASCIIToUTF16("tail$"), MATCH_LABEL));
+  SetFieldLabels(&field, u"head_tail");
+  EXPECT_FALSE(FormField::Match(&field, u"head$", kMatchLabel));
+  EXPECT_TRUE(FormField::Match(&field, u"tail$", kMatchLabel));
 
   // Exact.
-  SetFieldLabels(&field, "head_tail");
-  EXPECT_FALSE(FormField::Match(&field, ASCIIToUTF16("^head$"), MATCH_LABEL));
-  EXPECT_FALSE(FormField::Match(&field, ASCIIToUTF16("^tail$"), MATCH_LABEL));
-  EXPECT_TRUE(
-      FormField::Match(&field, ASCIIToUTF16("^head_tail$"), MATCH_LABEL));
+  SetFieldLabels(&field, u"head_tail");
+  EXPECT_FALSE(FormField::Match(&field, u"^head$", kMatchLabel));
+  EXPECT_FALSE(FormField::Match(&field, u"^tail$", kMatchLabel));
+  EXPECT_TRUE(FormField::Match(&field, u"^head_tail$", kMatchLabel));
 
   // Escaped dots.
-  SetFieldLabels(&field, "m.i.");
+  SetFieldLabels(&field, u"m.i.");
   // Note: This pattern is misleading as the "." characters are wild cards.
-  EXPECT_TRUE(FormField::Match(&field, ASCIIToUTF16("m.i."), MATCH_LABEL));
-  EXPECT_TRUE(FormField::Match(&field, ASCIIToUTF16("m\\.i\\."), MATCH_LABEL));
-  SetFieldLabels(&field, "mXiX");
-  EXPECT_TRUE(FormField::Match(&field, ASCIIToUTF16("m.i."), MATCH_LABEL));
-  EXPECT_FALSE(FormField::Match(&field, ASCIIToUTF16("m\\.i\\."), MATCH_LABEL));
+  EXPECT_TRUE(FormField::Match(&field, u"m.i.", kMatchLabel));
+  EXPECT_TRUE(FormField::Match(&field, u"m\\.i\\.", kMatchLabel));
+  SetFieldLabels(&field, u"mXiX");
+  EXPECT_TRUE(FormField::Match(&field, u"m.i.", kMatchLabel));
+  EXPECT_FALSE(FormField::Match(&field, u"m\\.i\\.", kMatchLabel));
 
   // Repetition.
-  SetFieldLabels(&field, "headtail");
-  EXPECT_TRUE(
-      FormField::Match(&field, ASCIIToUTF16("head.*tail"), MATCH_LABEL));
-  SetFieldLabels(&field, "headXtail");
-  EXPECT_TRUE(
-      FormField::Match(&field, ASCIIToUTF16("head.*tail"), MATCH_LABEL));
-  SetFieldLabels(&field, "headXXXtail");
-  EXPECT_TRUE(
-      FormField::Match(&field, ASCIIToUTF16("head.*tail"), MATCH_LABEL));
-  SetFieldLabels(&field, "headtail");
-  EXPECT_FALSE(
-      FormField::Match(&field, ASCIIToUTF16("head.+tail"), MATCH_LABEL));
-  SetFieldLabels(&field, "headXtail");
-  EXPECT_TRUE(
-      FormField::Match(&field, ASCIIToUTF16("head.+tail"), MATCH_LABEL));
-  SetFieldLabels(&field, "headXXXtail");
-  EXPECT_TRUE(
-      FormField::Match(&field, ASCIIToUTF16("head.+tail"), MATCH_LABEL));
+  SetFieldLabels(&field, u"headtail");
+  EXPECT_TRUE(FormField::Match(&field, u"head.*tail", kMatchLabel));
+  SetFieldLabels(&field, u"headXtail");
+  EXPECT_TRUE(FormField::Match(&field, u"head.*tail", kMatchLabel));
+  SetFieldLabels(&field, u"headXXXtail");
+  EXPECT_TRUE(FormField::Match(&field, u"head.*tail", kMatchLabel));
+  SetFieldLabels(&field, u"headtail");
+  EXPECT_FALSE(FormField::Match(&field, u"head.+tail", kMatchLabel));
+  SetFieldLabels(&field, u"headXtail");
+  EXPECT_TRUE(FormField::Match(&field, u"head.+tail", kMatchLabel));
+  SetFieldLabels(&field, u"headXXXtail");
+  EXPECT_TRUE(FormField::Match(&field, u"head.+tail", kMatchLabel));
 
   // Alternation.
-  SetFieldLabels(&field, "head_tail");
-  EXPECT_TRUE(
-      FormField::Match(&field, ASCIIToUTF16("head|other"), MATCH_LABEL));
-  EXPECT_TRUE(
-      FormField::Match(&field, ASCIIToUTF16("tail|other"), MATCH_LABEL));
-  EXPECT_FALSE(FormField::Match(&field, ASCIIToUTF16("bad|good"), MATCH_LABEL));
+  SetFieldLabels(&field, u"head_tail");
+  EXPECT_TRUE(FormField::Match(&field, u"head|other", kMatchLabel));
+  EXPECT_TRUE(FormField::Match(&field, u"tail|other", kMatchLabel));
+  EXPECT_FALSE(FormField::Match(&field, u"bad|good", kMatchLabel));
 
   // Case sensitivity.
-  SetFieldLabels(&field, "xxxHeAd_tAiLxxx");
-  EXPECT_TRUE(FormField::Match(&field, ASCIIToUTF16("head_tail"), MATCH_LABEL));
+  SetFieldLabels(&field, u"xxxHeAd_tAiLxxx");
+  EXPECT_TRUE(FormField::Match(&field, u"head_tail", kMatchLabel));
 
   // Word boundaries.
-  SetFieldLabels(&field, "contains word:");
-  EXPECT_TRUE(
-      FormField::Match(&field, ASCIIToUTF16("\\bword\\b"), MATCH_LABEL));
-  EXPECT_FALSE(
-      FormField::Match(&field, ASCIIToUTF16("\\bcon\\b"), MATCH_LABEL));
-  // Make sure the circumflex in 'crepe' is not treated as a word boundary.
-  field.label = base::UTF8ToUTF16("cr\xC3\xAApe");
-  EXPECT_FALSE(FormField::Match(&field, ASCIIToUTF16("\\bcr\\b"), MATCH_LABEL));
+  SetFieldLabels(&field, u"contains word:");
+  EXPECT_TRUE(FormField::Match(&field, u"\\bword\\b", kMatchLabel));
+  EXPECT_FALSE(FormField::Match(&field, u"\\bcon\\b", kMatchLabel));
+  // Make sure the circumflex in 'crêpe' is not treated as a word boundary.
+  field.label = u"crêpe";
+  EXPECT_FALSE(FormField::Match(&field, u"\\bcr\\b", kMatchLabel));
 }
 
 // Test that we ignore checkable elements.
@@ -131,7 +122,7 @@ TEST(FormFieldTest, ParseFormFields) {
   field_data.form_control_type = "text";
 
   field_data.check_status = FormFieldData::CheckStatus::kCheckableButUnchecked;
-  field_data.label = ASCIIToUTF16("Is PO Box");
+  field_data.label = u"Is PO Box";
   field_data.unique_renderer_id = MakeFieldRendererId();
   fields.push_back(std::make_unique<AutofillField>(field_data));
 
@@ -143,7 +134,7 @@ TEST(FormFieldTest, ParseFormFields) {
 
   // reset |is_checkable| to false.
   field_data.check_status = FormFieldData::CheckStatus::kNotCheckable;
-  field_data.label = ASCIIToUTF16("Address line1");
+  field_data.label = u"Address line1";
   field_data.unique_renderer_id = MakeFieldRendererId();
   fields.push_back(std::make_unique<AutofillField>(field_data));
 
@@ -152,7 +143,7 @@ TEST(FormFieldTest, ParseFormFields) {
             FormField::ParseFormFields(fields, LanguageCode(""), true).size());
 
   // Parses address line 1 and 2.
-  field_data.label = ASCIIToUTF16("Address line2");
+  field_data.label = u"Address line2";
   field_data.unique_renderer_id = MakeFieldRendererId();
   fields.push_back(std::make_unique<AutofillField>(field_data));
 
@@ -169,11 +160,11 @@ TEST(FormFieldTest, ParseFormFieldEnforceMinFillableFields) {
   FormFieldData field_data;
   field_data.form_control_type = "text";
 
-  field_data.label = ASCIIToUTF16("Address line 1");
+  field_data.label = u"Address line 1";
   field_data.unique_renderer_id = MakeFieldRendererId();
   fields.push_back(std::make_unique<AutofillField>(field_data));
 
-  field_data.label = ASCIIToUTF16("Address line 2");
+  field_data.label = u"Address line 2";
   field_data.unique_renderer_id = MakeFieldRendererId();
   fields.push_back(std::make_unique<AutofillField>(field_data));
 
@@ -183,7 +174,7 @@ TEST(FormFieldTest, ParseFormFieldEnforceMinFillableFields) {
   EXPECT_EQ(0u,
             FormField::ParseFormFields(fields, LanguageCode(""), true).size());
 
-  field_data.label = ASCIIToUTF16("Search");
+  field_data.label = u"Search";
   field_data.unique_renderer_id = MakeFieldRendererId();
   fields.push_back(std::make_unique<AutofillField>(field_data));
 
@@ -217,23 +208,53 @@ TEST(FormFieldTest, TestParseableLabels) {
   FormFieldData field_data;
   field_data.form_control_type = "text";
 
-  field_data.label = ASCIIToUTF16("not a parseable label");
+  field_data.label = u"not a parseable label";
   field_data.unique_renderer_id = MakeFieldRendererId();
   auto autofill_field = std::make_unique<AutofillField>(field_data);
-  autofill_field->set_parseable_label(ASCIIToUTF16("First Name"));
+  autofill_field->set_parseable_label(u"First Name");
   {
     base::test::ScopedFeatureList feature_list;
     feature_list.InitAndEnableFeature(
         features::kAutofillEnableSupportForParsingWithSharedLabels);
-    EXPECT_TRUE(FormField::Match(autofill_field.get(),
-                                 ASCIIToUTF16("First Name"), MATCH_LABEL));
+    EXPECT_TRUE(FormField::Match(autofill_field.get(), u"First Name",
+                                 MatchParams({MatchAttribute::kLabel}, {})));
   }
   {
     base::test::ScopedFeatureList feature_list;
     feature_list.InitAndDisableFeature(
         features::kAutofillEnableSupportForParsingWithSharedLabels);
-    EXPECT_FALSE(FormField::Match(autofill_field.get(),
-                                  ASCIIToUTF16("First Name"), MATCH_LABEL));
+    EXPECT_FALSE(FormField::Match(autofill_field.get(), u"First Name",
+                                  MatchParams({MatchAttribute::kLabel}, {})));
   }
+}
+
+// Test that |ParseFormFieldsForPromoCodes| parses single field promo codes.
+TEST(FormFieldTest, ParseFormFieldsForPromoCodes) {
+  base::test::ScopedFeatureList scoped_feature;
+  scoped_feature.InitAndEnableFeature(
+      features::kAutofillParseMerchantPromoCodeFields);
+
+  std::vector<std::unique_ptr<AutofillField>> fields;
+  FormFieldData field_data;
+  field_data.form_control_type = "text";
+
+  // Parse single field promo code.
+  field_data.label = u"Promo code";
+  field_data.unique_renderer_id = MakeFieldRendererId();
+  fields.push_back(std::make_unique<AutofillField>(field_data));
+
+  EXPECT_EQ(1u, FormField::ParseFormFieldsForPromoCodes(fields,
+                                                        LanguageCode(""), true)
+                    .size());
+
+  // Don't parse other fields.
+  field_data.label = u"Address line 1";
+  field_data.unique_renderer_id = MakeFieldRendererId();
+  fields.push_back(std::make_unique<AutofillField>(field_data));
+
+  // Still only the promo code field should be parsed.
+  EXPECT_EQ(1u, FormField::ParseFormFieldsForPromoCodes(fields,
+                                                        LanguageCode(""), true)
+                    .size());
 }
 }  // namespace autofill

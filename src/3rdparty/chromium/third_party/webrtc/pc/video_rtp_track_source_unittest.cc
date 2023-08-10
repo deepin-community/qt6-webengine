@@ -10,6 +10,12 @@
 
 #include "pc/video_rtp_track_source.h"
 
+#include "absl/types/optional.h"
+#include "api/scoped_refptr.h"
+#include "api/units/timestamp.h"
+#include "api/video/color_space.h"
+#include "api/video/encoded_image.h"
+#include "api/video/video_codec_type.h"
 #include "rtc_base/ref_counted_object.h"
 #include "test/gmock.h"
 #include "test/gtest.h"
@@ -30,9 +36,7 @@ class MockSink : public rtc::VideoSinkInterface<RecordableEncodedFrame> {
 
 rtc::scoped_refptr<VideoRtpTrackSource> MakeSource(
     VideoRtpTrackSource::Callback* callback) {
-  rtc::scoped_refptr<VideoRtpTrackSource> source(
-      new rtc::RefCountedObject<VideoRtpTrackSource>(callback));
-  return source;
+  return rtc::make_ref_counted<VideoRtpTrackSource>(callback);
 }
 
 TEST(VideoRtpTrackSourceTest, CreatesWithRemoteAtttributeSet) {

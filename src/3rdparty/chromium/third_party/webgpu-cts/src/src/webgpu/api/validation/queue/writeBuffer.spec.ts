@@ -1,25 +1,45 @@
 export const description = `
 Tests writeBuffer validation.
 
-- buffer missing usage flag
-- bufferOffset {ok, unaligned, too large for buffer}
-- dataOffset {ok, too large for data}
-- buffer size {ok, too small for copy}
-- data size {ok, too small for copy}
-- size {aligned, unaligned}
-- size unspecified; default {ok, too large for buffer}
-
-Note: destroyed buffer is tested in destroyed/.
-
-TODO: implement usage flag validation.
-TODO: validate large write sizes that may overflow.
+Note: buffer map state is tested in ./buffer_mapped.spec.ts.
 `;
 
 import { makeTestGroup } from '../../../../common/framework/test_group.js';
-import { TypedArrayBufferView, TypedArrayBufferViewConstructor } from '../../../gpu_test.js';
+import {
+  kTypedArrayBufferViewConstructors,
+  TypedArrayBufferView,
+  TypedArrayBufferViewConstructor,
+} from '../../../../common/util/util.js';
+import { GPUConst } from '../../../constants.js';
+import { kResourceStates } from '../../../gpu_test.js';
 import { ValidationTest } from '../validation_test.js';
 
 export const g = makeTestGroup(ValidationTest);
+
+g.test('buffer_state')
+  .desc(
+    `
+Test that the buffer used for GPUQueue.writeBuffer() must be valid. Tests calling writeBuffer
+with {valid, invalid, destroyed} buffer.
+  `
+  )
+  .params(u =>
+    u //
+      .combine('bufferState', kResourceStates)
+  )
+  .fn(async t => {
+    const { bufferState } = t.params;
+    const buffer = t.createBufferWithState(bufferState, {
+      size: 16,
+      usage: GPUBufferUsage.COPY_DST,
+    });
+    const data = new Uint8Array(16);
+    const _valid = bufferState === 'valid';
+
+    t.expectValidationError(() => {
+      t.device.queue.writeBuffer(buffer, 0, data, 0, data.length);
+    }, !_valid);
+  });
 
 g.test('ranges')
   .desc(
@@ -33,13 +53,13 @@ interpreted correctly for both.
 
 Also verifies that the specified data range:
 
-  - Describes a valid range of the source buffer.
+  - Describes a valid range of the destination buffer and source buffer.
   - Fits fully within the destination buffer.
   - Has a byte size which is a multiple of 4.
 `
   )
   .fn(async t => {
-    const queue = t.device.defaultQueue;
+    const queue = t.device.queue;
 
     function runTest(arrayType: TypedArrayBufferViewConstructor, testBuffer: boolean) {
       const elementSize = arrayType.BYTES_PER_ELEMENT;
@@ -86,7 +106,7 @@ Also verifies that the specified data range:
       t.expectValidationError(() => queue.writeBuffer(buffer, 8, arrayMd));
 
       // Writing the full buffer with a unaligned offset.
-      t.shouldThrow('OperationError', () => queue.writeBuffer(buffer, 3, arraySm));
+      t.expectValidationError(() => queue.writeBuffer(buffer, 3, arraySm));
 
       // Writing remainder of buffer from offset.
       queue.writeBuffer(buffer, 0, arraySm, 4);
@@ -109,29 +129,71 @@ Also verifies that the specified data range:
       // Writing zero bytes at the end of the buffer
       queue.writeBuffer(buffer, bufferSize, arraySm, 0, 0);
 
+      // Writing with a buffer offset that is out of range of buffer size
+      t.expectValidationError(() => queue.writeBuffer(buffer, bufferSize + 4, arraySm, 0, 0));
+
       // Writing zero bytes from the end of the data
       queue.writeBuffer(buffer, 0, arraySm, 8, 0);
+
+      // Writing with a data offset that is out of range of data size
+      t.shouldThrow('OperationError', () => queue.writeBuffer(buffer, 0, arraySm, 9, 0));
 
       // A data offset of undefined should be treated as 0
       queue.writeBuffer(buffer, 0, arraySm, undefined, 8);
       t.shouldThrow('OperationError', () => queue.writeBuffer(buffer, 0, arraySm, undefined, 12));
     }
 
-    const arrayTypes = [
-      Uint8Array,
-      Uint8Array,
-      Int8Array,
-      Uint16Array,
-      Int16Array,
-      Uint32Array,
-      Int32Array,
-      Float32Array,
-      Float64Array,
-    ];
-
     runTest(Uint8Array, true);
 
-    for (const arrayType of arrayTypes) {
+    for (const arrayType of kTypedArrayBufferViewConstructors) {
       runTest(arrayType, false);
     }
+  });
+
+g.test('usages')
+  .desc(
+    `
+Tests calling writeBuffer with the buffer missed COPY_DST usage.
+- buffer {with, without} COPY DST usage
+`
+  )
+  .paramsSubcasesOnly([
+    { usage: GPUConst.BufferUsage.COPY_DST, _valid: true }, // control case
+    { usage: GPUConst.BufferUsage.STORAGE, _valid: false }, // without COPY_DST usage
+    { usage: GPUConst.BufferUsage.STORAGE | GPUConst.BufferUsage.COPY_SRC, _valid: false }, // with other usage
+    { usage: GPUConst.BufferUsage.STORAGE | GPUConst.BufferUsage.COPY_DST, _valid: true }, // with COPY_DST usage
+  ])
+  .fn(async t => {
+    const { usage, _valid } = t.params;
+    const buffer = t.device.createBuffer({ size: 16, usage });
+    const data = new Uint8Array(16);
+
+    t.expectValidationError(() => {
+      t.device.queue.writeBuffer(buffer, 0, data, 0, data.length);
+    }, !_valid);
+  });
+
+g.test('buffer,device_mismatch')
+  .desc('Tests writeBuffer cannot be called with a buffer created from another device')
+  .paramsSubcasesOnly(u => u.combine('mismatched', [true, false]))
+  .fn(async t => {
+    const { mismatched } = t.params;
+
+    if (mismatched) {
+      await t.selectMismatchedDeviceOrSkipTestCase(undefined);
+    }
+
+    const device = mismatched ? t.mismatchedDevice : t.device;
+
+    const buffer = device.createBuffer({
+      size: 16,
+      usage: GPUBufferUsage.COPY_DST,
+    });
+    t.trackForCleanup(buffer);
+
+    const data = new Uint8Array(16);
+
+    t.expectValidationError(() => {
+      t.device.queue.writeBuffer(buffer, 0, data, 0, data.length);
+    }, mismatched);
   });

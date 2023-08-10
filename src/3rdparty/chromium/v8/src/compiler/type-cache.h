@@ -36,9 +36,10 @@ class V8_EXPORT_PRIVATE TypeCache final {
   Type const kUnsigned31 = Type::Unsigned31();
   Type const kInt32 = Type::Signed32();
   Type const kUint32 = Type::Unsigned32();
-  Type const kInt64 = CreateRange<int64_t>();
-  Type const kUint64 = CreateRange<uint64_t>();
-  Type const kIntPtr = CreateRange<intptr_t>();
+  Type const kDoubleRepresentableInt64 = CreateRange(
+      std::numeric_limits<int64_t>::min(), kMaxDoubleRepresentableInt64);
+  Type const kDoubleRepresentableUint64 = CreateRange(
+      std::numeric_limits<uint64_t>::min(), kMaxDoubleRepresentableUint64);
   Type const kFloat32 = Type::Number();
   Type const kFloat64 = Type::Number();
   Type const kBigInt64 = Type::BigInt();
@@ -130,9 +131,10 @@ class V8_EXPORT_PRIVATE TypeCache final {
   Type const kStringLengthType = CreateRange(0.0, String::kMaxLength);
 
   // A time value always contains a tagged number in the range
-  // [-kMaxTimeInMs, kMaxTimeInMs].
-  Type const kTimeValueType =
-      CreateRange(-DateCache::kMaxTimeInMs, DateCache::kMaxTimeInMs);
+  // [-kMaxTimeInMs, kMaxTimeInMs] or -0.
+  Type const kTimeValueType = Type::Union(
+      CreateRange(-DateCache::kMaxTimeInMs, DateCache::kMaxTimeInMs),
+      Type::MinusZero(), zone());
 
   // The JSDate::day property always contains a tagged number in the range
   // [1, 31] or NaN.
@@ -190,8 +192,11 @@ class V8_EXPORT_PRIVATE TypeCache final {
  private:
   template <typename T>
   Type CreateRange() {
-    return CreateRange(std::numeric_limits<T>::min(),
-                       std::numeric_limits<T>::max());
+    T min = std::numeric_limits<T>::min();
+    T max = std::numeric_limits<T>::max();
+    DCHECK_EQ(min, static_cast<T>(static_cast<double>(min)));
+    DCHECK_EQ(max, static_cast<T>(static_cast<double>(max)));
+    return CreateRange(min, max);
   }
 
   Type CreateRange(double min, double max) {
@@ -199,6 +204,10 @@ class V8_EXPORT_PRIVATE TypeCache final {
   }
 
   Zone* zone() { return &zone_; }
+
+  static constexpr double kMaxDoubleRepresentableInt64 = 9223372036854774784.0;
+  static constexpr double kMaxDoubleRepresentableUint64 =
+      18446744073709549568.0;
 };
 
 }  // namespace compiler

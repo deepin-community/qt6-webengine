@@ -21,9 +21,9 @@
 #include "rtc_base/async_packet_socket.h"
 #include "rtc_base/async_resolver_interface.h"
 #include "rtc_base/checks.h"
-#include "rtc_base/constructor_magic.h"
 #include "rtc_base/helpers.h"
 #include "rtc_base/logging.h"
+#include "rtc_base/task_utils/to_queued_task.h"
 #include "rtc_base/thread.h"
 #include "rtc_base/time_utils.h"
 
@@ -60,13 +60,16 @@ class StunProber::Requester : public sigslot::has_slots<> {
     void ProcessResponse(const char* buf, size_t buf_len);
   };
 
-  // StunProber provides |server_ips| for Requester to probe. For shared
+  // StunProber provides `server_ips` for Requester to probe. For shared
   // socket mode, it'll be all the resolved IP addresses. For non-shared mode,
   // it'll just be a single address.
   Requester(StunProber* prober,
             rtc::AsyncPacketSocket* socket,
             const std::vector<rtc::SocketAddress>& server_ips);
   ~Requester() override;
+
+  Requester(const Requester&) = delete;
+  Requester& operator=(const Requester&) = delete;
 
   // There is no callback for SendStunRequest as the underneath socket send is
   // expected to be completed immediately. Otherwise, it'll skip this request
@@ -104,8 +107,6 @@ class StunProber::Requester : public sigslot::has_slots<> {
   int16_t num_response_received_ = 0;
 
   webrtc::SequenceChecker& thread_checker_;
-
-  RTC_DISALLOW_COPY_AND_ASSIGN(Requester);
 };
 
 StunProber::Requester::Requester(
@@ -254,13 +255,14 @@ void StunProber::ObserverAdapter::OnFinished(StunProber* stunprober,
 
 StunProber::StunProber(rtc::PacketSocketFactory* socket_factory,
                        rtc::Thread* thread,
-                       const rtc::NetworkManager::NetworkList& networks)
+                       std::vector<const rtc::Network*> networks)
     : interval_ms_(0),
       socket_factory_(socket_factory),
       thread_(thread),
-      networks_(networks) {}
+      networks_(std::move(networks)) {}
 
 StunProber::~StunProber() {
+  RTC_DCHECK(thread_checker_.IsCurrent());
   for (auto* req : requesters_) {
     if (req) {
       delete req;
@@ -357,8 +359,8 @@ void StunProber::OnServerResolved(rtc::AsyncResolverInterface* resolver) {
 
   // Deletion of AsyncResolverInterface can't be done in OnResolveResult which
   // handles SignalDone.
-  invoker_.AsyncInvoke<void>(RTC_FROM_HERE, thread_,
-                             [resolver] { resolver->Destroy(false); });
+  thread_->PostTask(
+      webrtc::ToQueuedTask([resolver] { resolver->Destroy(false); }));
   servers_.pop_back();
 
   if (servers_.size()) {
@@ -451,12 +453,13 @@ int StunProber::get_wake_up_interval_ms() {
 }
 
 void StunProber::MaybeScheduleStunRequests() {
-  RTC_DCHECK(thread_checker_.IsCurrent());
+  RTC_DCHECK_RUN_ON(thread_);
   int64_t now = rtc::TimeMillis();
 
   if (Done()) {
-    invoker_.AsyncInvokeDelayed<void>(
-        RTC_FROM_HERE, thread_, [this] { ReportOnFinished(SUCCESS); },
+    thread_->PostDelayedTask(
+        webrtc::ToQueuedTask(task_safety_.flag(),
+                             [this] { ReportOnFinished(SUCCESS); }),
         timeout_ms_);
     return;
   }
@@ -467,8 +470,9 @@ void StunProber::MaybeScheduleStunRequests() {
     }
     next_request_time_ms_ = now + interval_ms_;
   }
-  invoker_.AsyncInvokeDelayed<void>(
-      RTC_FROM_HERE, thread_, [this] { MaybeScheduleStunRequests(); },
+  thread_->PostDelayedTask(
+      webrtc::ToQueuedTask(task_safety_.flag(),
+                           [this] { MaybeScheduleStunRequests(); }),
       get_wake_up_interval_ms());
 }
 

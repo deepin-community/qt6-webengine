@@ -35,7 +35,9 @@ ClientStatus JavaScriptErrorStatus(
     const DevtoolsClient::ReplyStatus& reply_status,
     const std::string& file,
     int line,
-    const runtime::ExceptionDetails* exception);
+    const runtime::ExceptionDetails* exception,
+    int js_line_offset = 0,
+    int num_stack_entries_to_drop = 0);
 
 // Makes sure that the given EvaluateResult exists, is successful and contains a
 // result.
@@ -44,19 +46,21 @@ ClientStatus CheckJavaScriptResult(
     const DevtoolsClient::ReplyStatus& reply_status,
     T* result,
     const char* file,
-    int line) {
+    int line,
+    int js_line_offset = 0,
+    int num_stack_entries_to_drop = 0) {
   if (!result)
-    return JavaScriptErrorStatus(reply_status, file, line, nullptr);
+    return JavaScriptErrorStatus(reply_status, file, line, nullptr,
+                                 js_line_offset, num_stack_entries_to_drop);
   if (result->HasExceptionDetails())
     return JavaScriptErrorStatus(reply_status, file, line,
-                                 result->GetExceptionDetails());
+                                 result->GetExceptionDetails(), js_line_offset,
+                                 num_stack_entries_to_drop);
   if (!result->GetResult())
-    return JavaScriptErrorStatus(reply_status, file, line, nullptr);
+    return JavaScriptErrorStatus(reply_status, file, line, nullptr,
+                                 js_line_offset, num_stack_entries_to_drop);
   return OkClientStatus();
 }
-
-// Fills a ClientStatus with appropriate details for a Chrome Autofill error.
-ClientStatus FillAutofillErrorStatus(ClientStatus status);
 
 // Fills a ClientStatus with appropriate details from the
 void FillWebControllerErrorInfo(

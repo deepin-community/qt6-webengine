@@ -38,10 +38,10 @@
 #include "third_party/blink/renderer/modules/indexeddb/idb_object_store.h"
 #include "third_party/blink/renderer/modules/indexeddb/idb_open_db_request.h"
 #include "third_party/blink/renderer/modules/indexeddb/idb_request_queue_item.h"
-#include "third_party/blink/renderer/modules/indexeddb/idb_tracing.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
 #include "third_party/blink/renderer/platform/bindings/v8_per_isolate_data.h"
+#include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 
 namespace blink {
@@ -324,7 +324,7 @@ void IDBTransaction::IndexDeleted(IDBIndex* index) {
 void IDBTransaction::SetActive(bool new_is_active) {
   DCHECK_NE(state_, kFinished)
       << "A finished transaction tried to SetActive(" << new_is_active << ")";
-  if (state_ == kFinishing)
+  if (IsFinishing())
     return;
   DCHECK_NE(new_is_active, (state_ == kActive));
   state_ = new_is_active ? kActive : kInactive;
@@ -346,14 +346,14 @@ void IDBTransaction::SetActiveDuringSerialization(bool new_is_active) {
 }
 
 void IDBTransaction::abort(ExceptionState& exception_state) {
-  if (state_ == kFinishing || state_ == kFinished) {
+  if (IsFinishing() || IsFinished()) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kInvalidStateError,
         IDBDatabase::kTransactionFinishedErrorMessage);
     return;
   }
 
-  state_ = kFinishing;
+  state_ = kAborting;
 
   if (!GetExecutionContext())
     return;
@@ -366,7 +366,7 @@ void IDBTransaction::abort(ExceptionState& exception_state) {
 }
 
 void IDBTransaction::commit(ExceptionState& exception_state) {
-  if (state_ == kFinishing || state_ == kFinished) {
+  if (IsFinishing() || IsFinished()) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kInvalidStateError,
         IDBDatabase::kTransactionFinishedErrorMessage);
@@ -383,10 +383,15 @@ void IDBTransaction::commit(ExceptionState& exception_state) {
   if (!GetExecutionContext())
     return;
 
-  state_ = kFinishing;
+  state_ = kCommitting;
 
   if (transaction_backend())
     transaction_backend()->Commit(num_errors_handled_);
+
+  // Once IDBtransaction.commit() is called, the page should no longer be
+  // prevented from entering back/forward cache for having outstanding IDB
+  // connections. Commit ends the inflight IDB transactions.
+  feature_handle_for_scheduler_.reset();
 }
 
 void IDBTransaction::RegisterRequest(IDBRequest* request) {
@@ -430,14 +435,14 @@ void IDBTransaction::OnResultReady() {
 }
 
 void IDBTransaction::OnAbort(DOMException* error) {
-  IDB_TRACE1("IDBTransaction::onAbort", "txn.id", id_);
+  TRACE_EVENT1("IndexedDB", "IDBTransaction::onAbort", "txn.id", id_);
   if (!GetExecutionContext()) {
     Finished();
     return;
   }
 
   DCHECK_NE(state_, kFinished);
-  if (state_ != kFinishing) {
+  if (state_ != kAborting) {
     // Abort was not triggered by front-end.
     DCHECK(error);
     SetError(error);
@@ -445,7 +450,7 @@ void IDBTransaction::OnAbort(DOMException* error) {
     AbortOutstandingRequests();
     RevertDatabaseMetadata();
 
-    state_ = kFinishing;
+    state_ = kAborting;
   }
 
   if (IsVersionChange())
@@ -458,14 +463,14 @@ void IDBTransaction::OnAbort(DOMException* error) {
 }
 
 void IDBTransaction::OnComplete() {
-  IDB_TRACE1("IDBTransaction::onComplete", "txn.id", id_);
+  TRACE_EVENT1("IndexedDB", "IDBTransaction::onComplete", "txn.id", id_);
   if (!GetExecutionContext()) {
     Finished();
     return;
   }
 
   DCHECK_NE(state_, kFinished);
-  state_ = kFinishing;
+  state_ = kCommitting;
 
   // Enqueue events before notifying database, as database may close which
   // enqueues more events and order matters.
@@ -555,7 +560,8 @@ const char* IDBTransaction::InactiveErrorMessage() const {
       return nullptr;
     case kInactive:
       return IDBDatabase::kTransactionInactiveErrorMessage;
-    case kFinishing:
+    case kCommitting:
+    case kAborting:
     case kFinished:
       return IDBDatabase::kTransactionFinishedErrorMessage;
   }
@@ -564,7 +570,7 @@ const char* IDBTransaction::InactiveErrorMessage() const {
 }
 
 DispatchEventResult IDBTransaction::DispatchEventInternal(Event& event) {
-  IDB_TRACE1("IDBTransaction::dispatchEvent", "txn.id", id_);
+  TRACE_EVENT1("IndexedDB", "IDBTransaction::dispatchEvent", "txn.id", id_);
 
   event.SetTarget(this);
 

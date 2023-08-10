@@ -7,9 +7,10 @@
 
 #include "base/callback.h"
 #include "base/callback_helpers.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
-#include "base/scoped_observer.h"
+#include "base/scoped_observation.h"
 #include "base/time/time.h"
 #include "chrome/browser/extensions/api/passwords_private/passwords_private_delegate.h"
 #include "chrome/browser/extensions/api/passwords_private/passwords_private_utils.h"
@@ -59,7 +60,7 @@ class PasswordCheckDelegate
   // Requests the plaintext password for |credential|. If successful, this
   // returns |credential| with its |password| member set. This can fail if no
   // matching insecure credential can be found in the password store.
-  base::Optional<api::passwords_private::InsecureCredential>
+  absl::optional<api::passwords_private::InsecureCredential>
   GetPlaintextInsecurePassword(
       api::passwords_private::InsecureCredential credential) const;
 
@@ -72,6 +73,16 @@ class PasswordCheckDelegate
   // Attempts to remove |credential| from the password store. Returns whether
   // the remove succeeded.
   bool RemoveInsecureCredential(
+      const api::passwords_private::InsecureCredential& credential);
+
+  // Attempts to mute |credential| from the password store. Returns whether
+  // the mute succeeded.
+  bool MuteInsecureCredential(
+      const api::passwords_private::InsecureCredential& credential);
+
+  // Attempts to unmute |credential| from the password store. Returns whether
+  // the unmute succeeded.
+  bool UnmuteInsecureCredential(
       const api::passwords_private::InsecureCredential& credential);
 
   // Requests to start a check for insecure passwords. Invokes |callback| once a
@@ -141,12 +152,12 @@ class PasswordCheckDelegate
       const password_manager::CredentialWithPassword& credential);
 
   // Raw pointer to the underlying profile. Needs to outlive this instance.
-  Profile* profile_ = nullptr;
+  raw_ptr<Profile> profile_ = nullptr;
 
   // Used by |insecure_credentials_manager_| to obtain the list of saved
   // passwords.
-  password_manager::SavedPasswordsPresenter* saved_passwords_presenter_ =
-      nullptr;
+  raw_ptr<password_manager::SavedPasswordsPresenter>
+      saved_passwords_presenter_ = nullptr;
 
   // Used to obtain the list of insecure credentials.
   password_manager::InsecureCredentialsManager insecure_credentials_manager_;
@@ -175,18 +186,20 @@ class PasswordCheckDelegate
   base::Time last_completed_weak_check_;
 
   // A scoped observer for |saved_passwords_presenter_|.
-  ScopedObserver<password_manager::SavedPasswordsPresenter,
-                 password_manager::SavedPasswordsPresenter::Observer>
+  base::ScopedObservation<password_manager::SavedPasswordsPresenter,
+                          password_manager::SavedPasswordsPresenter::Observer>
       observed_saved_passwords_presenter_{this};
 
   // A scoped observer for |insecure_credentials_manager_|.
-  ScopedObserver<password_manager::InsecureCredentialsManager,
-                 password_manager::InsecureCredentialsManager::Observer>
+  base::ScopedObservation<
+      password_manager::InsecureCredentialsManager,
+      password_manager::InsecureCredentialsManager::Observer>
       observed_insecure_credentials_manager_{this};
 
   // A scoped observer for the BulkLeakCheckService.
-  ScopedObserver<password_manager::BulkLeakCheckServiceInterface,
-                 password_manager::BulkLeakCheckServiceInterface::Observer>
+  base::ScopedObservation<
+      password_manager::BulkLeakCheckServiceInterface,
+      password_manager::BulkLeakCheckServiceInterface::Observer>
       observed_bulk_leak_check_service_{this};
 
   // An id generator for insecure credentials. Required to match

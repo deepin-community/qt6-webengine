@@ -7,7 +7,6 @@
 #include <utility>
 #include <vector>
 
-#include "base/stl_util.h"
 #include "build/build_config.h"
 #include "components/viz/common/resources/resource_sizes.h"
 #include "gpu/command_buffer/service/external_vk_image_gl_representation.h"
@@ -27,14 +26,15 @@
 #include "ui/gfx/buffer_format_util.h"
 #include "ui/gl/buildflags.h"
 #include "ui/gl/gl_context.h"
+#include "ui/gl/gl_utils.h"
 #include "ui/gl/gl_version_info.h"
 #include "ui/gl/scoped_binders.h"
 
-#if (defined(OS_LINUX) || defined(OS_CHROMEOS)) && BUILDFLAG(USE_DAWN)
+#if (BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)) && BUILDFLAG(USE_DAWN)
 #include "gpu/command_buffer/service/external_vk_image_dawn_representation.h"
 #endif
 
-#if defined(OS_FUCHSIA)
+#if BUILDFLAG(IS_FUCHSIA)
 #include "gpu/vulkan/fuchsia/vulkan_fuchsia_ext.h"
 #endif
 
@@ -79,30 +79,8 @@ static const struct {
     {GL_ZERO, GL_ZERO, 0},                         // YUV_420_BIPLANAR
     {GL_ZERO, GL_ZERO, 0},                         // P010
 };
-static_assert(base::size(kFormatTable) == (viz::RESOURCE_FORMAT_MAX + 1),
+static_assert(std::size(kFormatTable) == (viz::RESOURCE_FORMAT_MAX + 1),
               "kFormatTable does not handle all cases.");
-
-class ScopedPixelStore {
- public:
-  ScopedPixelStore(gl::GLApi* api, GLenum name, GLint value)
-      : api_(api), name_(name), value_(value) {
-    api_->glGetIntegervFn(name_, &old_value_);
-    if (value_ != old_value_)
-      api->glPixelStoreiFn(name_, value_);
-  }
-  ~ScopedPixelStore() {
-    if (value_ != old_value_)
-      api_->glPixelStoreiFn(name_, old_value_);
-  }
-
- private:
-  gl::GLApi* const api_;
-  const GLenum name_;
-  const GLint value_;
-  GLint old_value_;
-
-  DISALLOW_COPY_AND_ASSIGN(ScopedPixelStore);
-};
 
 class ScopedDedicatedMemoryObject {
  public:
@@ -191,7 +169,6 @@ std::unique_ptr<ExternalVkImageBacking> ExternalVkImageBacking::Create(
     base::span<const uint8_t> pixel_data,
     bool using_gmb) {
   bool is_external = context_state->support_vulkan_external_object();
-  bool is_transfer_dst = using_gmb || !pixel_data.empty() || !is_external;
 
   auto* device_queue = context_state->vk_context_provider()->GetDeviceQueue();
   VkFormat vk_format = ToVkFormat(format);
@@ -199,69 +176,31 @@ std::unique_ptr<ExternalVkImageBacking> ExternalVkImageBacking::Create(
       SHARED_IMAGE_USAGE_GLES2 | SHARED_IMAGE_USAGE_GLES2_FRAMEBUFFER_HINT |
       SHARED_IMAGE_USAGE_RASTER | SHARED_IMAGE_USAGE_OOP_RASTERIZATION |
       SHARED_IMAGE_USAGE_WEBGPU;
-  VkImageUsageFlags vk_usage = VK_IMAGE_USAGE_SAMPLED_BIT;
+  VkImageUsageFlags vk_usage = VK_IMAGE_USAGE_SAMPLED_BIT |
+                               VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                               VK_IMAGE_USAGE_TRANSFER_DST_BIT;
   if (usage & kUsageNeedsColorAttachment) {
-    vk_usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    vk_usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT;
     if (format == viz::ETC1) {
       DLOG(ERROR) << "ETC1 format cannot be used as color attachment.";
       return nullptr;
     }
   }
 
-  if (is_transfer_dst)
-    vk_usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-
   // Requested usage flags must be supported.
   DCHECK_EQ(vk_usage & image_usage_cache->optimal_tiling_usage[format],
             vk_usage);
 
-  if (is_external && (usage & SHARED_IMAGE_USAGE_GLES2)) {
-    // Must request all available image usage flags if aliasing GL texture. This
-    // is a spec requirement per EXT_memory_object. However, if
-    // ANGLE_memory_object_flags is supported, usage flags can be arbitrary.
-    if (UseMinimalUsageFlags(context_state.get())) {
-      // The following additional usage flags are provided for ANGLE:
-      //
-      // - TRANSFER_SRC: Used for copies from this image.
-      // - TRANSFER_DST: Used for copies to this image or clears.
-      vk_usage |=
-          VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-    } else {
-      vk_usage |= image_usage_cache->optimal_tiling_usage[format];
-    }
+  // Must request all available image usage flags if aliasing GL texture. This
+  // is a spec requirement per EXT_memory_object. However, if
+  // ANGLE_memory_object_flags is supported, usage flags can be arbitrary.
+  if (is_external && (usage & SHARED_IMAGE_USAGE_GLES2) &&
+      !UseMinimalUsageFlags(context_state.get())) {
+    vk_usage |= image_usage_cache->optimal_tiling_usage[format];
   }
 
-  if (is_external && (usage & SHARED_IMAGE_USAGE_WEBGPU)) {
-    // The following additional usage flags are provided for Dawn:
-    //
-    // - TRANSFER_SRC: Used for copies from this image.
-    // - TRANSFER_DST: Used for copies to this image or clears.
-    vk_usage |=
-        VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-  }
-
-  if (usage & SHARED_IMAGE_USAGE_DISPLAY) {
-    // Skia currently requires all VkImages it uses to support transfers
-    vk_usage |=
-        VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-  }
-
-  auto* vulkan_implementation =
-      context_state->vk_context_provider()->GetVulkanImplementation();
   VkImageCreateFlags vk_flags = 0;
-
-  // In protected mode mark the image as protected, except when the image needs
-  // GLES2, but not Raster usage. ANGLE currently doesn't support protected
-  // images. Some clients request GLES2 and Raster usage (e.g. see
-  // GpuMemoryBufferVideoFramePool). In that case still allocate protected
-  // image, which ensures that image can still usable, but it may not work in
-  // some scenarios (e.g. when the video frame is used in WebGL).
-  // TODO(https://crbug.com/angleproject/4833)
-  if (vulkan_implementation->enforce_protected_memory() &&
-      (!(usage & SHARED_IMAGE_USAGE_GLES2) ||
-       (usage & SHARED_IMAGE_USAGE_RASTER))) {
-    vk_flags |= VK_IMAGE_CREATE_PROTECTED_BIT;
-  }
 
   std::unique_ptr<VulkanImage> image;
   if (is_external) {
@@ -285,6 +224,9 @@ std::unique_ptr<ExternalVkImageBacking> ExternalVkImageBacking::Create(
   if (!pixel_data.empty()) {
     size_t stride = BitsPerPixel(format) / 8 * size.width();
     backing->WritePixelsWithData(pixel_data, stride);
+
+    // Mark the backing as cleared.
+    backing->SetCleared();
   }
 
   return backing;
@@ -458,6 +400,10 @@ bool ExternalVkImageBacking::BeginAccess(
     auto release_semaphore =
         ExternalVkImageGLRepresentationShared::ReleaseTexture(
             external_semaphore_pool(), texture_id, info.fImageLayout);
+    if (!release_semaphore) {
+      context_state_->MarkContextLost();
+      return false;
+    }
     EndAccessInternal(readonly, std::move(release_semaphore));
   }
 
@@ -477,20 +423,27 @@ bool ExternalVkImageBacking::BeginAccess(
         backend_texture_,
         GrBackendSurfaceMutableState(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                                      VK_QUEUE_FAMILY_EXTERNAL));
-    auto semaphore = external_semaphore_pool()->GetOrCreateSemaphore();
-    VkSemaphore vk_semaphore = semaphore.GetVkSemaphore();
-    GrBackendSemaphore backend_semaphore;
-    backend_semaphore.initVulkan(vk_semaphore);
-    GrFlushInfo flush_info = {
-        /* .fNumSemaphores = */ 1,
-        /* .fSignalSemaphores = */ &backend_semaphore,
-    };
-    gpu::AddVulkanCleanupTaskForSkiaFlush(
-        context_state()->vk_context_provider(), &flush_info);
-    auto flush_result = gr_context->flush(flush_info);
-    DCHECK_EQ(flush_result, GrSemaphoresSubmitted::kYes);
-    gr_context->submit();
-    external_semaphores->push_back(std::move(semaphore));
+
+    ExternalSemaphore external_semaphore =
+        external_semaphore_pool()->GetOrCreateSemaphore();
+    GrBackendSemaphore semaphore;
+    semaphore.initVulkan(external_semaphore.GetVkSemaphore());
+
+    GrFlushInfo flush_info;
+    flush_info.fNumSemaphores = 1;
+    flush_info.fSignalSemaphores = &semaphore;
+
+    if (gr_context->flush(flush_info) != GrSemaphoresSubmitted::kYes) {
+      LOG(ERROR) << "Failed to create a signaled semaphore";
+      return false;
+    }
+
+    if (!gr_context->submit()) {
+      LOG(ERROR) << "Failed GrContext submit";
+      return false;
+    }
+
+    external_semaphores->push_back(std::move(external_semaphore));
   }
 
   if (readonly) {
@@ -615,8 +568,9 @@ void ExternalVkImageBacking::ReturnPendingSemaphoresWithFenceHelper(
 std::unique_ptr<SharedImageRepresentationDawn>
 ExternalVkImageBacking::ProduceDawn(SharedImageManager* manager,
                                     MemoryTypeTracker* tracker,
-                                    WGPUDevice wgpuDevice) {
-#if (defined(OS_LINUX) || defined(OS_CHROMEOS)) && BUILDFLAG(USE_DAWN)
+                                    WGPUDevice wgpuDevice,
+                                    WGPUBackendType backend_type) {
+#if (BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)) && BUILDFLAG(USE_DAWN)
   auto wgpu_format = viz::ToWGPUFormat(format());
 
   if (wgpu_format == WGPUTextureFormat_Undefined) {
@@ -635,7 +589,8 @@ ExternalVkImageBacking::ProduceDawn(SharedImageManager* manager,
 
   return std::make_unique<ExternalVkImageDawnRepresentation>(
       manager, this, tracker, wgpuDevice, wgpu_format, std::move(memory_fd));
-#else  // (!defined(OS_LINUX) && !defined(OS_CHROMEOS)) || !BUILDFLAG(USE_DAWN)
+#else  // (!BUILDFLAG(IS_LINUX) && !BUILDFLAG(IS_CHROMEOS)) ||
+       // !BUILDFLAG(USE_DAWN)
   NOTIMPLEMENTED_LOG_ONCE();
   return nullptr;
 #endif
@@ -646,9 +601,9 @@ GLuint ExternalVkImageBacking::ProduceGLTextureInternal() {
   bool result = backend_texture_.getVkImageInfo(&image_info);
   DCHECK(result);
   gl::GLApi* api = gl::g_current_gl_context;
-  base::Optional<ScopedDedicatedMemoryObject> memory_object;
+  absl::optional<ScopedDedicatedMemoryObject> memory_object;
   if (!use_separate_gl_texture()) {
-#if defined(OS_LINUX) || defined(OS_CHROMEOS) || defined(OS_ANDROID)
+#if BUILDFLAG(IS_POSIX)
     auto memory_fd = image_->GetMemoryFd();
     if (!memory_fd.is_valid())
       return 0;
@@ -656,7 +611,7 @@ GLuint ExternalVkImageBacking::ProduceGLTextureInternal() {
     api->glImportMemoryFdEXTFn(memory_object->id(), image_info.fAlloc.fSize,
                                GL_HANDLE_TYPE_OPAQUE_FD_EXT,
                                memory_fd.release());
-#elif defined(OS_WIN)
+#elif BUILDFLAG(IS_WIN)
     auto memory_handle = image_->GetMemoryHandle();
     if (!memory_handle.IsValid()) {
       return 0;
@@ -665,7 +620,7 @@ GLuint ExternalVkImageBacking::ProduceGLTextureInternal() {
     api->glImportMemoryWin32HandleEXTFn(
         memory_object->id(), image_info.fAlloc.fSize,
         GL_HANDLE_TYPE_OPAQUE_WIN32_EXT, memory_handle.Take());
-#elif defined(OS_FUCHSIA)
+#elif BUILDFLAG(IS_FUCHSIA)
     zx::vmo vmo = image_->GetMemoryZirconHandle();
     if (!vmo)
       return 0;
@@ -689,7 +644,11 @@ GLuint ExternalVkImageBacking::ProduceGLTextureInternal() {
   if (use_separate_gl_texture()) {
     DCHECK(!memory_object);
     if (UseTexStorage2D(context_state_.get())) {
-      GLuint internal_format = viz::TextureStorageFormat(format());
+      bool use_rgbx = context_state()
+                          ->feature_info()
+                          ->feature_flags()
+                          .angle_rgbx_internal_format;
+      GLuint internal_format = viz::TextureStorageFormat(format(), use_rgbx);
       api->glTexStorage2DEXTFn(GL_TEXTURE_2D, 1, internal_format,
                                size().width(), size().height());
     } else {
@@ -704,12 +663,20 @@ GLuint ExternalVkImageBacking::ProduceGLTextureInternal() {
     DCHECK(memory_object);
     // If ANGLE_memory_object_flags is supported, use that to communicate the
     // exact create and usage flags the image was created with.
+    //
+    // Currently, no extension structs are appended to VkImageCreateInfo::pNext
+    // when creating the image, so communicate that information to ANGLE.  This
+    // makes sure that ANGLE recreates the VkImage identically to Chromium.
     DCHECK(image_->usage() != 0);
-    GLuint internal_format = viz::TextureStorageFormat(format());
+    bool use_rgbx = context_state()
+                        ->feature_info()
+                        ->feature_flags()
+                        .angle_rgbx_internal_format;
+    GLuint internal_format = viz::TextureStorageFormat(format(), use_rgbx);
     if (UseMinimalUsageFlags(context_state())) {
       api->glTexStorageMemFlags2DANGLEFn(
           GL_TEXTURE_2D, 1, internal_format, size().width(), size().height(),
-          memory_object->id(), 0, image_->flags(), image_->usage());
+          memory_object->id(), 0, image_->flags(), image_->usage(), nullptr);
     } else {
       api->glTexStorageMem2DEXTFn(GL_TEXTURE_2D, 1, internal_format,
                                   size().width(), size().height(),
@@ -733,7 +700,11 @@ ExternalVkImageBacking::ProduceGLTexture(SharedImageManager* manager,
     GLuint texture_service_id = ProduceGLTextureInternal();
     if (!texture_service_id)
       return nullptr;
-    GLuint internal_format = viz::TextureStorageFormat(format());
+    bool use_rgbx = context_state()
+                        ->feature_info()
+                        ->feature_flags()
+                        .angle_rgbx_internal_format;
+    GLuint internal_format = viz::TextureStorageFormat(format(), use_rgbx);
     GLenum gl_format = viz::GLDataFormat(format());
     GLenum gl_type = viz::GLDataType(format());
 
@@ -772,7 +743,11 @@ ExternalVkImageBacking::ProduceGLTexturePassthrough(
     GLuint texture_service_id = ProduceGLTextureInternal();
     if (!texture_service_id)
       return nullptr;
-    GLuint internal_format = viz::TextureStorageFormat(format());
+    bool use_rgbx = context_state()
+                        ->feature_info()
+                        ->feature_flags()
+                        .angle_rgbx_internal_format;
+    GLuint internal_format = viz::TextureStorageFormat(format(), use_rgbx);
     GLenum gl_format = viz::GLDataFormat(format());
     GLenum gl_type = viz::GLDataType(format());
 
@@ -845,7 +820,7 @@ void ExternalVkImageBacking::UpdateContent(uint32_t content_flags) {
     if (latest_content_ & kInSharedMemory) {
       CopyPixelsFromShmToGLTexture();
     } else if (latest_content_ & kInVkImage) {
-      NOTIMPLEMENTED_LOG_ONCE();
+      CopyPixelsFromVkImageToGLTexture();
     }
   } else if (content_flags == kInSharedMemory) {
     // TODO(penghuang): read pixels back from VkImage to shared memory GMB, if
@@ -857,7 +832,7 @@ void ExternalVkImageBacking::UpdateContent(uint32_t content_flags) {
 bool ExternalVkImageBacking::WritePixelsWithCallback(
     size_t data_size,
     size_t stride,
-    FillBufferCallback callback) {
+    WriteBufferCallback callback) {
   DCHECK(stride == 0 || size().height() * stride <= data_size);
 
   VkBufferCreateInfo buffer_create_info = {
@@ -958,6 +933,82 @@ bool ExternalVkImageBacking::WritePixelsWithCallback(
   return true;
 }
 
+bool ExternalVkImageBacking::ReadPixelsWithCallback(
+    size_t data_size,
+    size_t stride,
+    ReadBufferCallback callback) {
+  DCHECK(stride == 0 || size().height() * stride <= data_size);
+
+  VkBufferCreateInfo buffer_create_info = {};
+      buffer_create_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+      buffer_create_info.size = data_size;
+      buffer_create_info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+      buffer_create_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+  VmaAllocator allocator =
+      context_state()->vk_context_provider()->GetDeviceQueue()->vma_allocator();
+  VkBuffer stage_buffer = VK_NULL_HANDLE;
+  VmaAllocation stage_allocation = VK_NULL_HANDLE;
+  VkResult result = vma::CreateBuffer(allocator, &buffer_create_info,
+                                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                          VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                                      0, &stage_buffer, &stage_allocation);
+  if (result != VK_SUCCESS) {
+    DLOG(ERROR) << "vkCreateBuffer() failed." << result;
+    return false;
+  }
+
+  // ReadPixelsWithCallback() is only called for separate texture.
+  DCHECK(!need_synchronization());
+
+  std::vector<ExternalSemaphore> external_semaphores;
+  if (!BeginAccessInternal(true /* readonly */, &external_semaphores)) {
+    DLOG(ERROR) << "BeginAccess() failed.";
+    vma::DestroyBuffer(allocator, stage_buffer, stage_allocation);
+    return false;
+  }
+  DCHECK(external_semaphores.empty());
+
+  auto command_buffer = command_pool_->CreatePrimaryCommandBuffer();
+  CHECK(command_buffer);
+  {
+    ScopedSingleUseCommandBufferRecorder recorder(*command_buffer);
+    GrVkImageInfo image_info;
+    bool success = backend_texture_.getVkImageInfo(&image_info);
+    DCHECK(success);
+    if (image_info.fImageLayout != VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL) {
+      command_buffer->TransitionImageLayout(
+          image_info.fImage, image_info.fImageLayout,
+          VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+      backend_texture_.setVkImageLayout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    }
+    uint32_t buffer_width =
+        stride ? stride * 8 / BitsPerPixel(format()) : size().width();
+    command_buffer->CopyImageToBuffer(stage_buffer, image_info.fImage,
+                                      buffer_width, size().height(),
+                                      size().width(), size().height());
+  }
+
+  command_buffer->Submit(0, nullptr, 0, nullptr);
+  command_buffer->Wait(UINT64_MAX);
+  command_buffer->Destroy();
+  EndAccessInternal(true /* readonly */, ExternalSemaphore());
+
+  void* buffer = nullptr;
+  result = vma::MapMemory(allocator, stage_allocation, &buffer);
+  if (result != VK_SUCCESS) {
+    DLOG(ERROR) << "vma::MapMemory() failed. " << result;
+    vma::DestroyBuffer(allocator, stage_buffer, stage_allocation);
+    return false;
+  }
+
+  std::move(callback).Run(buffer);
+  vma::UnmapMemory(allocator, stage_allocation);
+  vma::DestroyBuffer(allocator, stage_buffer, stage_allocation);
+
+  return true;
+}
+
 bool ExternalVkImageBacking::WritePixelsWithData(
     base::span<const uint8_t> pixel_data,
     size_t stride) {
@@ -1044,14 +1095,12 @@ void ExternalVkImageBacking::CopyPixelsFromGLTextureToVkImage() {
 
   gl::GLApi* api = gl::g_current_gl_context;
   GLuint framebuffer;
-  GLint old_framebuffer;
-  api->glGetIntegervFn(GL_READ_FRAMEBUFFER_BINDING, &old_framebuffer);
   api->glGenFramebuffersEXTFn(1, &framebuffer);
-  api->glBindFramebufferEXTFn(GL_READ_FRAMEBUFFER, framebuffer);
+  gl::ScopedFramebufferBinder scoped_framebuffer_binder(framebuffer);
   api->glFramebufferTexture2DEXTFn(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
                                    GL_TEXTURE_2D, texture_service_id, 0);
-  GLenum status = api->glCheckFramebufferStatusEXTFn(GL_READ_FRAMEBUFFER);
-  DCHECK_EQ(status, static_cast<GLenum>(GL_FRAMEBUFFER_COMPLETE))
+  DCHECK_EQ(api->glCheckFramebufferStatusEXTFn(GL_READ_FRAMEBUFFER),
+            static_cast<GLenum>(GL_FRAMEBUFFER_COMPLETE))
       << "CheckFramebufferStatusEXT() failed.";
 
   base::CheckedNumeric<size_t> checked_size = bytes_per_pixel;
@@ -1059,10 +1108,11 @@ void ExternalVkImageBacking::CopyPixelsFromGLTextureToVkImage() {
   checked_size *= size().height();
   DCHECK(checked_size.IsValid());
 
-  ScopedPixelStore pack_row_length(api, GL_PACK_ROW_LENGTH, 0);
-  ScopedPixelStore pack_skip_pixels(api, GL_PACK_SKIP_PIXELS, 0);
-  ScopedPixelStore pack_skip_rows(api, GL_PACK_SKIP_ROWS, 0);
-  ScopedPixelStore pack_alignment(api, GL_PACK_ALIGNMENT, 1);
+  gl::ScopedPixelStore pack_row_length(GL_PACK_ROW_LENGTH, 0);
+  gl::ScopedPixelStore pack_skip_pixels(GL_PACK_SKIP_PIXELS, 0);
+  gl::ScopedPixelStore pack_skip_rows(GL_PACK_SKIP_ROWS, 0);
+  // Use 1 byte alignment for Vulkan image buffer copy.
+  gl::ScopedPixelStore pack_alignment(GL_PACK_ALIGNMENT, 1);
 
   WritePixelsWithCallback(
       checked_size.ValueOrDie(), 0,
@@ -1074,8 +1124,60 @@ void ExternalVkImageBacking::CopyPixelsFromGLTextureToVkImage() {
             DCHECK_EQ(api->glGetErrorFn(), static_cast<GLenum>(GL_NO_ERROR));
           },
           api, size(), gl_format, gl_type));
-  api->glBindFramebufferEXTFn(GL_READ_FRAMEBUFFER, old_framebuffer);
   api->glDeleteFramebuffersEXTFn(1, &framebuffer);
+}
+
+void ExternalVkImageBacking::CopyPixelsFromVkImageToGLTexture() {
+  DCHECK(use_separate_gl_texture());
+  DCHECK_NE(!!texture_, !!texture_passthrough_);
+  const GLuint texture_service_id =
+      texture_ ? texture_->service_id() : texture_passthrough_->service_id();
+
+  DCHECK_GE(format(), 0);
+  DCHECK_LE(format(), viz::RESOURCE_FORMAT_MAX);
+  auto gl_format = kFormatTable[format()].gl_format;
+  auto gl_type = kFormatTable[format()].gl_type;
+  auto bytes_per_pixel = kFormatTable[format()].bytes_per_pixel;
+
+  if (gl_format == GL_ZERO) {
+    NOTREACHED() << "Not supported resource format=" << format();
+    return;
+  }
+
+  // Make sure GrContext is not using GL. So we don't need reset GrContext
+  DCHECK(!context_state_->GrContextIsGL());
+
+  // Make sure a gl context is current, since textures are shared between all gl
+  // contexts, we don't care which gl context is current.
+  if (!gl::GLContext::GetCurrent() &&
+      !context_state_->MakeCurrent(nullptr, true /* needs_gl */))
+    return;
+
+  gl::GLApi* api = gl::g_current_gl_context;
+  base::CheckedNumeric<size_t> checked_size = bytes_per_pixel;
+  checked_size *= size().width();
+  checked_size *= size().height();
+  DCHECK(checked_size.IsValid());
+
+  gl::ScopedTextureBinder scoped_texture_binder(GL_TEXTURE_2D,
+                                                texture_service_id);
+
+  gl::ScopedPixelStore unpack_row_length(GL_UNPACK_ROW_LENGTH, 0);
+  gl::ScopedPixelStore unpack_skip_pixels(GL_UNPACK_SKIP_PIXELS, 0);
+  gl::ScopedPixelStore unpack_skip_rows(GL_UNPACK_SKIP_ROWS, 0);
+  // Use 1 byte alignment for Vulkan image buffer copy.
+  gl::ScopedPixelStore unpack_alignment(GL_UNPACK_ALIGNMENT, 1);
+
+  ReadPixelsWithCallback(
+      checked_size.ValueOrDie(), 0,
+      base::BindOnce(
+          [](gl::GLApi* api, const gfx::Size& size, GLenum format, GLenum type,
+             const void* buffer) {
+            api->glTexSubImage2DFn(GL_TEXTURE_2D, 0, 0, 0, size.width(),
+                                   size.height(), format, type, buffer);
+            DCHECK_EQ(api->glGetErrorFn(), static_cast<GLenum>(GL_NO_ERROR));
+          },
+          api, size(), gl_format, gl_type));
 }
 
 void ExternalVkImageBacking::CopyPixelsFromShmToGLTexture() {
@@ -1105,9 +1207,14 @@ void ExternalVkImageBacking::CopyPixelsFromShmToGLTexture() {
     return;
 
   gl::GLApi* api = gl::g_current_gl_context;
-  GLint old_texture;
-  api->glGetIntegervFn(GL_TEXTURE_BINDING_2D, &old_texture);
-  api->glBindTextureFn(GL_TEXTURE_2D, texture_service_id);
+  gl::ScopedTextureBinder scoped_texture_binder(GL_TEXTURE_2D,
+                                                texture_service_id);
+
+  gl::ScopedPixelStore unpack_row_length(GL_UNPACK_ROW_LENGTH, 0);
+  gl::ScopedPixelStore unpack_skip_pixels(GL_UNPACK_SKIP_PIXELS, 0);
+  gl::ScopedPixelStore unpack_skip_rows(GL_UNPACK_SKIP_ROWS, 0);
+  // Chrome uses 4 bytes alignment for shared memory GMB.
+  gl::ScopedPixelStore unpack_alignment(GL_UNPACK_ALIGNMENT, 4);
 
   base::CheckedNumeric<size_t> checked_size = bytes_per_pixel;
   checked_size *= size().width();
@@ -1119,7 +1226,6 @@ void ExternalVkImageBacking::CopyPixelsFromShmToGLTexture() {
                          size().height(), gl_format, gl_type,
                          pixel_data.data());
   DCHECK_EQ(api->glGetErrorFn(), static_cast<GLenum>(GL_NO_ERROR));
-  api->glBindTextureFn(GL_TEXTURE_2D, old_texture);
 }
 
 bool ExternalVkImageBacking::BeginAccessInternal(

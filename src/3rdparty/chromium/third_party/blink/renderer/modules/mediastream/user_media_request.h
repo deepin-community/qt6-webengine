@@ -32,8 +32,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_MEDIASTREAM_USER_MEDIA_REQUEST_H_
 
 #include "third_party/blink/public/common/privacy_budget/identifiable_surface.h"
-#include "third_party/blink/renderer/bindings/modules/v8/v8_navigator_user_media_error_callback.h"
-#include "third_party/blink/renderer/bindings/modules/v8/v8_navigator_user_media_success_callback.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_typedefs.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
 #include "third_party/blink/renderer/platform/mediastream/media_constraints.h"
@@ -44,8 +43,10 @@ namespace blink {
 
 class LocalDOMWindow;
 class MediaErrorState;
+class MediaStream;
 class MediaStreamConstraints;
 class MediaStreamDescriptor;
+class ScriptWrappable;
 class UserMediaController;
 
 class MODULES_EXPORT UserMediaRequest final
@@ -65,23 +66,19 @@ class MODULES_EXPORT UserMediaRequest final
     kTrackStart,
     kFailedDueToShutdown,
     kKillSwitchOn,
-    kSystemPermissionDenied
+    kSystemPermissionDenied,
+    kDeviceInUse
   };
 
-  enum class MediaType {
-    kUserMedia,
-    kDisplayMedia,
-    kGetCurrentBrowsingContextMedia,
-  };
+  enum class MediaType { kUserMedia, kDisplayMedia };
 
   class Callbacks : public GarbageCollected<Callbacks> {
    public:
     virtual ~Callbacks() = default;
 
-    virtual void OnSuccess(ScriptWrappable* callback_this_value,
-                           MediaStream*) = 0;
+    virtual void OnSuccess(MediaStream*) = 0;
     virtual void OnError(ScriptWrappable* callback_this_value,
-                         DOMExceptionOrOverconstrainedError) = 0;
+                         const V8MediaStreamError* error) = 0;
 
     virtual void Trace(Visitor*) const {}
 
@@ -98,13 +95,6 @@ class MODULES_EXPORT UserMediaRequest final
                                   Callbacks*,
                                   MediaErrorState&,
                                   IdentifiableSurface surface);
-  static UserMediaRequest* Create(ExecutionContext*,
-                                  UserMediaController*,
-                                  const MediaStreamConstraints* options,
-                                  V8NavigatorUserMediaSuccessCallback*,
-                                  V8NavigatorUserMediaErrorCallback*,
-                                  MediaErrorState&,
-                                  IdentifiableSurface surface);
   static UserMediaRequest* CreateForTesting(const MediaConstraints& audio,
                                             const MediaConstraints& video);
 
@@ -113,6 +103,7 @@ class MODULES_EXPORT UserMediaRequest final
                    MediaType media_type,
                    MediaConstraints audio,
                    MediaConstraints video,
+                   bool should_prefer_current_tab,
                    Callbacks*,
                    IdentifiableSurface surface);
   ~UserMediaRequest() override;
@@ -143,8 +134,8 @@ class MODULES_EXPORT UserMediaRequest final
   // ExecutionContextLifecycleObserver
   void ContextDestroyed() override;
 
-  void set_request_id(int id) { request_id_ = id; }
-  int request_id() { return request_id_; }
+  void set_request_id(int32_t id) { request_id_ = id; }
+  int32_t request_id() { return request_id_; }
 
   void set_has_transient_user_activation(bool value) {
     has_transient_user_activation_ = value;
@@ -153,15 +144,18 @@ class MODULES_EXPORT UserMediaRequest final
     return has_transient_user_activation_;
   }
 
+  bool should_prefer_current_tab() const { return should_prefer_current_tab_; }
+
   void Trace(Visitor*) const override;
 
  private:
   MediaType media_type_;
   MediaConstraints audio_;
   MediaConstraints video_;
+  const bool should_prefer_current_tab_ = false;
   bool should_disable_hardware_noise_suppression_;
   bool has_transient_user_activation_ = false;
-  int request_id_ = -1;
+  int32_t request_id_ = -1;
 
   Member<UserMediaController> controller_;
 

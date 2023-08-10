@@ -64,7 +64,7 @@ class TParseContext : angle::NonCopyable
                          const char *token);
 
     TIntermBlock *getTreeRoot() const { return mTreeRoot; }
-    void setTreeRoot(TIntermBlock *treeRoot) { mTreeRoot = treeRoot; }
+    void setTreeRoot(TIntermBlock *treeRoot);
 
     bool getFragmentPrecisionHigh() const
     {
@@ -191,6 +191,13 @@ class TParseContext : angle::NonCopyable
                                         const TPublicType &type,
                                         const TSourceLoc &qualifierLocation);
     void checkLocalVariableConstStorageQualifier(const TQualifierWrapperBase &qualifier);
+    void checkTCSOutVarIndexIsValid(TIntermBinary *binaryExpression, const TSourceLoc &location);
+
+    void checkAdvancedBlendEquationsNotSpecified(
+        const TSourceLoc &location,
+        const AdvancedBlendEquations &advancedBlendEquations,
+        const TQualifier &qualifier);
+
     const TPragma &pragma() const { return mDirectiveHandler.pragma(); }
     const TExtensionBehavior &extensionBehavior() const
     {
@@ -203,6 +210,10 @@ class TParseContext : angle::NonCopyable
                                const char *name,
                                const char *value,
                                bool stdgl);
+
+    // For built-ins that can be redeclared, adjusts the type qualifier so transformations can
+    // identify them correctly.
+    void adjustRedeclaredBuiltInType(const ImmutableString &identifier, TType *type);
 
     // Returns true on success. *initNode may still be nullptr on success in case the initialization
     // is not needed in the AST.
@@ -488,6 +499,15 @@ class TParseContext : angle::NonCopyable
         return mTessEvaluationShaderInputPointType;
     }
 
+    const TVector<TType *> &getDeferredArrayTypesToSize() const
+    {
+        return mDeferredArrayTypesToSize;
+    }
+
+    void markShaderHasPrecise() { mHasAnyPreciseType = true; }
+    bool hasAnyPreciseType() const { return mHasAnyPreciseType; }
+    AdvancedBlendEquations getAdvancedBlendEquations() const { return mAdvancedBlendEquations; }
+
     ShShaderOutput getOutputType() const { return mOutputType; }
 
     // TODO(jmadill): make this private
@@ -721,6 +741,13 @@ class TParseContext : angle::NonCopyable
     TLayoutTessEvaluationType mTessEvaluationShaderInputVertexSpacingType;
     TLayoutTessEvaluationType mTessEvaluationShaderInputOrderingType;
     TLayoutTessEvaluationType mTessEvaluationShaderInputPointType;
+    // List of array declarations without an explicit size that have come before layout(vertices=N).
+    // Once the vertex count is specified, these arrays are sized.
+    TVector<TType *> mDeferredArrayTypesToSize;
+    // Whether the |precise| keyword has been seen in the shader.
+    bool mHasAnyPreciseType;
+
+    AdvancedBlendEquations mAdvancedBlendEquations;
 
     // Track when we add new scope for func body in ESSL 1.00 spec
     bool mFunctionBodyNewScope;

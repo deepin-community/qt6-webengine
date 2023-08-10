@@ -37,6 +37,7 @@ const assert_js_1 = require("./assert.js");
  *   page.evaluate(() => alert('1'));
  * })();
  * ```
+ * @public
  */
 class Dialog {
     /**
@@ -75,7 +76,7 @@ class Dialog {
      * @returns A promise that resolves when the dialog has been accepted.
      */
     async accept(promptText) {
-        assert_js_1.assert(!this._handled, 'Cannot accept dialog which is already handled!');
+        (0, assert_js_1.assert)(!this._handled, 'Cannot accept dialog which is already handled!');
         this._handled = true;
         await this._client.send('Page.handleJavaScriptDialog', {
             accept: true,
@@ -86,7 +87,7 @@ class Dialog {
      * @returns A promise which will resolve once the dialog has been dismissed
      */
     async dismiss() {
-        assert_js_1.assert(!this._handled, 'Cannot dismiss dialog which is already handled!');
+        (0, assert_js_1.assert)(!this._handled, 'Cannot dismiss dialog which is already handled!');
         this._handled = true;
         await this._client.send('Page.handleJavaScriptDialog', {
             accept: false,

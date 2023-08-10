@@ -13,11 +13,11 @@
 #include "core/fpdfapi/page/cpdf_pageobjectholder.h"
 #include "core/fpdfapi/page/ipdf_page.h"
 #include "core/fxcrt/fx_coordinates.h"
-#include "core/fxcrt/fx_system.h"
+#include "core/fxcrt/fx_memory.h"
 #include "core/fxcrt/observed_ptr.h"
 #include "core/fxcrt/retain_ptr.h"
 #include "core/fxcrt/unowned_ptr.h"
-#include "third_party/base/optional.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 class CPDF_Dictionary;
 class CPDF_Document;
@@ -32,18 +32,19 @@ class CPDF_Page final : public IPDF_Page, public CPDF_PageObjectHolder {
   // Data for the render layer to attach to this page.
   class RenderContextIface {
    public:
-    virtual ~RenderContextIface() {}
+    virtual ~RenderContextIface() = default;
   };
 
   // Cache for the render layer to attach to this page.
   class RenderCacheIface {
    public:
-    virtual ~RenderCacheIface() {}
+    virtual ~RenderCacheIface() = default;
     virtual void ResetBitmapForImage(const RetainPtr<CPDF_Image>& pImage) = 0;
   };
 
   class RenderContextClearer {
    public:
+    FX_STACK_ALLOCATED();
     explicit RenderContextClearer(CPDF_Page* pPage);
     ~RenderContextClearer();
 
@@ -60,11 +61,11 @@ class CPDF_Page final : public IPDF_Page, public CPDF_PageObjectHolder {
   float GetPageWidth() const override;
   float GetPageHeight() const override;
   CFX_Matrix GetDisplayMatrix(const FX_RECT& rect, int iRotate) const override;
-  Optional<CFX_PointF> DeviceToPage(
+  absl::optional<CFX_PointF> DeviceToPage(
       const FX_RECT& rect,
       int rotate,
       const CFX_PointF& device_point) const override;
-  Optional<CFX_PointF> PageToDevice(
+  absl::optional<CFX_PointF> PageToDevice(
       const FX_RECT& rect,
       int rotate,
       const CFX_PointF& page_point) const override;
@@ -74,6 +75,7 @@ class CPDF_Page final : public IPDF_Page, public CPDF_PageObjectHolder {
 
   void ParseContent();
   const CFX_SizeF& GetPageSize() const { return m_PageSize; }
+  const CFX_Matrix& GetPageMatrix() const { return m_PageMatrix; }
   int GetPageRotation() const;
   RenderCacheIface* GetRenderCache() const { return m_pRenderCache.get(); }
   void SetRenderCache(std::unique_ptr<RenderCacheIface> pCache) {
@@ -83,9 +85,12 @@ class CPDF_Page final : public IPDF_Page, public CPDF_PageObjectHolder {
   RenderContextIface* GetRenderContext() const {
     return m_pRenderContext.get();
   }
-  void SetRenderContext(std::unique_ptr<RenderContextIface> pContext) {
-    m_pRenderContext = std::move(pContext);
-  }
+
+  // `pContext` cannot be null. `SetRenderContext()` cannot be called if the
+  // page already has a render context. Use `ClearRenderContext()` to reset the
+  // render context.
+  void SetRenderContext(std::unique_ptr<RenderContextIface> pContext);
+  void ClearRenderContext();
 
   CPDF_Document* GetPDFDocument() const { return m_pPDFDocument.Get(); }
   View* GetView() const { return m_pView.Get(); }

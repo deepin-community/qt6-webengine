@@ -1,9 +1,15 @@
-libqt6pdf6: embedded-library freetype usr/lib/*/libQt6Pdf.so.6.*.*
-libqt6pdf6: embedded-library lcms2 usr/lib/*/libQt6Pdf.so.6.*.*
-libqt6pdf6: embedded-library libpng usr/lib/*/libQt6Pdf.so.6.*.*
-libqt6pdf6: embedded-library openjpeg usr/lib/*/libQt6Pdf.so.6.*.*
-libqt6pdf6: embedded-library libjpeg usr/lib/*/libQt6Pdf.so.6.*.*
-libqt6pdf6: embedded-library zlib usr/lib/*/libQt6Pdf.so.6.*.*
+# to make lintian/ftp-master happy :-/
+embedded-library usr/lib/*/libQt6Pdf.so.6.*.*: freetype
+embedded-library usr/lib/*/libQt6Pdf.so.6.*.*: lcms2
+embedded-library usr/lib/*/libQt6Pdf.so.6.*.*: libpng
+
+libqt6pdf6: embedded-library freetype [usr/lib/*/libQt6Pdf.so.6.*.*]
+libqt6pdf6: embedded-library lcms2 [usr/lib/*/libQt6Pdf.so.6.*.*]
+libqt6pdf6: embedded-library libpng [usr/lib/*/libQt6Pdf.so.6.*.*]
+libqt6pdf6: embedded-library openjpeg [usr/lib/*/libQt6Pdf.so.6.*.*]
+libqt6pdf6: embedded-library zlib [usr/lib/*/libQt6Pdf.so.6.*.*]
+libqt6pdf6: embedded-library libjpeg [usr/lib/*/libQt6Pdf.so.6.*.*]
+libqt6pdf6: embedded-library tiff [usr/lib/*/libQt6Pdf.so.6.*.*]
 # This dependency has been added to track external packages building against
 # our private headers. It is ok if internal packages depend on the ABI one.
 libqt6pdf6: symbols-declares-dependency-on-other-package qt6-webengine-abi *

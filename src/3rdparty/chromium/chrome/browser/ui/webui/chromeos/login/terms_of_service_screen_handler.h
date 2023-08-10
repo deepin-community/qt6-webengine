@@ -7,14 +7,14 @@
 
 #include <string>
 
-#include "base/compiler_specific.h"
-#include "base/macros.h"
-#include "chrome/browser/chromeos/base/locale_util.h"
+#include "chrome/browser/ash/base/locale_util.h"
 #include "chrome/browser/ui/webui/chromeos/login/base_screen_handler.h"
 
-namespace chromeos {
-
+namespace ash {
 class TermsOfServiceScreen;
+}
+
+namespace chromeos {
 
 // Interface for dependency injection between TermsOfServiceScreen and its
 // WebUI representation.
@@ -25,16 +25,13 @@ class TermsOfServiceScreenView {
   virtual ~TermsOfServiceScreenView() {}
 
   // Sets screen this view belongs to.
-  virtual void SetScreen(TermsOfServiceScreen* screen) = 0;
+  virtual void SetScreen(ash::TermsOfServiceScreen* screen) = 0;
 
   // Shows the contents of the screen.
-  virtual void Show() = 0;
+  virtual void Show(const std::string& manager) = 0;
 
   // Hides the contents of the screen.
   virtual void Hide() = 0;
-
-  // Sets the manager whose Terms of Service are being shown.
-  virtual void SetManager(const std::string& manager) = 0;
 
   // Called when the download of the Terms of Service fails. Show an error
   // message to the user.
@@ -54,7 +51,12 @@ class TermsOfServiceScreenHandler : public BaseScreenHandler,
  public:
   using TView = TermsOfServiceScreenView;
 
-  explicit TermsOfServiceScreenHandler(JSCallsContainer* js_calls_container);
+  TermsOfServiceScreenHandler();
+
+  TermsOfServiceScreenHandler(const TermsOfServiceScreenHandler&) = delete;
+  TermsOfServiceScreenHandler& operator=(const TermsOfServiceScreenHandler&) =
+      delete;
+
   ~TermsOfServiceScreenHandler() override;
 
   // BaseScreenHandler:
@@ -62,32 +64,23 @@ class TermsOfServiceScreenHandler : public BaseScreenHandler,
       ::login::LocalizedValuesBuilder* builder) override;
 
   // TermsOfServiceScreenView:
-  void SetScreen(TermsOfServiceScreen* screen) override;
-  void Show() override;
+  void SetScreen(ash::TermsOfServiceScreen* screen) override;
+  void Show(const std::string& manager) override;
   void Hide() override;
-  void SetManager(const std::string& manager) override;
   void OnLoadError() override;
   void OnLoadSuccess(const std::string& terms_of_service) override;
   bool AreTermsLoaded() override;
 
  private:
   // BaseScreenHandler:
-  void Initialize() override;
-
-  // Switch to the user's preferred input method and show the screen. This
-  // method is called after it has been ensured that the current UI locale
-  // matches the UI locale chosen by the user.
-  void DoShow();
-
-  // Update the manager shown in the UI.
-  void UpdateManagerInUI();
+  void InitializeDeprecated() override;
 
   // Update the UI to show an error message or the Terms of Service, depending
   // on whether the download of the Terms of Service was successful. Does
   // nothing if the download is still in progress.
   void UpdateTermsOfServiceInUI();
 
-  TermsOfServiceScreen* screen_ = nullptr;
+  ash::TermsOfServiceScreen* screen_ = nullptr;
 
   // Whether the screen should be shown right after initialization.
   bool show_on_init_ = false;
@@ -100,10 +93,15 @@ class TermsOfServiceScreenHandler : public BaseScreenHandler,
 
   // Set to the Terms of Service when the download is successful.
   std::string terms_of_service_;
-
-  DISALLOW_COPY_AND_ASSIGN(TermsOfServiceScreenHandler);
 };
 
 }  // namespace chromeos
+
+// TODO(https://crbug.com/1164001): remove after the //chrome/browser/chromeos
+// source migration is finished.
+namespace ash {
+using ::chromeos::TermsOfServiceScreenHandler;
+using ::chromeos::TermsOfServiceScreenView;
+}
 
 #endif  // CHROME_BROWSER_UI_WEBUI_CHROMEOS_LOGIN_TERMS_OF_SERVICE_SCREEN_HANDLER_H_

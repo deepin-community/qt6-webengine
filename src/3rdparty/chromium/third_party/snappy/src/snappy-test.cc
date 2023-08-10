@@ -37,9 +37,6 @@
 #include <iostream>
 #include <string>
 
-DEFINE_bool(run_microbenchmarks, true,
-            "Run microbenchmarks before doing anything else.");
-
 namespace file {
 
 OptionsStub::OptionsStub() = default;
@@ -154,7 +151,7 @@ LogMessageCrash::~LogMessageCrash() {
 #pragma warning(pop)
 #endif
 
-#ifdef HAVE_LIBZ
+#if HAVE_LIBZ
 
 ZLib::ZLib()
     : comp_init_(false),

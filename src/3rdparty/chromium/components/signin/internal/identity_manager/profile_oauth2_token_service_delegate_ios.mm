@@ -10,7 +10,6 @@
 #include <utility>
 
 #include "base/bind.h"
-#include "base/macros.h"
 #include "base/stl_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/values.h"
@@ -20,6 +19,7 @@
 #include "components/signin/public/identity_manager/ios/device_accounts_provider.h"
 #include "google_apis/gaia/oauth2_access_token_fetcher.h"
 #include "net/base/net_errors.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -81,6 +81,10 @@ class SSOAccessTokenFetcher : public OAuth2AccessTokenFetcher {
   SSOAccessTokenFetcher(OAuth2AccessTokenConsumer* consumer,
                         DeviceAccountsProvider* provider,
                         const AccountInfo& account);
+
+  SSOAccessTokenFetcher(const SSOAccessTokenFetcher&) = delete;
+  SSOAccessTokenFetcher& operator=(const SSOAccessTokenFetcher&) = delete;
+
   ~SSOAccessTokenFetcher() override;
 
   void Start(const std::string& client_id,
@@ -99,8 +103,6 @@ class SSOAccessTokenFetcher : public OAuth2AccessTokenFetcher {
   AccountInfo account_;
   bool request_was_cancelled_;
   base::WeakPtrFactory<SSOAccessTokenFetcher> weak_factory_;
-
-  DISALLOW_COPY_AND_ASSIGN(SSOAccessTokenFetcher);
 };
 
 SSOAccessTokenFetcher::SSOAccessTokenFetcher(
@@ -293,7 +295,7 @@ void ProfileOAuth2TokenServiceIOSDelegate::RevokeAllCredentials() {
 
 void ProfileOAuth2TokenServiceIOSDelegate::
     ReloadAllAccountsFromSystemWithPrimaryAccount(
-        const base::Optional<CoreAccountId>& primary_account_id) {
+        const absl::optional<CoreAccountId>& primary_account_id) {
   ReloadCredentials(primary_account_id.value_or(CoreAccountId()));
 }
 

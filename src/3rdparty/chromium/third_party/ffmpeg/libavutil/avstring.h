@@ -324,6 +324,7 @@ enum AVEscapeMode {
     AV_ESCAPE_MODE_AUTO,      ///< Use auto-selected escaping mode.
     AV_ESCAPE_MODE_BACKSLASH, ///< Use backslash escaping.
     AV_ESCAPE_MODE_QUOTE,     ///< Use single-quote escaping.
+    AV_ESCAPE_MODE_XML,       ///< Use XML non-markup character data escaping.
 };
 
 /**
@@ -342,6 +343,19 @@ enum AVEscapeMode {
  * special by av_get_token(), such as the single quote.
  */
 #define AV_ESCAPE_FLAG_STRICT (1 << 1)
+
+/**
+ * Within AV_ESCAPE_MODE_XML, additionally escape single quotes for single
+ * quoted attributes.
+ */
+#define AV_ESCAPE_FLAG_XML_SINGLE_QUOTES (1 << 2)
+
+/**
+ * Within AV_ESCAPE_MODE_XML, additionally escape double quotes for double
+ * quoted attributes.
+ */
+#define AV_ESCAPE_FLAG_XML_DOUBLE_QUOTES (1 << 3)
+
 
 /**
  * Escape string in src, and put the escaped string in an allocated
@@ -414,7 +428,13 @@ int av_match_list(const char *name, const char *list, char separator);
  * See libc sscanf manual for more information.
  * Locale-independent sscanf implementation.
  */
+#if 0
 int av_sscanf(const char *string, const char *format, ...);
+#else
+// Chromium: av_sscanf() is ~8kb in implementation and isn't used by any
+// methods needed for Chromium; drop to save binary size.
+#define av_sscanf sscanf
+#endif
 
 /**
  * @}

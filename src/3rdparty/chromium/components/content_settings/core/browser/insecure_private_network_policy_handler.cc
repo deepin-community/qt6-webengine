@@ -31,11 +31,12 @@ InsecurePrivateNetworkPolicyHandler::~InsecurePrivateNetworkPolicyHandler() =
 void InsecurePrivateNetworkPolicyHandler::ApplyPolicySettings(
     const policy::PolicyMap& policies,
     PrefValueMap* prefs) {
-  const base::Value* value = policies.GetValue(policy_name());
-  bool is_allowed = false;
-  if (value && value->GetAsBoolean(&is_allowed)) {
-    prefs->SetValue(prefs::kManagedDefaultInsecurePrivateNetworkSetting,
-                    base::Value(ConvertBooleanToContentSetting(is_allowed)));
+  const base::Value* value =
+      policies.GetValue(policy_name(), base::Value::Type::BOOLEAN);
+  if (value) {
+    prefs->SetValue(
+        prefs::kManagedDefaultInsecurePrivateNetworkSetting,
+        base::Value(ConvertBooleanToContentSetting(value->GetBool())));
   }
 }
 

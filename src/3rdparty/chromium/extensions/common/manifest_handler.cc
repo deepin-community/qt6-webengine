@@ -10,7 +10,7 @@
 #include <vector>
 
 #include "base/check.h"
-#include "base/stl_util.h"
+#include "base/containers/contains.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/permissions/manifest_permission.h"
 #include "extensions/common/permissions/manifest_permission_set.h"
@@ -70,7 +70,7 @@ bool ManifestHandler::IsRegistrationFinalized() {
 
 // static
 bool ManifestHandler::ParseExtension(Extension* extension,
-                                     base::string16* error) {
+                                     std::u16string* error) {
   return ManifestHandlerRegistry::Get()->ParseExtension(extension, error);
 }
 
@@ -130,12 +130,12 @@ void ManifestHandlerRegistry::RegisterHandler(
 }
 
 bool ManifestHandlerRegistry::ParseExtension(Extension* extension,
-                                             base::string16* error) {
+                                             std::u16string* error) {
   std::map<int, ManifestHandler*> handlers_by_priority;
   for (ManifestHandlerMap::iterator iter = handlers_.begin();
        iter != handlers_.end(); ++iter) {
     ManifestHandler* handler = iter->second;
-    if (extension->manifest()->HasPath(iter->first) ||
+    if (extension->manifest()->FindPath(iter->first) ||
         handler->AlwaysParseForType(extension->GetType())) {
       handlers_by_priority[priority_map_[handler]] = handler;
     }
@@ -156,7 +156,7 @@ bool ManifestHandlerRegistry::ValidateExtension(
   for (ManifestHandlerMap::iterator iter = handlers_.begin();
        iter != handlers_.end(); ++iter) {
     ManifestHandler* handler = iter->second;
-    if (extension->manifest()->HasPath(iter->first) ||
+    if (extension->manifest()->FindPath(iter->first) ||
         handler->AlwaysValidateForType(extension->GetType())) {
       handlers.insert(handler);
     }

@@ -12,8 +12,8 @@
 #include "base/files/file_util.h"
 #include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
-#include "content/public/common/sandbox_init.h"
 #include "sandbox/policy/sandbox.h"
+#include "sandbox/policy/sandbox_type.h"
 
 namespace content {
 
@@ -31,7 +31,7 @@ void RendererMainPlatformDelegate::PlatformUninitialize() {
 
 bool RendererMainPlatformDelegate::EnableSandbox() {
   // The setuid sandbox is started in the zygote process: zygote_main_linux.cc
-  // https://chromium.googlesource.com/chromium/src/+/master/docs/linux/suid_sandbox.md
+  // https://chromium.googlesource.com/chromium/src/+/main/docs/linux/suid_sandbox.md
   //
   // Anything else is started in InitializeSandbox().
   sandbox::policy::SandboxLinux::Options options;

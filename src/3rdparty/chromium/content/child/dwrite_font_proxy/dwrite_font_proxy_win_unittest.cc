@@ -38,18 +38,16 @@ class DWriteFontProxyUnitTest : public testing::Test {
   }
 
   static void SetupFonts(FakeFontCollection* fonts) {
-    fonts->AddFont(STRING16_LITERAL("Aardvark"))
-        .AddFamilyName(STRING16_LITERAL("en-us"), STRING16_LITERAL("Aardvark"))
-        .AddFamilyName(STRING16_LITERAL("de-de"), STRING16_LITERAL("Erdferkel"))
+    fonts->AddFont(u"Aardvark")
+        .AddFamilyName(u"en-us", u"Aardvark")
+        .AddFamilyName(u"de-de", u"Erdferkel")
         .AddFilePath(base::FilePath(L"X:\\Nonexistent\\Folder\\Aardvark.ttf"));
-    FakeFont& arial = fonts->AddFont(STRING16_LITERAL("Arial"))
-                          .AddFamilyName(STRING16_LITERAL("en-us"),
-                                         STRING16_LITERAL("Arial"));
+    FakeFont& arial =
+        fonts->AddFont(u"Arial").AddFamilyName(u"en-us", u"Arial");
     for (auto& path : arial_font_files)
       arial.AddFilePath(base::FilePath(path));
-    fonts->AddFont(STRING16_LITERAL("Times New Roman"))
-        .AddFamilyName(STRING16_LITERAL("en-us"),
-                       STRING16_LITERAL("Times New Roman"))
+    fonts->AddFont(u"Times New Roman")
+        .AddFamilyName(u"en-us", u"Times New Roman")
         .AddFilePath(base::FilePath(L"X:\\Nonexistent\\Folder\\Times.ttf"));
   }
 
@@ -70,7 +68,7 @@ class DWriteFontProxyUnitTest : public testing::Test {
   }
 
  protected:
-  base::test::TaskEnvironment task_environment;
+  base::test::TaskEnvironment task_environment_;
   std::unique_ptr<FakeFontCollection> fake_collection_;
   mswr::ComPtr<DWriteFontCollectionProxy> collection_;
 
@@ -155,6 +153,24 @@ TEST_F(DWriteFontProxyUnitTest, GetFontFamilyShouldCreateFamily) {
   EXPECT_EQ(S_OK, hr);
   EXPECT_EQ(2u, fake_collection_->MessageCount());
   EXPECT_NE(nullptr, family.Get());
+}
+
+TEST_F(DWriteFontProxyUnitTest, PrewarmFamilyShouldCreateFamily) {
+  collection_->InitializePrewarmerForTesting(fake_collection_->CreateRemote());
+
+  collection_->PrewarmFamily("Arial");
+  // Run posted tasks in |ThreadPool|.
+  task_environment_.RunUntilIdle();
+  EXPECT_EQ(3u, fake_collection_->MessageCount());
+
+  // |FindFamilyName| should not make any mojo calls, because |PrewarmFamily|
+  // should have already created the family.
+  UINT32 index = UINT_MAX;
+  BOOL exists = FALSE;
+  HRESULT hr = collection_->FindFamilyName(L"Arial", &index, &exists);
+  EXPECT_EQ(S_OK, hr);
+  task_environment_.RunUntilIdle();
+  EXPECT_EQ(3u, fake_collection_->MessageCount());
 }
 
 void CheckLocale(const std::wstring& locale_name,
@@ -337,13 +353,11 @@ TEST_F(DWriteFontProxyUnitTest, GetFontFromFontFaceShouldFindFont) {
 
 TEST_F(DWriteFontProxyUnitTest, TestCustomFontFiles) {
   FakeFontCollection fonts;
-  FakeFont& arial =
-      fonts.AddFont(STRING16_LITERAL("Arial"))
-          .AddFamilyName(STRING16_LITERAL("en-us"), STRING16_LITERAL("Arial"));
+  FakeFont& arial = fonts.AddFont(u"Arial").AddFamilyName(u"en-us", u"Arial");
   for (auto& path : arial_font_files) {
-    base::File file(base::FilePath(path), base::File::FLAG_OPEN |
-                                              base::File::FLAG_READ |
-                                              base::File::FLAG_EXCLUSIVE_WRITE);
+    base::File file(base::FilePath(path),
+                    base::File::FLAG_OPEN | base::File::FLAG_READ |
+                        base::File::FLAG_WIN_EXCLUSIVE_WRITE);
     arial.AddFileHandle(std::move(file));
   }
   mswr::ComPtr<DWriteFontCollectionProxy> collection;

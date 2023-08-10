@@ -15,6 +15,7 @@
 #include "include/core/SkRect.h"
 #include "include/core/SkRefCnt.h"
 #include "include/core/SkScalar.h"
+#include "include/core/SkSpan.h"
 #include "include/core/SkStream.h"
 #include "include/core/SkTypeface.h"
 #include "include/core/SkTypes.h"
@@ -26,16 +27,13 @@
 #include "include/private/SkTemplates.h"
 #include "include/private/SkTo.h"
 #include "modules/skshaper/include/SkShaper.h"
-#include "modules/skshaper/src/SkUnicode.h"
+#include "modules/skunicode/include/SkUnicode.h"
 #include "src/core/SkLRUCache.h"
-#include "src/core/SkSpan.h"
 #include "src/core/SkTDPQueue.h"
 #include "src/utils/SkUTF.h"
 
 #include <hb.h>
-#include <hb-icu.h>
 #include <hb-ot.h>
-#include <unicode/uscript.h>
 #include <cstring>
 #include <memory>
 #include <type_traits>
@@ -266,23 +264,34 @@ HBBlob stream_to_blob(std::unique_ptr<SkStreamAsset> asset) {
 SkDEBUGCODE(static hb_user_data_key_t gDataIdKey;)
 
 HBFace create_hb_face(const SkTypeface& typeface) {
-    int index;
-    std::unique_ptr<SkStreamAsset> typefaceAsset = typeface.openStream(&index);
+    int index = 0;
+    std::unique_ptr<SkStreamAsset> typefaceAsset = typeface.openExistingStream(&index);
     HBFace face;
     if (typefaceAsset && typefaceAsset->getMemoryBase()) {
         HBBlob blob(stream_to_blob(std::move(typefaceAsset)));
-        face.reset(hb_face_create(blob.get(), (unsigned)index));
-    } else {
+        // hb_face_create always succeeds. Check that the format is minimally recognized first.
+        // hb_face_create_for_tables may still create a working hb_face.
+        // See https://github.com/harfbuzz/harfbuzz/issues/248 .
+        unsigned int num_hb_faces = hb_face_count(blob.get());
+        if (0 < num_hb_faces && (unsigned)index < num_hb_faces) {
+            face.reset(hb_face_create(blob.get(), (unsigned)index));
+            // Check the number of glyphs as a basic sanitization step.
+            if (face && hb_face_get_glyph_count(face.get()) == 0) {
+                face.reset();
+            }
+        }
+    }
+    if (!face) {
         face.reset(hb_face_create_for_tables(
             skhb_get_table,
             const_cast<SkTypeface*>(SkRef(&typeface)),
             [](void* user_data){ SkSafeUnref(reinterpret_cast<SkTypeface*>(user_data)); }));
+        hb_face_set_index(face.get(), (unsigned)index);
     }
     SkASSERT(face);
     if (!face) {
         return nullptr;
     }
-    hb_face_set_index(face.get(), (unsigned)index);
     hb_face_set_upem(face.get(), typeface.getUnitsPerEm());
 
     SkDEBUGCODE(
@@ -293,11 +302,11 @@ HBFace create_hb_face(const SkTypeface& typeface) {
     return face;
 }
 
-HBFont create_hb_font(const SkFont& font, const HBFace& face) {
-    SkDEBUGCODE(
-        void* dataId = hb_face_get_user_data(face.get(), &gDataIdKey);
-        SkASSERT(dataId == font.getTypeface());
-    )
+HBFont create_typeface_hb_font(const SkTypeface& typeface) {
+    HBFace face(create_hb_face(typeface));
+    if (!face) {
+        return nullptr;
+    }
 
     HBFont otFont(hb_font_create(face.get()));
     SkASSERT(otFont);
@@ -305,19 +314,29 @@ HBFont create_hb_font(const SkFont& font, const HBFace& face) {
         return nullptr;
     }
     hb_ot_font_set_funcs(otFont.get());
-    int axis_count = font.getTypeface()->getVariationDesignPosition(nullptr, 0);
+    int axis_count = typeface.getVariationDesignPosition(nullptr, 0);
     if (axis_count > 0) {
         SkAutoSTMalloc<4, SkFontArguments::VariationPosition::Coordinate> axis_values(axis_count);
-        if (font.getTypeface()->getVariationDesignPosition(axis_values, axis_count) == axis_count) {
+        if (typeface.getVariationDesignPosition(axis_values, axis_count) == axis_count) {
             hb_font_set_variations(otFont.get(),
                                    reinterpret_cast<hb_variation_t*>(axis_values.get()),
                                    axis_count);
         }
     }
 
+    return otFont;
+}
+
+HBFont create_sub_hb_font(const SkFont& font, const HBFont& typefaceFont) {
+    SkDEBUGCODE(
+        hb_face_t* face = hb_font_get_face(typefaceFont.get());
+        void* dataId = hb_face_get_user_data(face, &gDataIdKey);
+        SkASSERT(dataId == font.getTypeface());
+    )
+
     // Creating a sub font means that non-available functions
     // are found from the parent.
-    HBFont skFont(hb_font_create_sub_font(otFont.get()));
+    HBFont skFont(hb_font_create_sub_font(typefaceFont.get()));
     hb_font_set_funcs(skFont.get(), skhb_get_font_funcs(),
                       reinterpret_cast<void *>(new SkFont(font)),
                       [](void* user_data){ delete reinterpret_cast<SkFont*>(user_data); });
@@ -381,26 +400,21 @@ private:
 
 class SkUnicodeHbScriptRunIterator final: public SkShaper::ScriptRunIterator {
 public:
-    SkUnicodeHbScriptRunIterator(SkUnicodeScript script, const char* utf8, size_t utf8Bytes)
-        : fScript(std::move(script))
-        , fCurrent(utf8), fBegin(utf8), fEnd(fCurrent + utf8Bytes)
+    SkUnicodeHbScriptRunIterator(SkUnicodeScript, const char* utf8, size_t utf8Bytes)
+        : fCurrent(utf8), fBegin(utf8), fEnd(fCurrent + utf8Bytes)
         , fCurrentScript(HB_SCRIPT_UNKNOWN)
     {}
-    hb_script_t hb_script_from_icu(SkUnichar u) {
-        SkScriptIterator::ScriptID scriptId;
-        if (!fScript->getScript(u, &scriptId)) {
-            return HB_SCRIPT_UNKNOWN;
-        }
-        return hb_icu_script_to_script((UScriptCode)scriptId);
+    hb_script_t hb_script_for_unichar(SkUnichar u) {
+         return hb_unicode_script(hb_unicode_funcs_get_default(), u);
     }
     void consume() override {
         SkASSERT(fCurrent < fEnd);
         SkUnichar u = utf8_next(&fCurrent, fEnd);
-        fCurrentScript = hb_script_from_icu(u);
+        fCurrentScript = hb_script_for_unichar(u);
         while (fCurrent < fEnd) {
             const char* prev = fCurrent;
             u = utf8_next(&fCurrent, fEnd);
-            const hb_script_t script = hb_script_from_icu(u);
+            const hb_script_t script = hb_script_for_unichar(u);
             if (script != fCurrentScript) {
                 if (fCurrentScript == HB_SCRIPT_INHERITED || fCurrentScript == HB_SCRIPT_COMMON) {
                     fCurrentScript = script;
@@ -427,7 +441,6 @@ public:
         return SkSetFourByteTag(HB_UNTAG(fCurrentScript));
     }
 private:
-    SkUnicodeScript fScript;
     char const * fCurrent;
     char const * const fBegin;
     char const * const fEnd;
@@ -1258,36 +1271,35 @@ void ShapeDontWrapOrReorder::wrap(char const * const utf8, size_t utf8Bytes,
 
 class HBLockedFaceCache {
 public:
-    HBLockedFaceCache(SkLRUCache<SkFontID, HBFace>& lruCache, SkMutex& mutex)
+    HBLockedFaceCache(SkLRUCache<SkTypefaceID, HBFont>& lruCache, SkMutex& mutex)
         : fLRUCache(lruCache), fMutex(mutex)
     {
         fMutex.acquire();
     }
     HBLockedFaceCache(const HBLockedFaceCache&) = delete;
     HBLockedFaceCache& operator=(const HBLockedFaceCache&) = delete;
-    HBLockedFaceCache(HBLockedFaceCache&&) = delete;
     HBLockedFaceCache& operator=(HBLockedFaceCache&&) = delete;
 
     ~HBLockedFaceCache() {
         fMutex.release();
     }
 
-    HBFace* find(SkFontID fontId) {
+    HBFont* find(SkTypefaceID fontId) {
         return fLRUCache.find(fontId);
     }
-    HBFace* insert(SkFontID fontId, HBFace hbFace) {
-        return fLRUCache.insert(fontId, std::move(hbFace));
+    HBFont* insert(SkTypefaceID fontId, HBFont hbFont) {
+        return fLRUCache.insert(fontId, std::move(hbFont));
     }
     void reset() {
         fLRUCache.reset();
     }
 private:
-    SkLRUCache<SkFontID, HBFace>& fLRUCache;
+    SkLRUCache<SkTypefaceID, HBFont>& fLRUCache;
     SkMutex& fMutex;
 };
 static HBLockedFaceCache get_hbFace_cache() {
     static SkMutex gHBFaceCacheMutex;
-    static SkLRUCache<SkFontID, HBFace> gHBFaceCache(100);
+    static SkLRUCache<SkTypefaceID, HBFont> gHBFaceCache(100);
     return HBLockedFaceCache(gHBFaceCache, gHBFaceCacheMutex);
 }
 
@@ -1350,20 +1362,20 @@ ShapedRun ShaperHarfBuzz::shape(char const * const utf8,
     HBFont hbFont;
     {
         HBLockedFaceCache cache = get_hbFace_cache();
-        SkFontID dataId = font.currentFont().getTypeface()->uniqueID();
-        HBFace* hbFaceCached = cache.find(dataId);
-        if (!hbFaceCached) {
-            HBFace hbFace(create_hb_face(*font.currentFont().getTypeface()));
-            hbFaceCached = cache.insert(dataId, std::move(hbFace));
+        SkTypefaceID dataId = font.currentFont().getTypeface()->uniqueID();
+        HBFont* typefaceFontCached = cache.find(dataId);
+        if (!typefaceFontCached) {
+            HBFont typefaceFont(create_typeface_hb_font(*font.currentFont().getTypeface()));
+            typefaceFontCached = cache.insert(dataId, std::move(typefaceFont));
         }
-        hbFont = create_hb_font(font.currentFont(), *hbFaceCached);
+        hbFont = create_sub_hb_font(font.currentFont(), *typefaceFontCached);
     }
     if (!hbFont) {
         return run;
     }
 
     SkSTArray<32, hb_feature_t> hbFeatures;
-    for (const auto& feature : SkSpan(features, featuresSize)) {
+    for (const auto& feature : SkMakeSpan(features, featuresSize)) {
         if (feature.end < SkTo<size_t>(utf8Start - utf8) ||
                           SkTo<size_t>(utf8End   - utf8)  <= feature.start)
         {
@@ -1399,6 +1411,14 @@ ShapedRun ShaperHarfBuzz::shape(char const * const utf8,
                     std::unique_ptr<ShapedGlyph[]>(new ShapedGlyph[len]), len);
 
     // Undo skhb_position with (1.0/(1<<16)) and scale as needed.
+    SkAutoSTArray<32, SkGlyphID> glyphIDs(len);
+    for (unsigned i = 0; i < len; i++) {
+        glyphIDs[i] = info[i].codepoint;
+    }
+    SkAutoSTArray<32, SkRect> glyphBounds(len);
+    SkPaint p;
+    run.fFont.getBounds(glyphIDs.get(), len, glyphBounds.get(), &p);
+
     double SkScalarFromHBPosX = +(1.52587890625e-5) * run.fFont.getScaleX();
     double SkScalarFromHBPosY = -(1.52587890625e-5);  // HarfBuzz y-up, Skia y-down
     SkVector runAdvance = { 0, 0 };
@@ -1411,11 +1431,7 @@ ShapedRun ShaperHarfBuzz::shape(char const * const utf8,
         glyph.fAdvance.fX = pos[i].x_advance * SkScalarFromHBPosX;
         glyph.fAdvance.fY = pos[i].y_advance * SkScalarFromHBPosY;
 
-        SkRect bounds;
-        SkScalar advance;
-        SkPaint p;
-        run.fFont.getWidthsBounds(&glyph.fID, 1, &advance, &bounds, &p);
-        glyph.fHasVisual = !bounds.isEmpty(); //!font->currentTypeface()->glyphBoundsAreZero(glyph.fID);
+        glyph.fHasVisual = !glyphBounds[i].isEmpty(); //!font->currentTypeface()->glyphBoundsAreZero(glyph.fID);
 #if SK_HB_VERSION_CHECK(1, 5, 0)
         glyph.fUnsafeToBreak = info[i].mask & HB_GLYPH_FLAG_UNSAFE_TO_BREAK;
 #else

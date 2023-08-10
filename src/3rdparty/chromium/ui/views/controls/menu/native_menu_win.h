@@ -6,10 +6,10 @@
 #define UI_VIEWS_CONTROLS_MENU_NATIVE_MENU_WIN_H_
 
 #include <memory>
+#include <string>
 #include <vector>
 
-#include "base/macros.h"
-#include "base/strings/string16.h"
+#include "base/memory/raw_ptr.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/views/views_export.h"
 
@@ -28,6 +28,10 @@ class VIEWS_EXPORT NativeMenuWin {
   // is non-NULL, the NativeMenuWin wraps the system menu for that window.
   // The caller owns the model and the delegate.
   NativeMenuWin(ui::MenuModel* model, HWND system_menu_for);
+
+  NativeMenuWin(const NativeMenuWin&) = delete;
+  NativeMenuWin& operator=(const NativeMenuWin&) = delete;
+
   ~NativeMenuWin();
 
   void Rebuild(MenuInsertionDelegateWin* delegate);
@@ -62,7 +66,7 @@ class VIEWS_EXPORT NativeMenuWin {
   // Sets the label of the item at the specified index.
   void SetMenuItemLabel(int menu_index,
                         int model_index,
-                        const base::string16& label);
+                        const std::u16string& label);
 
   // Updates the local data structure with the correctly formatted version of
   // |label| at the specified model_index, and adds string data to |mii| if
@@ -70,14 +74,14 @@ class VIEWS_EXPORT NativeMenuWin {
   // of the peculiarities of the Windows menu API.
   void UpdateMenuItemInfoForString(MENUITEMINFO* mii,
                                    int model_index,
-                                   const base::string16& label);
+                                   const std::u16string& label);
 
   // Resets the native menu stored in |menu_| by destroying any old menu then
   // creating a new empty one.
   void ResetNativeMenu();
 
   // Our attached model and delegate.
-  ui::MenuModel* model_;
+  raw_ptr<ui::MenuModel> model_;
 
   HMENU menu_;
 
@@ -98,9 +102,7 @@ class VIEWS_EXPORT NativeMenuWin {
   int first_item_index_;
 
   // If we're a submenu, this is our parent.
-  NativeMenuWin* parent_;
-
-  DISALLOW_COPY_AND_ASSIGN(NativeMenuWin);
+  raw_ptr<NativeMenuWin> parent_;
 };
 
 }  // namespace views

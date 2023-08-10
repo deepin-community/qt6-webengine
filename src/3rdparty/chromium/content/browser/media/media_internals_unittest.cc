@@ -48,7 +48,7 @@ class MediaInternalsTestBase {
 
  protected:
   // Extracts and deserializes the JSON update data; merges into |update_data_|.
-  virtual void UpdateCallbackImpl(const base::string16& update) {
+  virtual void UpdateCallbackImpl(const std::u16string& update) {
     // Each update string looks like "<JavaScript Function Name>({<JSON>});"
     // or for video capabilities: "<JavaScript Function Name>([{<JSON>}]);".
     // In the second case we will be able to extract the dictionary if it is the
@@ -68,9 +68,9 @@ class MediaInternalsTestBase {
   }
 
   void ExpectInt(const std::string& key, int expected_value) const {
-    int actual_value = 0;
-    ASSERT_TRUE(update_data_.GetInteger(key, &actual_value));
-    EXPECT_EQ(expected_value, actual_value);
+    absl::optional<int> actual_value = update_data_.FindIntKey(key);
+    ASSERT_TRUE(actual_value);
+    EXPECT_EQ(expected_value, *actual_value);
   }
 
   void ExpectString(const std::string& key,
@@ -88,14 +88,17 @@ class MediaInternalsTestBase {
                            const base::ListValue& expected_list) const {
     const base::ListValue* actual_list;
     ASSERT_TRUE(update_data_.GetList(key, &actual_list));
-    const size_t expected_size = expected_list.GetSize();
-    const size_t actual_size = actual_list->GetSize();
+    const size_t expected_size = expected_list.GetListDeprecated().size();
+    const size_t actual_size = actual_list->GetListDeprecated().size();
     ASSERT_EQ(expected_size, actual_size);
     for (size_t i = 0; i < expected_size; ++i) {
-      std::string expected_value, actual_value;
-      ASSERT_TRUE(expected_list.GetString(i, &expected_value));
-      ASSERT_TRUE(actual_list->GetString(i, &actual_value));
-      EXPECT_EQ(expected_value, actual_value);
+      const std::string* expected_value =
+          expected_list.GetListDeprecated()[i].GetIfString();
+      const std::string* actual_value =
+          actual_list->GetListDeprecated()[i].GetIfString();
+      ASSERT_TRUE(expected_value);
+      ASSERT_TRUE(actual_value);
+      EXPECT_EQ(*expected_value, *actual_value);
     }
   }
 
@@ -166,14 +169,14 @@ TEST_F(MediaInternalsVideoCaptureDeviceTest,
   media::VideoCaptureDeviceDescriptor descriptor;
   descriptor.device_id = "dummy";
   descriptor.set_display_name("dummy");
-#if defined(OS_MAC)
+#if BUILDFLAG(IS_MAC)
   descriptor.capture_api = media::VideoCaptureApi::MACOSX_AVFOUNDATION;
-#elif defined(OS_WIN)
+#elif BUILDFLAG(IS_WIN)
   descriptor.capture_api = media::VideoCaptureApi::WIN_DIRECT_SHOW;
-#elif defined(OS_LINUX) || defined(OS_CHROMEOS)
+#elif BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
   descriptor.device_id = "/dev/dummy";
   descriptor.capture_api = media::VideoCaptureApi::LINUX_V4L2_SINGLE_PLANE;
-#elif defined(OS_ANDROID)
+#elif BUILDFLAG(IS_ANDROID)
   descriptor.capture_api = media::VideoCaptureApi::ANDROID_API2_LEGACY;
 #endif
   std::vector<std::tuple<media::VideoCaptureDeviceDescriptor,
@@ -188,22 +191,22 @@ TEST_F(MediaInternalsVideoCaptureDeviceTest,
   media_internals()->UpdateVideoCaptureDeviceCapabilities(
       descriptors_and_formats);
 
-#if defined(OS_LINUX) || defined(OS_CHROMEOS)
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
   ExpectString("id", "/dev/dummy");
 #else
   ExpectString("id", "dummy");
 #endif
   ExpectString("name", "dummy");
   base::ListValue expected_list;
-  expected_list.AppendString(media::VideoCaptureFormat::ToString(format_hd));
+  expected_list.Append(media::VideoCaptureFormat::ToString(format_hd));
   ExpectListOfStrings("formats", expected_list);
-#if defined(OS_LINUX) || defined(OS_CHROMEOS)
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
   ExpectString("captureApi", "V4L2 SPLANE");
-#elif defined(OS_WIN)
+#elif BUILDFLAG(IS_WIN)
   ExpectString("captureApi", "Direct Show");
-#elif defined(OS_MAC)
+#elif BUILDFLAG(IS_MAC)
   ExpectString("captureApi", "AV Foundation");
-#elif defined(OS_ANDROID)
+#elif BUILDFLAG(IS_ANDROID)
   ExpectString("captureApi", "Camera API2 Legacy");
 #endif
 }
@@ -303,13 +306,13 @@ INSTANTIATE_TEST_SUITE_P(
 
 // TODO(https://crbug.com/873320): AudioFocusManager is not available on
 // Android.
-#if !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
 
 namespace {
 
 // Test page titles.
-const char kTestTitle1[] = "Test Title 1";
-const char kTestTitle2[] = "Test Title 2";
+const char16_t kTestTitle1[] = u"Test Title 1";
+const char16_t kTestTitle2[] = u"Test Title 2";
 
 }  // namespace
 
@@ -339,7 +342,7 @@ class MediaInternalsAudioFocusTest : public RenderViewHostTestHarness,
   }
 
  protected:
-  void UpdateCallbackImpl(const base::string16& update) override {
+  void UpdateCallbackImpl(const std::u16string& update) override {
     base::AutoLock auto_lock(lock_);
     MediaInternalsTestBase::UpdateCallbackImpl(update);
     call_count_++;
@@ -355,7 +358,7 @@ class MediaInternalsAudioFocusTest : public RenderViewHostTestHarness,
         update_data_.FindKeyOfType("sessions", base::Value::Type::LIST)
             ->Clone();
 
-    update_data_.Clear();
+    update_data_.DictClear();
     run_loop_ = std::make_unique<base::RunLoop>();
     call_count_ = 0;
 
@@ -365,7 +368,7 @@ class MediaInternalsAudioFocusTest : public RenderViewHostTestHarness,
   void Reset() {
     base::AutoLock auto_lock(lock_);
 
-    update_data_.Clear();
+    update_data_.DictClear();
     run_loop_ = std::make_unique<base::RunLoop>();
     call_count_ = 0;
   }
@@ -379,7 +382,7 @@ class MediaInternalsAudioFocusTest : public RenderViewHostTestHarness,
 
     {
       base::AutoLock auto_lock(lock_);
-      if (!update_data_.empty() && call_count_ == wanted_call_count_)
+      if (!update_data_.DictEmpty() && call_count_ == wanted_call_count_)
         return;
     }
 
@@ -415,8 +418,7 @@ class MediaInternalsAudioFocusTest : public RenderViewHostTestHarness,
 TEST_F(MediaInternalsAudioFocusTest, AudioFocusStateIsUpdated) {
   // Create a test media session and request audio focus.
   std::unique_ptr<WebContents> web_contents1 = CreateTestWebContents();
-  static_cast<TestWebContents*>(web_contents1.get())
-      ->SetTitle(base::UTF8ToUTF16(kTestTitle1));
+  static_cast<TestWebContents*>(web_contents1.get())->SetTitle(kTestTitle1);
   MediaSessionImpl* media_session1 = MediaSessionImpl::Get(web_contents1.get());
   media_session1->RequestSystemAudioFocus(AudioFocusType::kGain);
   WaitForCallbackCount(1);
@@ -427,10 +429,10 @@ TEST_F(MediaInternalsAudioFocusTest, AudioFocusStateIsUpdated) {
   // Check JSON is what we expect.
   {
     base::Value found_sessions = GetSessionsFromValueAndReset();
-    EXPECT_EQ(1u, found_sessions.GetList().size());
+    EXPECT_EQ(1u, found_sessions.GetListDeprecated().size());
 
-    const base::Value& session = found_sessions.GetList()[0];
-    EXPECT_TRUE(base::Value(request_id1).Equals(session.FindKey("id")));
+    const base::Value& session = found_sessions.GetListDeprecated()[0];
+    EXPECT_EQ(base::Value(request_id1), *session.FindKey("id"));
     EXPECT_TRUE(session.FindKeyOfType("name", base::Value::Type::STRING));
     EXPECT_TRUE(session.FindKeyOfType("owner", base::Value::Type::STRING));
     EXPECT_TRUE(session.FindKeyOfType("state", base::Value::Type::STRING));
@@ -438,8 +440,7 @@ TEST_F(MediaInternalsAudioFocusTest, AudioFocusStateIsUpdated) {
 
   // Create another media session.
   std::unique_ptr<WebContents> web_contents2 = CreateTestWebContents();
-  static_cast<TestWebContents*>(web_contents2.get())
-      ->SetTitle(base::UTF8ToUTF16(kTestTitle2));
+  static_cast<TestWebContents*>(web_contents2.get())->SetTitle(kTestTitle2);
   MediaSessionImpl* media_session2 = MediaSessionImpl::Get(web_contents2.get());
   media_session2->RequestSystemAudioFocus(
       AudioFocusType::kGainTransientMayDuck);
@@ -452,16 +453,16 @@ TEST_F(MediaInternalsAudioFocusTest, AudioFocusStateIsUpdated) {
   // Check JSON is what we expect.
   {
     base::Value found_sessions = GetSessionsFromValueAndReset();
-    EXPECT_EQ(2u, found_sessions.GetList().size());
+    EXPECT_EQ(2u, found_sessions.GetListDeprecated().size());
 
-    const base::Value& session1 = found_sessions.GetList()[0];
-    EXPECT_TRUE(base::Value(request_id2).Equals(session1.FindKey("id")));
+    const base::Value& session1 = found_sessions.GetListDeprecated()[0];
+    EXPECT_EQ(base::Value(request_id2), *session1.FindKey("id"));
     EXPECT_TRUE(session1.FindKeyOfType("name", base::Value::Type::STRING));
     EXPECT_TRUE(session1.FindKeyOfType("owner", base::Value::Type::STRING));
     EXPECT_TRUE(session1.FindKeyOfType("state", base::Value::Type::STRING));
 
-    const base::Value& session2 = found_sessions.GetList()[1];
-    EXPECT_TRUE(base::Value(request_id1).Equals(session2.FindKey("id")));
+    const base::Value& session2 = found_sessions.GetListDeprecated()[1];
+    EXPECT_EQ(base::Value(request_id1), *session2.FindKey("id"));
     EXPECT_TRUE(session2.FindKeyOfType("name", base::Value::Type::STRING));
     EXPECT_TRUE(session2.FindKeyOfType("owner", base::Value::Type::STRING));
     EXPECT_TRUE(session2.FindKeyOfType("state", base::Value::Type::STRING));
@@ -474,10 +475,10 @@ TEST_F(MediaInternalsAudioFocusTest, AudioFocusStateIsUpdated) {
   // Check JSON is what we expect.
   {
     base::Value found_sessions = GetSessionsFromValueAndReset();
-    EXPECT_EQ(1u, found_sessions.GetList().size());
+    EXPECT_EQ(1u, found_sessions.GetListDeprecated().size());
 
-    const base::Value& session = found_sessions.GetList()[0];
-    EXPECT_TRUE(base::Value(request_id1).Equals(session.FindKey("id")));
+    const base::Value& session = found_sessions.GetListDeprecated()[0];
+    EXPECT_EQ(base::Value(request_id1), *session.FindKey("id"));
     EXPECT_TRUE(session.FindKeyOfType("name", base::Value::Type::STRING));
     EXPECT_TRUE(session.FindKeyOfType("owner", base::Value::Type::STRING));
     EXPECT_TRUE(session.FindKeyOfType("state", base::Value::Type::STRING));
@@ -494,10 +495,10 @@ TEST_F(MediaInternalsAudioFocusTest, AudioFocusStateIsUpdated) {
   // Check JSON is what we expect.
   {
     base::Value found_sessions = GetSessionsFromValueAndReset();
-    EXPECT_EQ(0u, found_sessions.GetList().size());
+    EXPECT_EQ(0u, found_sessions.GetListDeprecated().size());
   }
 }
 
-#endif  // !defined(OS_ANDROID)
+#endif  // !BUILDFLAG(IS_ANDROID)
 
 }  // namespace content

@@ -45,6 +45,8 @@
 
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 
+#include <ostream>
+
 #include "base/check_op.h"
 #include "base/notreached.h"
 #include "base/strings/string_piece.h"
@@ -227,10 +229,9 @@ void AppendInvalidString(base::StringPiece16 str, url::CanonOutput* output) {
 }
 
 // Backend for PermissiveGetHostRegistryLength that handles both UTF-8 and
-// UTF-16 input. The template type is the std::string type to use (it makes the
-// typedefs easier than using the character type).
-template <typename Str>
-size_t DoPermissiveGetHostRegistryLength(base::BasicStringPiece<Str> host,
+// UTF-16 input.
+template <typename T, typename CharT = typename T::value_type>
+size_t DoPermissiveGetHostRegistryLength(T host,
                                          UnknownRegistryFilter unknown_filter,
                                          PrivateRegistryFilter private_filter) {
   std::string canonical_host;  // Do not modify outside of canon_output.
@@ -388,7 +389,7 @@ bool SameDomainOrHost(const url::Origin& origin1,
 }
 
 bool SameDomainOrHost(const url::Origin& origin1,
-                      const base::Optional<url::Origin>& origin2,
+                      const absl::optional<url::Origin>& origin2,
                       PrivateRegistryFilter filter) {
   return origin2.has_value() &&
          SameDomainOrHost(origin1, origin2.value(), filter);
@@ -452,23 +453,23 @@ size_t GetCanonicalHostRegistryLength(base::StringPiece canon_host,
 size_t PermissiveGetHostRegistryLength(base::StringPiece host,
                                        UnknownRegistryFilter unknown_filter,
                                        PrivateRegistryFilter private_filter) {
-  return DoPermissiveGetHostRegistryLength<std::string>(host, unknown_filter,
-                                                        private_filter);
+  return DoPermissiveGetHostRegistryLength(host, unknown_filter,
+                                           private_filter);
 }
 
 size_t PermissiveGetHostRegistryLength(base::StringPiece16 host,
                                        UnknownRegistryFilter unknown_filter,
                                        PrivateRegistryFilter private_filter) {
-  return DoPermissiveGetHostRegistryLength<base::string16>(host, unknown_filter,
-                                                           private_filter);
+  return DoPermissiveGetHostRegistryLength(host, unknown_filter,
+                                           private_filter);
 }
 
-void SetFindDomainGraph() {
+void ResetFindDomainGraphForTesting() {
   g_graph = kDafsa;
   g_graph_length = sizeof(kDafsa);
 }
 
-void SetFindDomainGraph(const unsigned char* domains, size_t length) {
+void SetFindDomainGraphForTesting(const unsigned char* domains, size_t length) {
   CHECK(domains);
   CHECK_NE(length, 0u);
   g_graph = domains;

@@ -4,9 +4,11 @@
 
 #include "extensions/browser/api/system_info/system_info_api.h"
 
+#include <string>
+
 #include "base/containers/flat_map.h"
+#include "base/memory/raw_ptr.h"
 #include "base/no_destructor.h"
-#include "base/strings/string16.h"
 #include "components/storage_monitor/storage_info.h"
 #include "components/storage_monitor/storage_monitor.h"
 #include "components/storage_monitor/test_storage_monitor.h"
@@ -86,7 +88,7 @@ class FakeExtensionsBrowserClient : public TestExtensionsBrowserClient {
   }
 
  private:
-  content::BrowserContext* second_context_ = nullptr;
+  raw_ptr<content::BrowserContext> second_context_ = nullptr;
   base::flat_map<std::string, std::vector<Broadcast>>
       event_name_to_broadcasts_map_;
 };
@@ -130,8 +132,8 @@ const storage_monitor::StorageInfo& GetFakeStorageInfo() {
     return storage_monitor::StorageInfo(
         GetFakeStorageDeviceId(),
         base::FilePath::StringType() /* device_location */,
-        base::string16() /* label */, base::string16() /* vendor */,
-        base::string16() /* model */, 0 /* size_in_bytes */);
+        std::u16string() /* label */, std::u16string() /* vendor */,
+        std::u16string() /* model */, 0 /* size_in_bytes */);
   }());
   return *info;
 }
@@ -151,7 +153,7 @@ base::ListValue GetStorageDetachedArgs() {
   // Because of the use of GetTransientIdForDeviceId(), we cannot use a static
   // variable and cache the returned ListValue.
   base::ListValue args;
-  args.AppendString(
+  args.Append(
       storage_monitor::StorageMonitor::GetInstance()->GetTransientIdForDeviceId(
           GetFakeStorageDeviceId()));
   return args;
@@ -295,10 +297,10 @@ class SystemInfoAPITest : public testing::Test {
   content::TestBrowserContext context1_;
   content::TestBrowserContext context2_;
   FakeExtensionsBrowserClient client_;
-  EventRouter* router1_ = nullptr;
-  EventRouter* router2_ = nullptr;
+  raw_ptr<EventRouter> router1_ = nullptr;
+  raw_ptr<EventRouter> router2_ = nullptr;
   FakeDisplayInfoProvider display_info_provider_;
-  storage_monitor::TestStorageMonitor* storage_monitor_;
+  raw_ptr<storage_monitor::TestStorageMonitor> storage_monitor_;
 };
 
 /******************************************************************************/

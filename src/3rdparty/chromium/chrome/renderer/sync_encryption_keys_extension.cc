@@ -11,8 +11,7 @@
 #include "base/feature_list.h"
 #include "base/logging.h"
 #include "base/no_destructor.h"
-#include "base/stl_util.h"
-#include "components/sync/driver/sync_driver_switches.h"
+#include "components/sync/base/features.h"
 #include "content/public/common/isolated_world_ids.h"
 #include "content/public/renderer/chrome_object_extensions_utils.h"
 #include "content/public/renderer/render_frame.h"
@@ -23,6 +22,11 @@
 #include "third_party/blink/public/web/blink.h"
 #include "third_party/blink/public/web/web_local_frame.h"
 #include "url/origin.h"
+#include "v8/include/v8-array-buffer.h"
+#include "v8/include/v8-context.h"
+#include "v8/include/v8-function.h"
+#include "v8/include/v8-object.h"
+#include "v8/include/v8-primitive.h"
 
 namespace {
 
@@ -113,7 +117,7 @@ void SyncEncryptionKeysExtension::Install() {
       .Check();
 
   if (!base::FeatureList::IsEnabled(
-          switches::kSyncSupportTrustedVaultPassphraseRecovery)) {
+          syncer::kSyncTrustedVaultPassphraseRecovery)) {
     return;
   }
 
@@ -201,12 +205,16 @@ void SyncEncryptionKeysExtension::AddTrustedSyncEncryptionRecoveryMethod(
   DCHECK(render_frame());
 
   // This function as exposed to the web has the following signature:
-  //   addTrustedSyncEncryptionRecoveryMethod(callback, gaia_id, public_key)
+  //   addTrustedSyncEncryptionRecoveryMethod(callback, gaia_id, public_key,
+  //                                          method_type_hint)
   //
   // Where:
   //   callback: Allows caller to get notified upon completion.
   //   gaia_id: String representing the user's server-provided ID.
   //   public_key: A public key representing the recovery method to be added.
+  //   method_type_hint: An enum-like integer representing the added method's
+  //   type. This value is opaque to the client and may only be used for
+  //   future related interactions with the server.
 
   v8::HandleScope handle_scope(args->isolate());
 
@@ -231,6 +239,13 @@ void SyncEncryptionKeysExtension::AddTrustedSyncEncryptionRecoveryMethod(
     return;
   }
 
+  int method_type_hint = 0;
+  if (!args->GetNext(&method_type_hint)) {
+    DLOG(ERROR) << "No method type hint";
+    args->ThrowError();
+    return;
+  }
+
   auto global_callback =
       std::make_unique<v8::Global<v8::Function>>(args->isolate(), callback);
 
@@ -239,7 +254,7 @@ void SyncEncryptionKeysExtension::AddTrustedSyncEncryptionRecoveryMethod(
   }
 
   remote_->AddTrustedRecoveryMethod(
-      gaia_id, ArrayBufferAsBytes(public_key),
+      gaia_id, ArrayBufferAsBytes(public_key), method_type_hint,
       base::BindOnce(&SyncEncryptionKeysExtension::RunCompletionCallback,
                      weak_ptr_factory_.GetWeakPtr(),
                      std::move(global_callback)));

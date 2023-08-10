@@ -23,32 +23,47 @@ generate_grd("build_grdp") {
     # Non-apps images
     "add.svg",
     "cancel_red.svg",
-    "check_circle_green.svg",
-    "check.png",
     "checkbox_black.png",
     "checkbox_white.png",
+    "check_circle_green.svg",
+    "check.png",
+    "dark/icon_search.svg",
     "disabled_select.png",
+    "drop_down_arrow_black.svg",
+    "drop_down_arrow_gray.svg",
+    "drop_down_arrow_white.svg",
     "error.svg",
-    "icon_search.svg",
+    "icon_cancel.svg",
+    "icon_copy_content.svg",
+    "icon_file.png",
     "icon_refresh.svg",
+    "icon_search.svg",
+    "open_in_new.svg",
     "select.png",
     "throbber_medium.svg",
+    "throbber_small_dark.svg",
     "throbber_small.svg",
+    "tree_triangle.svg",
+
+    "2x/checkbox_black.png",
+    "2x/checkbox_white.png",
+    "2x/check.png",
+    "2x/disabled_select.png",
+    "2x/select.png",
   ]
 
   if (!is_android && !is_ios) {
     input_files += [
-      "200-logo_googleg.png",
       "arrow_down.svg",
       "arrow_right.svg",
       "business.svg",
+      "chrome_logo_dark.svg",
       "dark/arrow_down.svg",
-      "dark/icon_search.svg",
       "icon_arrow_back.svg",
       "icon_arrow_dropdown.svg",
-      "icon_cancel.svg",
+      "icon_bookmark.svg",
       "icon_clear.svg",
-      "icon_copy_content.svg",
+      "icon_clock.svg",
       "icon_delete_gray.svg",
       "icon_edit.svg",
       "icon_expand_less.svg",
@@ -58,20 +73,13 @@ generate_grd("build_grdp") {
       "icon_settings.svg",
       "icon_visibility_off.svg",
       "icon_visibility.svg",
-      "open_in_new.svg",
     ]
   }
 
-  if (is_chromeos_ash) {
-    input_files += [
-      # Similar to error.svg except that it is white-filled instead of
-      # transparent-filled. Useful for badging images where the background may
-      # be red.
-      # TODO(dpapad) Move to
-      # chrome/browser/resources/settings/chromeos/os_people_page/, only used
-      # there.
-      "error_badge.svg",
-    ]
+  if (is_chromeos) {
+    input_files += [ "os_flags_app_icon.svg" ]
+    input_files += [ "os_system_app_icon.svg" ]
   }
+
   resource_path_prefix = "images"
 }

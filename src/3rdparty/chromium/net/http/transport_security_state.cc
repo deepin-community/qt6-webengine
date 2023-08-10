@@ -13,6 +13,7 @@
 #include "base/base64.h"
 #include "base/bind.h"
 #include "base/build_time.h"
+#include "base/containers/contains.h"
 #include "base/containers/span.h"
 #include "base/feature_list.h"
 #include "base/json/json_writer.h"
@@ -21,8 +22,6 @@
 #include "base/metrics/field_trial_params.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/optional.h"
-#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -37,19 +36,15 @@
 #include "net/base/host_port_pair.h"
 #include "net/cert/ct_policy_status.h"
 #include "net/cert/symantec_certs.h"
-#include "net/cert/x509_cert_types.h"
 #include "net/cert/x509_certificate.h"
 #include "net/dns/dns_util.h"
 #include "net/extras/preload_data/decoder.h"
-#include "net/http/hsts_info.h"
 #include "net/http/http_security_headers.h"
 #include "net/net_buildflags.h"
 #include "net/ssl/ssl_info.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace net {
-
-const base::Feature kEnforceCTForNewCerts{"EnforceCTForNewCerts",
-                                          base::FEATURE_DISABLED_BY_DEFAULT};
 
 namespace {
 
@@ -74,11 +69,6 @@ const size_t kReportCacheKeyLength = 16;
 //   false: Use the default implementation (e.g. production)
 //   true: Unless a delegate says otherwise, require CT.
 bool g_ct_required_for_testing = false;
-
-// The date (as the number of seconds since the Unix Epoch) to enforce CT for
-// new certificates.
-constexpr base::FeatureParam<int> kEnforceCTForNewCertsDate{
-    &kEnforceCTForNewCerts, "date", 0};
 
 bool IsDynamicExpectCTEnabled() {
   return base::FeatureList::IsEnabled(
@@ -395,13 +385,22 @@ bool DecodeHSTSPreload(const std::string& search_hostname, PreloadResult* out) {
 const base::Feature TransportSecurityState::kDynamicExpectCTFeature{
     "DynamicExpectCT", base::FEATURE_ENABLED_BY_DEFAULT};
 
+// static
+const base::Feature TransportSecurityState::kCertificateTransparencyEnforcement{
+    "CertificateTransparencyEnforcement", base::FEATURE_ENABLED_BY_DEFAULT};
+
 void SetTransportSecurityStateSourceForTesting(
     const TransportSecurityStateSource* source) {
   g_hsts_source = source ? source : kDefaultHSTSSource;
 }
 
 TransportSecurityState::TransportSecurityState()
-    : TransportSecurityState(std::vector<std::string>()) {}
+    : TransportSecurityState(std::vector<std::string>()) {
+  // By default the CT log list is treated as last updated at build time (since
+  // a compiled-in list is used), this is overridden if the list is dynamically
+  // updated.
+  ct_log_list_last_update_time_ = base::GetBuildTime();
+}
 
 TransportSecurityState::TransportSecurityState(
     std::vector<std::string> hsts_host_bypass_list)
@@ -414,7 +413,8 @@ TransportSecurityState::TransportSecurityState(
           features::kPartitionExpectCTStateByNetworkIsolationKey)) {
 // Static pinning is only enabled for official builds to make sure that
 // others don't end up with pins that cannot be easily updated.
-#if !BUILDFLAG(GOOGLE_CHROME_BRANDING) || defined(OS_ANDROID) || defined(OS_IOS)
+#if !BUILDFLAG(GOOGLE_CHROME_BRANDING) || BUILDFLAG(IS_ANDROID) || \
+    BUILDFLAG(IS_IOS)
   if (!base::FeatureList::IsEnabled(features::kChromeStaticPinning)) {
     enable_static_pins_ = false;
     enable_static_expect_ct_ = false;
@@ -433,13 +433,29 @@ TransportSecurityState::TransportSecurityState(
 bool TransportSecurityState::ShouldSSLErrorsBeFatal(const std::string& host) {
   STSState unused_sts;
   PKPState unused_pkp;
-  return GetDynamicSTSState(host, &unused_sts) ||
-         GetDynamicPKPState(host, &unused_pkp) ||
-         GetStaticDomainState(host, &unused_sts, &unused_pkp);
+  return GetSTSState(host, &unused_sts) || GetPKPState(host, &unused_pkp);
 }
 
-bool TransportSecurityState::ShouldUpgradeToSSL(const std::string& host) {
+base::Value TransportSecurityState::NetLogUpgradeToSSLParam(
+    const std::string& host) {
   STSState sts_state;
+  base::Value dict(base::Value::Type::DICTIONARY);
+  dict.SetStringKey("host", host);
+  dict.SetBoolKey("get_sts_state_result", GetSTSState(host, &sts_state));
+  dict.SetBoolKey("should_upgrade_to_ssl", sts_state.ShouldUpgradeToSSL());
+  dict.SetBoolKey(
+      "host_found_in_hsts_bypass_list",
+      hsts_host_bypass_list_.find(host) != hsts_host_bypass_list_.end());
+  return dict;
+}
+
+bool TransportSecurityState::ShouldUpgradeToSSL(
+    const std::string& host,
+    const NetLogWithSource& net_log) {
+  STSState sts_state;
+  net_log.AddEvent(
+      NetLogEventType::TRANSPORT_SECURITY_STATE_SHOULD_UPGRADE_TO_SSL,
+      [&] { return NetLogUpgradeToSSLParam(host); });
   return GetSTSState(host, &sts_state) && sts_state.ShouldUpgradeToSSL();
 }
 
@@ -492,6 +508,13 @@ TransportSecurityState::CheckCTRequirements(
   using CTRequirementLevel = RequireCTDelegate::CTRequirementLevel;
   std::string hostname = host_port_pair.host();
 
+  // If CT is emergency disabled, either through a component updater set flag or
+  // through the feature flag, we don't require CT for any host.
+  if (ct_emergency_disable_ ||
+      !base::FeatureList::IsEnabled(kCertificateTransparencyEnforcement)) {
+    return CT_NOT_REQUIRED;
+  }
+
   // CT is not required if the certificate does not chain to a publicly
   // trusted root certificate. Testing can override this, as certain tests
   // rely on using a non-publicly-trusted root.
@@ -513,9 +536,6 @@ TransportSecurityState::CheckCTRequirements(
   ExpectCTState state;
   if (IsDynamicExpectCTEnabled() &&
       GetDynamicExpectCTState(hostname, network_isolation_key, &state)) {
-    UMA_HISTOGRAM_ENUMERATION(
-        "Net.ExpectCTHeader.PolicyComplianceOnConnectionSetup",
-        policy_compliance, ct::CTPolicyCompliance::CT_POLICY_COUNT);
     if (!complies && expect_ct_reporter_ && !state.report_uri.is_empty() &&
         report_status == ENABLE_EXPECT_CT_REPORTS) {
       MaybeNotifyExpectCTFailed(
@@ -545,22 +565,6 @@ TransportSecurityState::CheckCTRequirements(
         return complies ? CT_REQUIREMENTS_MET : CT_REQUIREMENTS_NOT_MET;
       }
       break;
-  }
-
-  // This is provided as a means for CAs to test their own issuance practices
-  // prior to Certificate Transparency becoming mandatory. A parameterized
-  // Feature/FieldTrial is provided, with a single parameter, "date", that
-  // allows a CA to simulate an enforcement date. The expected use case is
-  // that a CA will simulate a date of today/yesterday to see if their newly
-  // issued certificates comply.
-  if (base::FeatureList::IsEnabled(kEnforceCTForNewCerts)) {
-    base::Time enforcement_date =
-        base::Time::UnixEpoch() +
-        base::TimeDelta::FromSeconds(kEnforceCTForNewCertsDate.Get());
-    if (enforcement_date > base::Time::UnixEpoch() &&
-        validated_certificate_chain->valid_start() > enforcement_date) {
-      return complies ? CT_REQUIREMENTS_MET : CT_REQUIREMENTS_NOT_MET;
-    }
   }
 
   const base::Time epoch = base::Time::UnixEpoch();
@@ -627,6 +631,33 @@ void TransportSecurityState::SetExpectCTReporter(
 void TransportSecurityState::SetRequireCTDelegate(RequireCTDelegate* delegate) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   require_ct_delegate_ = delegate;
+}
+
+void TransportSecurityState::SetCTLogListUpdateTime(base::Time update_time) {
+  ct_log_list_last_update_time_ = update_time;
+}
+
+void TransportSecurityState::UpdatePinList(
+    const std::vector<PinSet>& pinsets,
+    const std::vector<PinSetInfo>& host_pins,
+    base::Time update_time) {
+  pinsets_ = pinsets;
+  key_pins_list_last_update_time_ = update_time;
+  host_pins_ = absl::make_optional(
+      std::map<std::string, std::pair<PinSet const*, bool>>());
+  std::map<std::string, PinSet const*> pinset_names_map;
+  for (const auto& pinset : pinsets_) {
+    pinset_names_map[pinset.name()] = &pinset;
+  }
+  for (const auto& pin : host_pins) {
+    if (!base::Contains(pinset_names_map, pin.pinset_name_)) {
+      // This should never happen, but if the component is bad and missing an
+      // entry, we will ignore that particular pin.
+      continue;
+    }
+    host_pins_.value()[pin.hostname_] = std::make_pair(
+        pinset_names_map[pin.pinset_name_], pin.include_subdomains_);
+  }
 }
 
 void TransportSecurityState::AddHSTSInternal(
@@ -780,8 +811,7 @@ TransportSecurityState::CheckPinsAndMaybeSendReport(
     return PKPStatus::VIOLATED;
   sent_hpkp_reports_cache_.Put(
       report_cache_key, true, base::TimeTicks::Now(),
-      base::TimeTicks::Now() +
-          base::TimeDelta::FromMinutes(kTimeToRememberReportsMins));
+      base::TimeTicks::Now() + base::Minutes(kTimeToRememberReportsMins));
 
   report_sender_->Send(pkp_state.report_uri, "application/json; charset=utf-8",
                        serialized_report, network_isolation_key,
@@ -795,7 +825,7 @@ bool TransportSecurityState::GetStaticExpectCTState(
     ExpectCTState* expect_ct_state) const {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
-  if (!IsBuildTimely())
+  if (!IsCTLogListTimely())
     return false;
 
   PreloadResult result;
@@ -831,8 +861,7 @@ void TransportSecurityState::MaybeNotifyExpectCTFailed(
   }
   sent_expect_ct_reports_cache_.Put(
       report_cache_key, true, base::TimeTicks::Now(),
-      base::TimeTicks::Now() +
-          base::TimeDelta::FromMinutes(kTimeToRememberReportsMins));
+      base::TimeTicks::Now() + base::Minutes(kTimeToRememberReportsMins));
 
   expect_ct_reporter_->OnExpectCTFailed(
       host_port_pair, report_uri, expiration, validated_certificate_chain,
@@ -1041,16 +1070,12 @@ void TransportSecurityState::ProcessExpectCTHeader(
   bool enforce;
   GURL report_uri;
   bool parsed = ParseExpectCTHeader(value, &max_age, &enforce, &report_uri);
-  UMA_HISTOGRAM_BOOLEAN("Net.ExpectCTHeader.ParseSuccess", parsed);
   if (!parsed)
     return;
   // Do not persist Expect-CT headers if the connection was not chained to a
   // public root or did not comply with CT policy.
   if (!ssl_info.is_issued_by_known_root)
     return;
-  UMA_HISTOGRAM_ENUMERATION(
-      "Net.ExpectCTHeader.PolicyComplianceOnHeaderProcessing",
-      ssl_info.ct_policy_compliance, ct::CTPolicyCompliance::CT_POLICY_COUNT);
   if (ssl_info.ct_policy_compliance !=
       ct::CTPolicyCompliance::CT_POLICY_COMPLIES_VIA_SCTS) {
     // If an Expect-CT header is observed over a non-compliant connection, the
@@ -1094,8 +1119,12 @@ void TransportSecurityState::ClearReportCachesForTesting() {
   sent_expect_ct_reports_cache_.Clear();
 }
 
-size_t TransportSecurityState::num_expect_ct_entries() const {
+size_t TransportSecurityState::num_expect_ct_entries_for_testing() const {
   return enabled_expect_ct_hosts_.size();
+}
+
+size_t TransportSecurityState::num_sts_entries() const {
+  return enabled_sts_hosts_.size();
 }
 
 // static
@@ -1127,27 +1156,64 @@ TransportSecurityState::CheckPublicKeyPinsImpl(
       network_isolation_key, failure_log);
 }
 
-bool TransportSecurityState::GetStaticDomainState(const std::string& host,
-                                                  STSState* sts_result,
-                                                  PKPState* pkp_result) const {
+bool TransportSecurityState::GetStaticSTSState(const std::string& host,
+                                               STSState* sts_result) const {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   if (!IsBuildTimely())
     return false;
 
   PreloadResult result;
-  if (!DecodeHSTSPreload(host, &result))
-    return false;
-
-  if (hsts_host_bypass_list_.find(host) == hsts_host_bypass_list_.end() &&
+  if (DecodeHSTSPreload(host, &result) &&
+      hsts_host_bypass_list_.find(host) == hsts_host_bypass_list_.end() &&
       result.force_https) {
     sts_result->domain = host.substr(result.hostname_offset);
     sts_result->include_subdomains = result.sts_include_subdomains;
     sts_result->last_observed = base::GetBuildTime();
     sts_result->upgrade_mode = STSState::MODE_FORCE_HTTPS;
+    return true;
   }
 
-  if (enable_static_pins_ && result.has_pins) {
+  return false;
+}
+
+bool TransportSecurityState::GetStaticPKPState(const std::string& host,
+                                               PKPState* pkp_result) const {
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+
+  if (!enable_static_pins_ || !IsStaticPKPListTimely())
+    return false;
+
+  PreloadResult result;
+  if (host_pins_.has_value()) {
+    auto iter = host_pins_->find(host);
+    if (iter != host_pins_->end()) {
+      pkp_result->domain = host;
+      pkp_result->last_observed = key_pins_list_last_update_time_;
+      pkp_result->include_subdomains = iter->second.second;
+      const PinSet* pinset = iter->second.first;
+      if (!pinset->report_uri().empty()) {
+        pkp_result->report_uri = GURL(pinset->report_uri());
+      }
+      for (auto hash : pinset->static_spki_hashes()) {
+        // If the update is malformed, it's preferable to skip the hash than
+        // crash.
+        if (hash.size() == 32) {
+          AddHash(reinterpret_cast<const char*>(hash.data()),
+                  &pkp_result->spki_hashes);
+        }
+      }
+      for (auto hash : pinset->bad_static_spki_hashes()) {
+        // If the update is malformed, it's preferable to skip the hash than
+        // crash.
+        if (hash.size() == 32) {
+          AddHash(reinterpret_cast<const char*>(hash.data()),
+                  &pkp_result->bad_spki_hashes);
+        }
+      }
+      return true;
+    }
+  } else if (DecodeHSTSPreload(host, &result) && result.has_pins) {
     if (result.pinset_id >= g_hsts_source->pinsets_count)
       return false;
 
@@ -1174,23 +1240,20 @@ bool TransportSecurityState::GetStaticDomainState(const std::string& host,
         sha256_hash++;
       }
     }
+    return true;
   }
 
-  return true;
+  return false;
 }
 
 bool TransportSecurityState::GetSTSState(const std::string& host,
                                          STSState* result) {
-  PKPState unused;
-  return GetDynamicSTSState(host, result) ||
-         GetStaticDomainState(host, result, &unused);
+  return GetDynamicSTSState(host, result) || GetStaticSTSState(host, result);
 }
 
 bool TransportSecurityState::GetPKPState(const std::string& host,
                                          PKPState* result) {
-  STSState unused;
-  return GetDynamicPKPState(host, result) ||
-         GetStaticDomainState(host, &unused, result);
+  return GetDynamicPKPState(host, result) || GetStaticPKPState(host, result);
 }
 
 bool TransportSecurityState::GetDynamicSTSState(const std::string& host,
@@ -1220,7 +1283,7 @@ bool TransportSecurityState::GetDynamicSTSState(const std::string& host,
     // An entry matches if it is either an exact match, or if it is a prefix
     // match and the includeSubDomains directive was included.
     if (i == 0 || j->second.include_subdomains) {
-      base::Optional<std::string> dotted_name =
+      absl::optional<std::string> dotted_name =
           DnsDomainToString(host_sub_chunk);
       if (!dotted_name)
         return false;
@@ -1266,7 +1329,7 @@ bool TransportSecurityState::GetDynamicPKPState(const std::string& host,
     // implement HPKP, so this logic is only used via AddHPKP(), reachable from
     // Cronet.
     if (i == 0 || j->second.include_subdomains) {
-      base::Optional<std::string> dotted_name =
+      absl::optional<std::string> dotted_name =
           DnsDomainToString(host_sub_chunk);
       if (!dotted_name)
         return false;
@@ -1374,6 +1437,26 @@ TransportSecurityState::ExpectCTStateIterator::ExpectCTStateIterator(
 TransportSecurityState::ExpectCTStateIterator::~ExpectCTStateIterator() =
     default;
 
+TransportSecurityState::PinSet::PinSet(
+    std::string name,
+    std::vector<std::vector<uint8_t>> static_spki_hashes,
+    std::vector<std::vector<uint8_t>> bad_static_spki_hashes,
+    std::string report_uri)
+    : name_(std::move(name)),
+      static_spki_hashes_(std::move(static_spki_hashes)),
+      bad_static_spki_hashes_(std::move(bad_static_spki_hashes)),
+      report_uri_(std::move(report_uri)) {}
+
+TransportSecurityState::PinSet::PinSet(const PinSet& other) = default;
+TransportSecurityState::PinSet::~PinSet() = default;
+
+TransportSecurityState::PinSetInfo::PinSetInfo(std::string hostname,
+                                               std::string pinset_name,
+                                               bool include_subdomains)
+    : hostname_(std::move(hostname)),
+      pinset_name_(std::move(pinset_name)),
+      include_subdomains_(std::move(include_subdomains)) {}
+
 bool TransportSecurityState::PKPState::CheckPublicKeyPins(
     const HashValueVector& hashes,
     std::string* failure_log) const {
@@ -1433,12 +1516,10 @@ void TransportSecurityState::MaybePruneExpectCTState() {
     return;
 
   earliest_next_prune_expect_ct_time_ =
-      now +
-      base::TimeDelta::FromSeconds(features::kExpectCTPruneDelaySecs.Get());
+      now + base::Seconds(features::kExpectCTPruneDelaySecs.Get());
 
   base::Time last_prunable_observation_time =
-      now -
-      base::TimeDelta::FromDays(features::kExpectCTSafeFromPruneDays.Get());
+      now - base::Days(features::kExpectCTSafeFromPruneDays.Get());
 
   // Cache this locally, so don't have to repeatedly query the value.
   size_t expect_ct_prune_min = features::kExpectCTPruneMin.Get();
@@ -1547,6 +1628,30 @@ bool TransportSecurityState::ExpectCTPruningSorter(
                   it1->second.last_observed) <
          std::tie(is_not_transient2, it2->second.enforce,
                   it2->second.last_observed);
+}
+
+bool TransportSecurityState::IsCTLogListTimely() const {
+  // Preloaded Expect-CT is enforced if the CT log list is timely. Note that
+  // unlike HSTS and HPKP, the date of the preloaded list itself (i.e.
+  // base::GetBuildTime()) is not directly consulted. Consulting the
+  // build time would allow sites that have subsequently disabled Expect-CT
+  // to opt-out. However, because as of June 2021, all unexpired certificates
+  // are already expected to comply with the policies expressed by Expect-CT,
+  // there's no need to offer an opt-out.
+  return (base::Time::Now() - ct_log_list_last_update_time_).InDays() <
+         70 /* 10 weeks */;
+}
+
+bool TransportSecurityState::IsStaticPKPListTimely() const {
+  // If the list has not been updated via component updater, freshness depends
+  // on build freshness.
+  if (!host_pins_.has_value()) {
+    return IsBuildTimely();
+  }
+  DCHECK(!key_pins_list_last_update_time_.is_null());
+  // Else, we use the last update time.
+  return (base::Time::Now() - key_pins_list_last_update_time_).InDays() <
+         70 /* 10 weeks */;
 }
 
 }  // namespace net

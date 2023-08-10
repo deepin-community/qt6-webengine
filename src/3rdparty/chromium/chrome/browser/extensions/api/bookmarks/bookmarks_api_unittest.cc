@@ -4,6 +4,7 @@
 
 #include "chrome/browser/extensions/api/bookmarks/bookmarks_api.h"
 
+#include "base/memory/raw_ptr.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -32,15 +33,15 @@ class BookmarksApiUnittest : public ExtensionServiceTestBase {
     model_ = BookmarkModelFactory::GetForBrowserContext(profile());
     bookmarks::test::WaitForBookmarkModelToLoad(model_);
 
-    const bookmarks::BookmarkNode* node = model_->AddFolder(
-        model_->other_node(), 0, base::ASCIIToUTF16("Empty folder"));
+    const bookmarks::BookmarkNode* node =
+        model_->AddFolder(model_->other_node(), 0, u"Empty folder");
     node_id_ = base::NumberToString(node->id());
   }
 
   std::string node_id() const { return node_id_; }
 
  private:
-  bookmarks::BookmarkModel* model_ = nullptr;
+  raw_ptr<bookmarks::BookmarkModel> model_ = nullptr;
   std::string node_id_;
 };
 

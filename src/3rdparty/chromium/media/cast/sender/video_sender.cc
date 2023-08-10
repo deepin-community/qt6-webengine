@@ -90,7 +90,6 @@ VideoSender::VideoSender(
     const FrameSenderConfig& video_config,
     StatusChangeCallback status_change_cb,
     const CreateVideoEncodeAcceleratorCallback& create_vea_cb,
-    const CreateVideoEncodeMemoryCallback& create_video_encode_mem_cb,
     CastTransport* const transport_sender,
     PlayoutDelayChangeCB playout_delay_change_cb,
     media::VideoCaptureFeedbackCB feedback_callback)
@@ -112,12 +111,8 @@ VideoSender::VideoSender(
       low_latency_mode_(false),
       last_reported_encoder_utilization_(-1.0),
       last_reported_lossy_utilization_(-1.0) {
-  video_encoder_ = VideoEncoder::Create(
-      cast_environment_,
-      video_config,
-      status_change_cb,
-      create_vea_cb,
-      create_video_encode_mem_cb);
+  video_encoder_ = VideoEncoder::Create(cast_environment_, video_config,
+                                        status_change_cb, create_vea_cb);
   if (!video_encoder_) {
     cast_environment_->PostTask(
         CastEnvironment::MAIN, FROM_HERE,
@@ -193,15 +188,16 @@ void VideoSender::InsertRawVideoFrame(
   // based on the configured |max_frame_rate_|.  Any error introduced by this
   // guess will be eliminated when |duration_in_encoder_| is updated in
   // OnEncodedVideoFrame().
-  const base::TimeDelta duration_added_by_next_frame = frames_in_encoder_ > 0 ?
-      reference_time - last_enqueued_frame_reference_time_ :
-      base::TimeDelta::FromSecondsD(1.0 / max_frame_rate_);
+  const base::TimeDelta duration_added_by_next_frame =
+      frames_in_encoder_ > 0
+          ? reference_time - last_enqueued_frame_reference_time_
+          : base::Seconds(1.0 / max_frame_rate_);
 
   if (ShouldDropNextFrame(duration_added_by_next_frame)) {
-    base::TimeDelta new_target_delay = std::min(
-        current_round_trip_time_ * kRoundTripsNeeded +
-        base::TimeDelta::FromMilliseconds(kConstantTimeMs),
-        max_playout_delay_);
+    base::TimeDelta new_target_delay =
+        std::min(current_round_trip_time_ * kRoundTripsNeeded +
+                     base::Milliseconds(kConstantTimeMs),
+                 max_playout_delay_);
     // In case of low latency mode, we prefer frame drops over increasing
     // playout time.
     if (!low_latency_mode_ && new_target_delay > target_playout_delay_) {
@@ -255,9 +251,9 @@ void VideoSender::InsertRawVideoFrame(
           frame_to_encode, reference_time,
           base::BindOnce(&VideoSender::OnEncodedVideoFrame, AsWeakPtr(),
                          frame_to_encode, bitrate))) {
-    TRACE_EVENT_ASYNC_BEGIN1("cast.stream", "Video Encode",
-                             frame_to_encode.get(), "rtp_timestamp",
-                             rtp_timestamp.lower_32_bits());
+    TRACE_EVENT_NESTABLE_ASYNC_BEGIN1(
+        "cast.stream", "Video Encode", TRACE_ID_LOCAL(frame_to_encode.get()),
+        "rtp_timestamp", rtp_timestamp.lower_32_bits());
     frames_in_encoder_++;
     duration_in_encoder_ += duration_added_by_next_frame;
     last_enqueued_frame_rtp_timestamp_ = rtp_timestamp;
@@ -311,10 +307,10 @@ void VideoSender::OnEncodedVideoFrame(
   last_reported_encoder_utilization_ = encoded_frame->encoder_utilization;
   last_reported_lossy_utilization_ = encoded_frame->lossy_utilization;
 
-  TRACE_EVENT_ASYNC_END2("cast.stream", "Video Encode", video_frame.get(),
-                         "encoder_utilization",
-                         last_reported_encoder_utilization_,
-                         "lossy_utilization", last_reported_lossy_utilization_);
+  TRACE_EVENT_NESTABLE_ASYNC_END2(
+      "cast.stream", "Video Encode", TRACE_ID_LOCAL(video_frame.get()),
+      "encoder_utilization", last_reported_encoder_utilization_,
+      "lossy_utilization", last_reported_lossy_utilization_);
 
   // Report the resource utilization for processing this frame.  Take the
   // greater of the two utilization values and attenuate them such that the
@@ -327,7 +323,7 @@ void VideoSender::OnEncodedVideoFrame(
     // Key frames are artificially capped to 1.0 because their actual
     // utilization is atypical compared to the other frames in the stream, and
     // this can misguide the producer of the input video frames.
-    VideoFrameFeedback feedback;
+    VideoCaptureFeedback feedback;
     feedback.resource_utilization =
         encoded_frame->dependency == EncodedFrame::KEY
             ? std::min(1.0, attenuated_utilization)

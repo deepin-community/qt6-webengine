@@ -7,9 +7,8 @@
 
 #include <stdint.h>
 
-#include "base/compiler_specific.h"
-#include "base/optional.h"
 #include "mojo/public/cpp/bindings/struct_traits.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/display/display_export.h"
 #include "ui/display/types/display_constants.h"
 #include "ui/gfx/display_color_spaces.h"
@@ -234,6 +233,9 @@ class DISPLAY_EXPORT Display final {
     color_spaces_ = color_spaces;
   }
 
+  // Return true if the display orientation is landscape.
+  bool is_landscape() const { return bounds_.width() >= bounds_.height(); }
+
   // Default values for color_depth and depth_per_component.
   static constexpr int kDefaultBitsPerPixel = 24;
   static constexpr int kDefaultBitsPerComponent = 8;
@@ -281,7 +283,7 @@ class DISPLAY_EXPORT Display final {
   gfx::Rect work_area_;
   float device_scale_factor_;
   Rotation rotation_ = ROTATE_0;
-  base::Optional<Rotation> panel_rotation_;
+  absl::optional<Rotation> panel_rotation_;
   TouchSupport touch_support_ = TouchSupport::UNKNOWN;
   AccelerometerSupport accelerometer_support_ = AccelerometerSupport::UNKNOWN;
   gfx::Size maximum_cursor_size_;

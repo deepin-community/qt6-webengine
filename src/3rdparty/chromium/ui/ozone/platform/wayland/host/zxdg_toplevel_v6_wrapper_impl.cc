@@ -8,15 +8,30 @@
 #include <xdg-shell-client-protocol.h>
 #include <xdg-shell-unstable-v6-client-protocol.h>
 
+#include "base/logging.h"
 #include "base/strings/utf_string_conversions.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/base/hit_test.h"
 #include "ui/ozone/platform/wayland/common/wayland_util.h"
 #include "ui/ozone/platform/wayland/host/shell_surface_wrapper.h"
 #include "ui/ozone/platform/wayland/host/wayland_connection.h"
+#include "ui/ozone/platform/wayland/host/wayland_seat.h"
+#include "ui/ozone/platform/wayland/host/wayland_serial_tracker.h"
 #include "ui/ozone/platform/wayland/host/wayland_window.h"
 #include "ui/ozone/platform/wayland/host/zxdg_surface_v6_wrapper_impl.h"
 
 namespace ui {
+
+namespace {
+
+absl::optional<wl::Serial> GetSerialForMoveResize(
+    WaylandConnection* connection) {
+  return connection->serial_tracker().GetSerial({wl::SerialType::kTouchPress,
+                                                 wl::SerialType::kMousePress,
+                                                 wl::SerialType::kKeyPress});
+}
+
+}  // namespace
 
 ZXDGToplevelV6WrapperImpl::ZXDGToplevelV6WrapperImpl(
     std::unique_ptr<ZXDGSurfaceV6WrapperImpl> surface,
@@ -34,9 +49,9 @@ bool ZXDGToplevelV6WrapperImpl::Initialize() {
     return false;
   }
 
-  static const zxdg_toplevel_v6_listener zxdg_toplevel_v6_listener = {
-      &ZXDGToplevelV6WrapperImpl::ConfigureTopLevel,
-      &ZXDGToplevelV6WrapperImpl::CloseTopLevel,
+  static constexpr zxdg_toplevel_v6_listener zxdg_toplevel_v6_listener = {
+      &ConfigureTopLevel,
+      &CloseTopLevel,
   };
 
   if (!zxdg_surface_v6_wrapper_)
@@ -51,8 +66,6 @@ bool ZXDGToplevelV6WrapperImpl::Initialize() {
   zxdg_toplevel_v6_add_listener(zxdg_toplevel_v6_.get(),
                                 &zxdg_toplevel_v6_listener, this);
 
-  wayland_window_->root_surface()->Commit();
-  connection_->ScheduleFlush();
   return true;
 }
 
@@ -83,19 +96,27 @@ void ZXDGToplevelV6WrapperImpl::SetMinimized() {
 
 void ZXDGToplevelV6WrapperImpl::SurfaceMove(WaylandConnection* connection) {
   DCHECK(zxdg_toplevel_v6_);
-  zxdg_toplevel_v6_move(zxdg_toplevel_v6_.get(), connection->seat(),
-                        connection->serial());
+  DCHECK(connection_->seat());
+
+  if (auto serial = GetSerialForMoveResize(connection)) {
+    zxdg_toplevel_v6_move(zxdg_toplevel_v6_.get(),
+                          connection->seat()->wl_object(), serial->value);
+  }
 }
 
 void ZXDGToplevelV6WrapperImpl::SurfaceResize(WaylandConnection* connection,
                                               uint32_t hittest) {
   DCHECK(zxdg_toplevel_v6_);
-  zxdg_toplevel_v6_resize(zxdg_toplevel_v6_.get(), connection->seat(),
-                          connection->serial(),
-                          wl::IdentifyDirection(*connection, hittest));
+  DCHECK(connection_->seat());
+
+  if (auto serial = GetSerialForMoveResize(connection)) {
+    zxdg_toplevel_v6_resize(zxdg_toplevel_v6_.get(),
+                            connection->seat()->wl_object(), serial->value,
+                            wl::IdentifyDirection(*connection, hittest));
+  }
 }
 
-void ZXDGToplevelV6WrapperImpl::SetTitle(const base::string16& title) {
+void ZXDGToplevelV6WrapperImpl::SetTitle(const std::u16string& title) {
   DCHECK(zxdg_toplevel_v6_);
   zxdg_toplevel_v6_set_title(zxdg_toplevel_v6_.get(),
                              base::UTF16ToUTF8(title).c_str());
@@ -125,6 +146,11 @@ void ZXDGToplevelV6WrapperImpl::SetDecoration(DecorationMode decoration) {}
 void ZXDGToplevelV6WrapperImpl::AckConfigure(uint32_t serial) {
   DCHECK(zxdg_surface_v6_wrapper_);
   zxdg_surface_v6_wrapper_->AckConfigure(serial);
+}
+
+bool ZXDGToplevelV6WrapperImpl::IsConfigured() {
+  DCHECK(zxdg_surface_v6_wrapper_);
+  return zxdg_surface_v6_wrapper_->IsConfigured();
 }
 
 // static
@@ -161,6 +187,14 @@ ZXDGSurfaceV6WrapperImpl* ZXDGToplevelV6WrapperImpl::zxdg_surface_v6_wrapper()
     const {
   DCHECK(zxdg_surface_v6_wrapper_.get());
   return zxdg_surface_v6_wrapper_.get();
+}
+
+void ZXDGToplevelV6WrapperImpl::Lock(WaylandOrientationLockType lock_type) {}
+
+void ZXDGToplevelV6WrapperImpl::Unlock() {}
+
+void ZXDGToplevelV6WrapperImpl::RequestWindowBounds(const gfx::Rect& bounds) {
+  NOTREACHED();
 }
 
 }  // namespace ui

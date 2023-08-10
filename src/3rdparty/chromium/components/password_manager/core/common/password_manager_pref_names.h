@@ -14,17 +14,55 @@ namespace prefs {
 // component.
 
 // Boolean controlling whether the password manager allows automatic signing in
-// through Credential Manager API.
+// through Credential Management API.
+//
+// IMPORTANT: This pref is neither querried nor updated on Android if the
+// unified password manager is enabled.
+// Use `password_manager_util::IsAutoSignInEnabled` to check
+// the value of this setting instead.
 extern const char kCredentialsEnableAutosignin[];
 
 // The value of this preference controls whether the Password Manager will save
 // credentials. When it is false, it doesn't ask if you want to save passwords
 // but will continue to fill passwords.
-// TODO(melandory): Preference should also control autofill behavior for the
-// passwords.
+//
+// IMPORTANT: This pref is neither querried nor updated on Android if the
+// unified password manager is enabled.
+// Use `password_manager_util::IsSavingPasswordsEnabled` to check the value of
+// this setting instead.
 extern const char kCredentialsEnableService[];
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_ANDROID)
+// Boolean controlling whether the password manager allows automatic signing in
+// through Credential Management API. This pref is not synced. Its value is set
+// by fetching the latest value from Google Mobile Services. Except for
+// migration steps, it should not be modified in Chrome.
+extern const char kAutoSignInEnabledGMS[];
+
+// Boolean controlling whether the password manager offers to save passwords.
+// If false, the password manager will not save credentials, but it will still
+// fill previously saved ones. This pref is not synced. Its value is set
+// by fetching the latest value from Google Mobile Services. Except for
+// migration steps, it should not be modified in Chrome.
+//
+// This pref doesn't have a policy mapped to it directly, instead, the policy
+// mapped to `kCredentialEnableService` will be applied.
+extern const char kOfferToSavePasswordsEnabledGMS[];
+
+// Integer value which indicates the version used to migrate passwords from
+// built in storage to Google Mobile Services.
+extern const char kCurrentMigrationVersionToGoogleMobileServices[];
+
+// Timestamps of when credentials from the GMS Core to the built in storage were
+// last time migrated, in microseconds since Windows epoch.
+extern const char kTimeOfLastMigrationAttempt[];
+
+// Boolean value that indicated the need of data migration between the two
+// backends due to sync settings change.
+extern const char kRequiresMigrationAfterSyncStatusChange[];
+#endif
+
+#if BUILDFLAG(IS_WIN)
 // Whether the password was blank, only valid if OS password was last changed
 // on or before the value contained in kOsPasswordLastChanged.
 extern const char kOsPasswordBlank[];
@@ -33,44 +71,24 @@ extern const char kOsPasswordBlank[];
 extern const char kOsPasswordLastChanged[];
 #endif
 
-#if defined(OS_APPLE)
+#if BUILDFLAG(IS_APPLE)
 // The current status of migrating the passwords from the Keychain to the
 // database. Stores a value from MigrationStatus.
 extern const char kKeychainMigrationStatus[];
-
-// The date of when passwords were cleaned up for MacOS users who previously
-// lost access to their password because of encryption key modification in
-// Keychain.
-extern const char kPasswordRecovery[];
 #endif
 
 // Boolean that indicated whether first run experience for the auto sign-in
 // prompt was shown or not.
 extern const char kWasAutoSignInFirstRunExperienceShown[];
 
-// Boolean that indicated whether one time upload of phished credentials was
-// performed for syncing users.
-extern const char kWasPhishedCredentialsUploadedToSync[];
-
-// Boolean that indicated if user interacted with the Chrome Sign in promo.
-extern const char kWasSignInPasswordPromoClicked[];
-
-// Number of times the Chrome Sign in promo popped up.
-extern const char kNumberSignInPasswordPromoShown[];
-
-// True if the counters for the sign in promo were reset for M79.
-// Safe to remove for M82.
-extern const char kSignInPasswordPromoRevive[];
+// Boolean that indicated whether one time removal of old google.com logins was
+// performed.
+extern const char kWereOldGoogleLoginsRemoved[];
 
 // A dictionary of account-storage-related settings that exist per Gaia account
 // (e.g. whether that user has opted in). It maps from hash of Gaia ID to
 // dictionary of key-value pairs.
 extern const char kAccountStoragePerAccountSettings[];
-
-// A boolean that tracks whether the account-scoped password store exists on
-// disk. When the factory needs to delete the store from disk, it uses this pref
-// to only trigger the deletion if the store actually exists.
-extern const char kAccountStorageExists[];
 
 // String that represents the sync password hash.
 extern const char kSyncPasswordHash[];
@@ -87,12 +105,24 @@ extern const char kLastTimeObsoleteHttpCredentialsRemoved[];
 // The last time the password check has run to completion.
 extern const char kLastTimePasswordCheckCompleted[];
 
+// Timestamps of when password store metrics where last reported, in
+// microseconds since Windows epoch.
+extern const char kLastTimePasswordStoreMetricsReported[];
+
+// The last time the password check has run to completion synced across devices.
+// It's used on passwords.google.com and not in Chrome.
+extern const char kSyncedLastTimePasswordCheckCompleted[];
+
 // List that contains captured password hashes.
 extern const char kPasswordHashDataList[];
 
 // Boolean indicating whether Chrome should check whether the credentials
 // submitted by the user were part of a leak.
 extern const char kPasswordLeakDetectionEnabled[];
+
+// Boolean indicating whether users can mute (aka dismiss) alerts resulting from
+// compromised credentials that were submitted by the user.
+extern const char kPasswordDismissCompromisedAlertEnabled[];
 
 // Timestamps of when credentials from the profile / account store were last
 // used to fill a form, in microseconds since Windows epoch.

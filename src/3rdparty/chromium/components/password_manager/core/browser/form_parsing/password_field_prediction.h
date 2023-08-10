@@ -10,8 +10,8 @@
 
 #include "build/build_config.h"
 #include "components/autofill/core/browser/field_types.h"
-#include "components/autofill/core/common/renderer_id.h"
 #include "components/autofill/core/common/signatures.h"
+#include "components/autofill/core/common/unique_ids.h"
 
 namespace autofill {
 class FormStructure;
@@ -36,8 +36,8 @@ CredentialFieldType DeriveFromServerFieldType(autofill::ServerFieldType type);
 struct PasswordFieldPrediction {
   // Field identifier generated in Blink on non-iOS platforms.
   autofill::FieldRendererId renderer_id;
-#if defined(OS_IOS)
-  base::string16 unique_id;
+#if BUILDFLAG(IS_IOS)
+  std::u16string unique_id;
 #endif
   autofill::FieldSignature signature;
   autofill::ServerFieldType type;

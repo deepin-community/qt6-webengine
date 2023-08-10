@@ -8,11 +8,13 @@
 #include <memory>
 #include <vector>
 
+#include "base/callback_helpers.h"
 #include "components/viz/service/display/output_surface.h"
 #include "components/viz/service/display/overlay_processor_interface.h"
 #include "components/viz/service/display/skia_output_surface.h"
 #include "components/viz/service/viz_service_export.h"
 #include "gpu/command_buffer/service/shared_image_representation.h"
+#include "ui/gfx/gpu_fence_handle.h"
 #include "ui/gfx/presentation_feedback.h"
 #include "ui/gfx/swap_result.h"
 
@@ -45,14 +47,14 @@ class VIZ_SERVICE_EXPORT OutputPresenter {
       return skia_representation_.get();
     }
 
-    void BeginWriteSkia();
+    void BeginWriteSkia(int sample_count);
     SkSurface* sk_surface();
     std::vector<GrBackendSemaphore> TakeEndWriteSkiaSemaphores();
-    void EndWriteSkia();
+    void EndWriteSkia(bool force_flush = false);
     void PreGrContextSubmit();
 
     virtual void BeginPresent() = 0;
-    virtual void EndPresent() = 0;
+    virtual void EndPresent(gfx::GpuFenceHandle release_fence) = 0;
     virtual int GetPresentCount() const = 0;
     virtual void OnContextLost() = 0;
 
@@ -78,16 +80,17 @@ class VIZ_SERVICE_EXPORT OutputPresenter {
 
   virtual void InitializeCapabilities(
       OutputSurface::Capabilities* capabilities) = 0;
-  virtual bool Reshape(const gfx::Size& size,
-                       float device_scale_factor,
+  virtual bool Reshape(const SkSurfaceCharacterization& characterization,
                        const gfx::ColorSpace& color_space,
-                       gfx::BufferFormat format,
+                       float device_scale_factor,
                        gfx::OverlayTransform transform) = 0;
   virtual std::vector<std::unique_ptr<Image>> AllocateImages(
       gfx::ColorSpace color_space,
       gfx::Size image_size,
       size_t num_images) = 0;
-  virtual std::unique_ptr<Image> AllocateBackgroundImage(
+  // This function exists because the Fuchsia call to 'AllocateImages' does not
+  // support single image allocation.
+  virtual std::unique_ptr<Image> AllocateSingleImage(
       gfx::ColorSpace color_space,
       gfx::Size image_size);
   virtual void SwapBuffers(SwapCompletionCallback completion_callback,
@@ -104,9 +107,13 @@ class VIZ_SERVICE_EXPORT OutputPresenter {
       bool is_submitted) = 0;
   using ScopedOverlayAccess =
       gpu::SharedImageRepresentationOverlay::ScopedReadAccess;
+  virtual void ScheduleOneOverlay(const OverlayCandidate& overlay,
+                                  ScopedOverlayAccess* access);
   virtual void ScheduleOverlays(SkiaOutputSurface::OverlayList overlays,
                                 std::vector<ScopedOverlayAccess*> accesses) = 0;
-  virtual void ScheduleBackground(Image* image);
+#if BUILDFLAG(IS_MAC)
+  virtual void SetCALayerErrorCode(gfx::CALayerResult ca_layer_error_code) {}
+#endif
 };
 
 }  // namespace viz

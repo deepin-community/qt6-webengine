@@ -35,7 +35,7 @@ ExtensionFunction::ResponseAction IdentityLaunchWebAuthFlowFunction::Run() {
   }
 
   std::unique_ptr<api::identity::LaunchWebAuthFlow::Params> params(
-      api::identity::LaunchWebAuthFlow::Params::Create(*args_));
+      api::identity::LaunchWebAuthFlow::Params::Create(args()));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
   GURL auth_url(params->details.url);
@@ -49,8 +49,8 @@ ExtensionFunction::ResponseAction IdentityLaunchWebAuthFlowFunction::Run() {
 
   AddRef();  // Balanced in OnAuthFlowSuccess/Failure.
 
-  auth_flow_.reset(new WebAuthFlow(this, profile, auth_url, mode,
-                                   WebAuthFlow::LAUNCH_WEB_AUTH_FLOW));
+  auth_flow_ = std::make_unique<WebAuthFlow>(this, profile, auth_url, mode,
+                                             WebAuthFlow::LAUNCH_WEB_AUTH_FLOW);
   auth_flow_->Start();
   return RespondLater();
 }
