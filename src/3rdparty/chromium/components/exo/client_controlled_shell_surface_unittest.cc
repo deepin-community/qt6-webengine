@@ -8,9 +8,13 @@
 #include "ash/frame/header_view.h"
 #include "ash/frame/non_client_frame_view_ash.h"
 #include "ash/frame/wide_frame_view.h"
+#include "ash/public/cpp/arc_resize_lock_type.h"
+#include "ash/public/cpp/shelf_types.h"
 #include "ash/public/cpp/test/shell_test_api.h"
+#include "ash/shelf/shelf.h"
 #include "ash/shell.h"
 #include "ash/system/unified/unified_system_tray.h"
+#include "ash/test/test_widget_builder.h"
 #include "ash/wm/drag_window_resizer.h"
 #include "ash/wm/overview/overview_controller.h"
 #include "ash/wm/pip/pip_positioner.h"
@@ -21,6 +25,7 @@
 #include "ash/wm/tablet_mode/tablet_mode_window_resizer.h"
 #include "ash/wm/window_positioning_utils.h"
 #include "ash/wm/window_resizer.h"
+#include "ash/wm/window_restore/window_restore_controller.h"
 #include "ash/wm/window_state.h"
 #include "ash/wm/window_util.h"
 #include "ash/wm/wm_event.h"
@@ -29,13 +34,17 @@
 #include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/scoped_feature_list.h"
 #include "cc/paint/display_item_list.h"
 #include "chromeos/ui/base/window_pin_type.h"
 #include "chromeos/ui/base/window_properties.h"
 #include "chromeos/ui/frame/caption_buttons/caption_button_model.h"
 #include "chromeos/ui/frame/caption_buttons/frame_caption_button_container_view.h"
+#include "components/app_restore/full_restore_utils.h"
+#include "components/app_restore/window_properties.h"
 #include "components/exo/buffer.h"
 #include "components/exo/display.h"
+#include "components/exo/permission.h"
 #include "components/exo/pointer.h"
 #include "components/exo/shell_surface_util.h"
 #include "components/exo/sub_surface.h"
@@ -45,11 +54,13 @@
 #include "components/exo/wm_helper.h"
 #include "third_party/skia/include/utils/SkNoDrawCanvas.h"
 #include "ui/aura/client/aura_constants.h"
+#include "ui/aura/client/window_parenting_client.h"
 #include "ui/aura/env.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_event_dispatcher.h"
 #include "ui/aura/window_targeter.h"
 #include "ui/aura/window_tree_host.h"
+#include "ui/compositor/layer.h"
 #include "ui/compositor/scoped_animation_duration_scale_mode.h"
 #include "ui/compositor/scoped_layer_animation_settings.h"
 #include "ui/compositor_extra/shadow.h"
@@ -75,10 +86,7 @@ bool HasBackdrop() {
 }
 
 bool IsWidgetPinned(views::Widget* widget) {
-  chromeos::WindowPinType type =
-      widget->GetNativeWindow()->GetProperty(chromeos::kWindowPinTypeKey);
-  return type == chromeos::WindowPinType::kPinned ||
-         type == chromeos::WindowPinType::kTrustedPinned;
+  return ash::WindowState::Get(widget->GetNativeWindow())->IsPinned();
 }
 
 int GetShadowElevation(aura::Window* window) {
@@ -93,6 +101,10 @@ void EnableTabletMode(bool enable) {
 class TestCanvas : public SkNoDrawCanvas {
  public:
   TestCanvas() : SkNoDrawCanvas(100, 100) {}
+
+  TestCanvas(const TestCanvas&) = delete;
+  TestCanvas& operator=(const TestCanvas&) = delete;
+
   ~TestCanvas() override {}
 
   void onDrawTextBlob(const SkTextBlob*,
@@ -106,8 +118,6 @@ class TestCanvas : public SkNoDrawCanvas {
 
  private:
   bool text_was_drawn_ = false;
-
-  DISALLOW_COPY_AND_ASSIGN(TestCanvas);
 };
 
 }  // namespace
@@ -220,7 +230,7 @@ TEST_F(ClientControlledShellSurfaceTest, UpdateModalWindow) {
   child->Attach(child_buffer.get());
   std::unique_ptr<SubSurface> sub_surface(
       display->CreateSubSurface(child.get(), surface.get()));
-  surface->SetSubSurfacePosition(child.get(), gfx::Point(10, 10));
+  surface->SetSubSurfacePosition(child.get(), gfx::PointF(10, 10));
   child->Commit();
   surface->Commit();
   EXPECT_FALSE(ash::Shell::IsSystemModalWindowOpen());
@@ -515,7 +525,7 @@ TEST_F(ClientControlledShellSurfaceTest, Frame) {
 
   // Normal state.
   widget->LayoutRootViewIfNecessary();
-  EXPECT_TRUE(frame_view->GetVisible());
+  EXPECT_TRUE(frame_view->GetFrameEnabled());
   EXPECT_EQ(normal_window_bounds, widget->GetWindowBoundsInScreen());
   EXPECT_EQ(client_bounds,
             frame_view->GetClientBoundsForWindowBounds(normal_window_bounds));
@@ -526,7 +536,7 @@ TEST_F(ClientControlledShellSurfaceTest, Frame) {
   surface->Commit();
 
   widget->LayoutRootViewIfNecessary();
-  EXPECT_TRUE(frame_view->GetVisible());
+  EXPECT_TRUE(frame_view->GetFrameEnabled());
   EXPECT_EQ(fullscreen_bounds, widget->GetWindowBoundsInScreen());
   EXPECT_EQ(
       gfx::Size(800, 568),
@@ -534,15 +544,15 @@ TEST_F(ClientControlledShellSurfaceTest, Frame) {
 
   // With work area top insets.
   display_manager->UpdateWorkAreaOfDisplay(display_id,
-                                           gfx::Insets(200, 0, 0, 0));
+                                           gfx::Insets::TLBR(200, 0, 0, 0));
   shell_surface->SetGeometry(gfx::Rect(0, 0, 800, 368));
   surface->Commit();
 
   widget->LayoutRootViewIfNecessary();
-  EXPECT_TRUE(frame_view->GetVisible());
+  EXPECT_TRUE(frame_view->GetFrameEnabled());
   EXPECT_EQ(gfx::Rect(0, 200, 800, 400), widget->GetWindowBoundsInScreen());
 
-  display_manager->UpdateWorkAreaOfDisplay(display_id, gfx::Insets(0, 0, 0, 0));
+  display_manager->UpdateWorkAreaOfDisplay(display_id, gfx::Insets());
 
   // AutoHide
   surface->SetFrame(SurfaceFrameType::AUTOHIDE);
@@ -550,7 +560,7 @@ TEST_F(ClientControlledShellSurfaceTest, Frame) {
   surface->Commit();
 
   widget->LayoutRootViewIfNecessary();
-  EXPECT_TRUE(frame_view->GetVisible());
+  EXPECT_TRUE(frame_view->GetFrameEnabled());
   EXPECT_EQ(fullscreen_bounds, widget->GetWindowBoundsInScreen());
   EXPECT_EQ(fullscreen_bounds,
             frame_view->GetClientBoundsForWindowBounds(fullscreen_bounds));
@@ -560,7 +570,7 @@ TEST_F(ClientControlledShellSurfaceTest, Frame) {
   surface->Commit();
 
   widget->LayoutRootViewIfNecessary();
-  EXPECT_TRUE(frame_view->GetVisible());
+  EXPECT_TRUE(frame_view->GetFrameEnabled());
   EXPECT_EQ(fullscreen_bounds, widget->GetWindowBoundsInScreen());
   EXPECT_EQ(fullscreen_bounds,
             frame_view->GetClientBoundsForWindowBounds(fullscreen_bounds));
@@ -585,7 +595,7 @@ TEST_F(ClientControlledShellSurfaceTest, Frame) {
   surface->Commit();
 
   widget->LayoutRootViewIfNecessary();
-  EXPECT_TRUE(frame_view->GetVisible());
+  EXPECT_TRUE(frame_view->GetFrameEnabled());
   EXPECT_EQ(normal_window_bounds, widget->GetWindowBoundsInScreen());
   EXPECT_EQ(client_bounds,
             frame_view->GetClientBoundsForWindowBounds(normal_window_bounds));
@@ -597,7 +607,7 @@ TEST_F(ClientControlledShellSurfaceTest, Frame) {
   surface->Commit();
 
   widget->LayoutRootViewIfNecessary();
-  EXPECT_FALSE(frame_view->GetVisible());
+  EXPECT_FALSE(frame_view->GetFrameEnabled());
   EXPECT_EQ(client_bounds, widget->GetWindowBoundsInScreen());
   EXPECT_EQ(client_bounds,
             frame_view->GetClientBoundsForWindowBounds(client_bounds));
@@ -609,14 +619,14 @@ TEST_F(ClientControlledShellSurfaceTest, Frame) {
   surface->Commit();
 
   widget->LayoutRootViewIfNecessary();
-  EXPECT_TRUE(frame_view->GetVisible());
+  EXPECT_TRUE(frame_view->GetFrameEnabled());
   EXPECT_TRUE(frame_view->GetHeaderView()->in_immersive_mode());
 
   surface->SetFrame(SurfaceFrameType::NONE);
   surface->Commit();
 
   widget->LayoutRootViewIfNecessary();
-  EXPECT_FALSE(frame_view->GetVisible());
+  EXPECT_FALSE(frame_view->GetFrameEnabled());
   EXPECT_FALSE(frame_view->GetHeaderView()->in_immersive_mode());
 }
 
@@ -625,16 +635,23 @@ namespace {
 class TestEventHandler : public ui::EventHandler {
  public:
   TestEventHandler() = default;
+
+  TestEventHandler(const TestEventHandler&) = delete;
+  TestEventHandler& operator=(const TestEventHandler&) = delete;
+
   ~TestEventHandler() override = default;
 
   // ui::EventHandler:
-  void OnMouseEvent(ui::MouseEvent* event) override { received_event_ = true; }
+  void OnMouseEvent(ui::MouseEvent* event) override {
+    mouse_events_.push_back(*event);
+  }
 
-  bool received_event() const { return received_event_; }
+  const std::vector<ui::MouseEvent>& mouse_events() const {
+    return mouse_events_;
+  }
 
  private:
-  bool received_event_ = false;
-  DISALLOW_COPY_AND_ASSIGN(TestEventHandler);
+  std::vector<ui::MouseEvent> mouse_events_;
 };
 
 }  // namespace
@@ -643,9 +660,9 @@ TEST_F(ClientControlledShellSurfaceTest, NoSynthesizedEventOnFrameChange) {
   UpdateDisplay("800x600");
 
   gfx::Size buffer_size(256, 256);
-  std::unique_ptr<Buffer> buffer(
-      new Buffer(exo_test_helper()->CreateGpuMemoryBuffer(buffer_size)));
-  std::unique_ptr<Surface> surface(new Surface);
+  std::unique_ptr<Buffer> buffer = std::make_unique<Buffer>(
+      exo_test_helper()->CreateGpuMemoryBuffer(buffer_size));
+  std::unique_ptr<Surface> surface = std::make_unique<Surface>();
 
   gfx::Rect fullscreen_bounds(0, 0, 800, 600);
 
@@ -671,8 +688,52 @@ TEST_F(ClientControlledShellSurfaceTest, NoSynthesizedEventOnFrameChange) {
   shell_surface->SetGeometry(cropped_fullscreen_bounds);
   surface->Commit();
   base::RunLoop().RunUntilIdle();
-  EXPECT_FALSE(handler.received_event());
+  EXPECT_TRUE(handler.mouse_events().empty());
   env->RemovePreTargetHandler(&handler);
+}
+
+// Shell surfaces should not emit extra events on commit even if using pixel
+// coordinates and a cursor is hovering over the window.
+// https://crbug.com/1296315.
+TEST_F(ClientControlledShellSurfaceTest,
+       NoSynthesizedEventsForPixelCoordinates) {
+  TestEventHandler event_handler;
+
+  gfx::Size buffer_size(400, 400);
+  std::unique_ptr<Buffer> buffer(
+      new Buffer(exo_test_helper()->CreateGpuMemoryBuffer(buffer_size)));
+  auto surface = std::make_unique<Surface>();
+  surface->Attach(buffer.get());
+  auto shell_surface =
+      exo_test_helper()->CreateClientControlledShellSurface(surface.get());
+  // Pixel coordinates add a transform to the underlying layer.
+  shell_surface->set_client_submits_surfaces_in_pixel_coordinates(true);
+
+  display::Display primary_display =
+      display::Screen::GetScreen()->GetPrimaryDisplay();
+  gfx::Rect initial_bounds(150, 10, 200, 200);
+  shell_surface->SetBounds(primary_display.id(), initial_bounds);
+
+  // Tested condition only happens when cursor is over the window.
+  ui::test::EventGenerator generator(ash::Shell::GetPrimaryRootWindow());
+  generator.MoveMouseTo(200, 110);
+
+  shell_surface->host_window()->AddPreTargetHandler(&event_handler);
+  shell_surface->Activate();
+  // Commit an arbitrary number of frames. We expect that this will not generate
+  // synthetic events.
+  for (int i = 0; i < 5; i++) {
+    surface->Commit();
+    task_environment()->RunUntilIdle();
+  }
+
+  // There should be 2 events.  One for mouse enter and the other for move.
+  const auto& events = event_handler.mouse_events();
+  ASSERT_EQ(events.size(), 2UL);
+  EXPECT_EQ(events[0].type(), ui::ET_MOUSE_ENTERED);
+  EXPECT_EQ(events[1].type(), ui::ET_MOUSE_MOVED);
+
+  shell_surface->host_window()->RemovePreTargetHandler(&event_handler);
 }
 
 TEST_F(ClientControlledShellSurfaceTest, CompositorLockInRotation) {
@@ -741,9 +802,7 @@ TEST_F(ClientControlledShellSurfaceTest,
   EXPECT_FALSE(system_tray->IsBubbleActive());
 
   // Send tab key event.
-  ui::test::EventGenerator* event_generator = GetEventGenerator();
-  event_generator->PressKey(ui::VKEY_TAB, ui::EF_NONE);
-  event_generator->ReleaseKey(ui::VKEY_TAB, ui::EF_NONE);
+  PressAndReleaseKey(ui::VKEY_TAB);
 
   // Confirm that system tray is activated.
   EXPECT_FALSE(shell_surface->GetWidget()->IsActive());
@@ -1014,7 +1073,7 @@ TEST_F(ClientControlledShellSurfaceTest,
   EXPECT_FALSE(shell_surface->GetWidget()->widget_delegate()->CanResize());
 }
 
-// The shell surface in SystemModal container should not become target
+// The shell surface in SystemModal container should be a target
 // at the edge.
 TEST_F(ClientControlledShellSurfaceTest, ShellSurfaceInSystemModalHitTest) {
   std::unique_ptr<Surface> surface(new Surface);
@@ -1040,7 +1099,7 @@ TEST_F(ClientControlledShellSurfaceTest, ShellSurfaceInSystemModalHitTest) {
   aura::WindowTargeter targeter;
   aura::Window* found =
       static_cast<aura::Window*>(targeter.FindTargetForEvent(root, &event));
-  EXPECT_FALSE(window->Contains(found));
+  EXPECT_TRUE(window->Contains(found));
 }
 
 // Test the snap functionalities in splitscreen in tablet mode.
@@ -1074,7 +1133,7 @@ TEST_F(ClientControlledShellSurfaceTest, SnapWindowInSplitViewModeTest) {
   window1->SetBounds(split_view_controller->GetSnappedWindowBoundsInScreen(
       ash::SplitViewController::LEFT, window1));
   state1->set_bounds_locally(false);
-  EXPECT_EQ(window_state1->GetStateType(), WindowStateType::kLeftSnapped);
+  EXPECT_EQ(window_state1->GetStateType(), WindowStateType::kPrimarySnapped);
   EXPECT_EQ(shell_surface1->GetWidget()->GetWindowBoundsInScreen(),
             split_view_controller->GetSnappedWindowBoundsInScreen(
                 ash::SplitViewController::LEFT,
@@ -1088,7 +1147,7 @@ TEST_F(ClientControlledShellSurfaceTest, SnapWindowInSplitViewModeTest) {
   window1->SetBounds(split_view_controller->GetSnappedWindowBoundsInScreen(
       ash::SplitViewController::RIGHT, window1));
   state1->set_bounds_locally(false);
-  EXPECT_EQ(window_state1->GetStateType(), WindowStateType::kRightSnapped);
+  EXPECT_EQ(window_state1->GetStateType(), WindowStateType::kSecondarySnapped);
   EXPECT_EQ(shell_surface1->GetWidget()->GetWindowBoundsInScreen(),
             split_view_controller->GetSnappedWindowBoundsInScreen(
                 ash::SplitViewController::RIGHT,
@@ -1134,6 +1193,26 @@ TEST_F(ClientControlledShellSurfaceTest, ClientIniatedResize) {
   ASSERT_FALSE(window_state->is_dragged());
 }
 
+TEST_F(ClientControlledShellSurfaceTest, ResizabilityAndSizeConstraints) {
+  std::unique_ptr<Surface> surface(new Surface);
+  auto shell_surface =
+      exo_test_helper()->CreateClientControlledShellSurface(surface.get());
+  shell_surface->SetMinimumSize(gfx::Size(0, 0));
+  shell_surface->SetMaximumSize(gfx::Size(0, 0));
+  surface->Commit();
+  EXPECT_FALSE(shell_surface->GetWidget()->widget_delegate()->CanResize());
+
+  shell_surface->SetMinimumSize(gfx::Size(400, 400));
+  shell_surface->SetMaximumSize(gfx::Size(0, 0));
+  surface->Commit();
+  EXPECT_TRUE(shell_surface->GetWidget()->widget_delegate()->CanResize());
+
+  shell_surface->SetMinimumSize(gfx::Size(400, 400));
+  shell_surface->SetMaximumSize(gfx::Size(400, 400));
+  surface->Commit();
+  EXPECT_FALSE(shell_surface->GetWidget()->widget_delegate()->CanResize());
+}
+
 namespace {
 
 // This class is only meant to used by CloseWindowWhenDraggingTest.
@@ -1147,6 +1226,11 @@ class ShellSurfaceWindowObserver : public aura::WindowObserver {
         has_delegate_(ash::WindowState::Get(window)->HasDelegate()) {
     window_->AddObserver(this);
   }
+
+  ShellSurfaceWindowObserver(const ShellSurfaceWindowObserver&) = delete;
+  ShellSurfaceWindowObserver& operator=(const ShellSurfaceWindowObserver&) =
+      delete;
+
   ~ShellSurfaceWindowObserver() override {
     if (window_) {
       window_->RemoveObserver(this);
@@ -1170,8 +1254,6 @@ class ShellSurfaceWindowObserver : public aura::WindowObserver {
  private:
   aura::Window* window_;
   bool has_delegate_;
-
-  DISALLOW_COPY_AND_ASSIGN(ShellSurfaceWindowObserver);
 };
 
 }  // namespace
@@ -1212,6 +1294,12 @@ namespace {
 class ClientControlledShellSurfaceDragTest : public test::ExoTestBase {
  public:
   ClientControlledShellSurfaceDragTest() = default;
+
+  ClientControlledShellSurfaceDragTest(
+      const ClientControlledShellSurfaceDragTest&) = delete;
+  ClientControlledShellSurfaceDragTest& operator=(
+      const ClientControlledShellSurfaceDragTest&) = delete;
+
   ~ClientControlledShellSurfaceDragTest() override = default;
 
   // Sends a gesture scroll sequence to TabletModeAppWindowDragController.
@@ -1242,9 +1330,6 @@ class ClientControlledShellSurfaceDragTest : public test::ExoTestBase {
     }
     ash::WindowState::Get(window)->DeleteDragDetails();
   }
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(ClientControlledShellSurfaceDragTest);
 };
 
 }  // namespace
@@ -1288,10 +1373,10 @@ TEST_F(ClientControlledShellSurfaceDragTest, DragWindowFromTopInTabletMode) {
 
   // Drag the window long enough (pass one fourth of the screen vertical
   // height) to snap the window to splitscreen.
-  shell->overview_controller()->EndOverview();
+  shell->overview_controller()->EndOverview(ash::OverviewEndAction::kTests);
   SendGestureEvents(window, gfx::Point(0, 210));
   EXPECT_EQ(ash::WindowState::Get(window)->GetStateType(),
-            WindowStateType::kLeftSnapped);
+            WindowStateType::kPrimarySnapped);
 }
 
 namespace {
@@ -1521,13 +1606,15 @@ TEST_F(ClientControlledShellSurfaceTest, CaptionButtonModel) {
       views::CAPTION_BUTTON_ICON_CLOSE,
       views::CAPTION_BUTTON_ICON_BACK,
       views::CAPTION_BUTTON_ICON_MENU,
+      views::CAPTION_BUTTON_ICON_FLOAT,
   };
   constexpr uint32_t kAllButtonMask =
       1 << views::CAPTION_BUTTON_ICON_MINIMIZE |
       1 << views::CAPTION_BUTTON_ICON_MAXIMIZE_RESTORE |
       1 << views::CAPTION_BUTTON_ICON_CLOSE |
       1 << views::CAPTION_BUTTON_ICON_BACK |
-      1 << views::CAPTION_BUTTON_ICON_MENU;
+      1 << views::CAPTION_BUTTON_ICON_MENU |
+      1 << views::CAPTION_BUTTON_ICON_FLOAT;
 
   ash::NonClientFrameViewAsh* frame_view =
       static_cast<ash::NonClientFrameViewAsh*>(
@@ -1583,7 +1670,7 @@ TEST_F(ClientControlledShellSurfaceTest, SetExtraTitle) {
   surface->Commit();
   shell_surface->GetWidget()->Show();
 
-  const base::string16 window_title(base::ASCIIToUTF16("title"));
+  const std::u16string window_title(u"title");
   shell_surface->SetTitle(window_title);
   const aura::Window* window = shell_surface->GetWidget()->GetNativeWindow();
   EXPECT_EQ(window_title, window->GetTitle());
@@ -1616,7 +1703,7 @@ TEST_F(ClientControlledShellSurfaceTest, SetExtraTitle) {
 
   // Setting the extra title/debug text won't change the window's title, but it
   // will be drawn by the frame header.
-  shell_surface->SetExtraTitle(base::ASCIIToUTF16("extra"));
+  shell_surface->SetExtraTitle(u"extra");
   surface->Commit();
   EXPECT_EQ(window_title, window->GetTitle());
   EXPECT_TRUE(paint_does_draw_text());
@@ -1633,22 +1720,74 @@ TEST_F(ClientControlledShellSurfaceTest, WideFrame) {
       new Buffer(exo_test_helper()->CreateGpuMemoryBuffer(gfx::Size(64, 64))));
   surface->Attach(desktop_buffer.get());
   surface->SetInputRegion(gfx::Rect(0, 0, 64, 64));
-  shell_surface->SetGeometry(gfx::Rect(0, 0, 64, 64));
+  shell_surface->SetGeometry(gfx::Rect(100, 0, 64, 64));
   shell_surface->SetMaximized();
   surface->SetFrame(SurfaceFrameType::NORMAL);
   surface->Commit();
 
+  aura::Window* window = shell_surface->GetWidget()->GetNativeWindow();
+  ash::Shelf* shelf = ash::Shelf::ForWindow(window);
+  shelf->SetAlignment(ash::ShelfAlignment::kLeft);
+
+  const gfx::Rect work_area =
+      display::Screen::GetScreen()->GetPrimaryDisplay().work_area();
+  const gfx::Rect display_bounds =
+      display::Screen::GetScreen()->GetPrimaryDisplay().bounds();
+  ASSERT_TRUE(work_area.x() != display_bounds.x());
+
   auto* wide_frame = shell_surface->wide_frame_for_test();
   ASSERT_TRUE(wide_frame);
   EXPECT_FALSE(wide_frame->header_view()->in_immersive_mode());
+  EXPECT_EQ(work_area.x(), wide_frame->GetBoundsInScreen().x());
+  EXPECT_EQ(work_area.width(), wide_frame->GetBoundsInScreen().width());
+
+  auto another_window = ash::TestWidgetBuilder().BuildOwnsNativeWidget();
+  another_window->SetFullscreen(true);
+
+  // Make sure that the wide frame stays in maximzied size even if there is
+  // active fullscreen window.
+  EXPECT_EQ(work_area.x(), wide_frame->GetBoundsInScreen().x());
+  EXPECT_EQ(work_area.width(), wide_frame->GetBoundsInScreen().width());
+
+  shell_surface->Activate();
+
+  EXPECT_EQ(work_area.x(), wide_frame->GetBoundsInScreen().x());
+  EXPECT_EQ(work_area.width(), wide_frame->GetBoundsInScreen().width());
+
+  // If the shelf is set to auto hide by a user, use the display bounds.
+  ash::Shelf::ForWindow(window)->SetAutoHideBehavior(
+      ash::ShelfAutoHideBehavior::kAlways);
+  EXPECT_EQ(display_bounds.x(), wide_frame->GetBoundsInScreen().x());
+  EXPECT_EQ(display_bounds.width(), wide_frame->GetBoundsInScreen().width());
+
+  ash::Shelf::ForWindow(window)->SetAutoHideBehavior(
+      ash::ShelfAutoHideBehavior::kNever);
+  EXPECT_EQ(work_area.x(), wide_frame->GetBoundsInScreen().x());
+  EXPECT_EQ(work_area.width(), wide_frame->GetBoundsInScreen().width());
+
+  shell_surface->SetFullscreen(true);
+  surface->Commit();
+  EXPECT_EQ(display_bounds.x(), wide_frame->GetBoundsInScreen().x());
+  EXPECT_EQ(display_bounds.width(), wide_frame->GetBoundsInScreen().width());
+  EXPECT_EQ(display_bounds,
+            display::Screen::GetScreen()->GetPrimaryDisplay().work_area());
+
+  // Activating maximized window should not affect the fullscreen shell
+  // surface's wide frame.
+  another_window->Activate();
+  another_window->SetFullscreen(false);
+  EXPECT_EQ(work_area,
+            display::Screen::GetScreen()->GetPrimaryDisplay().work_area());
+  EXPECT_EQ(display_bounds.x(), wide_frame->GetBoundsInScreen().x());
+  EXPECT_EQ(display_bounds.width(), wide_frame->GetBoundsInScreen().width());
+
+  another_window->Close();
 
   // Check targeter is still CustomWindowTargeter.
-  aura::Window* window = shell_surface->GetWidget()->GetNativeWindow();
-
   ASSERT_TRUE(window->parent());
 
   auto* custom_targeter = window->targeter();
-  gfx::Point mouse_location(1, 50);
+  gfx::Point mouse_location(101, 50);
 
   auto* root = window->GetRootWindow();
   aura::WindowTargeter targeter;
@@ -1725,6 +1864,7 @@ TEST_F(ClientControlledShellSurfaceTest, WideFrame) {
   EXPECT_EQ(surface->window(), target);
 }
 
+// Tests that a WideFrameView is created for an unparented ARC task and that the
 TEST_F(ClientControlledShellSurfaceTest, NoFrameOnModalContainer) {
   std::unique_ptr<Surface> surface(new Surface);
   auto shell_surface =
@@ -1744,7 +1884,7 @@ TEST_F(ClientControlledShellSurfaceTest, NoFrameOnModalContainer) {
 
 TEST_F(ClientControlledShellSurfaceTest,
        SetGeometryReparentsToDisplayOnFirstCommit) {
-  UpdateDisplay("100x100,100x100");
+  UpdateDisplay("100x200,100x200");
 
   gfx::Size buffer_size(64, 64);
   std::unique_ptr<Buffer> buffer(
@@ -1790,7 +1930,7 @@ TEST_F(ClientControlledShellSurfaceTest,
 }
 
 TEST_F(ClientControlledShellSurfaceTest, SetBoundsReparentsToDisplay) {
-  UpdateDisplay("100x100,100+0-100x100");
+  UpdateDisplay("100x200,100x200");
 
   gfx::Size buffer_size(64, 64);
   std::unique_ptr<Buffer> buffer(
@@ -1924,13 +2064,13 @@ TEST_F(ClientControlledShellSurfaceTest, SetOrientationLock) {
   surface->Commit();
 
   shell_surface->SetOrientationLock(
-      ash::OrientationLockType::kLandscapePrimary);
+      chromeos::OrientationType::kLandscapePrimary);
   EXPECT_TRUE(controller->rotation_locked());
   display::Display display(display::Screen::GetScreen()->GetPrimaryDisplay());
   gfx::Size displaySize = display.size();
   EXPECT_GT(displaySize.width(), displaySize.height());
 
-  shell_surface->SetOrientationLock(ash::OrientationLockType::kAny);
+  shell_surface->SetOrientationLock(chromeos::OrientationType::kAny);
   EXPECT_FALSE(controller->rotation_locked());
 
   EnableTabletMode(false);
@@ -2003,9 +2143,9 @@ TEST_F(ClientControlledShellSurfaceTest, SnappedInTabletMode) {
 
   EnableTabletMode(true);
 
-  ash::WMEvent event(ash::WM_EVENT_SNAP_LEFT);
+  ash::WMEvent event(ash::WM_EVENT_SNAP_PRIMARY);
   window_state->OnWMEvent(&event);
-  EXPECT_EQ(window_state->GetStateType(), WindowStateType::kLeftSnapped);
+  EXPECT_EQ(window_state->GetStateType(), WindowStateType::kPrimarySnapped);
 
   ash::NonClientFrameViewAsh* frame_view =
       static_cast<ash::NonClientFrameViewAsh*>(
@@ -2013,7 +2153,7 @@ TEST_F(ClientControlledShellSurfaceTest, SnappedInTabletMode) {
   // Snapped window can also use auto hide.
   surface->SetFrame(SurfaceFrameType::AUTOHIDE);
   surface->Commit();
-  EXPECT_TRUE(frame_view->GetVisible());
+  EXPECT_TRUE(frame_view->GetFrameEnabled());
   EXPECT_TRUE(frame_view->GetHeaderView()->in_immersive_mode());
 }
 
@@ -2094,8 +2234,8 @@ TEST_F(ClientControlledShellSurfaceDisplayTest,
   surface->SetFrame(SurfaceFrameType::NORMAL);
   surface->Commit();
   shell_surface->OnBoundsChangeEvent(WindowStateType::kMinimized,
-                                     WindowStateType::kRightSnapped, display_id,
-                                     gfx::Rect(0, 0, 100, 100), 0);
+                                     WindowStateType::kSecondarySnapped,
+                                     display_id, gfx::Rect(0, 0, 100, 100), 0);
   EXPECT_EQ(3, delegate->bounds_change_count());
   EXPECT_EQ(
       frame_view->GetClientBoundsForWindowBounds(gfx::Rect(0, 0, 100, 100)),
@@ -2105,8 +2245,8 @@ TEST_F(ClientControlledShellSurfaceDisplayTest,
   // Snapped, in tablet mode.
   EnableTabletMode(true);
   shell_surface->OnBoundsChangeEvent(WindowStateType::kMinimized,
-                                     WindowStateType::kRightSnapped, display_id,
-                                     gfx::Rect(0, 0, 100, 100), 0);
+                                     WindowStateType::kSecondarySnapped,
+                                     display_id, gfx::Rect(0, 0, 100, 100), 0);
   EXPECT_EQ(4, delegate->bounds_change_count());
   EXPECT_EQ(gfx::Rect(0, 0, 100, 100), delegate->requested_bounds().back());
 }
@@ -2574,7 +2714,7 @@ TEST_F(ClientControlledShellSurfaceScaleTest,
       display::Screen::GetScreen()->GetPrimaryDisplay();
   gfx::Rect initial_native_bounds(100, 100, 100, 100);
   shell_surface->SetBounds(primary_display.id(), initial_native_bounds);
-  shell_surface->SetSnappedToRight();
+  shell_surface->SetSnappedToSecondary();
   surface->Commit();
 
   EXPECT_EQ(2.f, 1.f / shell_surface->GetClientToDpScale());
@@ -2611,8 +2751,8 @@ TEST_F(ClientControlledShellSurfaceTest, SnappedClientBounds) {
   // Clear insets so that it won't affects the bounds.
   shell_surface->SetSystemUiVisibility(true);
   int64_t display_id = display::Screen::GetScreen()->GetPrimaryDisplay().id();
-  ash::Shell::Get()->display_manager()->UpdateWorkAreaOfDisplay(
-      display_id, gfx::Insets(0, 0, 0, 0));
+  ash::Shell::Get()->display_manager()->UpdateWorkAreaOfDisplay(display_id,
+                                                                gfx::Insets());
 
   auto* delegate =
       TestClientControlledShellSurfaceDelegate::SetUp(shell_surface.get());
@@ -2628,7 +2768,7 @@ TEST_F(ClientControlledShellSurfaceTest, SnappedClientBounds) {
   surface->Commit();
   EXPECT_EQ(gfx::Rect(50, 68, 200, 332), widget->GetWindowBoundsInScreen());
 
-  ash::WMEvent event(ash::WM_EVENT_SNAP_LEFT);
+  ash::WMEvent event(ash::WM_EVENT_SNAP_PRIMARY);
   ash::WindowState::Get(window)->OnWMEvent(&event);
   EXPECT_EQ(gfx::Rect(0, 32, 400, 568), delegate->requested_bounds().back());
 
@@ -2640,7 +2780,7 @@ TEST_F(ClientControlledShellSurfaceTest, SnappedClientBounds) {
 
   ash::WindowState::Get(window)->OnWMEvent(&event);
   EXPECT_EQ(gfx::Rect(0, 32, 400, 568), delegate->requested_bounds().back());
-  shell_surface->SetSnappedToLeft();
+  shell_surface->SetSnappedToPrimary();
   shell_surface->SetGeometry(gfx::Rect(0, 0, 400, 568));
   surface->Commit();
 
@@ -2653,11 +2793,116 @@ TEST_F(ClientControlledShellSurfaceTest, SnappedClientBounds) {
 
   // Tablet mode -> clamshell mode. Top caption height should be reserved.
   EnableTabletMode(false);
-  EXPECT_EQ(gfx::Rect(0, 32, 396, 568), delegate->requested_bounds().back());
+  EXPECT_EQ(gfx::Rect(0, 32, 400, 568), delegate->requested_bounds().back());
 
   // Clean up state.
-  shell_surface->SetSnappedToLeft();
+  shell_surface->SetSnappedToPrimary();
   surface->Commit();
+}
+
+// The shell surface with resize lock on should be unresizable.
+TEST_F(ClientControlledShellSurfaceTest,
+       ShellSurfaceWithResizeLockOnIsUnresizable) {
+  gfx::Size buffer_size(256, 256);
+  std::unique_ptr<Buffer> buffer(
+      new Buffer(exo_test_helper()->CreateGpuMemoryBuffer(buffer_size)));
+  std::unique_ptr<Surface> surface(new Surface);
+  auto shell_surface =
+      exo_test_helper()->CreateClientControlledShellSurface(surface.get());
+  surface->Attach(buffer.get());
+  surface->Commit();
+}
+
+TEST_F(ClientControlledShellSurfaceTest, OverlayShadowBounds) {
+  gfx::Size buffer_size(1, 1);
+  std::unique_ptr<Buffer> buffer(
+      new Buffer(exo_test_helper()->CreateGpuMemoryBuffer(buffer_size)));
+  std::unique_ptr<Surface> surface(new Surface);
+  auto shell_surface =
+      exo_test_helper()->CreateClientControlledShellSurface(surface.get());
+  surface->Attach(buffer.get());
+  surface->Commit();
+
+  display::Display primary_display =
+      display::Screen::GetScreen()->GetPrimaryDisplay();
+  gfx::Rect initial_bounds(150, 10, 200, 200);
+  shell_surface->SetBounds(primary_display.id(), initial_bounds);
+  shell_surface->OnSetFrame(SurfaceFrameType::NORMAL);
+  surface->Commit();
+
+  EXPECT_FALSE(shell_surface->HasOverlay());
+
+  ShellSurfaceBase::OverlayParams params(std::make_unique<views::View>());
+  params.overlaps_frame = false;
+  shell_surface->AddOverlay(std::move(params));
+  EXPECT_TRUE(shell_surface->HasOverlay());
+
+  {
+    gfx::Size overlay_size =
+        shell_surface->GetWidget()->GetWindowBoundsInScreen().size();
+    gfx::Size shadow_size = shell_surface->GetShadowBounds().size();
+    EXPECT_EQ(shadow_size, overlay_size);
+  }
+}
+
+// WideFrameView follows its respective surface when it is eventually parented.
+// See crbug.com/1223135.
+TEST_F(ClientControlledShellSurfaceTest, WideframeForUnparentedTasks) {
+  auto surface = std::make_unique<Surface>();
+  auto shell_surface =
+      exo_test_helper()->CreateClientControlledShellSurface(surface.get());
+
+  // Create a non-wide frame shell surface.
+  auto desktop_buffer = std::make_unique<Buffer>(
+      exo_test_helper()->CreateGpuMemoryBuffer(gfx::Size(64, 64)));
+  surface->Attach(desktop_buffer.get());
+  surface->SetInputRegion(gfx::Rect(0, 0, 64, 64));
+  shell_surface->SetGeometry(gfx::Rect(100, 0, 64, 64));
+  surface->SetFrame(SurfaceFrameType::NORMAL);
+  surface->Commit();
+  auto* wide_frame = shell_surface->wide_frame_for_test();
+  ASSERT_FALSE(wide_frame);
+
+  // Set the |app_restore::kParentToHiddenContainerKey| for the surface and
+  // reparent it, simulating the Full Restore process for an unparented ARC
+  // task.
+  aura::Window* window = shell_surface->GetWidget()->GetNativeWindow();
+  window->SetProperty(app_restore::kParentToHiddenContainerKey, true);
+  aura::client::ParentWindowWithContext(window,
+                                        /*context=*/window->GetRootWindow(),
+                                        window->GetBoundsInScreen());
+
+  // Maximize the surface. The WideFrameView should be created and a crash
+  // should not occur.
+  shell_surface->SetMaximized();
+  surface->Commit();
+  const auto* hidden_container_parent = window->parent();
+  wide_frame = shell_surface->wide_frame_for_test();
+  EXPECT_TRUE(wide_frame);
+  EXPECT_EQ(hidden_container_parent,
+            wide_frame->GetWidget()->GetNativeWindow()->parent());
+
+  // Call the WindowRestoreController, simulating the ARC task becoming ready.
+  // The surface should be reparented and the WideFrameView should follow it.
+  ash::WindowRestoreController::Get()->OnParentWindowToValidContainer(window);
+  EXPECT_NE(hidden_container_parent, window->parent());
+  wide_frame = shell_surface->wide_frame_for_test();
+  EXPECT_TRUE(wide_frame);
+  EXPECT_EQ(window->parent(),
+            wide_frame->GetWidget()->GetNativeWindow()->parent());
+}
+
+TEST_F(ClientControlledShellSurfaceTest,
+       InitializeWindowStateGrantsPermissionToActivate) {
+  auto surface = std::make_unique<Surface>();
+  auto shell_surface =
+      exo_test_helper()->CreateClientControlledShellSurface(surface.get());
+  surface->Commit();
+
+  aura::Window* window = shell_surface->GetWidget()->GetNativeWindow();
+  auto* permission = window->GetProperty(kPermissionKey);
+
+  EXPECT_TRUE(permission->Check(Permission::Capability::kActivate));
 }
 
 }  // namespace exo

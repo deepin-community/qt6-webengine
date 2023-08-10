@@ -13,7 +13,6 @@
 #include "build/build_config.h"
 #include "content/public/common/content_constants.h"
 #include "content/public/common/content_switches.h"
-#include "content/renderer/loader/web_worker_fetch_context_impl.h"
 #include "content/shell/common/shell_switches.h"
 #include "content/shell/renderer/shell_render_frame_observer.h"
 #include "content/web_test/common/web_test_switches.h"
@@ -26,6 +25,7 @@
 #include "media/media_buildflags.h"
 #include "third_party/blink/public/common/unique_name/unique_name_helper.h"
 #include "third_party/blink/public/platform/web_audio_latency_hint.h"
+#include "third_party/blink/public/platform/web_dedicated_or_shared_worker_fetch_context.h"
 #include "third_party/blink/public/platform/web_runtime_features.h"
 #include "third_party/blink/public/test/frame_widget_test_helper.h"
 #include "third_party/blink/public/web/blink.h"
@@ -35,13 +35,13 @@
 #include "ui/gfx/icc_profile.h"
 #include "v8/include/v8.h"
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 #include "third_party/blink/public/web/win/web_font_rendering.h"
 #include "third_party/skia/include/core/SkFontMgr.h"
 #include "third_party/skia/include/ports/SkTypeface_win.h"
 #endif
 
-#if defined(OS_FUCHSIA) || defined(OS_MAC)
+#if BUILDFLAG(IS_FUCHSIA) || BUILDFLAG(IS_MAC)
 #include "skia/ext/test_fonts.h"
 #endif
 
@@ -89,7 +89,8 @@ WebTestContentRendererClient::WebTestContentRendererClient() {
   blink::InstallCreateWebFrameWidgetHook(&create_widget_callback_);
 
   blink::UniqueNameHelper::PreserveStableUniqueNameForTesting();
-  WebWorkerFetchContextImpl::InstallRewriteURLFunction(RewriteWebTestsURL);
+  blink::WebDedicatedOrSharedWorkerFetchContext::InstallRewriteURLFunction(
+      RewriteWebTestsURL);
 }
 
 WebTestContentRendererClient::~WebTestContentRendererClient() {
@@ -101,12 +102,12 @@ void WebTestContentRendererClient::RenderThreadStarted() {
 
   render_thread_observer_ = std::make_unique<WebTestRenderThreadObserver>();
 
-#if defined(OS_FUCHSIA) || defined(OS_MAC)
+#if BUILDFLAG(IS_FUCHSIA) || BUILDFLAG(IS_MAC)
   // On these platforms, fonts are set up in the renderer process. Other
   // platforms set up fonts as part of WebTestBrowserMainRunner in the
   // browser process, via WebTestBrowserPlatformInitialize().
   skia::ConfigureTestFont();
-#elif defined(OS_WIN)
+#elif BUILDFLAG(IS_WIN)
   // DirectWrite only has access to %WINDIR%\Fonts by default. For developer
   // side-loading, support kRegisterFontFiles to allow access to additional
   // fonts. The browser process sets these files and punches a hole in the
@@ -130,7 +131,7 @@ void WebTestContentRendererClient::RenderFrameCreated(
   // override is not needed.
 }
 
-std::unique_ptr<content::WebSocketHandshakeThrottleProvider>
+std::unique_ptr<blink::WebSocketHandshakeThrottleProvider>
 WebTestContentRendererClient::CreateWebSocketHandshakeThrottleProvider() {
   return std::make_unique<TestWebSocketHandshakeThrottleProvider>();
 }

@@ -13,8 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-declare class CustomError extends Error {
-    constructor(message: string);
+/**
+ * @public
+ */
+export declare class CustomError extends Error {
+    constructor(message?: string);
 }
 /**
  * TimeoutError is emitted whenever certain operations are terminated due to timeout.
@@ -28,7 +31,21 @@ declare class CustomError extends Error {
  */
 export declare class TimeoutError extends CustomError {
 }
+/**
+ * ProtocolError is emitted whenever there is an error from the protocol.
+ *
+ * @public
+ */
+export declare class ProtocolError extends CustomError {
+    code?: number;
+    originalMessage: string;
+}
+/**
+ * @public
+ */
 export declare type PuppeteerErrors = Record<string, typeof CustomError>;
+/**
+ * @public
+ */
 export declare const puppeteerErrors: PuppeteerErrors;
-export {};
 //# sourceMappingURL=Errors.d.ts.map

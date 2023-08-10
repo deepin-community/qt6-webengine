@@ -43,14 +43,14 @@
 #include "snappy.h"
 #include "snappy_test_data.h"
 
-DEFINE_bool(snappy_dump_decompression_table, false,
+SNAPPY_FLAG(bool, snappy_dump_decompression_table, false,
             "If true, we print the decompression table during tests.");
 
 namespace snappy {
 
 namespace {
 
-#if defined(HAVE_FUNC_MMAP) && defined(HAVE_FUNC_SYSCONF)
+#if HAVE_FUNC_MMAP && HAVE_FUNC_SYSCONF
 
 // To test against code that reads beyond its input, this class copies a
 // string to a newly allocated group of pages, the last of which
@@ -96,7 +96,7 @@ class DataEndingAtUnreadablePage {
   size_t size_;
 };
 
-#else  // defined(HAVE_FUNC_MMAP) && defined(HAVE_FUNC_SYSCONF)
+#else  // HAVE_FUNC_MMAP) && HAVE_FUNC_SYSCONF
 
 // Fallback for systems without mmap.
 using DataEndingAtUnreadablePage = std::string;
@@ -461,7 +461,7 @@ TEST(Snappy, MaxBlowup) {
 }
 
 TEST(Snappy, RandomData) {
-  std::minstd_rand0 rng(FLAGS_test_random_seed);
+  std::minstd_rand0 rng(snappy::GetFlag(FLAGS_test_random_seed));
   std::uniform_int_distribution<int> uniform_0_to_3(0, 3);
   std::uniform_int_distribution<int> uniform_0_to_8(0, 8);
   std::uniform_int_distribution<int> uniform_byte(0, 255);
@@ -834,7 +834,7 @@ TEST(Snappy, FindMatchLength) {
 TEST(Snappy, FindMatchLengthRandom) {
   constexpr int kNumTrials = 10000;
   constexpr int kTypicalLength = 10;
-  std::minstd_rand0 rng(FLAGS_test_random_seed);
+  std::minstd_rand0 rng(snappy::GetFlag(FLAGS_test_random_seed));
   std::uniform_int_distribution<int> uniform_byte(0, 255);
   std::bernoulli_distribution one_in_two(1.0 / 2);
   std::bernoulli_distribution one_in_typical_length(1.0 / kTypicalLength);
@@ -905,7 +905,7 @@ TEST(Snappy, VerifyCharTable) {
   // COPY_1_BYTE_OFFSET.
   //
   // The tag byte in the compressed data stores len-4 in 3 bits, and
-  // offset/256 in 5 bits.  offset%256 is stored in the next byte.
+  // offset/256 in 3 bits.  offset%256 is stored in the next byte.
   //
   // This format is used for length in range [4..11] and offset in
   // range [0..2047]
@@ -938,7 +938,7 @@ TEST(Snappy, VerifyCharTable) {
     EXPECT_NE(0xffff, dst[i]) << "Did not assign byte " << i;
   }
 
-  if (FLAGS_snappy_dump_decompression_table) {
+  if (snappy::GetFlag(FLAGS_snappy_dump_decompression_table)) {
     std::printf("static const uint16_t char_table[256] = {\n  ");
     for (int i = 0; i < 256; ++i) {
       std::printf("0x%04x%s",

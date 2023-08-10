@@ -5,7 +5,6 @@
 #include "headless/lib/browser/headless_request_context_manager.h"
 
 #include "base/bind.h"
-#include "base/task/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
@@ -25,19 +24,13 @@
 #include "services/network/url_request_context_builder_mojo.h"
 
 #if defined(HEADLESS_USE_PREFS)
-#include "components/os_crypt/os_crypt.h"
+#include "components/os_crypt/os_crypt.h"  // nogncheck
 #include "content/public/common/network_service_util.h"
 #endif
 
 namespace headless {
 
 namespace {
-
-// TODO(crbug.com/1052397): Revisit the macro expression once build flag switch
-// of lacros-chrome is complete.
-#if defined(OS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS)
-constexpr char kProductName[] = "HeadlessChrome";
-#endif
 
 net::NetworkTrafficAnnotationTag GetProxyConfigTrafficAnnotationTag() {
   static net::NetworkTrafficAnnotationTag traffic_annotation =
@@ -65,28 +58,20 @@ net::NetworkTrafficAnnotationTag GetProxyConfigTrafficAnnotationTag() {
   return traffic_annotation;
 }
 
-void SetCryptConfigOnce(const base::FilePath& user_data_path) {
+void SetCryptKeyOnce(const base::FilePath& user_data_path) {
   static bool done_once = false;
   if (done_once)
     return;
   done_once = true;
 
-// TODO(crbug.com/1052397): Revisit the macro expression once build flag switch
-// of lacros-chrome is complete.
-#if defined(OS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS)
-  ::network::mojom::CryptConfigPtr config =
-      ::network::mojom::CryptConfig::New();
-  config->store = base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
-      switches::kPasswordStore);
-  config->product_name = kProductName;
-  config->should_use_preference = false;
-  config->user_data_path = user_data_path;
-  content::GetNetworkService()->SetCryptConfig(std::move(config));
-#elif defined(OS_WIN) && defined(HEADLESS_USE_PREFS)
+#if (BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX)) && defined(HEADLESS_USE_PREFS)
   // The OSCrypt keys are process bound, so if network service is out of
   // process, send it the required key if it is available.
-  if (content::IsOutOfProcessNetworkService() &&
-      OSCrypt::IsEncryptionAvailable()) {
+  if (content::IsOutOfProcessNetworkService()
+#if BUILDFLAG(IS_WIN)
+      && OSCrypt::IsEncryptionAvailable()
+#endif
+  ) {
     content::GetNetworkService()->SetEncryptionKey(
         OSCrypt::GetRawEncryptionKey());
   }
@@ -119,6 +104,10 @@ class HeadlessProxyConfigMonitor
                                   base::Unretained(proxy_config_service_.get()),
                                   base::Unretained(this)));
   }
+
+  HeadlessProxyConfigMonitor(const HeadlessProxyConfigMonitor&) = delete;
+  HeadlessProxyConfigMonitor& operator=(const HeadlessProxyConfigMonitor&) =
+      delete;
 
   ~HeadlessProxyConfigMonitor() override {
     DCHECK(task_runner_->RunsTasksInCurrentSequence());
@@ -173,8 +162,6 @@ class HeadlessProxyConfigMonitor
   mojo::Receiver<::network::mojom::ProxyConfigPollerClient> poller_receiver_{
       this};
   mojo::Remote<::network::mojom::ProxyConfigClient> proxy_config_client_;
-
-  DISALLOW_COPY_AND_ASSIGN(HeadlessProxyConfigMonitor);
 };
 
 // static
@@ -186,8 +173,12 @@ HeadlessRequestContextManager::CreateSystemContext(
 
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
   auto auth_params = ::network::mojom::HttpAuthDynamicParams::New();
-  auth_params->server_allowlist =
-      command_line->GetSwitchValueASCII(switches::kAuthServerAllowlist);
+
+  if (command_line->HasSwitch(switches::kAuthServerAllowlist)) {
+    auth_params->server_allowlist =
+        command_line->GetSwitchValueASCII(switches::kAuthServerAllowlist);
+  }
+
   auto* network_service = content::GetNetworkService();
   network_service->ConfigureHttpAuthPrefs(std::move(auth_params));
 
@@ -200,7 +191,7 @@ HeadlessRequestContextManager::CreateSystemContext(
       network_context_params.get(), cert_verifier_creation_params.get());
   network_context_params->cert_verifier_params =
       content::GetCertVerifierParams(std::move(cert_verifier_creation_params));
-  network_service->CreateNetworkContext(
+  content::CreateNetworkContextInNetworkService(
       manager->system_context_.InitWithNewPipeAndPassReceiver(),
       std::move(network_context_params));
 
@@ -212,7 +203,7 @@ HeadlessRequestContextManager::HeadlessRequestContextManager(
     base::FilePath user_data_path)
     :
 // On Windows, Cookie encryption requires access to local_state prefs.
-#if defined(OS_WIN) && !defined(HEADLESS_USE_PREFS)
+#if BUILDFLAG(IS_WIN) && !defined(HEADLESS_USE_PREFS)
       cookie_encryption_enabled_(false),
 #else
       cookie_encryption_enabled_(
@@ -237,7 +228,7 @@ HeadlessRequestContextManager::HeadlessRequestContextManager(
     }
   }
 
-  SetCryptConfigOnce(user_data_path_);
+  SetCryptKeyOnce(user_data_path_);
 }
 
 HeadlessRequestContextManager::~HeadlessRequestContextManager() {
@@ -271,15 +262,18 @@ void HeadlessRequestContextManager::ConfigureNetworkContextParamsInternal(
 
   if (!user_data_path_.empty()) {
     context_params->enable_encrypted_cookies = cookie_encryption_enabled_;
-    context_params->cookie_path =
-        user_data_path_.Append(FILE_PATH_LITERAL("Cookies"));
+    context_params->file_paths =
+        ::network::mojom::NetworkContextFilePaths::New();
+    context_params->file_paths->data_directory = user_data_path_;
+    context_params->file_paths->cookie_database_name =
+        base::FilePath(FILE_PATH_LITERAL("Cookies"));
   }
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
   if (command_line->HasSwitch(switches::kDiskCacheDir)) {
-    context_params->http_cache_path =
+    context_params->http_cache_directory =
         command_line->GetSwitchValuePath(switches::kDiskCacheDir);
   } else if (!user_data_path_.empty()) {
-    context_params->http_cache_path =
+    context_params->http_cache_directory =
         user_data_path_.Append(FILE_PATH_LITERAL("Cache"));
   }
   if (proxy_config_) {

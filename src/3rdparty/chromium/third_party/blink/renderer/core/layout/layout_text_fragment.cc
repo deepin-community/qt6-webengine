@@ -194,11 +194,16 @@ LayoutText* LayoutTextFragment::GetFirstLetterPart() const {
   NOT_DESTROYED();
   if (!is_remaining_text_layout_object_)
     return nullptr;
-  // Node: We assume first letter pseudo element has only one child and it
-  // is LayoutTextFragment.
   LayoutObject* const first_letter_container =
       GetFirstLetterPseudoElement()->GetLayoutObject();
-  LayoutObject* const child = first_letter_container->SlowFirstChild();
+  LayoutObject* child = first_letter_container->SlowFirstChild();
+  if (!child->IsText()) {
+    DCHECK(!IsInLayoutNGInlineFormattingContext());
+    // In legacy layout there may also be a list item marker here. The next
+    // sibling better be the LayoutTextFragment of the ::first-letter, then.
+    child = child->NextSibling();
+    DCHECK(child);
+  }
   CHECK(child->IsText());
   DCHECK_EQ(child, first_letter_container->SlowLastChild());
   return To<LayoutTextFragment>(child);
@@ -236,11 +241,11 @@ Position LayoutTextFragment::PositionForCaretOffset(unsigned offset) const {
   return Position(node, Start() + clamped_offset);
 }
 
-base::Optional<unsigned> LayoutTextFragment::CaretOffsetForPosition(
+absl::optional<unsigned> LayoutTextFragment::CaretOffsetForPosition(
     const Position& position) const {
   NOT_DESTROYED();
   if (position.IsNull() || position.AnchorNode() != AssociatedTextNode())
-    return base::nullopt;
+    return absl::nullopt;
   unsigned dom_offset;
   if (position.IsBeforeAnchor()) {
     dom_offset = 0;
@@ -253,8 +258,27 @@ base::Optional<unsigned> LayoutTextFragment::CaretOffsetForPosition(
     dom_offset = position.OffsetInContainerNode();
   }
   if (dom_offset < Start() || dom_offset > Start() + FragmentLength())
-    return base::nullopt;
+    return absl::nullopt;
   return dom_offset - Start();
+}
+
+String LayoutTextFragment::PlainText() const {
+  // Special handling for floating ::first-letter in LayoutNG to ensure that
+  // PlainText() returns the full text of the node, not just the remaining text.
+  // See also ElementInnerTextCollector::ProcessTextNode(), which does the same.
+  NOT_DESTROYED();
+  if (!is_remaining_text_layout_object_ || !GetNode())
+    return LayoutText::PlainText();
+  LayoutText* first_letter = GetFirstLetterPart();
+  if (!first_letter)
+    return LayoutText::PlainText();
+  const NGOffsetMapping* remaining_text_mapping = GetNGOffsetMapping();
+  const NGOffsetMapping* first_letter_mapping =
+      first_letter->GetNGOffsetMapping();
+  if (first_letter_mapping && remaining_text_mapping &&
+      first_letter_mapping != remaining_text_mapping)
+    return first_letter_mapping->GetText() + LayoutText::PlainText();
+  return LayoutText::PlainText();
 }
 
 }  // namespace blink

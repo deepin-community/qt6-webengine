@@ -5,6 +5,7 @@
 #include "net/disk_cache/blockfile/backend_impl.h"
 
 #include <limits>
+#include <memory>
 #include <utility>
 
 #include "base/bind.h"
@@ -19,18 +20,17 @@
 #include "base/metrics/field_trial.h"
 #include "base/metrics/histogram.h"
 #include "base/rand_util.h"
-#include "base/single_thread_task_runner.h"
-#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
+#include "base/synchronization/waitable_event.h"
 #include "base/system/sys_info.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
-#include "base/trace_event/process_memory_dump.h"
 #include "base/trace_event/trace_event.h"
 #include "net/base/net_errors.h"
 #include "net/disk_cache/backend_cleanup_tracker.h"
@@ -46,7 +46,6 @@
 #define CACHE_UMA_BACKEND_IMPL_OBJ this
 
 using base::Time;
-using base::TimeDelta;
 using base::TimeTicks;
 
 namespace {
@@ -317,8 +316,8 @@ int BackendImpl::SyncInit() {
     // Create a recurrent timer of 30 secs.
     DCHECK(background_queue_.BackgroundIsCurrentSequence());
     int timer_delay = unit_test_ ? 1000 : 30000;
-    timer_.reset(new base::RepeatingTimer());
-    timer_->Start(FROM_HERE, TimeDelta::FromMilliseconds(timer_delay), this,
+    timer_ = std::make_unique<base::RepeatingTimer>();
+    timer_->Start(FROM_HERE, base::Milliseconds(timer_delay), this,
                   &BackendImpl::OnStatsTimer);
   }
 
@@ -339,7 +338,9 @@ void BackendImpl::CleanupCache() {
 
     if (user_flags_ & kNoRandom) {
       // This is a net_unittest, verify that we are not 'leaking' entries.
-      File::WaitForPendingIO(&num_pending_io_);
+      // TODO(https://crbug.com/1184679): Refactor this and eliminate the
+      //    WaitForPendingIOForTesting API.
+      File::WaitForPendingIOForTesting(&num_pending_io_);
       DCHECK(!num_refs_);
     } else {
       File::DropPendingIO();
@@ -747,7 +748,7 @@ bool BackendImpl::CreateExternalFile(Addr* address) {
     }
     base::FilePath name = GetFileName(file_address);
     int flags = base::File::FLAG_READ | base::File::FLAG_WRITE |
-                base::File::FLAG_CREATE | base::File::FLAG_EXCLUSIVE_WRITE;
+                base::File::FLAG_CREATE | base::File::FLAG_WIN_EXCLUSIVE_WRITE;
     base::File file(name, flags);
     if (!file.IsValid()) {
       base::File::Error error = file.error_details();
@@ -1355,13 +1356,6 @@ void BackendImpl::OnExternalCacheHit(const std::string& key) {
   background_queue_.OnExternalCacheHit(key);
 }
 
-size_t BackendImpl::DumpMemoryStats(
-    base::trace_event::ProcessMemoryDump* pmd,
-    const std::string& parent_absolute_name) const {
-  // TODO(xunjieli): Implement this. crbug.com/669108.
-  return 0u;
-}
-
 // ------------------------------------------------------------------------
 
 // We just created a new file so we're going to write the header and set the
@@ -1415,7 +1409,8 @@ bool BackendImpl::InitBackingStore(bool* file_created) {
   base::FilePath index_name = path_.AppendASCII(kIndexName);
 
   int flags = base::File::FLAG_READ | base::File::FLAG_WRITE |
-              base::File::FLAG_OPEN_ALWAYS | base::File::FLAG_EXCLUSIVE_WRITE;
+              base::File::FLAG_OPEN_ALWAYS |
+              base::File::FLAG_WIN_EXCLUSIVE_WRITE;
   base::File base_file(index_name, flags);
   if (!base_file.IsValid())
     return false;
@@ -1604,13 +1599,8 @@ int BackendImpl::NewEntry(Addr address, scoped_refptr<EntryImpl>* entry) {
   IncreaseNumRefs();
   *entry = nullptr;
 
-  TimeTicks start = TimeTicks::Now();
   if (!cache_entry->entry()->Load())
     return ERR_READ_FAILURE;
-
-  if (IsLoaded()) {
-    CACHE_UMA(AGE_MS, "LoadTime", 0, start);
-  }
 
   if (!cache_entry->SanityCheck()) {
     LOG(WARNING) << "Messed up entry found.";
@@ -1994,9 +1984,6 @@ void BackendImpl::ReportStats() {
 
   stats_.ResetRatios();
   stats_.SetCounter(Stats::TRIM_ENTRY, 0);
-
-  if (GetCacheType() == net::DISK_CACHE)
-    block_files_.ReportStats();
 }
 
 void BackendImpl::UpgradeTo2_1() {
@@ -2113,7 +2100,7 @@ bool BackendImpl::CheckEntry(EntryImpl* cache_entry) {
   bool ok = block_files_.IsValid(cache_entry->entry()->address());
   ok = ok && block_files_.IsValid(cache_entry->rankings()->address());
   EntryStore* data = cache_entry->entry()->Data();
-  for (size_t i = 0; i < base::size(data->data_addr); i++) {
+  for (size_t i = 0; i < std::size(data->data_addr); i++) {
     if (data->data_addr[i]) {
       Addr address(data->data_addr[i]);
       if (address.is_block_file())

@@ -9,7 +9,8 @@ import "mojo/public/mojom/base/time.mojom";
 import "mojo/public/mojom/base/unguessable_token.mojom";
 import "services/network/public/mojom/chunked_data_pipe_getter.mojom";
 import "services/network/public/mojom/fetch_api.mojom";
-import "services/network/public/mojom/url_loader.mojom";
+import "services/network/public/mojom/request_priority.mojom";
+import "services/network/public/mojom/url_request.mojom";
 import "third_party/blink/public/mojom/blob/serialized_blob.mojom";
 import "third_party/blink/public/mojom/loader/request_context_frame_type.mojom";
 import "third_party/blink/public/mojom/loader/referrer.mojom";
@@ -25,6 +26,7 @@ import "url/mojom/url.mojom";
 // than this one.
 enum RequestContextType {
   UNSPECIFIED,
+  ATTRIBUTION_SRC,
   AUDIO,
   BEACON,
   CSP_REPORT,
@@ -40,7 +42,6 @@ enum RequestContextType {
   IFRAME,
   IMAGE,
   IMAGE_SET,
-  IMPORT,
   INTERNAL,
   LOCATION,
   MANIFEST,
@@ -99,13 +100,12 @@ enum FetchCacheMode {
   kUnspecifiedForceCacheMiss,
 };
 
-// Corresponds to Fetch request's "importance mode"
-// Currently discussed at: https://github.com/WICG/priority-hints
-// TODO(domfarolino): add a spec link to this once specified.
-enum FetchImportanceMode {
-  kImportanceLow,
-  kImportanceAuto,
-  kImportanceHigh
+// Corresponds to Fetch request's "priority"
+// Spec: https://wicg.github.io/priority-hints/
+enum FetchPriorityHint {
+  kLow,
+  kAuto,
+  kHigh
 };
 
 // Request headers for FetchAPIRequest. This is typemapped to a container with a

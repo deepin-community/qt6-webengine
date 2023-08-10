@@ -8,7 +8,6 @@
 #include <map>
 #include <utility>
 
-#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "gpu/command_buffer/common/constants.h"
 #include "gpu/command_buffer/common/mailbox.h"
@@ -22,14 +21,15 @@ namespace gles2 {
 class GPU_GLES2_EXPORT MailboxManagerImpl : public MailboxManager {
  public:
   MailboxManagerImpl();
+
+  MailboxManagerImpl(const MailboxManagerImpl&) = delete;
+  MailboxManagerImpl& operator=(const MailboxManagerImpl&) = delete;
+
   ~MailboxManagerImpl() override;
 
   // MailboxManager implementation:
   TextureBase* ConsumeTexture(const Mailbox& mailbox) override;
   void ProduceTexture(const Mailbox& mailbox, TextureBase* texture) override;
-  bool UsesSync() override;
-  void PushTextureUpdates(const SyncToken& token) override {}
-  void PullTextureUpdates(const SyncToken& token) override {}
   void TextureDeleted(TextureBase* texture) override;
 
  private:
@@ -43,12 +43,9 @@ class GPU_GLES2_EXPORT MailboxManagerImpl : public MailboxManager {
 
   MailboxToTextureMap mailbox_to_textures_;
   TextureToMailboxMap textures_to_mailboxes_;
-
-  DISALLOW_COPY_AND_ASSIGN(MailboxManagerImpl);
 };
 
 }  // namespage gles2
 }  // namespace gpu
 
 #endif  // GPU_COMMAND_BUFFER_SERVICE_MAILBOX_MANAGER_IMPL_H_
-

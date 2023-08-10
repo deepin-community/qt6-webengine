@@ -14,11 +14,9 @@
 
 #include "base/json/json_writer.h"
 #include "base/ranges/algorithm.h"
+#include "base/stl_util.h"
 #include "base/values.h"
-#include "extensions/common/extension_messages.h"
 #include "extensions/common/permissions/api_permission.h"
-#include "ipc/ipc_message.h"
-#include "ipc/ipc_message_utils.h"
 
 namespace extensions {
 
@@ -106,31 +104,25 @@ class SetDisjunctionPermission : public APIPermission {
       std::string* error,
       std::vector<std::string>* unhandled_permissions) override {
     data_set_.clear();
-    const base::ListValue* list = NULL;
 
     if (!value) {
       // treat null as an empty list.
       return true;
     }
 
-    if (!value->GetAsList(&list)) {
+    if (!value->is_list()) {
       if (error)
         *error = "Cannot parse the permission list. It's not a list.";
       return false;
     }
 
-    for (size_t i = 0; i < list->GetSize(); ++i) {
-      const base::Value* item_value = NULL;
-      bool got_item = list->Get(i, &item_value);
-      DCHECK(got_item);
-      DCHECK(item_value);
-
+    for (const base::Value& item_value : value->GetListDeprecated()) {
       PermissionDataType data;
-      if (data.FromValue(item_value)) {
+      if (data.FromValue(&item_value)) {
         data_set_.insert(data);
       } else {
         std::string unknown_permission;
-        base::JSONWriter::Write(*item_value, &unknown_permission);
+        base::JSONWriter::Write(item_value, &unknown_permission);
         if (unhandled_permissions) {
           unhandled_permissions->push_back(unknown_permission);
         } else {
@@ -153,16 +145,6 @@ class SetDisjunctionPermission : public APIPermission {
       list->Append(std::move(item_value));
     }
     return std::unique_ptr<base::Value>(list);
-  }
-
-  void Write(base::Pickle* m) const override { IPC::WriteParam(m, data_set_); }
-
-  bool Read(const base::Pickle* m, base::PickleIterator* iter) override {
-    return IPC::ReadParam(m, iter, &data_set_);
-  }
-
-  void Log(std::string* log) const override {
-    IPC::LogParam(data_set_, log);
   }
 
  protected:

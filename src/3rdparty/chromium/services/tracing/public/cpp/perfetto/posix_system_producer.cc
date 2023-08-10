@@ -24,12 +24,12 @@
 #include "third_party/perfetto/include/perfetto/protozero/scattered_stream_writer.h"
 #include "third_party/perfetto/protos/perfetto/common/track_event_descriptor.pbzero.h"
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 #include "base/android/build_info.h"
-#endif  // defined(OS_ANDROID)
+#endif  // BUILDFLAG(IS_ANDROID)
 
-#if !defined(OS_ANDROID)
-#include "mojo/public/cpp/bindings/shared_remote.h"
+#if !BUILDFLAG(IS_ANDROID)
+#include "mojo/public/cpp/bindings/remote.h"
 #include "services/tracing/public/cpp/system_tracing_service.h"
 #endif
 
@@ -58,8 +58,9 @@ uint32_t IncreaseBackoff(uint32_t current, uint32_t max) {
 
 }  // namespace
 
-PosixSystemProducer::PosixSystemProducer(const char* socket,
-                                         PerfettoTaskRunner* task_runner)
+PosixSystemProducer::PosixSystemProducer(
+    const char* socket,
+    base::tracing::PerfettoTaskRunner* task_runner)
     : SystemProducer(task_runner),
       socket_name_(socket),
       connection_backoff_ms_(kInitialConnectionBackoffMs) {
@@ -293,7 +294,7 @@ void PosixSystemProducer::StartDataSource(
                   base::AutoLock lock(weak_ptr->lock_);
                   ++weak_ptr->data_sources_tracing_;
                 }
-                data_source->StartTracingWithID(
+                data_source->StartTracing(
                     id, weak_ptr.get(),
                     EnsureGuardRailsAreFollowed(data_source_config));
                 weak_ptr->GetService()->NotifyDataSourceStarted(id);
@@ -389,10 +390,10 @@ void PosixSystemProducer::ConnectSocket() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   state_ = State::kConnecting;
   const char* host_package_name = nullptr;
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   host_package_name =
       base::android::BuildInfo::GetInstance()->host_package_name();
-#endif  // defined(OS_ANDROID)
+#endif  // BUILDFLAG(IS_ANDROID)
 
   // On android we want to include if this is webview inside of an app or
   // Android Chrome. To aid this we add the host_package_name to differentiate
@@ -416,18 +417,23 @@ void PosixSystemProducer::ConnectSocket() {
   if (!SandboxForbidsSocketConnection()) {
     auto service = perfetto::ProducerIPCClient::Connect(
         socket_name_.c_str(), this, std::move(producer_name), task_runner(),
-        perfetto::TracingService::ProducerSMBScrapingMode::kEnabled);
+        perfetto::TracingService::ProducerSMBScrapingMode::kEnabled,
+        GetPreferredSmbSizeBytes(), kSMBPageSizeBytes);
 
     base::AutoLock lock(lock_);
     services_.push_back(std::move(service));
     return;
   }
 
-#if !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
   // If the child process hasn't received the Mojo remote, try again later.
-  auto shared_remote =
-      TracedProcessImpl::GetInstance()->system_tracing_service();
-  if (!shared_remote.is_bound()) {
+  auto& remote = TracedProcessImpl::GetInstance()->system_tracing_service();
+  if (!remote.is_bound()) {
+    // We don't really open the socket using ProducerIPCClient in child
+    // processes and need to reset |state_| to make DelayedReconnect() retry the
+    // connection using mojo.
+    DCHECK(state_ == State::kConnecting);
+    state_ = State::kDisconnected;
     DelayedReconnect();
     return;
   }
@@ -439,6 +445,9 @@ void PosixSystemProducer::ConnectSocket() {
           return;
 
         if (!file.IsValid()) {
+          // Reset |state_| to make DelayedReconnect() retry the connection.
+          DCHECK(self->state_ == State::kConnecting);
+          self->state_ = State::kDisconnected;
           self->DelayedReconnect();
           return;
         }
@@ -448,7 +457,8 @@ void PosixSystemProducer::ConnectSocket() {
             perfetto::ipc::Client::ConnArgs(
                 perfetto::base::ScopedFile(file.TakePlatformFile())),
             self.get(), std::move(producer_name), self->task_runner(),
-            perfetto::TracingService::ProducerSMBScrapingMode::kEnabled);
+            perfetto::TracingService::ProducerSMBScrapingMode::kEnabled,
+            self->GetPreferredSmbSizeBytes(), kSMBPageSizeBytes);
 
         base::AutoLock lock(self->lock_);
         self->services_.push_back(std::move(service));
@@ -456,17 +466,18 @@ void PosixSystemProducer::ConnectSocket() {
       std::move(producer_name), weak_ptr_factory_.GetWeakPtr());
 
   // Open the socket remotely using Mojo.
-  shared_remote->OpenProducerSocket(std::move(callback));
-#endif  // !defined(OS_ANDROID)
+  remote->OpenProducerSocket(std::move(callback));
+#endif  // !BUILDFLAG(IS_ANDROID)
 }
 
 bool PosixSystemProducer::SkipIfOnAndroidAndPreAndroidPie() const {
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   return disallow_pre_android_pie_ &&
          base::android::BuildInfo::GetInstance()->sdk_int() <
              base::android::SDK_VERSION_P;
-#endif  // defined(OS_ANDROID)
+#else
   return false;
+#endif  // BUILDFLAG(IS_ANDROID)
 }
 
 void PosixSystemProducer::InvokeStoredOnDisconnectCallbacks() {
@@ -504,7 +515,7 @@ void PosixSystemProducer::Connect() {
 }
 
 bool PosixSystemProducer::SandboxForbidsSocketConnection() {
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   // Android renderer can connect to the producer socket directly.
   return false;
 #else
@@ -543,7 +554,7 @@ void PosixSystemProducer::DelayedReconnect() {
             }
           },
           weak_ptr_factory_.GetWeakPtr()),
-      base::TimeDelta::FromMilliseconds(connection_backoff_ms_));
+      base::Milliseconds(connection_backoff_ms_));
 
   connection_backoff_ms_ =
       IncreaseBackoff(connection_backoff_ms_, kMaxConnectionBackoffMs);

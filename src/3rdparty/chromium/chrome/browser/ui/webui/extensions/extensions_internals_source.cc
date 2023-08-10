@@ -31,6 +31,8 @@
 #include "extensions/common/permissions/permission_set.h"
 #include "extensions/common/permissions/permissions_data.h"
 
+using extensions::mojom::ManifestLocation;
+
 namespace {
 
 const char* TypeToString(extensions::Manifest::Type type) {
@@ -53,6 +55,8 @@ const char* TypeToString(extensions::Manifest::Type type) {
       return "TYPE_SHARED_MODULE";
     case extensions::Manifest::TYPE_LOGIN_SCREEN_EXTENSION:
       return "TYPE_LOGIN_SCREEN_EXTENSION";
+    case extensions::Manifest::TYPE_CHROMEOS_SYSTEM_EXTENSION:
+      return "TYPE_CHROMEOS_SYSTEM_EXTENSION";
     case extensions::Manifest::NUM_LOAD_TYPES:
       break;
   }
@@ -60,32 +64,30 @@ const char* TypeToString(extensions::Manifest::Type type) {
   return "";
 }
 
-const char* LocationToString(extensions::Manifest::Location loc) {
+const char* LocationToString(ManifestLocation loc) {
   switch (loc) {
-    case extensions::Manifest::INVALID_LOCATION:
+    case ManifestLocation::kInvalidLocation:
       return "INVALID_LOCATION";
-    case extensions::Manifest::INTERNAL:
+    case ManifestLocation::kInternal:
       return "INTERNAL";
-    case extensions::Manifest::EXTERNAL_PREF:
+    case ManifestLocation::kExternalPref:
       return "EXTERNAL_PREF";
-    case extensions::Manifest::EXTERNAL_REGISTRY:
+    case ManifestLocation::kExternalRegistry:
       return "EXTERNAL_REGISTRY";
-    case extensions::Manifest::UNPACKED:
+    case ManifestLocation::kUnpacked:
       return "UNPACKED";
-    case extensions::Manifest::COMPONENT:
+    case ManifestLocation::kComponent:
       return "COMPONENT";
-    case extensions::Manifest::EXTERNAL_PREF_DOWNLOAD:
+    case ManifestLocation::kExternalPrefDownload:
       return "EXTERNAL_PREF_DOWNLOAD";
-    case extensions::Manifest::EXTERNAL_POLICY_DOWNLOAD:
+    case ManifestLocation::kExternalPolicyDownload:
       return "EXTERNAL_POLICY_DOWNLOAD";
-    case extensions::Manifest::COMMAND_LINE:
+    case ManifestLocation::kCommandLine:
       return "COMMAND_LINE";
-    case extensions::Manifest::EXTERNAL_POLICY:
+    case ManifestLocation::kExternalPolicy:
       return "EXTERNAL_POLICY";
-    case extensions::Manifest::EXTERNAL_COMPONENT:
+    case ManifestLocation::kExternalComponent:
       return "EXTERNAL_COMPONENT";
-    case extensions::Manifest::NUM_LOCATIONS:
-      break;
   }
   NOTREACHED();
   return "";
@@ -93,7 +95,7 @@ const char* LocationToString(extensions::Manifest::Location loc) {
 
 base::Value CreationFlagsToList(int creation_flags) {
   base::Value flags_value(base::Value::Type::LIST);
-  if (creation_flags & extensions::Extension::NO_FLAGS)
+  if (creation_flags == extensions::Extension::NO_FLAGS)
     flags_value.Append("NO_FLAGS");
   if (creation_flags & extensions::Extension::REQUIRE_KEY)
     flags_value.Append("REQUIRE_KEY");
@@ -158,10 +160,6 @@ base::Value DisableReasonsToList(int disable_reasons) {
   }
   if (disable_reasons & extensions::disable_reason::DISABLE_BLOCKED_BY_POLICY)
     disable_reasons_value.Append("DISABLE_BLOCKED_BY_POLICY");
-  if (disable_reasons &
-      extensions::disable_reason::DISABLE_REMOTELY_FOR_MALWARE) {
-    disable_reasons_value.Append("DISABLE_REMOTELY_FOR_MALWARE");
-  }
   return disable_reasons_value;
 }
 // The JSON we generate looks like this:
@@ -346,8 +344,7 @@ template <typename T>
 base::Value FormatDetailedPermissionSet(const T& permissions) {
   base::Value value_list(base::Value::Type::LIST);
   for (const auto& permission : permissions) {
-    std::unique_ptr<base::Value> detail(permission->ToValue());
-    if (detail) {
+    if (auto detail = permission->ToValue()) {
       base::Value tmp(base::Value::Type::DICTIONARY);
       tmp.SetKey(permission->name(),
                  base::Value::FromUniquePtrValue(std::move(detail)));
@@ -444,7 +441,7 @@ void AddEventListenerData(extensions::EventRouter* event_router,
   }
 
   // Move all of the entries from the map into the output data.
-  for (auto& output_entry : data->GetList()) {
+  for (auto& output_entry : data->GetListDeprecated()) {
     const base::Value* const value = output_entry.FindKey(kInternalsIdKey);
     CHECK(value && value->is_string());
     const auto it = listeners_map.find(value->GetString());
@@ -456,9 +453,9 @@ void AddEventListenerData(extensions::EventRouter* event_router,
                              base::Value(base::Value::Type::LIST));
     } else {
       // Set the count and the events values.
-      event_listeners.SetKey(
-          kCountKey,
-          base::Value(base::checked_cast<int>(it->second.GetList().size())));
+      event_listeners.SetKey(kCountKey,
+                             base::Value(base::checked_cast<int>(
+                                 it->second.GetListDeprecated().size())));
       event_listeners.SetKey(kListenersKey, std::move(it->second));
     }
     output_entry.SetKey(kEventsListenersKey, std::move(event_listeners));

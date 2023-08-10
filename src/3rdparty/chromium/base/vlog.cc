@@ -10,7 +10,6 @@
 #include <utility>
 
 #include "base/logging.h"
-#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
@@ -43,8 +42,7 @@ VlogInfo::VmodulePattern::VmodulePattern(const std::string& pattern)
 }
 
 VlogInfo::VmodulePattern::VmodulePattern()
-    : vlog_level(VlogInfo::kDefaultVlogLevel),
-      match_target(MATCH_MODULE) {}
+    : vlog_level(VlogInfo::kDefaultVlogLevel), match_target(MATCH_MODULE) {}
 
 VlogInfo::VlogInfo(const std::string& v_switch,
                    const std::string& vmodule_switch,
@@ -86,16 +84,15 @@ namespace {
 // Given a path, returns the basename with the extension chopped off
 // (and any -inl suffix).  We avoid using FilePath to minimize the
 // number of dependencies the logging system has.
-base::StringPiece GetModule(const base::StringPiece& file) {
+base::StringPiece GetModule(base::StringPiece file) {
   base::StringPiece module(file);
-  base::StringPiece::size_type last_slash_pos =
-      module.find_last_of("\\/");
+  base::StringPiece::size_type last_slash_pos = module.find_last_of("\\/");
   if (last_slash_pos != base::StringPiece::npos)
     module.remove_prefix(last_slash_pos + 1);
   base::StringPiece::size_type extension_start = module.rfind('.');
   module = module.substr(0, extension_start);
   static const char kInlSuffix[] = "-inl";
-  static const int kInlSuffixLen = base::size(kInlSuffix) - 1;
+  static const int kInlSuffixLen = std::size(kInlSuffix) - 1;
   if (base::EndsWith(module, kInlSuffix))
     module.remove_suffix(kInlSuffixLen);
   return module;
@@ -103,7 +100,7 @@ base::StringPiece GetModule(const base::StringPiece& file) {
 
 }  // namespace
 
-int VlogInfo::GetVlogLevel(const base::StringPiece& file) const {
+int VlogInfo::GetVlogLevel(base::StringPiece file) const {
   if (!vmodule_levels_.empty()) {
     base::StringPiece module(GetModule(file));
     for (const auto& it : vmodule_levels_) {
@@ -125,23 +122,20 @@ int VlogInfo::GetMaxVlogLevel() const {
   return -*min_log_level_;
 }
 
-bool MatchVlogPattern(const base::StringPiece& string,
-                      const base::StringPiece& vlog_pattern) {
-  base::StringPiece pat(vlog_pattern);
-  base::StringPiece str(string);
-
+bool MatchVlogPattern(base::StringPiece string,
+                      base::StringPiece vlog_pattern) {
   // The code implements the glob matching using a greedy approach described in
   // https://research.swtch.com/glob.
   size_t s = 0, nexts = 0;
   size_t p = 0, nextp = 0;
-  size_t slen = str.size(), plen = pat.size();
+  size_t slen = string.size(), plen = vlog_pattern.size();
   while (s < slen || p < plen) {
     if (p < plen) {
-      switch (pat[p]) {
+      switch (vlog_pattern[p]) {
         // A slash (forward or back) must match a slash (forward or back).
         case '/':
         case '\\':
-          if (s < slen && (str[s] == '/' || str[s] == '\\')) {
+          if (s < slen && (string[s] == '/' || string[s] == '\\')) {
             p++, s++;
             continue;
           }
@@ -160,7 +154,7 @@ bool MatchVlogPattern(const base::StringPiece& string,
           continue;
         // Anything else must match literally.
         default:
-          if (s < slen && str[s] == pat[p]) {
+          if (s < slen && string[s] == vlog_pattern[p]) {
             p++, s++;
             continue;
           }

@@ -18,7 +18,12 @@
 #include "src/core/SkPicturePlayback.h"
 #include "src/core/SkPicturePriv.h"
 #include "src/core/SkPictureRecord.h"
+#include "src/core/SkResourceCache.h"
 #include <atomic>
+
+#if SK_SUPPORT_GPU
+#include "include/private/chromium/GrSlug.h"
+#endif
 
 // When we read/write the SkPictInfo via a stream, we have a sentinel byte right after the info.
 // Note: in the read/write buffer versions, we have a slightly different convention:
@@ -39,6 +44,12 @@ SkPicture::SkPicture() {
     do {
         fUniqueID = nextID.fetch_add(+1, std::memory_order_relaxed);
     } while (fUniqueID == 0);
+}
+
+SkPicture::~SkPicture() {
+    if (fAddedToCache.load()) {
+        SkResourceCache::PostPurgeSharedID(SkPicturePriv::MakeSharedID(fUniqueID));
+    }
 }
 
 static const char kMagic[] = { 's', 'k', 'i', 'a', 'p', 'i', 'c', 't' };
@@ -86,11 +97,12 @@ bool SkPicture::StreamIsSKP(SkStream* stream, SkPictInfo* pInfo) {
     if (!stream->readScalar(&info.fCullRect.fRight )) { return false; }
     if (!stream->readScalar(&info.fCullRect.fBottom)) { return false; }
 
-    if (!IsValidPictInfo(info)) { return false; }
-
-    if (pInfo) { *pInfo = info; }
-    return true;
+    if (pInfo) {
+        *pInfo = info;
+    }
+    return IsValidPictInfo(info);
 }
+
 bool SkPicture_StreamIsSKP(SkStream* stream, SkPictInfo* pInfo) {
     return SkPicture::StreamIsSKP(stream, pInfo);
 }

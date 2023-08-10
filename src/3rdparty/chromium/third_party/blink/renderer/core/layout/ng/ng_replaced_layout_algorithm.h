@@ -5,6 +5,7 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_NG_NG_REPLACED_LAYOUT_ALGORITHM_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_NG_NG_REPLACED_LAYOUT_ALGORITHM_H_
 
+#include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/layout/ng/ng_layout_algorithm.h"
 
 #include "third_party/blink/renderer/core/layout/ng/ng_box_fragment_builder.h"
@@ -21,11 +22,8 @@ class CORE_EXPORT NGReplacedLayoutAlgorithm
  public:
   explicit NGReplacedLayoutAlgorithm(const NGLayoutAlgorithmParams& params);
 
-  MinMaxSizesResult ComputeMinMaxSizes(const MinMaxSizesInput&) const override;
-  scoped_refptr<const NGLayoutResult> Layout() override;
-
- private:
-  const LogicalSize natural_size_;
+  MinMaxSizesResult ComputeMinMaxSizes(const MinMaxSizesFloatInput&) override;
+  const NGLayoutResult* Layout() override;
 };
 
 }  // namespace blink

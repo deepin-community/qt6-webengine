@@ -87,11 +87,8 @@ Polymer({
       value: false,
     },
 
-    /**
-     * The cellular DeviceState, or undefined if there is no Cellular device.
-     * @private {!OncMojo.DeviceStateProperties|undefined} deviceState
-     */
-    cellularDeviceState_: Object,
+    /** @private {!chromeos.networkConfig.mojom.GlobalPolicy|undefined} */
+    globalPolicy_: Object,
   },
 
   /** @type {!OncMojo.NetworkStateProperties|undefined} */
@@ -164,6 +161,9 @@ Polymer({
   refreshNetworks() {
     this.networkConfig_.getDeviceStateList().then(response => {
       this.onGetDeviceStates_(response.result);
+    });
+    this.networkConfig_.getGlobalPolicy().then(response => {
+      this.globalPolicy_ = response.result;
     });
   },
 
@@ -262,12 +262,6 @@ Polymer({
    * @private
    */
   onGetNetworkStateList_(deviceStates, networkStates) {
-    this.cellularDeviceState_ = deviceStates.find(function(device) {
-      return device.type === mojom.NetworkType.kCellular;
-    });
-    if (this.cellularDeviceState_) {
-      this.ensureCellularNetwork_(networkStates);
-    }
     this.networkStateList_ = networkStates;
     this.fire('network-list-changed', networkStates);
 
@@ -286,37 +280,6 @@ Polymer({
         undefined;
     // Note: event.detail will be {} if defaultNetwork is undefined.
     this.fire('default-network-changed', defaultNetwork);
-  },
-
-  /**
-   * Modifies |networkStates| to include a cellular network if one is required
-   * but does not exist.
-   * @param {!Array<!OncMojo.NetworkStateProperties>} networkStates
-   * @private
-   */
-  ensureCellularNetwork_(networkStates) {
-    if (networkStates.find(function(network) {
-          return network.type === mojom.NetworkType.kCellular;
-        })) {
-      return;
-    }
-    const deviceState = this.cellularDeviceState_.deviceState;
-    if (deviceState === mojom.DeviceStateType.kDisabled ||
-        deviceState === mojom.DeviceStateType.kProhibited) {
-      return;  // No Cellular network
-    }
-
-    // Note: the default connectionState is kNotConnected.
-    // TODO(khorimoto): Maybe set an 'initializing' CellularState property if
-    // the device state is initializing, see TODO in network_list_item.js.
-
-    // Insert the Cellular network after the Ethernet network if it exists.
-    const idx = (networkStates.length > 0 &&
-                 networkStates[0].type === mojom.NetworkType.kEthernet) ?
-        1 :
-        0;
-    networkStates.splice(
-        idx, 0, OncMojo.getDefaultNetworkState(mojom.NetworkType.kCellular));
   },
 
   /**

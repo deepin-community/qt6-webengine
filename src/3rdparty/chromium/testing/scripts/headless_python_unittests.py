@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env vpython3
 # Copyright 2016 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
@@ -33,11 +33,10 @@ def main_run(args):
   parsed_results = common.parse_common_test_results(results, test_separator='.')
   failures = parsed_results['unexpected_failures']
 
-  json.dump({
-      'valid': bool(rc <= common.MAX_FAILURES_EXIT_STATUS and
-                   ((rc == 0) or failures)),
-      'failures': failures.keys(),
-  }, args.output)
+  valid = bool(rc <= common.MAX_FAILURES_EXIT_STATUS and
+               ((rc == 0) or failures))
+  common.record_local_script_results(
+      'headless_python_unittests', args.output, list(failures.keys()), valid)
 
   return rc
 

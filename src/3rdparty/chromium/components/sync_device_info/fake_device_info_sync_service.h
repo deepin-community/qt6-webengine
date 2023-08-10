@@ -15,14 +15,14 @@ namespace syncer {
 
 class FakeDeviceInfoSyncService : public DeviceInfoSyncService {
  public:
-  FakeDeviceInfoSyncService();
+  explicit FakeDeviceInfoSyncService(bool skip_engine_connection = false);
   ~FakeDeviceInfoSyncService() override;
 
   // DeviceInfoSyncService implementation.
   FakeLocalDeviceInfoProvider* GetLocalDeviceInfoProvider() override;
   FakeDeviceInfoTracker* GetDeviceInfoTracker() override;
   base::WeakPtr<ModelTypeControllerDelegate> GetControllerDelegate() override;
-  void RefreshLocalDeviceInfo(base::OnceClosure callback) override;
+  void RefreshLocalDeviceInfo() override;
 
   // Returns number of times RefreshLocalDeviceInfo() has been called.
   int RefreshLocalDeviceInfoCount();

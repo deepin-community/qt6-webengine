@@ -6,25 +6,24 @@
 
 #include <algorithm>
 
-#include "base/allocator/partition_allocator/address_space_randomization.h"
-#include "base/allocator/partition_allocator/page_allocator.h"
-#include "base/allocator/partition_allocator/random.h"
 #include "base/bind.h"
 #include "base/bit_cast.h"
-#include "base/bits.h"
 #include "base/check_op.h"
 #include "base/debug/stack_trace.h"
 #include "base/location.h"
+#include "base/memory/nonscannable_memory.h"
+#include "base/memory/raw_ptr.h"
 #include "base/rand_util.h"
 #include "base/system/sys_info.h"
 #include "base/task/post_job.h"
-#include "base/task/post_task.h"
 #include "base/task/task_traits.h"
+#include "base/task/thread_pool.h"
 #include "base/task/thread_pool/thread_pool_instance.h"
 #include "base/trace_event/trace_event.h"
 #include "base/tracing_buildflags.h"
 #include "build/build_config.h"
 #include "gin/per_isolate_data.h"
+#include "v8_platform_page_allocator.h"
 
 namespace gin {
 
@@ -52,6 +51,10 @@ class ConvertableToTraceFormatWrapper final
   explicit ConvertableToTraceFormatWrapper(
       std::unique_ptr<v8::ConvertableToTraceFormat> inner)
       : inner_(std::move(inner)) {}
+  ConvertableToTraceFormatWrapper(const ConvertableToTraceFormatWrapper&) =
+      delete;
+  ConvertableToTraceFormatWrapper& operator=(
+      const ConvertableToTraceFormatWrapper&) = delete;
   ~ConvertableToTraceFormatWrapper() override = default;
   void AppendAsTraceFormat(std::string* out) const final {
     inner_->AppendAsTraceFormat(out);
@@ -59,8 +62,6 @@ class ConvertableToTraceFormatWrapper final
 
  private:
   std::unique_ptr<v8::ConvertableToTraceFormat> inner_;
-
-  DISALLOW_COPY_AND_ASSIGN(ConvertableToTraceFormatWrapper);
 };
 
 class EnabledStateObserverImpl final
@@ -69,6 +70,10 @@ class EnabledStateObserverImpl final
   EnabledStateObserverImpl() {
     base::trace_event::TraceLog::GetInstance()->AddEnabledStateObserver(this);
   }
+
+  EnabledStateObserverImpl(const EnabledStateObserverImpl&) = delete;
+
+  EnabledStateObserverImpl& operator=(const EnabledStateObserverImpl&) = delete;
 
   ~EnabledStateObserverImpl() override {
     base::trace_event::TraceLog::GetInstance()->RemoveEnabledStateObserver(
@@ -110,8 +115,6 @@ class EnabledStateObserverImpl final
  private:
   base::Lock mutex_;
   std::unordered_set<v8::TracingController::TraceStateObserver*> observers_;
-
-  DISALLOW_COPY_AND_ASSIGN(EnabledStateObserverImpl);
 };
 
 base::LazyInstance<EnabledStateObserverImpl>::Leaky g_trace_state_dispatcher =
@@ -122,13 +125,15 @@ class TimeClamper {
  public:
 // As site isolation is enabled on desktop platforms, we can safely provide
 // more timing resolution. Jittering is still enabled everywhere.
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   static constexpr double kResolutionSeconds = 100e-6;
 #else
   static constexpr double kResolutionSeconds = 5e-6;
 #endif
 
   TimeClamper() : secret_(base::RandUint64()) {}
+  TimeClamper(const TimeClamper&) = delete;
+  TimeClamper& operator=(const TimeClamper&) = delete;
 
   double ClampTimeResolution(double time_seconds) const {
     bool was_negative = false;
@@ -174,111 +179,14 @@ class TimeClamper {
   }
 
   const uint64_t secret_;
-  DISALLOW_COPY_AND_ASSIGN(TimeClamper);
 };
 
 base::LazyInstance<TimeClamper>::Leaky g_time_clamper =
     LAZY_INSTANCE_INITIALIZER;
 
 #if BUILDFLAG(USE_PARTITION_ALLOC)
-base::PageAccessibilityConfiguration GetPageConfig(
-    v8::PageAllocator::Permission permission) {
-  switch (permission) {
-    case v8::PageAllocator::Permission::kRead:
-      return base::PageRead;
-    case v8::PageAllocator::Permission::kReadWrite:
-      return base::PageReadWrite;
-    case v8::PageAllocator::Permission::kReadWriteExecute:
-      return base::PageReadWriteExecute;
-    case v8::PageAllocator::Permission::kReadExecute:
-      return base::PageReadExecute;
-    default:
-      DCHECK_EQ(v8::PageAllocator::Permission::kNoAccess, permission);
-      return base::PageInaccessible;
-  }
-}
 
-class PageAllocator : public v8::PageAllocator {
- public:
-  ~PageAllocator() override = default;
-
-  size_t AllocatePageSize() override {
-    return base::PageAllocationGranularity();
-  }
-
-  size_t CommitPageSize() override { return base::SystemPageSize(); }
-
-  void SetRandomMmapSeed(int64_t seed) override {
-    base::SetMmapSeedForTesting(seed);
-  }
-
-  void* GetRandomMmapAddr() override { return base::GetRandomPageBase(); }
-
-  void* AllocatePages(void* address,
-                      size_t length,
-                      size_t alignment,
-                      v8::PageAllocator::Permission permissions) override {
-    if (permissions == v8::PageAllocator::Permission::kNoAccessWillJitLater) {
-      // We could use this information to conditionally set the MAP_JIT flag
-      // on Mac-arm64; however this permissions value is intended to be a
-      // short-term solution, so we continue to set MAP_JIT for all V8 pages
-      // for now.
-      permissions = v8::PageAllocator::Permission::kNoAccess;
-    }
-    base::PageAccessibilityConfiguration config = GetPageConfig(permissions);
-    return base::AllocPages(address, length, alignment, config,
-                            base::PageTag::kV8);
-  }
-
-  bool FreePages(void* address, size_t length) override {
-    base::FreePages(address, length);
-    return true;
-  }
-
-  bool ReleasePages(void* address, size_t length, size_t new_length) override {
-    DCHECK_LT(new_length, length);
-    uint8_t* release_base = reinterpret_cast<uint8_t*>(address) + new_length;
-    size_t release_size = length - new_length;
-#if defined(OS_POSIX) || defined(OS_FUCHSIA)
-    // On POSIX, we can unmap the trailing pages.
-    base::FreePages(release_base, release_size);
-#elif defined(OS_WIN)
-    // On Windows, we can only de-commit the trailing pages. FreePages() will
-    // still free all pages in the region including the released tail, so it's
-    // safe to just decommit the tail.
-    base::DecommitSystemPages(release_base, release_size,
-                              base::PageUpdatePermissions);
-#else
-#error Unsupported platform
-#endif
-    return true;
-  }
-
-  bool SetPermissions(void* address,
-                      size_t length,
-                      Permission permissions) override {
-    // If V8 sets permissions to none, we can discard the memory.
-    if (permissions == v8::PageAllocator::Permission::kNoAccess) {
-      // Use PageKeepPermissionsIfPossible as an optimization, to avoid perf
-      // regression (see crrev.com/c/2563038 for details). This may cause the
-      // memory region to still be accessible on certain platforms, but at least
-      // the physical pages will be discarded.
-      base::DecommitSystemPages(address, length,
-                                base::PageKeepPermissionsIfPossible);
-      return true;
-    } else {
-      return base::TrySetSystemPagesAccess(address, length,
-                                           GetPageConfig(permissions));
-    }
-  }
-
-  bool DiscardSystemPages(void* address, size_t size) override {
-    base::DiscardSystemPages(address, size);
-    return true;
-  }
-};
-
-base::LazyInstance<PageAllocator>::Leaky g_page_allocator =
+base::LazyInstance<gin::PageAllocator>::Leaky g_page_allocator =
     LAZY_INSTANCE_INITIALIZER;
 
 #endif  // BUILDFLAG(USE_PARTITION_ALLOC)
@@ -300,7 +208,7 @@ class JobDelegateImpl : public v8::JobDelegate {
   bool IsJoiningThread() const override { return delegate_->IsJoiningThread(); }
 
  private:
-  base::JobDelegate* delegate_;
+  raw_ptr<base::JobDelegate> delegate_;
 };
 
 class JobHandleImpl : public v8::JobHandle {
@@ -365,6 +273,8 @@ namespace gin {
 class V8Platform::TracingControllerImpl : public v8::TracingController {
  public:
   TracingControllerImpl() = default;
+  TracingControllerImpl(const TracingControllerImpl&) = delete;
+  TracingControllerImpl& operator=(const TracingControllerImpl&) = delete;
   ~TracingControllerImpl() override = default;
 
   // TracingController implementation.
@@ -418,8 +328,7 @@ class V8Platform::TracingControllerImpl : public v8::TracingController {
         arg_convertables);
     DCHECK_LE(num_args, 2);
     base::TimeTicks timestamp =
-        base::TimeTicks() +
-        base::TimeDelta::FromMicroseconds(timestampMicroseconds);
+        base::TimeTicks() + base::Microseconds(timestampMicroseconds);
     base::trace_event::TraceEventHandle handle =
         TRACE_EVENT_API_ADD_TRACE_EVENT_WITH_THREAD_ID_AND_TIMESTAMP(
             phase, category_enabled_flag, name, scope, id, bind_id,
@@ -443,9 +352,6 @@ class V8Platform::TracingControllerImpl : public v8::TracingController {
   void RemoveTraceStateObserver(TraceStateObserver* observer) override {
     g_trace_state_dispatcher.Get().RemoveObserver(observer);
   }
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(TracingControllerImpl);
 };
 
 // static
@@ -456,16 +362,26 @@ V8Platform::V8Platform() : tracing_controller_(new TracingControllerImpl) {}
 V8Platform::~V8Platform() = default;
 
 #if BUILDFLAG(USE_PARTITION_ALLOC)
-v8::PageAllocator* V8Platform::GetPageAllocator() {
+PageAllocator* V8Platform::GetPageAllocator() {
   return g_page_allocator.Pointer();
 }
 
 void V8Platform::OnCriticalMemoryPressure() {
 // We only have a reservation on 32-bit Windows systems.
 // TODO(bbudge) Make the #if's in BlinkInitializer match.
-#if defined(OS_WIN) && defined(ARCH_CPU_32_BITS)
+#if BUILDFLAG(IS_WIN) && defined(ARCH_CPU_32_BITS)
   base::ReleaseReservation();
 #endif
+}
+
+v8::ZoneBackingAllocator* V8Platform::GetZoneBackingAllocator() {
+  static struct Allocator final : v8::ZoneBackingAllocator {
+    MallocFn GetMallocFn() const override {
+      return &base::AllocNonQuarantinable;
+    }
+    FreeFn GetFreeFn() const override { return &base::FreeNonQuarantinable; }
+  } allocator;
+  return &allocator;
 }
 #endif  // BUILDFLAG(USE_PARTITION_ALLOC)
 
@@ -511,7 +427,7 @@ void V8Platform::CallDelayedOnWorkerThread(std::unique_ptr<v8::Task> task,
   base::ThreadPool::PostDelayedTask(
       FROM_HERE, kDefaultTaskTraits,
       base::BindOnce(&v8::Task::Run, std::move(task)),
-      base::TimeDelta::FromSecondsD(delay_in_seconds));
+      base::Seconds(delay_in_seconds));
 }
 
 std::unique_ptr<v8::JobHandle> V8Platform::PostJob(

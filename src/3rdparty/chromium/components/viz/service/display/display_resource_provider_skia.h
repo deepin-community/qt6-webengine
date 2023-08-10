@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/memory/raw_ptr.h"
 #include "components/viz/service/display/display_resource_provider.h"
 #include "components/viz/service/display/external_use_client.h"
 #include "components/viz/service/viz_service_export.h"
@@ -20,6 +21,19 @@ class VIZ_SERVICE_EXPORT DisplayResourceProviderSkia
  public:
   DisplayResourceProviderSkia();
   ~DisplayResourceProviderSkia() override;
+
+  // Same as ScopedReadLockSharedImage, but will release |image_context| if
+  // already was created, making sure resource isn't locked by compositor.
+  class VIZ_SERVICE_EXPORT ScopedExclusiveReadLockSharedImage
+      : public ScopedReadLockSharedImage {
+   public:
+    ScopedExclusiveReadLockSharedImage(
+        DisplayResourceProviderSkia* resource_provider,
+        ResourceId resource_id);
+    ~ScopedExclusiveReadLockSharedImage();
+    ScopedExclusiveReadLockSharedImage(
+        ScopedExclusiveReadLockSharedImage&& other);
+  };
 
   // Maintains set of resources locked for external use by SkiaRenderer.
   class VIZ_SERVICE_EXPORT LockSetForExternalUse {
@@ -44,7 +58,9 @@ class VIZ_SERVICE_EXPORT DisplayResourceProviderSkia
         ResourceId resource_id,
         bool maybe_concurrent_reads,
         bool is_video_plane,
-        const gfx::ColorSpace& color_space = gfx::ColorSpace());
+        const absl::optional<gfx::ColorSpace>& override_color_space =
+            absl::nullopt,
+        bool raw_draw_if_possible = false);
 
     // Unlock all locked resources with a |sync_token|.  The |sync_token| should
     // be waited on before reusing the resource's backing to ensure that any
@@ -65,7 +81,7 @@ class VIZ_SERVICE_EXPORT DisplayResourceProviderSkia
       const std::vector<ResourceId>& unused) override;
 
   // Used to release resources held by an external consumer.
-  ExternalUseClient* external_use_client_ = nullptr;
+  raw_ptr<ExternalUseClient> external_use_client_ = nullptr;
 };
 
 }  // namespace viz

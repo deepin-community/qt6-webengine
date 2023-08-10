@@ -7,10 +7,12 @@
 
 #include "third_party/blink/renderer/modules/modules_export.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
+#include "third_party/blink/renderer/platform/heap/member.h"
 
 namespace blink {
 
 class Element;
+class ExceptionState;
 class InkTrailStyle;
 class LocalFrame;
 class PointerEvent;
@@ -23,17 +25,17 @@ class ScriptState;
 // coordinates before being packed up and sent to cc.
 //
 // Explainer for the feature:
-// https://github.com/WICG/ink-enhancement/blob/master/README.md
+// https://github.com/WICG/ink-enhancement/blob/main/README.md
 class MODULES_EXPORT DelegatedInkTrailPresenter : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  static DelegatedInkTrailPresenter* CreatePresenter(Element* element,
-                                                     LocalFrame* frame);
   DelegatedInkTrailPresenter(Element* element, LocalFrame* frame);
+
   void updateInkTrailStartPoint(ScriptState* state,
                                 PointerEvent* evt,
-                                InkTrailStyle* style);
+                                InkTrailStyle* style,
+                                ExceptionState& exception_state);
   uint32_t expectedImprovement() const { return expected_improvement_; }
   Element* presentationArea() const { return presentation_area_; }
 

@@ -15,7 +15,6 @@
 #include "rtc_base/logging.h"
 
 namespace webrtc {
-namespace video_coding {
 
 RtpFrameReferenceFinder::ReturnVector RtpSeqNumOnlyRefFinder::ManageFrame(
     std::unique_ptr<RtpFrameObject> frame) {
@@ -117,7 +116,7 @@ void RtpSeqNumOnlyRefFinder::RetryStashedFrames(
         case kHandOff:
           complete_frame = true;
           res.push_back(std::move(*frame_it));
-          ABSL_FALLTHROUGH_INTENDED;
+          [[fallthrough]];
         case kDrop:
           frame_it = stashed_frames_.erase(frame_it);
       }
@@ -184,5 +183,4 @@ void RtpSeqNumOnlyRefFinder::ClearTo(uint16_t seq_num) {
   }
 }
 
-}  // namespace video_coding
 }  // namespace webrtc

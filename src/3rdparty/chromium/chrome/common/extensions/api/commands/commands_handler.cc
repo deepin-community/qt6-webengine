@@ -67,8 +67,8 @@ CommandsHandler::CommandsHandler() {
 CommandsHandler::~CommandsHandler() {
 }
 
-bool CommandsHandler::Parse(Extension* extension, base::string16* error) {
-  if (!extension->manifest()->HasKey(keys::kCommands)) {
+bool CommandsHandler::Parse(Extension* extension, std::u16string* error) {
+  if (!extension->manifest()->FindKey(keys::kCommands)) {
     std::unique_ptr<CommandsInfo> commands_info(new CommandsInfo);
     MaybeSetBrowserActionDefault(extension, commands_info.get());
     extension->SetManifestData(keys::kCommands, std::move(commands_info));
@@ -77,7 +77,7 @@ bool CommandsHandler::Parse(Extension* extension, base::string16* error) {
 
   const base::DictionaryValue* dict = NULL;
   if (!extension->manifest()->GetDictionary(keys::kCommands, &dict)) {
-    *error = base::ASCIIToUTF16(manifest_errors::kInvalidCommandsKey);
+    *error = manifest_errors::kInvalidCommandsKey;
     return false;
   }
 
@@ -110,7 +110,7 @@ bool CommandsHandler::Parse(Extension* extension, base::string16* error) {
 
       if (keybindings_found > kMaxCommandsWithKeybindingPerExtension &&
           !PermissionsParser::HasAPIPermission(
-              extension, APIPermission::kCommandsAccessibility)) {
+              extension, mojom::APIPermissionID::kCommandsAccessibility)) {
         *error = ErrorUtils::FormatErrorMessageUTF16(
             manifest_errors::kInvalidKeyBindingTooMany,
             base::NumberToString(kMaxCommandsWithKeybindingPerExtension));
@@ -147,13 +147,11 @@ bool CommandsHandler::AlwaysParseForType(Manifest::Type type) const {
 void CommandsHandler::MaybeSetBrowserActionDefault(const Extension* extension,
                                                    CommandsInfo* info) {
   // TODO(devlin): Synthesize a command for the "action" key, too?
-  if (extension->manifest()->HasKey(keys::kBrowserAction) &&
+  if (extension->manifest()->FindKey(keys::kBrowserAction) &&
       !info->browser_action_command.get()) {
-    info->browser_action_command.reset(
-        new Command(manifest_values::kBrowserActionCommandEvent,
-                    base::string16(),
-                    std::string(),
-                    false));
+    info->browser_action_command =
+        std::make_unique<Command>(manifest_values::kBrowserActionCommandEvent,
+                                  std::u16string(), std::string(), false);
   }
 }
 

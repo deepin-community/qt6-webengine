@@ -6,7 +6,8 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_STYLE_LIST_STYLE_TYPE_DATA_H_
 
 #include "third_party/blink/renderer/core/style/computed_style_constants.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/platform/heap/member.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
 
 namespace blink {
@@ -60,8 +61,6 @@ class ListStyleTypeData final : public GarbageCollected<ListStyleTypeData> {
   // TODO(crbug.com/687225): Try not to pass a Document, which is cumbersome.
   bool IsCounterStyleReferenceValid(Document&) const;
   const CounterStyle& GetCounterStyle(Document&) const;
-
-  EListStyleType ToDeprecatedListStyleTypeEnum() const;
 
  private:
   Type type_;

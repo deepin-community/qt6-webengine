@@ -139,7 +139,7 @@ static const char* const LEGACY[] = {
  Updated on 2018-09-12 from
  https://www.iana.org/assignments/language-subtag-registry/language-subtag-registry .
 
- The table lists redundant tags with preferred value in the IANA languate tag registry.
+ The table lists redundant tags with preferred value in the IANA language tag registry.
  It's generated with the following command:
 
  curl  https://www.iana.org/assignments/language-subtag-registry/language-subtag-registry |\
@@ -651,7 +651,7 @@ ultag_getTKeyStart(const char *localeID) {
     const char *result = localeID;
     const char *sep;
     while((sep = uprv_strchr(result, SEP)) != nullptr) {
-        if (_isTKey(result, sep - result)) {
+        if (_isTKey(result, static_cast<int32_t>(sep - result))) {
             return result;
         }
         result = ++sep;
@@ -1612,7 +1612,7 @@ _appendLDMLExtensionAsKeywords(const char* ldmlext, ExtensionListEntry** appendT
     }
 
     if (pKwds) {
-        const char *pBcpKey = NULL;     /* u extenstion key subtag */
+        const char *pBcpKey = NULL;     /* u extension key subtag */
         const char *pBcpType = NULL;    /* beginning of u extension type subtag(s) */
         int32_t bcpKeyLen = 0;
         int32_t bcpTypeLen = 0;
@@ -2047,7 +2047,10 @@ ultag_parse(const char* tag, int32_t tagLen, int32_t* parsedLen, UErrorCode* sta
         *status = U_MEMORY_ALLOCATION_ERROR;
         return NULL;
     }
-    uprv_memcpy(tagBuf, tag, tagLen);
+    
+    if (tagLen > 0) {
+        uprv_memcpy(tagBuf, tag, tagLen);
+    }
     *(tagBuf + tagLen) = 0;
 
     /* create a ULanguageTag */
@@ -2086,6 +2089,7 @@ ultag_parse(const char* tag, int32_t tagLen, int32_t* parsedLen, UErrorCode* sta
             legacyLen = checkLegacyLen;  /* back up for output parsedLen */
             int32_t replacementLen = static_cast<int32_t>(uprv_strlen(LEGACY[i+1]));
             newTagLength = replacementLen + tagLen - checkLegacyLen;
+            int32_t oldTagLength = tagLen;
             if (tagLen < newTagLength) {
                 uprv_free(tagBuf);
                 tagBuf = (char*)uprv_malloc(newTagLength + 1);
@@ -2099,7 +2103,10 @@ ultag_parse(const char* tag, int32_t tagLen, int32_t* parsedLen, UErrorCode* sta
             parsedLenDelta = checkLegacyLen - replacementLen;
             uprv_strcpy(t->buf, LEGACY[i + 1]);
             if (checkLegacyLen != tagLen) {
-                uprv_strcpy(t->buf + replacementLen, tag + checkLegacyLen);
+                uprv_memcpy(t->buf + replacementLen, tag + checkLegacyLen,
+                            oldTagLength - checkLegacyLen);
+                // NUL-terminate after memcpy().
+                t->buf[replacementLen + oldTagLength - checkLegacyLen] = 0;
             }
             break;
         }
@@ -2303,7 +2310,7 @@ ultag_parse(const char* tag, int32_t tagLen, int32_t* parsedLen, UErrorCode* sta
         if (next & EXTV) {
             if (_isExtensionSubtag(pSubtag, subtagLen)) {
                 if (pExtValueSubtag == NULL) {
-                    /* if the start postion of this extension's value is not yet,
+                    /* if the start position of this extension's value is not yet,
                         this one is the first value subtag */
                     pExtValueSubtag = pSubtag;
                 }

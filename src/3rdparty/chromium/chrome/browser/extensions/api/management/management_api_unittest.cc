@@ -6,11 +6,10 @@
 #include <utility>
 
 #include "base/bind.h"
-#include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/scoped_refptr.h"
-#include "base/optional.h"
 #include "base/strings/stringprintf.h"
+#include "build/chromeos_buildflags.h"
 #include "chrome/browser/extensions/extension_function_test_utils.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_service_test_base.h"
@@ -36,8 +35,10 @@
 #include "extensions/common/extension_builder.h"
 #include "extensions/common/extension_set.h"
 #include "extensions/common/permissions/permission_set.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
-#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
+// TODO(https://crbug.com/1218633): Fix and include extensions tests on LaCrOS.
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS) && !BUILDFLAG(IS_CHROMEOS_LACROS)
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/metrics/user_action_tester.h"
 #include "chrome/browser/background/background_contents.h"
@@ -49,6 +50,8 @@
 #include "extensions/browser/api/management/management_api_constants.h"
 #include "extensions/common/error_utils.h"
 #endif
+
+using extensions::mojom::ManifestLocation;
 
 namespace extensions {
 
@@ -70,6 +73,10 @@ namespace constants = extension_management_api_constants;
 // TODO(devlin): Unittests are awesome. Test more with unittests and less with
 // heavy api/browser tests.
 class ManagementApiUnitTest : public ExtensionServiceTestWithInstall {
+ public:
+  ManagementApiUnitTest(const ManagementApiUnitTest&) = delete;
+  ManagementApiUnitTest& operator=(const ManagementApiUnitTest&) = delete;
+
  protected:
   ManagementApiUnitTest() {}
   ~ManagementApiUnitTest() override {}
@@ -77,7 +84,7 @@ class ManagementApiUnitTest : public ExtensionServiceTestWithInstall {
   // A wrapper around extension_function_test_utils::RunFunction that runs with
   // the associated browser, no flags, and can take stack-allocated arguments.
   bool RunFunction(const scoped_refptr<ExtensionFunction>& function,
-                   const base::ListValue& args);
+                   const base::Value& args);
 
   // Runs the management.setEnabled() function to enable an extension.
   bool RunSetEnabledFunction(content::WebContents* web_contents,
@@ -102,16 +109,15 @@ class ManagementApiUnitTest : public ExtensionServiceTestWithInstall {
   // The browser (and accompanying window).
   std::unique_ptr<TestBrowserWindow> browser_window_;
   std::unique_ptr<Browser> browser_;
-
-  DISALLOW_COPY_AND_ASSIGN(ManagementApiUnitTest);
 };
 
 bool ManagementApiUnitTest::RunFunction(
     const scoped_refptr<ExtensionFunction>& function,
-    const base::ListValue& args) {
+    const base::Value& args) {
   return extension_function_test_utils::RunFunction(
-      function.get(), base::WrapUnique(args.DeepCopy()), browser(),
-      api_test_utils::NONE);
+      function.get(),
+      base::ListValue::From(base::Value::ToUniquePtrValue(args.Clone())),
+      browser(), api_test_utils::NONE);
 }
 
 bool ManagementApiUnitTest::RunSetEnabledFunction(
@@ -124,18 +130,17 @@ bool ManagementApiUnitTest::RunSetEnabledFunction(
   ScopedTestDialogAutoConfirm auto_confirm(
       accept_dialog ? ScopedTestDialogAutoConfirm::ACCEPT
                     : ScopedTestDialogAutoConfirm::CANCEL);
-  base::Optional<ExtensionFunction::ScopedUserGestureForTests> gesture =
-      base::nullopt;
+  absl::optional<ExtensionFunction::ScopedUserGestureForTests> gesture =
+      absl::nullopt;
   if (use_user_gesture)
     gesture.emplace();
   scoped_refptr<ManagementSetEnabledFunction> function =
       base::MakeRefCounted<ManagementSetEnabledFunction>();
-  function->set_browser_context(profile());
   if (web_contents)
     function->SetRenderFrameHost(web_contents->GetMainFrame());
-  base::ListValue args;
-  args.AppendString(extension_id);
-  args.AppendBoolean(enabled);
+  base::Value args(base::Value::Type::LIST);
+  args.Append(extension_id);
+  args.Append(enabled);
   bool result = RunFunction(function, args);
   if (error)
     *error = function->GetError();
@@ -151,7 +156,7 @@ void ManagementApiUnitTest::SetUp() {
   EventRouterFactory::GetInstance()->SetTestingFactory(
       profile(), base::BindRepeating(&BuildEventRouter));
 
-  browser_window_.reset(new TestBrowserWindow());
+  browser_window_ = std::make_unique<TestBrowserWindow>();
   Browser::CreateParams params(profile(), true);
   params.type = Browser::TYPE_NORMAL;
   params.window = browser_window_.get();
@@ -176,18 +181,18 @@ TEST_F(ManagementApiUnitTest, ManagementSetEnabled) {
       new ManagementSetEnabledFunction());
   function->set_extension(source_extension);
 
-  base::ListValue disable_args;
-  disable_args.AppendString(extension_id);
-  disable_args.AppendBoolean(false);
+  base::Value disable_args(base::Value::Type::LIST);
+  disable_args.Append(extension_id);
+  disable_args.Append(false);
 
   // Test disabling an (enabled) extension.
   EXPECT_TRUE(registry()->enabled_extensions().Contains(extension_id));
   EXPECT_TRUE(RunFunction(function, disable_args)) << function->GetError();
   EXPECT_TRUE(registry()->disabled_extensions().Contains(extension_id));
 
-  base::ListValue enable_args;
-  enable_args.AppendString(extension_id);
-  enable_args.AppendBoolean(true);
+  base::Value enable_args(base::Value::Type::LIST);
+  enable_args.Append(extension_id);
+  enable_args.Append(true);
 
   // Test re-enabling it.
   function = new ManagementSetEnabledFunction();
@@ -213,17 +218,21 @@ TEST_F(ManagementApiUnitTest, ManagementSetEnabled) {
 // Test that component extensions cannot be disabled, and that policy extensions
 // can be disabled only by component/policy extensions.
 TEST_F(ManagementApiUnitTest, ComponentPolicyDisabling) {
-  auto component =
-      ExtensionBuilder("component").SetLocation(Manifest::COMPONENT).Build();
-  auto component2 =
-      ExtensionBuilder("component2").SetLocation(Manifest::COMPONENT).Build();
-  auto policy =
-      ExtensionBuilder("policy").SetLocation(Manifest::EXTERNAL_POLICY).Build();
+  auto component = ExtensionBuilder("component")
+                       .SetLocation(ManifestLocation::kComponent)
+                       .Build();
+  auto component2 = ExtensionBuilder("component2")
+                        .SetLocation(ManifestLocation::kComponent)
+                        .Build();
+  auto policy = ExtensionBuilder("policy")
+                    .SetLocation(ManifestLocation::kExternalPolicy)
+                    .Build();
   auto policy2 = ExtensionBuilder("policy2")
-                     .SetLocation(Manifest::EXTERNAL_POLICY)
+                     .SetLocation(ManifestLocation::kExternalPolicy)
                      .Build();
-  auto internal =
-      ExtensionBuilder("internal").SetLocation(Manifest::INTERNAL).Build();
+  auto internal = ExtensionBuilder("internal")
+                      .SetLocation(ManifestLocation::kInternal)
+                      .Build();
 
   service()->AddExtension(component.get());
   service()->AddExtension(component2.get());
@@ -235,9 +244,9 @@ TEST_F(ManagementApiUnitTest, ComponentPolicyDisabling) {
       [this](scoped_refptr<const Extension> source_extension,
              scoped_refptr<const Extension> target_extension) {
         std::string id = target_extension->id();
-        base::ListValue args;
-        args.AppendString(id);
-        args.AppendBoolean(false /* disable the extension */);
+        base::Value args(base::Value::Type::LIST);
+        args.Append(id);
+        args.Append(false /* disable the extension */);
         auto function = base::MakeRefCounted<ManagementSetEnabledFunction>();
         function->set_extension(source_extension);
         bool did_disable = RunFunction(function, args);
@@ -266,15 +275,18 @@ TEST_F(ManagementApiUnitTest, ComponentPolicyDisabling) {
 // Test that policy extensions can be enabled only by component/policy
 // extensions.
 TEST_F(ManagementApiUnitTest, ComponentPolicyEnabling) {
-  auto component =
-      ExtensionBuilder("component").SetLocation(Manifest::COMPONENT).Build();
-  auto policy =
-      ExtensionBuilder("policy").SetLocation(Manifest::EXTERNAL_POLICY).Build();
+  auto component = ExtensionBuilder("component")
+                       .SetLocation(ManifestLocation::kComponent)
+                       .Build();
+  auto policy = ExtensionBuilder("policy")
+                    .SetLocation(ManifestLocation::kExternalPolicy)
+                    .Build();
   auto policy2 = ExtensionBuilder("policy2")
-                     .SetLocation(Manifest::EXTERNAL_POLICY)
+                     .SetLocation(ManifestLocation::kExternalPolicy)
                      .Build();
-  auto internal =
-      ExtensionBuilder("internal").SetLocation(Manifest::INTERNAL).Build();
+  auto internal = ExtensionBuilder("internal")
+                      .SetLocation(ManifestLocation::kInternal)
+                      .Build();
 
   service()->AddExtension(component.get());
   service()->AddExtension(policy.get());
@@ -287,9 +299,9 @@ TEST_F(ManagementApiUnitTest, ComponentPolicyEnabling) {
       [this, component](scoped_refptr<const Extension> source_extension,
                         scoped_refptr<const Extension> target_extension) {
         std::string id = target_extension->id();
-        base::ListValue args;
-        args.AppendString(id);
-        args.AppendBoolean(true /* enable the extension */);
+        base::Value args(base::Value::Type::LIST);
+        args.Append(id);
+        args.Append(true /* enable the extension */);
         auto function = base::MakeRefCounted<ManagementSetEnabledFunction>();
         function->set_extension(source_extension);
         bool did_enable = RunFunction(function, args);
@@ -317,8 +329,8 @@ TEST_F(ManagementApiUnitTest, ManagementUninstall) {
   service()->AddExtension(extension.get());
   std::string extension_id = extension->id();
 
-  base::ListValue uninstall_args;
-  uninstall_args.AppendString(extension->id());
+  base::Value uninstall_args(base::Value::Type::LIST);
+  uninstall_args.Append(extension->id());
 
   // Auto-accept any uninstalls.
   {
@@ -361,8 +373,8 @@ TEST_F(ManagementApiUnitTest, ManagementUninstall) {
               function->GetError());
 
     // Try again, using showConfirmDialog: false.
-    std::unique_ptr<base::DictionaryValue> options(new base::DictionaryValue());
-    options->SetBoolean("showConfirmDialog", false);
+    base::Value options(base::Value::Type::DICTIONARY);
+    options.SetBoolPath("showConfirmDialog", false);
     uninstall_args.Append(std::move(options));
     function = new ManagementUninstallFunction();
     EXPECT_TRUE(registry()->enabled_extensions().Contains(extension_id));
@@ -377,7 +389,7 @@ TEST_F(ManagementApiUnitTest, ManagementUninstall) {
     // If we try uninstall the extension itself, the uninstall should succeed
     // (even though we auto-cancel any dialog), because the dialog is never
     // shown.
-    uninstall_args.Remove(0u, nullptr);
+    uninstall_args.EraseListIter(uninstall_args.GetListDeprecated().begin());
     function = new ManagementUninstallSelfFunction();
     function->set_extension(extension);
     EXPECT_TRUE(registry()->enabled_extensions().Contains(extension_id));
@@ -394,8 +406,8 @@ TEST_F(ManagementApiUnitTest, ManagementWebStoreUninstall) {
   scoped_refptr<const Extension> extension = ExtensionBuilder("Test").Build();
   service()->AddExtension(extension.get());
   std::string extension_id = extension->id();
-  base::ListValue uninstall_args;
-  uninstall_args.AppendString(extension->id());
+  base::Value uninstall_args(base::Value::Type::LIST);
+  uninstall_args.Append(extension->id());
 
   {
     ScopedTestDialogAutoConfirm auto_confirm(
@@ -449,8 +461,8 @@ TEST_F(ManagementApiUnitTest, ManagementProgrammaticUninstall) {
   scoped_refptr<const Extension> extension = ExtensionBuilder("Test").Build();
   service()->AddExtension(extension.get());
   std::string extension_id = extension->id();
-  base::ListValue uninstall_args;
-  uninstall_args.AppendString(extension->id());
+  base::Value uninstall_args(base::Value::Type::LIST);
+  uninstall_args.Append(extension->id());
   {
     scoped_refptr<ExtensionFunction> function(
         new ManagementUninstallFunction());
@@ -491,8 +503,8 @@ TEST_F(ManagementApiUnitTest, ManagementUninstallBlocklisted) {
   ScopedTestDialogAutoConfirm auto_confirm(ScopedTestDialogAutoConfirm::ACCEPT);
   ExtensionFunction::ScopedUserGestureForTests scoped_user_gesture;
   scoped_refptr<ExtensionFunction> function(new ManagementUninstallFunction());
-  base::ListValue uninstall_args;
-  uninstall_args.AppendString(id);
+  base::Value uninstall_args(base::Value::Type::LIST);
+  uninstall_args.Append(id);
   EXPECT_TRUE(RunFunction(function, uninstall_args)) << function->GetError();
 
   EXPECT_EQ(nullptr, registry()->GetInstalledExtension(id));
@@ -510,9 +522,9 @@ TEST_F(ManagementApiUnitTest, ManagementEnableOrDisableBlocklisted) {
 
   // Test enabling it.
   {
-    base::ListValue enable_args;
-    enable_args.AppendString(id);
-    enable_args.AppendBoolean(true);
+    base::Value enable_args(base::Value::Type::LIST);
+    enable_args.Append(id);
+    enable_args.Append(true);
     function = new ManagementSetEnabledFunction();
     EXPECT_TRUE(RunFunction(function, enable_args)) << function->GetError();
     EXPECT_FALSE(registry()->enabled_extensions().Contains(id));
@@ -521,9 +533,9 @@ TEST_F(ManagementApiUnitTest, ManagementEnableOrDisableBlocklisted) {
 
   // Test disabling it
   {
-    base::ListValue disable_args;
-    disable_args.AppendString(id);
-    disable_args.AppendBoolean(false);
+    base::Value disable_args(base::Value::Type::LIST);
+    disable_args.Append(id);
+    disable_args.Append(false);
 
     function = new ManagementSetEnabledFunction();
     EXPECT_TRUE(RunFunction(function, disable_args)) << function->GetError();
@@ -749,7 +761,8 @@ TEST_F(ManagementApiUnitTest, SetEnabledAfterIncreasedPermissions) {
   EXPECT_FALSE(known_perms->IsEmpty());
 }
 
-#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
+// TODO(https://crbug.com/1218633): Fix and include extensions tests on LaCrOS.
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS) && !BUILDFLAG(IS_CHROMEOS_LACROS)
 
 // A delegate that senses when extensions are enabled or disabled.
 class TestManagementAPIDelegate : public ManagementAPIDelegate {
@@ -795,7 +808,7 @@ class TestManagementAPIDelegate : public ManagementAPIDelegate {
   bool UninstallExtension(content::BrowserContext* context,
                           const std::string& transient_extension_id,
                           UninstallReason reason,
-                          base::string16* error) const override {
+                          std::u16string* error) const override {
     return true;
   }
   bool CreateAppShortcutFunctionDelegate(
@@ -1662,7 +1675,7 @@ TEST_F(ManagementApiSupervisedUserTestWithSetup,
   // Extension was not enabled.
   EXPECT_EQ(0, delegate_->enable_count_);
 }
-#endif  // BUILDFLAG(ENABLE_SUPERVISED_USERS)
+#endif  // BUILDFLAG(ENABLE_SUPERVISED_USERS) && !BUILDFLAG(IS_CHROMEOS_LACROS)
 
 }  // namespace
 }  // namespace extensions

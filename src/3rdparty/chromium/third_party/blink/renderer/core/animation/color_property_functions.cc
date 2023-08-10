@@ -9,14 +9,19 @@
 namespace blink {
 
 OptionalStyleColor ColorPropertyFunctions::GetInitialColor(
-    const CSSProperty& property) {
-  return GetUnvisitedColor(property, ComputedStyle::InitialStyle());
+    const CSSProperty& property,
+    const ComputedStyle& initial_style) {
+  return GetUnvisitedColor(property, initial_style);
 }
 
 OptionalStyleColor ColorPropertyFunctions::GetUnvisitedColor(
     const CSSProperty& property,
     const ComputedStyle& style) {
   switch (property.PropertyID()) {
+    case CSSPropertyID::kAccentColor:
+      if (style.AccentColor().IsAutoColor())
+        return nullptr;
+      return style.AccentColor().ToStyleColor();
     case CSSPropertyID::kBackgroundColor:
       return style.BackgroundColor();
     case CSSPropertyID::kBorderLeftColor:
@@ -37,7 +42,7 @@ OptionalStyleColor ColorPropertyFunctions::GetUnvisitedColor(
       return style.OutlineColor();
     case CSSPropertyID::kColumnRuleColor:
       return style.ColumnRuleColor();
-    case CSSPropertyID::kWebkitTextEmphasisColor:
+    case CSSPropertyID::kTextEmphasisColor:
       return style.TextEmphasisColor();
     case CSSPropertyID::kWebkitTextFillColor:
       return style.TextFillColor();
@@ -63,6 +68,8 @@ OptionalStyleColor ColorPropertyFunctions::GetVisitedColor(
     const CSSProperty& property,
     const ComputedStyle& style) {
   switch (property.PropertyID()) {
+    case CSSPropertyID::kAccentColor:
+      return style.AccentColor();
     case CSSPropertyID::kBackgroundColor:
       return style.InternalVisitedBackgroundColor();
     case CSSPropertyID::kBorderLeftColor:
@@ -85,7 +92,7 @@ OptionalStyleColor ColorPropertyFunctions::GetVisitedColor(
       return style.InternalVisitedOutlineColor();
     case CSSPropertyID::kColumnRuleColor:
       return style.InternalVisitedColumnRuleColor();
-    case CSSPropertyID::kWebkitTextEmphasisColor:
+    case CSSPropertyID::kTextEmphasisColor:
       return style.InternalVisitedTextEmphasisColor();
     case CSSPropertyID::kWebkitTextFillColor:
       return style.InternalVisitedTextFillColor();
@@ -112,6 +119,9 @@ void ColorPropertyFunctions::SetUnvisitedColor(const CSSProperty& property,
                                                const Color& color) {
   StyleColor style_color(color);
   switch (property.PropertyID()) {
+    case CSSPropertyID::kAccentColor:
+      style.SetAccentColor(StyleAutoColor(color));
+      return;
     case CSSPropertyID::kBackgroundColor:
       style.SetBackgroundColor(style_color);
       return;
@@ -148,6 +158,9 @@ void ColorPropertyFunctions::SetUnvisitedColor(const CSSProperty& property,
     case CSSPropertyID::kTextDecorationColor:
       style.SetTextDecorationColor(style_color);
       return;
+    case CSSPropertyID::kTextEmphasisColor:
+      style.SetTextEmphasisColor(style_color);
+      return;
     case CSSPropertyID::kColumnRuleColor:
       style.SetColumnRuleColor(style_color);
       return;
@@ -165,6 +178,9 @@ void ColorPropertyFunctions::SetVisitedColor(const CSSProperty& property,
                                              const Color& color) {
   StyleColor style_color(color);
   switch (property.PropertyID()) {
+    case CSSPropertyID::kAccentColor:
+      // The accent-color property is not valid for :visited.
+      return;
     case CSSPropertyID::kBackgroundColor:
       style.SetInternalVisitedBackgroundColor(style_color);
       return;
@@ -200,6 +216,9 @@ void ColorPropertyFunctions::SetVisitedColor(const CSSProperty& property,
       return;
     case CSSPropertyID::kTextDecorationColor:
       style.SetInternalVisitedTextDecorationColor(style_color);
+      return;
+    case CSSPropertyID::kTextEmphasisColor:
+      style.SetInternalVisitedTextEmphasisColor(style_color);
       return;
     case CSSPropertyID::kColumnRuleColor:
       style.SetInternalVisitedColumnRuleColor(style_color);

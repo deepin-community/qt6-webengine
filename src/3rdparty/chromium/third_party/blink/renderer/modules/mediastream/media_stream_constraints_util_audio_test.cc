@@ -12,13 +12,19 @@
 
 #include "base/callback_helpers.h"
 #include "base/containers/contains.h"
+#include "base/stl_util.h"
+#include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
 #include "media/base/audio_parameters.h"
-#include "media/webrtc/webrtc_switches.h"
+#include "media/base/media_switches.h"
+#include "media/media_buildflags.h"
+#include "media/webrtc/constants.h"
+#include "media/webrtc/webrtc_features.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/platform/modules/mediastream/web_platform_media_stream_source.h"
 #include "third_party/blink/public/platform/scheduler/test/renderer_scheduler_test_support.h"
 #include "third_party/blink/public/platform/web_string.h"
+#include "third_party/blink/renderer/core/testing/sim/sim_test.h"
 #include "third_party/blink/renderer/modules/mediastream/local_media_stream_audio_source.h"
 #include "third_party/blink/renderer/modules/mediastream/mock_constraint_factory.h"
 #include "third_party/blink/renderer/modules/mediastream/processed_local_audio_source.h"
@@ -26,6 +32,7 @@
 #include "third_party/blink/renderer/platform/mediastream/media_constraints.h"
 #include "third_party/blink/renderer/platform/mediastream/media_stream_audio_source.h"
 #include "third_party/blink/renderer/platform/testing/io_task_runner_testing_platform_support.h"
+#include "third_party/blink/renderer/platform/wtf/vector.h"
 #include "third_party/webrtc/rtc_base/ref_counted_object.h"
 
 namespace blink {
@@ -57,27 +64,18 @@ const bool kBoolValues[] = {true, false};
 const int kMinChannels = 1;
 
 using AudioSettingsBoolMembers =
-    std::vector<bool (AudioCaptureSettings::*)() const>;
+    WTF::Vector<bool (AudioCaptureSettings::*)() const>;
 using AudioPropertiesBoolMembers =
-    std::vector<bool AudioProcessingProperties::*>;
-
-const AudioPropertiesBoolMembers kAudioProcessingProperties = {
-    &AudioProcessingProperties::goog_audio_mirroring,
-    &AudioProcessingProperties::goog_auto_gain_control,
-    &AudioProcessingProperties::goog_experimental_echo_cancellation,
-    &AudioProcessingProperties::goog_noise_suppression,
-    &AudioProcessingProperties::goog_experimental_noise_suppression,
-    &AudioProcessingProperties::goog_highpass_filter,
-    &AudioProcessingProperties::goog_experimental_auto_gain_control};
+    WTF::Vector<bool AudioProcessingProperties::*>;
 
 template <typename T>
-static bool Contains(const std::vector<T>& vector, T value) {
+static bool Contains(const WTF::Vector<T>& vector, T value) {
   return base::Contains(vector, value);
 }
 
 }  // namespace
 
-class MediaStreamConstraintsUtilAudioTestBase {
+class MediaStreamConstraintsUtilAudioTestBase : public SimTest {
  protected:
   void MakeSystemEchoCancellerDeviceExperimental() {
     media::AudioParameters experimental_system_echo_canceller_parameters(
@@ -102,6 +100,15 @@ class MediaStreamConstraintsUtilAudioTestBase {
   // If not overridden, this function will return device capture by default.
   virtual std::string GetMediaStreamSource() { return std::string(); }
   bool IsDeviceCapture() { return GetMediaStreamSource().empty(); }
+  static AudioPropertiesBoolMembers GetAudioProcessingProperties() {
+    return {&AudioProcessingProperties::goog_audio_mirroring,
+            &AudioProcessingProperties::goog_auto_gain_control,
+            &AudioProcessingProperties::goog_experimental_echo_cancellation,
+            &AudioProcessingProperties::goog_noise_suppression,
+            &AudioProcessingProperties::goog_experimental_noise_suppression,
+            &AudioProcessingProperties::goog_highpass_filter,
+            &AudioProcessingProperties::goog_experimental_auto_gain_control};
+  }
 
   blink::mojom::MediaStreamType GetMediaStreamType() {
     std::string media_source = GetMediaStreamSource();
@@ -116,7 +123,8 @@ class MediaStreamConstraintsUtilAudioTestBase {
       const AudioProcessingProperties& properties,
       bool disable_local_echo,
       bool render_to_associated_sink,
-      int effects) {
+      int effects,
+      int num_requested_channels) {
     blink::MediaStreamDevice device;
     device.id = "processed_source";
     device.type = GetMediaStreamType();
@@ -125,8 +133,8 @@ class MediaStreamConstraintsUtilAudioTestBase {
     device.input.set_effects(effects);
 
     return std::make_unique<ProcessedLocalAudioSource>(
-        nullptr /*web_frame*/, device, disable_local_echo, properties,
-        base::NullCallback(),
+        *MainFrame().GetFrame(), device, disable_local_echo, properties,
+        num_requested_channels, base::NullCallback(),
         blink::scheduler::GetSingleThreadTaskRunnerForTesting());
   }
 
@@ -136,7 +144,8 @@ class MediaStreamConstraintsUtilAudioTestBase {
       bool render_to_associated_sink) {
     return GetProcessedLocalAudioSource(
         properties, disable_local_echo, render_to_associated_sink,
-        media::AudioParameters::PlatformEffectsMask::NO_EFFECTS);
+        media::AudioParameters::PlatformEffectsMask::NO_EFFECTS,
+        1 /* num_requested_channels */);
   }
 
   std::unique_ptr<blink::LocalMediaStreamAudioSource>
@@ -168,8 +177,8 @@ class MediaStreamConstraintsUtilAudioTestBase {
 
   AudioCaptureSettings SelectSettings(
       bool is_reconfigurable = false,
-      base::Optional<AudioDeviceCaptureCapabilities> capabilities =
-          base::nullopt) {
+      absl::optional<AudioDeviceCaptureCapabilities> capabilities =
+          absl::nullopt) {
     MediaConstraints constraints = constraint_factory_.CreateMediaConstraints();
     if (capabilities) {
       return SelectSettingsAudioCapture(*capabilities, constraints, false,
@@ -186,7 +195,7 @@ class MediaStreamConstraintsUtilAudioTestBase {
   void CheckGoogExperimentalEchoCancellationDefault(
       const AudioProcessingProperties& properties,
       bool value) {
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
     EXPECT_FALSE(properties.goog_experimental_echo_cancellation);
 #else
     EXPECT_EQ(value, properties.goog_experimental_echo_cancellation);
@@ -339,8 +348,8 @@ class MediaStreamConstraintsUtilAudioTestBase {
     const auto& properties = result.audio_processing_properties();
     bool properties_value = false;
     // Skip audio mirroring and start directly from auto gain control.
-    for (size_t i = 1; i < kAudioProcessingProperties.size(); ++i)
-      properties_value |= properties.*kAudioProcessingProperties[i];
+    for (WTF::wtf_size_t i = 1; i < GetAudioProcessingProperties().size(); ++i)
+      properties_value |= properties.*GetAudioProcessingProperties()[i];
 
     // If goog_audio_mirroring is true but all the other properties are false,
     // we should be expecting kProcessed, however if any of the properties was
@@ -475,13 +484,12 @@ class MediaStreamConstraintsUtilAudioTestBase {
   const AudioDeviceCaptureCapability* system_echo_canceller_device_ = nullptr;
   const AudioDeviceCaptureCapability* four_channels_device_ = nullptr;
   const AudioDeviceCaptureCapability* variable_latency_device_ = nullptr;
-  std::unique_ptr<ProcessedLocalAudioSource> system_echo_canceller_source_ =
-      nullptr;
-  const std::vector<media::Point> kMicPositions = {{8, 8, 8}, {4, 4, 4}};
+  std::unique_ptr<ProcessedLocalAudioSource> system_echo_canceller_source_;
+  const WTF::Vector<media::Point> kMicPositions = {{8, 8, 8}, {4, 4, 4}};
 
   // TODO(grunell): Store these as separate constants and compare against those
   // in tests, instead of indexing the vector.
-  const std::vector<blink::WebString> kEchoCancellationTypeValues = {
+  const WTF::Vector<blink::WebString> kEchoCancellationTypeValues = {
       blink::WebString::FromASCII("browser"),
       blink::WebString::FromASCII("aec3"),
       blink::WebString::FromASCII("system")};
@@ -492,9 +500,10 @@ class MediaStreamConstraintsUtilAudioTestBase {
 
 class MediaStreamConstraintsUtilAudioTest
     : public MediaStreamConstraintsUtilAudioTestBase,
-      public testing::TestWithParam<std::string> {
+      public testing::WithParamInterface<std::string> {
  public:
   void SetUp() override {
+    MediaStreamConstraintsUtilAudioTestBase::SetUp();
     ResetFactory();
     if (IsDeviceCapture()) {
       capabilities_.emplace_back(
@@ -524,7 +533,7 @@ class MediaStreamConstraintsUtilAudioTest
           "8khz_sample_rate_device", "fake_group4",
           media::AudioParameters(media::AudioParameters::AUDIO_PCM_LOW_LATENCY,
                                  media::CHANNEL_LAYOUT_STEREO,
-                                 blink::AudioProcessing::kSampleRate8kHz,
+                                 webrtc::AudioProcessing::kSampleRate8kHz,
                                  1000));
 
       capabilities_.emplace_back(
@@ -549,6 +558,57 @@ class MediaStreamConstraintsUtilAudioTest
   std::string GetMediaStreamSource() override { return GetParam(); }
 };
 
+enum class ApmLocation {
+  kProcessedLocalAudioSource,
+  kAudioService,
+  kAudioServiceAvoidResampling
+};
+
+class MediaStreamConstraintsRemoteAPMTest
+    : public MediaStreamConstraintsUtilAudioTestBase,
+      public testing::WithParamInterface<ApmLocation> {
+ protected:
+  ApmLocation GetApmLocation() { return GetParam(); }
+
+ private:
+  void SetUp() override {
+#if BUILDFLAG(CHROME_WIDE_ECHO_CANCELLATION)
+    switch (GetApmLocation()) {
+      case ApmLocation::kProcessedLocalAudioSource:
+        scoped_feature_list_.InitAndDisableFeature(
+            media::kChromeWideEchoCancellation);
+        break;
+      case ApmLocation::kAudioService:
+        scoped_feature_list_.InitAndEnableFeatureWithParameters(
+            media::kChromeWideEchoCancellation,
+            {{ "minimize_resampling",
+               "false" }});
+        break;
+      case ApmLocation::kAudioServiceAvoidResampling:
+        scoped_feature_list_.InitAndEnableFeatureWithParameters(
+            media::kChromeWideEchoCancellation,
+            {{ "minimize_resampling",
+               "true" }});
+        break;
+    }
+#endif
+
+    // Setup the capabilities.
+    ResetFactory();
+    if (IsDeviceCapture()) {
+      capabilities_.emplace_back(
+          "default_device", "fake_group1",
+          media::AudioParameters(media::AudioParameters::AUDIO_PCM_LOW_LATENCY,
+                                 media::CHANNEL_LAYOUT_STEREO,
+                                 media::AudioParameters::kAudioCDSampleRate,
+                                 1000));
+      default_device_ = &capabilities_[0];
+    }
+  }
+
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
 // The Unconstrained test checks the default selection criteria.
 TEST_P(MediaStreamConstraintsUtilAudioTest, Unconstrained) {
   auto result = SelectSettings();
@@ -567,7 +627,7 @@ TEST_P(MediaStreamConstraintsUtilAudioTest, SingleBoolConstraint) {
       &AudioCaptureSettings::disable_local_echo,
       &AudioCaptureSettings::render_to_associated_sink};
 
-  const std::vector<blink::BooleanConstraint MediaTrackConstraintSetPlatform::*>
+  const WTF::Vector<blink::BooleanConstraint MediaTrackConstraintSetPlatform::*>
       kMainBoolConstraints = {
           &MediaTrackConstraintSetPlatform::disable_local_echo,
           &MediaTrackConstraintSetPlatform::render_to_associated_sink};
@@ -582,7 +642,7 @@ TEST_P(MediaStreamConstraintsUtilAudioTest, SingleBoolConstraint) {
           accessor == kFactoryAccessors[1]) {
         continue;
       }
-      for (size_t i = 0; i < kMainSettings.size(); ++i) {
+      for (WTF::wtf_size_t i = 0; i < kMainSettings.size(); ++i) {
         for (bool value : kBoolValues) {
           ResetFactory();
           (((constraint_factory_.*accessor)().*kMainBoolConstraints[i]).*
@@ -597,7 +657,7 @@ TEST_P(MediaStreamConstraintsUtilAudioTest, SingleBoolConstraint) {
     }
   }
 
-  const std::vector<blink::BooleanConstraint MediaTrackConstraintSetPlatform::*>
+  const WTF::Vector<blink::BooleanConstraint MediaTrackConstraintSetPlatform::*>
       kAudioProcessingConstraints = {
           &MediaTrackConstraintSetPlatform::goog_audio_mirroring,
           &MediaTrackConstraintSetPlatform::goog_auto_gain_control,
@@ -608,7 +668,7 @@ TEST_P(MediaStreamConstraintsUtilAudioTest, SingleBoolConstraint) {
           &MediaTrackConstraintSetPlatform::goog_experimental_auto_gain_control,
       };
 
-  ASSERT_EQ(kAudioProcessingProperties.size(),
+  ASSERT_EQ(GetAudioProcessingProperties().size(),
             kAudioProcessingConstraints.size());
   for (auto set_function : kBoolSetFunctions) {
     for (auto accessor : kFactoryAccessors) {
@@ -619,7 +679,8 @@ TEST_P(MediaStreamConstraintsUtilAudioTest, SingleBoolConstraint) {
           accessor == kFactoryAccessors[1]) {
         continue;
       }
-      for (size_t i = 0; i < kAudioProcessingProperties.size(); ++i) {
+      for (WTF::wtf_size_t i = 0; i < GetAudioProcessingProperties().size();
+           ++i) {
         for (bool value : kBoolValues) {
           ResetFactory();
           (((constraint_factory_.*accessor)().*kAudioProcessingConstraints[i]).*
@@ -627,9 +688,9 @@ TEST_P(MediaStreamConstraintsUtilAudioTest, SingleBoolConstraint) {
           auto result = SelectSettings();
           EXPECT_TRUE(result.HasValue());
           EXPECT_EQ(value, result.audio_processing_properties().*
-                               kAudioProcessingProperties[i]);
+                               GetAudioProcessingProperties()[i]);
           CheckAllDefaults(AudioSettingsBoolMembers(),
-                           {kAudioProcessingProperties[i]}, result);
+                           {GetAudioProcessingProperties()[i]}, result);
         }
       }
     }
@@ -788,6 +849,61 @@ TEST_P(MediaStreamConstraintsUtilAudioTest, Channels) {
   }
 }
 
+TEST_P(MediaStreamConstraintsUtilAudioTest, MultiChannelEchoCancellation) {
+  if (!IsDeviceCapture())
+    return;
+
+  AudioCaptureSettings result;
+
+  ResetFactory();
+  result = SelectSettings();
+  EXPECT_TRUE(result.HasValue());
+  EXPECT_EQ(result.device_id(), "default_device");
+  // By default, use the default deevice with echo cancellation enabled
+  // and 1 channel,
+  EXPECT_EQ(result.audio_processing_properties().echo_cancellation_type,
+            EchoCancellationType::kEchoCancellationAec3);
+  EXPECT_EQ(result.num_channels(), 1);
+
+  ResetFactory();
+  constraint_factory_.basic().device_id.SetExact("default_device");
+  constraint_factory_.basic().echo_cancellation.SetExact(true);
+  result = SelectSettings();
+  EXPECT_TRUE(result.HasValue());
+  EXPECT_EQ(result.device_id(), "default_device");
+  // By default, use 1 channel, even with a stereo device.
+  EXPECT_EQ(result.audio_processing_properties().echo_cancellation_type,
+            EchoCancellationType::kEchoCancellationAec3);
+  EXPECT_EQ(result.num_channels(), 1);
+
+  ResetFactory();
+  constraint_factory_.basic().channel_count.SetExact(2);
+  result = SelectSettings();
+  EXPECT_TRUE(result.HasValue());
+  EXPECT_EQ(result.device_id(), "default_device");
+  EXPECT_EQ(result.audio_processing_properties().echo_cancellation_type,
+            EchoCancellationType::kEchoCancellationAec3);
+  EXPECT_EQ(result.num_channels(), 2);
+
+  ResetFactory();
+  constraint_factory_.basic().channel_count.SetIdeal(2);
+  result = SelectSettings();
+  EXPECT_TRUE(result.HasValue());
+  EXPECT_EQ(result.device_id(), "default_device");
+  EXPECT_EQ(result.audio_processing_properties().echo_cancellation_type,
+            EchoCancellationType::kEchoCancellationAec3);
+  EXPECT_EQ(result.num_channels(), 2);
+
+  ResetFactory();
+  constraint_factory_.basic().channel_count.SetIdeal(4);
+  result = SelectSettings();
+  EXPECT_TRUE(result.HasValue());
+  EXPECT_EQ(result.device_id(), "4_channels_device");
+  EXPECT_EQ(result.audio_processing_properties().echo_cancellation_type,
+            EchoCancellationType::kEchoCancellationAec3);
+  EXPECT_EQ(result.num_channels(), 4);
+}
+
 TEST_P(MediaStreamConstraintsUtilAudioTest, ChannelsWithSource) {
   if (!IsDeviceCapture())
     return;
@@ -811,19 +927,19 @@ TEST_P(MediaStreamConstraintsUtilAudioTest, ChannelsWithSource) {
 
 TEST_P(MediaStreamConstraintsUtilAudioTest, SampleRate) {
   AudioCaptureSettings result;
-  int exact_sample_rate = blink::AudioProcessing::kSampleRate8kHz;
-  int min_sample_rate = blink::AudioProcessing::kSampleRate8kHz;
+  int exact_sample_rate = webrtc::AudioProcessing::kSampleRate8kHz;
+  int min_sample_rate = webrtc::AudioProcessing::kSampleRate8kHz;
   // |max_sample_rate| is different based on architecture, namely due to a
   // difference on Android.
   int max_sample_rate =
       std::max(static_cast<int>(media::AudioParameters::kAudioCDSampleRate),
-               blink::kAudioProcessingSampleRate);
-  int ideal_sample_rate = blink::AudioProcessing::kSampleRate8kHz;
+               media::kAudioProcessingSampleRateHz);
+  int ideal_sample_rate = webrtc::AudioProcessing::kSampleRate8kHz;
   if (!IsDeviceCapture()) {
     exact_sample_rate = media::AudioParameters::kAudioCDSampleRate;
     min_sample_rate =
         std::min(static_cast<int>(media::AudioParameters::kAudioCDSampleRate),
-                 blink::kAudioProcessingSampleRate);
+                 media::kAudioProcessingSampleRateHz);
     ideal_sample_rate = media::AudioParameters::kAudioCDSampleRate;
   }
 
@@ -898,7 +1014,7 @@ TEST_P(MediaStreamConstraintsUtilAudioTest, SampleRate) {
 
   if (IsDeviceCapture()) {
     constraint_factory_.basic().sample_rate.SetIdeal(
-        blink::AudioProcessing::kSampleRate48kHz + 1000);
+        webrtc::AudioProcessing::kSampleRate48kHz + 1000);
     result = SelectSettings();
     EXPECT_TRUE(result.HasValue());
     EXPECT_EQ(result.device_id(), "default_device");
@@ -1458,7 +1574,7 @@ TEST_P(MediaStreamConstraintsUtilAudioTest, ContradictoryAutoGainControl) {
 // default value set by the echoCancellation constraint.
 TEST_P(MediaStreamConstraintsUtilAudioTest,
        EchoCancellationAndSingleBoolConstraint) {
-  const std::vector<blink::BooleanConstraint MediaTrackConstraintSetPlatform::*>
+  const WTF::Vector<blink::BooleanConstraint MediaTrackConstraintSetPlatform::*>
       kAudioProcessingConstraints = {
           &MediaTrackConstraintSetPlatform::goog_audio_mirroring,
           &MediaTrackConstraintSetPlatform::goog_auto_gain_control,
@@ -1469,7 +1585,7 @@ TEST_P(MediaStreamConstraintsUtilAudioTest,
           &MediaTrackConstraintSetPlatform::goog_experimental_auto_gain_control,
       };
 
-  ASSERT_EQ(kAudioProcessingProperties.size(),
+  ASSERT_EQ(GetAudioProcessingProperties().size(),
             kAudioProcessingConstraints.size());
   for (auto set_function : kBoolSetFunctions) {
     for (auto accessor : kFactoryAccessors) {
@@ -1480,7 +1596,8 @@ TEST_P(MediaStreamConstraintsUtilAudioTest,
           accessor == kFactoryAccessors[1]) {
         continue;
       }
-      for (size_t i = 0; i < kAudioProcessingProperties.size(); ++i) {
+      for (WTF::wtf_size_t i = 0; i < GetAudioProcessingProperties().size();
+           ++i) {
         ResetFactory();
         ((constraint_factory_.*accessor)().echo_cancellation.*
          set_function)(false);
@@ -1492,21 +1609,22 @@ TEST_P(MediaStreamConstraintsUtilAudioTest,
         EXPECT_EQ(EchoCancellationType::kEchoCancellationDisabled,
                   result.audio_processing_properties().echo_cancellation_type);
         EXPECT_TRUE(result.audio_processing_properties().*
-                    kAudioProcessingProperties[i]);
-        for (size_t j = 0; j < kAudioProcessingProperties.size(); ++j) {
+                    GetAudioProcessingProperties()[i]);
+        for (WTF::wtf_size_t j = 0; j < GetAudioProcessingProperties().size();
+             ++j) {
           if (i == j)
             continue;
           // goog_auto_gain_control and goog_experimental_auto_gain_control
           // should always match in value.
           if ((i == 1 && j == 6) || (i == 6 && j == 1)) {
             EXPECT_EQ(result.audio_processing_properties().*
-                          kAudioProcessingProperties[i],
+                          GetAudioProcessingProperties()[i],
                       result.audio_processing_properties().*
-                          kAudioProcessingProperties[j]);
+                          GetAudioProcessingProperties()[j]);
             continue;
           }
           EXPECT_FALSE(result.audio_processing_properties().*
-                       kAudioProcessingProperties[j]);
+                       GetAudioProcessingProperties()[j]);
         }
       }
     }
@@ -1528,7 +1646,8 @@ TEST_P(MediaStreamConstraintsUtilAudioTest,
       GetProcessedLocalAudioSource(
           properties, false /* disable_local_echo */,
           false /* render_to_associated_sink */,
-          media::AudioParameters::PlatformEffectsMask::ECHO_CANCELLER);
+          media::AudioParameters::PlatformEffectsMask::ECHO_CANCELLER,
+          1 /* num_requested_channels */);
   AudioDeviceCaptureCapabilities capabilities = {
       AudioDeviceCaptureCapability(system_echo_canceller_source.get())};
   AudioDeviceCaptureCapability* system_echo_canceller_with_source =
@@ -1642,7 +1761,7 @@ TEST_P(MediaStreamConstraintsUtilAudioTest, SourceWithNoAudioProcessing) {
             enable_properties /* render_to_associated_sink */);
 
     // These constraints are false in |source|.
-    const std::vector<
+    const WTF::Vector<
         blink::BooleanConstraint MediaTrackConstraintSetPlatform::*>
         kConstraints = {
             &MediaTrackConstraintSetPlatform::echo_cancellation,
@@ -1650,7 +1769,7 @@ TEST_P(MediaStreamConstraintsUtilAudioTest, SourceWithNoAudioProcessing) {
             &MediaTrackConstraintSetPlatform::render_to_associated_sink,
         };
 
-    for (size_t i = 0; i < kConstraints.size(); ++i) {
+    for (WTF::wtf_size_t i = 0; i < kConstraints.size(); ++i) {
       constraint_factory_.Reset();
       (constraint_factory_.basic().*kConstraints[i])
           .SetExact(enable_properties);
@@ -1709,7 +1828,7 @@ TEST_P(MediaStreamConstraintsUtilAudioTest, SourceWithAudioProcessing) {
         GetProcessedLocalAudioSource(
             properties, use_defaults /* disable_local_echo */,
             use_defaults /* render_to_associated_sink */);
-    const std::vector<
+    const WTF::Vector<
         blink::BooleanConstraint MediaTrackConstraintSetPlatform::*>
         kAudioProcessingConstraints = {
             &MediaTrackConstraintSetPlatform::goog_audio_mirroring,
@@ -1724,19 +1843,19 @@ TEST_P(MediaStreamConstraintsUtilAudioTest, SourceWithAudioProcessing) {
                 goog_experimental_auto_gain_control,
         };
     ASSERT_EQ(kAudioProcessingConstraints.size(),
-              kAudioProcessingProperties.size());
+              GetAudioProcessingProperties().size());
 
-    for (size_t i = 0; i < kAudioProcessingConstraints.size(); ++i) {
+    for (WTF::wtf_size_t i = 0; i < kAudioProcessingConstraints.size(); ++i) {
       constraint_factory_.Reset();
       (constraint_factory_.basic().*kAudioProcessingConstraints[i])
-          .SetExact(properties.*kAudioProcessingProperties[i]);
+          .SetExact(properties.*GetAudioProcessingProperties()[i]);
       auto result = SelectSettingsAudioCapture(
           source.get(), constraint_factory_.CreateMediaConstraints());
       EXPECT_TRUE(result.HasValue());
 
       constraint_factory_.Reset();
       (constraint_factory_.basic().*kAudioProcessingConstraints[i])
-          .SetExact(!(properties.*kAudioProcessingProperties[i]));
+          .SetExact(!(properties.*GetAudioProcessingProperties()[i]));
       result = SelectSettingsAudioCapture(
           source.get(), constraint_factory_.CreateMediaConstraints());
       EXPECT_FALSE(result.HasValue());
@@ -1787,17 +1906,17 @@ TEST_P(MediaStreamConstraintsUtilAudioTest, SourceWithAudioProcessing) {
     EXPECT_TRUE(result.HasValue());
 
     // These constraints are false in |source|.
-    const std::vector<
+    const WTF::Vector<
         blink::BooleanConstraint MediaTrackConstraintSetPlatform::*>
         kAudioBrowserConstraints = {
             &MediaTrackConstraintSetPlatform::disable_local_echo,
             &MediaTrackConstraintSetPlatform::render_to_associated_sink,
         };
-    for (size_t i = 0; i < kAudioBrowserConstraints.size(); ++i) {
+    for (WTF::wtf_size_t i = 0; i < kAudioBrowserConstraints.size(); ++i) {
       constraint_factory_.Reset();
       (constraint_factory_.basic().*kAudioBrowserConstraints[i])
           .SetExact(use_defaults);
-      auto result = SelectSettingsAudioCapture(
+      result = SelectSettingsAudioCapture(
           source.get(), constraint_factory_.CreateMediaConstraints());
       EXPECT_TRUE(result.HasValue());
 
@@ -1908,6 +2027,45 @@ TEST_P(MediaStreamConstraintsUtilAudioTest, ExperimetanlEcWithSource) {
   EXPECT_TRUE(result.HasValue());
 }
 
+TEST_P(MediaStreamConstraintsRemoteAPMTest, DeviceSampleRate) {
+  if (!IsDeviceCapture())
+    return;
+
+  AudioCaptureSettings result;
+  ResetFactory();
+  constraint_factory_.basic().sample_rate.SetExact(
+      media::AudioParameters::kAudioCDSampleRate);
+  constraint_factory_.basic().echo_cancellation.SetExact(true);
+  result = SelectSettings();
+
+  // Native sample rate is only supported by APM in the audio service, without
+  // resampling mitigations.
+  if (GetApmLocation() == ApmLocation::kAudioService)
+    EXPECT_TRUE(result.HasValue());
+  else
+    EXPECT_FALSE(result.HasValue());
+}
+
+TEST_P(MediaStreamConstraintsRemoteAPMTest,
+       WebRtcSampleRateButNotDeviceSampleRate) {
+  if (!IsDeviceCapture())
+    return;
+
+  AudioCaptureSettings result;
+  ResetFactory();
+  constraint_factory_.basic().sample_rate.SetExact(
+      media::kAudioProcessingSampleRateHz);
+  constraint_factory_.basic().echo_cancellation.SetExact(true);
+  result = SelectSettings();
+
+  // Native sample rate is only supported by APM in the audio service, without
+  // resampling mitigations.
+  if (GetApmLocation() == ApmLocation::kAudioService)
+    EXPECT_FALSE(result.HasValue());
+  else
+    EXPECT_TRUE(result.HasValue());
+}
+
 TEST_P(MediaStreamConstraintsUtilAudioTest, LatencyConstraint) {
   if (!IsDeviceCapture())
     return;
@@ -1946,7 +2104,7 @@ TEST_P(MediaStreamConstraintsUtilAudioTest, LatencyConstraint) {
   // media::AudioLatency::GetExactBufferSize().
   CheckLocalMediaStreamAudioSourceLatency(variable_latency_device_, 0.001, 128);
   CheckLocalMediaStreamAudioSourceLatency(variable_latency_device_, 0.011, 512);
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   // Windows only uses exactly the minimum or else multiples of the
   // hardware_buffer_size (512 for the variable_latency_device_).
   CheckLocalMediaStreamAudioSourceLatency(variable_latency_device_, 0.020,
@@ -1963,4 +2121,17 @@ INSTANTIATE_TEST_SUITE_P(All,
                                          blink::kMediaStreamSourceTab,
                                          blink::kMediaStreamSourceSystem,
                                          blink::kMediaStreamSourceDesktop));
+#if BUILDFLAG(CHROME_WIDE_ECHO_CANCELLATION)
+INSTANTIATE_TEST_SUITE_P(
+    All,
+    MediaStreamConstraintsRemoteAPMTest,
+    testing::Values(ApmLocation::kProcessedLocalAudioSource,
+                    ApmLocation::kAudioService,
+                    ApmLocation::kAudioServiceAvoidResampling));
+#else
+INSTANTIATE_TEST_SUITE_P(
+    All,
+    MediaStreamConstraintsRemoteAPMTest,
+    testing::Values(ApmLocation::kProcessedLocalAudioSource));
+#endif
 }  // namespace blink

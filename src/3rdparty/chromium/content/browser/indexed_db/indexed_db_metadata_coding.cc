@@ -8,6 +8,7 @@
 #include <utility>
 
 #include "base/strings/string_piece.h"
+#include "base/trace_event/base_tracing.h"
 #include "components/services/storage/indexed_db/scopes/leveldb_scope_deletion_mode.h"
 #include "components/services/storage/indexed_db/transactional_leveldb/transactional_leveldb_database.h"
 #include "components/services/storage/indexed_db/transactional_leveldb/transactional_leveldb_factory.h"
@@ -17,7 +18,6 @@
 #include "content/browser/indexed_db/indexed_db_leveldb_coding.h"
 #include "content/browser/indexed_db/indexed_db_leveldb_operations.h"
 #include "content/browser/indexed_db/indexed_db_reporting.h"
-#include "content/browser/indexed_db/indexed_db_tracing.h"
 #include "third_party/blink/public/common/indexeddb/indexeddb_metadata.h"
 
 using base::StringPiece;
@@ -102,7 +102,7 @@ Status ReadIndexes(DatabaseOrTransaction* db_or_transaction,
     // TODO(jsbell): Do this by direct key lookup rather than iteration, to
     // simplify.
     int64_t index_id = meta_data_key.IndexId();
-    base::string16 index_name;
+    std::u16string index_name;
     {
       StringPiece slice(it->Value());
       if (!DecodeString(&slice, &index_name) || !slice.empty())
@@ -211,7 +211,7 @@ Status ReadObjectStores(
 
     // TODO(jsbell): Do this by direct key lookup rather than iteration, to
     // simplify.
-    base::string16 object_store_name;
+    std::u16string object_store_name;
     {
       StringPiece slice(it->Value());
       if (!DecodeString(&slice, &object_store_name) || !slice.empty())
@@ -415,10 +415,11 @@ template <typename DatabaseOrTransaction>
 Status ReadMetadataForDatabaseNameInternal(
     DatabaseOrTransaction* db_or_transaction,
     const std::string& origin_identifier,
-    const base::string16& name,
+    const std::u16string& name,
     IndexedDBDatabaseMetadata* metadata,
     bool* found) {
-  IDB_TRACE("IndexedDBMetadataCoding::ReadMetadataForDatabaseName");
+  TRACE_EVENT0("IndexedDB",
+               "IndexedDBMetadataCoding::ReadMetadataForDatabaseName");
   const std::string key = DatabaseNameKey::Encode(origin_identifier, name);
   *found = false;
 
@@ -494,7 +495,7 @@ Status IndexedDBMetadataCoding::ReadDatabaseNamesAndVersions(
 Status IndexedDBMetadataCoding::ReadDatabaseNames(
     TransactionalLevelDBDatabase* db,
     const std::string& origin_identifier,
-    std::vector<base::string16>* names) {
+    std::vector<std::u16string>* names) {
   std::vector<blink::mojom::IDBNameAndVersionPtr> names_and_versions;
   Status s = ReadDatabaseNamesAndVersionsInternal(db, origin_identifier,
                                                   &names_and_versions);
@@ -507,7 +508,7 @@ Status IndexedDBMetadataCoding::ReadDatabaseNames(
 Status IndexedDBMetadataCoding::ReadDatabaseNames(
     TransactionalLevelDBTransaction* transaction,
     const std::string& origin_identifier,
-    std::vector<base::string16>* names) {
+    std::vector<std::u16string>* names) {
   std::vector<blink::mojom::IDBNameAndVersionPtr> names_and_versions;
   Status s = ReadDatabaseNamesAndVersionsInternal(
       transaction, origin_identifier, &names_and_versions);
@@ -520,7 +521,7 @@ Status IndexedDBMetadataCoding::ReadDatabaseNames(
 Status IndexedDBMetadataCoding::ReadMetadataForDatabaseName(
     TransactionalLevelDBDatabase* db,
     const std::string& origin_identifier,
-    const base::string16& name,
+    const std::u16string& name,
     IndexedDBDatabaseMetadata* metadata,
     bool* found) {
   return ReadMetadataForDatabaseNameInternal(db, origin_identifier, name,
@@ -530,7 +531,7 @@ Status IndexedDBMetadataCoding::ReadMetadataForDatabaseName(
 Status IndexedDBMetadataCoding::ReadMetadataForDatabaseName(
     TransactionalLevelDBTransaction* transaction,
     const std::string& origin_identifier,
-    const base::string16& name,
+    const std::u16string& name,
     IndexedDBDatabaseMetadata* metadata,
     bool* found) {
   return ReadMetadataForDatabaseNameInternal(transaction, origin_identifier,
@@ -540,7 +541,7 @@ Status IndexedDBMetadataCoding::ReadMetadataForDatabaseName(
 Status IndexedDBMetadataCoding::CreateDatabase(
     TransactionalLevelDBDatabase* db,
     const std::string& origin_identifier,
-    const base::string16& name,
+    const std::u16string& name,
     int64_t version,
     IndexedDBDatabaseMetadata* metadata) {
   // TODO(jsbell): Don't persist metadata if open fails. http://crbug.com/395472
@@ -612,7 +613,7 @@ leveldb::Status IndexedDBMetadataCoding::SetDatabaseVersion(
 Status IndexedDBMetadataCoding::FindDatabaseId(
     TransactionalLevelDBDatabase* db,
     const std::string& origin_identifier,
-    const base::string16& name,
+    const std::u16string& name,
     int64_t* id,
     bool* found) {
   const std::string key = DatabaseNameKey::Encode(origin_identifier, name);
@@ -628,7 +629,7 @@ Status IndexedDBMetadataCoding::CreateObjectStore(
     TransactionalLevelDBTransaction* transaction,
     int64_t database_id,
     int64_t object_store_id,
-    base::string16 name,
+    std::u16string name,
     IndexedDBKeyPath key_path,
     bool auto_increment,
     IndexedDBObjectStoreMetadata* metadata) {
@@ -706,7 +707,7 @@ Status IndexedDBMetadataCoding::DeleteObjectStore(
   if (!KeyPrefix::ValidIds(database_id, object_store.id))
     return InvalidDBKeyStatus();
 
-  base::string16 object_store_name;
+  std::u16string object_store_name;
   bool found = false;
   Status s =
       GetString(transaction,
@@ -756,8 +757,8 @@ Status IndexedDBMetadataCoding::DeleteObjectStore(
 Status IndexedDBMetadataCoding::RenameObjectStore(
     TransactionalLevelDBTransaction* transaction,
     int64_t database_id,
-    base::string16 new_name,
-    base::string16* old_name,
+    std::u16string new_name,
+    std::u16string* old_name,
     IndexedDBObjectStoreMetadata* metadata) {
   if (!KeyPrefix::ValidIds(database_id, metadata->id))
     return InvalidDBKeyStatus();
@@ -767,7 +768,7 @@ Status IndexedDBMetadataCoding::RenameObjectStore(
   const std::string new_names_key =
       ObjectStoreNamesKey::Encode(database_id, new_name);
 
-  base::string16 old_name_check;
+  std::u16string old_name_check;
   bool found = false;
   Status s = GetString(transaction, name_key, &old_name_check, &found);
   // TODO(dmurph): Change DELETE_OBJECT_STORE to RENAME_OBJECT_STORE & fix UMA.
@@ -807,7 +808,7 @@ Status IndexedDBMetadataCoding::CreateIndex(
     int64_t database_id,
     int64_t object_store_id,
     int64_t index_id,
-    base::string16 name,
+    std::u16string name,
     IndexedDBKeyPath key_path,
     bool is_unique,
     bool is_multi_entry,
@@ -873,8 +874,8 @@ Status IndexedDBMetadataCoding::RenameIndex(
     TransactionalLevelDBTransaction* transaction,
     int64_t database_id,
     int64_t object_store_id,
-    base::string16 new_name,
-    base::string16* old_name,
+    std::u16string new_name,
+    std::u16string* old_name,
     IndexedDBIndexMetadata* metadata) {
   if (!KeyPrefix::ValidIds(database_id, object_store_id, metadata->id))
     return InvalidDBKeyStatus();

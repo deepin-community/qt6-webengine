@@ -5,6 +5,7 @@
 #include "third_party/blink/renderer/modules/buckets/storage_bucket.h"
 
 #include "third_party/blink/public/platform/task_type.h"
+#include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_storage_estimate.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_storage_usage_details.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
@@ -180,7 +181,7 @@ void StorageBucket::DidSetExpires(ScriptPromiseResolver* resolver,
 }
 
 void StorageBucket::DidGetExpires(ScriptPromiseResolver* resolver,
-                                  const base::Optional<base::Time> expires,
+                                  const absl::optional<base::Time> expires,
                                   bool success) {
   ScriptState* script_state = resolver->GetScriptState();
   if (!script_state->ContextIsValid())

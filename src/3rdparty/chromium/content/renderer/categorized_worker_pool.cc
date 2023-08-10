@@ -9,11 +9,15 @@
 #include <vector>
 
 #include "base/bind.h"
-#include "base/single_thread_task_runner.h"
-#include "base/stl_util.h"
+#include "base/containers/contains.h"
+#include "base/containers/cxx20_erase.h"
 #include "base/strings/stringprintf.h"
+#include "base/task/sequence_manager/task_time_observer.h"
+#include "base/task/single_thread_task_runner.h"
+#include "base/threading/platform_thread.h"
 #include "base/threading/thread_restrictions.h"
-#include "base/trace_event/trace_event.h"
+#include "base/trace_event/typed_macros.h"
+#include "build/build_config.h"
 #include "cc/base/math_util.h"
 #include "cc/raster/task_category.h"
 
@@ -208,7 +212,7 @@ void CategorizedWorkerPool::Start(int num_normal_threads) {
       std::end(kBackgroundThreadPriorityCategories)};
 
   base::SimpleThread::Options thread_options;
-#if !defined(OS_MAC)
+#if !BUILDFLAG(IS_MAC)
   thread_options.priority = base::ThreadPriority::BACKGROUND;
 #endif
 
@@ -294,6 +298,11 @@ void CategorizedWorkerPool::Run(
       // start running. Signal other worker threads.
       SignalHasReadyToRunTasksWithLockAcquired();
 
+      // Make sure the END of the last trace event emitted before going idle
+      // is flushed to perfetto.
+      // TODO(crbug.com/1021571): Remove this once fixed.
+      PERFETTO_INTERNAL_ADD_EMPTY_EVENT();
+
       // Exit when shutdown is set and no more tasks are pending.
       if (shutdown_)
         break;
@@ -327,7 +336,7 @@ void CategorizedWorkerPool::SetBackgroundingCallback(
   background_task_runner_ = std::move(task_runner);
 }
 
-CategorizedWorkerPool::~CategorizedWorkerPool() {}
+CategorizedWorkerPool::~CategorizedWorkerPool() = default;
 
 cc::NamespaceToken CategorizedWorkerPool::GenerateNamespaceToken() {
   base::AutoLock lock(lock_);
@@ -414,23 +423,25 @@ bool CategorizedWorkerPool::RunTaskWithLockAcquired(
 
 void CategorizedWorkerPool::RunTaskInCategoryWithLockAcquired(
     cc::TaskCategory category) {
-
   lock_.AssertAcquired();
 
   auto prioritized_task = work_queue_.GetNextTaskToRun(category);
 
-  TRACE_EVENT1("toplevel", "TaskGraphRunner::RunTask", "source_frame_number_",
-               prioritized_task.task->frame_number());
+  TRACE_EVENT(
+      "toplevel", "TaskGraphRunner::RunTask", [&](perfetto::EventContext ctx) {
+        ctx.event<perfetto::protos::pbzero::ChromeTrackEvent>()
+            ->set_chrome_raster_task()
+            ->set_source_frame_number(prioritized_task.task->frame_number());
+      });
   // There may be more work available, so wake up another worker thread.
   SignalHasReadyToRunTasksWithLockAcquired();
 
   {
     base::AutoUnlock unlock(lock_);
-
     prioritized_task.task->RunOnWorkerThread();
   }
 
-  auto* task_namespace = prioritized_task.task_namespace;
+  auto* task_namespace = prioritized_task.task_namespace.get();
   work_queue_.CompleteTask(std::move(prioritized_task));
 
   // If namespace has finished running all tasks, wake up origin threads.

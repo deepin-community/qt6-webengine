@@ -6,7 +6,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_CSS_RESOLVER_STYLE_CASCADE_H_
 
 #include "third_party/blink/renderer/core/animation/interpolation.h"
-#include "third_party/blink/renderer/core/css/css_property_id_templates.h"
+#include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/css/css_property_name.h"
 #include "third_party/blink/renderer/core/css/css_property_value.h"
 #include "third_party/blink/renderer/core/css/parser/css_parser_token.h"
@@ -20,7 +20,9 @@
 #include "third_party/blink/renderer/core/css/resolver/cascade_priority.h"
 #include "third_party/blink/renderer/core/css/resolver/match_result.h"
 #include "third_party/blink/renderer/core/frame/web_feature_forward.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_map.h"
+#include "third_party/blink/renderer/platform/heap/member.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/text/text_encoding.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
@@ -104,6 +106,8 @@ class CORE_EXPORT StyleCascade {
   // the corresponding unvisited properties to be set in the return value.
   std::unique_ptr<CSSBitset> GetImportantSet();
 
+  bool InlineStyleLost() const { return map_.InlineStyleLost(); }
+
   // Resets the cascade to its initial state. Note that this does not undo
   // any changes already applied to the StyleResolverState/ComputedStyle.
   void Reset();
@@ -112,11 +116,18 @@ class CORE_EXPORT StyleCascade {
   // applying a keyframe from e.g. "color: var(--x)" to "color: var(--y)".
   // Hence that code needs an entry point to the resolving process.
   //
+  // This function handles IACVT [1] as follows:
+  //
+  //  - If a cycle was detected, returns nullptr.
+  //  - If IACVT for other reasons, returns a 'CSSUnsetValue'.
+  //
   // TODO(crbug.com/985023): This function has an associated const
   // violation, which isn't great. (This vilation was not introduced with
   // StyleCascade, however).
   //
   // See documentation the other Resolve* functions for what resolve means.
+  //
+  // [1] https://drafts.csswg.org/css-variables/#invalid-at-computed-value-time
   const CSSValue* Resolve(const CSSPropertyName&,
                           const CSSValue&,
                           CascadeOrigin,
@@ -236,15 +247,18 @@ class CORE_EXPORT StyleCascade {
     bool IsAnimationTainted() const { return is_animation_tainted_; }
     CSSParserTokenRange TokenRange() const { return tokens_; }
 
-    void Append(const TokenSequence&);
-    void Append(const CSSVariableData*);
+    bool Append(const TokenSequence&, wtf_size_t);
+    bool Append(CSSVariableData* data,
+                wtf_size_t limit = std::numeric_limits<wtf_size_t>::max());
     void Append(const CSSParserToken&);
 
     scoped_refptr<CSSVariableData> BuildVariableData();
 
    private:
+    bool AppendTokens(const Vector<CSSParserToken>&, wtf_size_t);
+
     Vector<CSSParserToken> tokens_;
-    Vector<String> backing_strings_;
+    Vector<scoped_refptr<const CSSVariableData>> variable_data_;
     // https://drafts.csswg.org/css-variables/#animation-tainted
     bool is_animation_tainted_ = false;
     // https://drafts.css-houdini.org/css-properties-values-api-1/#dependency-cycles
@@ -281,6 +295,7 @@ class CORE_EXPORT StyleCascade {
 
   const CSSValue* Resolve(const CSSProperty&,
                           const CSSValue&,
+                          CascadePriority,
                           CascadeOrigin&,
                           CascadeResolver&);
   const CSSValue* ResolveCustomProperty(const CSSProperty&,
@@ -296,6 +311,11 @@ class CORE_EXPORT StyleCascade {
                                 const CSSValue&,
                                 CascadeOrigin&,
                                 CascadeResolver&);
+  const CSSValue* ResolveRevertLayer(const CSSProperty&,
+                                     const CSSValue&,
+                                     CascadePriority,
+                                     CascadeOrigin&,
+                                     CascadeResolver&);
 
   scoped_refptr<CSSVariableData> ResolveVariableData(CSSVariableData*,
                                                      CascadeResolver&);
@@ -313,7 +333,8 @@ class CORE_EXPORT StyleCascade {
   bool ResolveEnvInto(CSSParserTokenRange, CascadeResolver&, TokenSequence&);
 
   CSSVariableData* GetVariableData(const CustomProperty&) const;
-  CSSVariableData* GetEnvironmentVariable(const AtomicString&) const;
+  CSSVariableData* GetEnvironmentVariable(const AtomicString&,
+                                          WTF::Vector<unsigned>) const;
   const CSSParserContext* GetParserContext(const CSSVariableReferenceValue&);
 
   // Detects if the given property/data depends on the font-size property
@@ -340,7 +361,6 @@ class CORE_EXPORT StyleCascade {
   void CountUse(WebFeature);
   void MaybeUseCountRevert(const CSSValue&);
   void MaybeUseCountSummaryDisplayBlock();
-  void MaybeUseCountInvalidVariableUnset(const CustomProperty&);
 
   StyleResolverState& state_;
   MatchResult match_result_;

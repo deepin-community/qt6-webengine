@@ -52,7 +52,7 @@
 #define ABSL_HAVE_SIGACTION
 // Apple WatchOS and TVOS don't allow sigaltstack
 #if !(defined(TARGET_OS_WATCH) && TARGET_OS_WATCH) && \
-    !(defined(TARGET_OS_TV) && TARGET_OS_TV)
+    !(defined(TARGET_OS_TV) && TARGET_OS_TV) && !defined(__QNX__)
 #define ABSL_HAVE_SIGALTSTACK
 #endif
 #endif
@@ -367,6 +367,7 @@ static void AbslFailureSignalHandler(int signo, siginfo_t*, void* ucontext) {
   // goes after this point.
   if (fsh_options.writerfn != nullptr) {
     WriteFailureInfo(signo, ucontext, my_cpu, fsh_options.writerfn);
+    fsh_options.writerfn(nullptr);
   }
 
   if (fsh_options.call_previous_handler) {

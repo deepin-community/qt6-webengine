@@ -7,6 +7,7 @@
 #include "core/fpdfapi/parser/cpdf_indirect_object_holder.h"
 
 #include <algorithm>
+#include <memory>
 #include <utility>
 
 #include "core/fpdfapi/parser/cpdf_object.h"
@@ -22,7 +23,7 @@ CPDF_Object* FilterInvalidObjNum(CPDF_Object* obj) {
 }  // namespace
 
 CPDF_IndirectObjectHolder::CPDF_IndirectObjectHolder()
-    : m_LastObjNum(0), m_pByteStringPool(std::make_unique<ByteStringPool>()) {}
+    : m_pByteStringPool(std::make_unique<ByteStringPool>()) {}
 
 CPDF_IndirectObjectHolder::~CPDF_IndirectObjectHolder() {
   m_pByteStringPool.DeleteObject();  // Make weak.

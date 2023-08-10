@@ -60,7 +60,7 @@ bool ResourceRequestPolicy::CanRequestResource(
     const GURL& resource_url,
     blink::WebLocalFrame* frame,
     ui::PageTransition transition_type,
-    const base::Optional<url::Origin>& initiator_origin) {
+    const absl::optional<url::Origin>& initiator_origin) {
   CHECK(resource_url.SchemeIs(kExtensionScheme));
 
   GURL frame_url = frame->GetDocument().Url();
@@ -81,7 +81,7 @@ bool ResourceRequestPolicy::CanRequestResource(
   // current extension or has a devtools scheme.
   GURL page_origin = url::Origin(frame->Top()->GetSecurityOrigin()).GetURL();
 
-  GURL extension_origin = resource_url.GetOrigin();
+  GURL extension_origin = resource_url.DeprecatedGetOriginAsURL();
 
   // We always allow loads in the following cases, regardless of web accessible
   // resources:
@@ -97,7 +97,7 @@ bool ResourceRequestPolicy::CanRequestResource(
   // of the frame, to account for about:blank subframes being scripted by an
   // extension parent (though we'll still need the frame origin check for
   // sandboxed frames).
-  if (frame_url.GetOrigin() == extension_origin ||
+  if (frame_url.DeprecatedGetOriginAsURL() == extension_origin ||
       page_origin == extension_origin) {
     return true;
   }

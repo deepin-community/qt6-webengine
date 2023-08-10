@@ -31,6 +31,7 @@
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/web_feature.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
+#include "third_party/blink/renderer/platform/wtf/math_extras.h"
 
 namespace blink {
 
@@ -90,17 +91,16 @@ WheelEvent::WheelEvent()
 WheelEvent::WheelEvent(const AtomicString& type,
                        const WheelEventInit* initializer)
     : MouseEvent(type, initializer),
-      wheel_delta_(initializer->wheelDeltaX()
-                       ? initializer->wheelDeltaX()
-                       : static_cast<int32_t>(initializer->deltaX()),
-                   initializer->wheelDeltaY()
-                       ? initializer->wheelDeltaY()
-                       : static_cast<int32_t>(initializer->deltaY())),
+      wheel_delta_(
+          initializer->wheelDeltaX() ? initializer->wheelDeltaX()
+                                     : ClampTo<int32_t>(initializer->deltaX()),
+          initializer->wheelDeltaY() ? initializer->wheelDeltaY()
+                                     : ClampTo<int32_t>(initializer->deltaY())),
       delta_x_(initializer->deltaX() ? initializer->deltaX()
-                                     : clampTo<int32_t>(-static_cast<double>(
+                                     : ClampTo<int32_t>(-static_cast<double>(
                                            initializer->wheelDeltaX()))),
       delta_y_(initializer->deltaY() ? initializer->deltaY()
-                                     : clampTo<int32_t>(-static_cast<double>(
+                                     : ClampTo<int32_t>(-static_cast<double>(
                                            initializer->wheelDeltaY()))),
       delta_z_(initializer->deltaZ()),
       delta_mode_(initializer->deltaMode()) {}
@@ -152,7 +152,7 @@ void WheelEvent::preventDefault() {
     String message =
         "Unable to preventDefault inside passive event listener due to "
         "target being treated as passive. See "
-        "https://www.chromestatus.com/features/6662647093133312";
+        "https://www.chromestatus.com/feature/6662647093133312";
     auto* local_dom_window = DynamicTo<LocalDOMWindow>(view());
     if (local_dom_window && local_dom_window->GetFrame()) {
       Intervention::GenerateReport(local_dom_window->GetFrame(), id, message);

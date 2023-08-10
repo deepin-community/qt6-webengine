@@ -9,6 +9,7 @@ import "ui/gfx/geometry/mojom/geometry.mojom";
 import "ui/gfx/mojom/color_space.mojom";
 
 struct RendererSettings {
+  bool apply_simple_frame_rate_throttling;
   bool allow_antialiasing;
   bool force_antialiasing;
   bool force_blending_with_shaders;
@@ -18,7 +19,6 @@ struct RendererSettings {
   bool should_clear_root_render_pass;
   int32 slow_down_compositing_scale_factor;
   bool use_skia_renderer;
-  bool allow_overlays;
   bool auto_resize_output_surface;
   bool requires_alpha_channel;
 
@@ -34,6 +34,7 @@ struct RendererSettings {
 
 struct DebugRendererSettings {
   bool tint_composited_content;
+  bool tint_composited_content_modulate;
   bool show_overdraw_feedback;
   bool show_dc_layer_debug_borders;
   bool show_aggregated_damage;

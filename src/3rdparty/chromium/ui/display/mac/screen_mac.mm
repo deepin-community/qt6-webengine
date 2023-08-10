@@ -18,7 +18,6 @@
 #include "base/mac/scoped_cftyperef.h"
 #include "base/mac/scoped_nsobject.h"
 #include "base/mac/sdk_forward_declarations.h"
-#include "base/stl_util.h"
 #include "base/timer/timer.h"
 #include "base/trace_event/trace_event.h"
 #include "ui/display/display.h"
@@ -34,6 +33,11 @@ Boolean CGDisplayUsesForceToGray(void);
 
 namespace display {
 namespace {
+
+struct DisplayMac {
+  const Display display;
+  NSScreen* const ns_screen;  // weak
+};
 
 NSScreen* GetMatchingScreen(const gfx::Rect& match_rect) {
   // Default to the monitor with the current keyboard focus, in case
@@ -54,12 +58,23 @@ NSScreen* GetMatchingScreen(const gfx::Rect& match_rect) {
   return max_screen;
 }
 
-Display BuildDisplayForScreen(NSScreen* screen) {
+const std::vector<Display> DisplaysFromDisplaysMac(
+    const std::vector<DisplayMac> displays_mac) {
+  std::vector<Display> displays;
+
+  for (auto const& display_mac : displays_mac) {
+    displays.push_back(display_mac.display);
+  }
+
+  return displays;
+}
+
+DisplayMac BuildDisplayForScreen(NSScreen* screen) {
   TRACE_EVENT0("ui", "BuildDisplayForScreen");
   NSRect frame = [screen frame];
 
-  CGDirectDisplayID display_id = [[[screen deviceDescription]
-      objectForKey:@"NSScreenNumber"] unsignedIntValue];
+  CGDirectDisplayID display_id =
+      [[screen deviceDescription][@"NSScreenNumber"] unsignedIntValue];
 
   Display display(display_id, gfx::Rect(NSRectToCGRect(frame)));
   NSRect visible_frame = [screen visibleFrame];
@@ -84,10 +99,23 @@ Display BuildDisplayForScreen(NSScreen* screen) {
 
   // Examine the presence of HDR.
   bool enable_hdr = false;
+  float hdr_max_lum_relative = 1.f;
   if (@available(macOS 10.15, *)) {
-    if ([screen maximumPotentialExtendedDynamicRangeColorComponentValue] >
-        1.0) {
+    // It can be the case that `max_potential_edr_value` > 1, but
+    // `max_edr_value` == 1. This happens, e.g, when an HDR capable Macbook Pro
+    // display is set to maximum brightness. This can create the confusing
+    // appearance that the display is rapidly fluctuating between being HDR
+    // capable and HDR incapable. To avoid this confusion, set a minimum value
+    // to report when `max_potential_edr_value` > 1.
+    constexpr float kMinMaxEdrValueForHDR = 1.0625;
+
+    const float max_potential_edr_value =
+        [screen maximumPotentialExtendedDynamicRangeColorComponentValue];
+    const float max_edr_value =
+        [screen maximumExtendedDynamicRangeColorComponentValue];
+    if (max_potential_edr_value > 1.f) {
       enable_hdr = true;
+      hdr_max_lum_relative = std::max(kMinMaxEdrValueForHDR, max_edr_value);
     }
   }
 
@@ -122,6 +150,7 @@ Display BuildDisplayForScreen(NSScreen* screen) {
             gfx::ContentColorUsage::kHDR, needs_alpha,
             gfx::ColorSpace::CreateExtendedSRGB(), gfx::BufferFormat::RGBA_F16);
       }
+      display_color_spaces.SetHDRMaxLuminanceRelative(hdr_max_lum_relative);
     }
     display.set_color_spaces(display_color_spaces);
   }
@@ -146,14 +175,14 @@ Display BuildDisplayForScreen(NSScreen* screen) {
   if (CGDisplayIsBuiltin(display_id))
     Display::SetInternalDisplayId(display_id);
 
-  return display;
+  return DisplayMac{display, screen};
 }
 
-Display BuildPrimaryDisplay() {
+DisplayMac BuildPrimaryDisplay() {
   return BuildDisplayForScreen([[NSScreen screens] firstObject]);
 }
 
-std::vector<Display> BuildDisplaysFromQuartz() {
+std::vector<DisplayMac> BuildDisplaysFromQuartz() {
   TRACE_EVENT0("ui", "BuildDisplaysFromQuartz");
 
   // Don't just return all online displays.  This would include displays
@@ -166,21 +195,21 @@ std::vector<Display> BuildDisplaysFromQuartz() {
   // doesn't hurt.
   CGDirectDisplayID online_displays[1024];
   CGDisplayCount online_display_count = 0;
-  if (CGGetOnlineDisplayList(base::size(online_displays), online_displays,
+  if (CGGetOnlineDisplayList(std::size(online_displays), online_displays,
                              &online_display_count) != kCGErrorSuccess) {
-    return std::vector<Display>(1, BuildPrimaryDisplay());
+    return std::vector<DisplayMac>(1, BuildPrimaryDisplay());
   }
 
-  typedef std::map<int64_t, NSScreen*> ScreenIdsToScreensMap;
+  using ScreenIdsToScreensMap = std::map<CGDirectDisplayID, NSScreen*>;
   ScreenIdsToScreensMap screen_ids_to_screens;
   for (NSScreen* screen in [NSScreen screens]) {
     NSDictionary* screen_device_description = [screen deviceDescription];
-    int64_t screen_id = [[screen_device_description
-        objectForKey:@"NSScreenNumber"] unsignedIntValue];
+    CGDirectDisplayID screen_id =
+        [screen_device_description[@"NSScreenNumber"] unsignedIntValue];
     screen_ids_to_screens[screen_id] = screen;
   }
 
-  std::vector<Display> displays;
+  std::vector<DisplayMac> displays_mac;
   for (CGDisplayCount online_display_index = 0;
        online_display_index < online_display_count; ++online_display_index) {
     CGDirectDisplayID online_display = online_displays[online_display_index];
@@ -188,16 +217,16 @@ std::vector<Display> BuildDisplaysFromQuartz() {
       // If this display doesn't mirror any other, include it in the list.
       // The primary display in a mirrored set will be counted, but those that
       // mirror it will not be.
-      ScreenIdsToScreensMap::iterator foundScreen =
-          screen_ids_to_screens.find(online_display);
+      auto foundScreen = screen_ids_to_screens.find(online_display);
       if (foundScreen != screen_ids_to_screens.end()) {
-        displays.push_back(BuildDisplayForScreen(foundScreen->second));
+        displays_mac.push_back(BuildDisplayForScreen(foundScreen->second));
       }
     }
   }
 
-  return displays.empty() ? std::vector<Display>(1, BuildPrimaryDisplay())
-                          : displays;
+  return displays_mac.empty()
+             ? std::vector<DisplayMac>(1, BuildPrimaryDisplay())
+             : displays_mac;
 }
 
 // Returns the minimum Manhattan distance from |point| to corners of |screen|
@@ -218,7 +247,8 @@ CGFloat GetMinimumDistanceToCorner(const NSPoint& point, NSScreen* screen) {
 class ScreenMac : public Screen {
  public:
   ScreenMac() {
-    displays_ = BuildDisplaysFromQuartz();
+    UpdateDisplays();
+
     CGDisplayRegisterReconfigurationCallback(
         ScreenMac::DisplayReconfigurationCallBack, this);
 
@@ -238,6 +268,9 @@ class ScreenMac : public Screen {
                      queue:nil
                 usingBlock:update_block] retain]);
   }
+
+  ScreenMac(const ScreenMac&) = delete;
+  ScreenMac& operator=(const ScreenMac&) = delete;
 
   ~ScreenMac() override {
     NSNotificationCenter* center = [NSNotificationCenter defaultCenter];
@@ -289,7 +322,7 @@ class ScreenMac : public Screen {
     return nil;
   }
 
-  int GetNumDisplays() const override { return GetAllDisplays().size(); }
+  int GetNumDisplays() const override { return displays_mac_.size(); }
 
   const std::vector<Display>& GetAllDisplays() const override {
     return displays_;
@@ -311,6 +344,7 @@ class ScreenMac : public Screen {
 
     if (!match_screen)
       return GetPrimaryDisplay();
+
     return GetCachedDisplayForScreen(match_screen);
   }
 
@@ -328,7 +362,7 @@ class ScreenMac : public Screen {
       return GetPrimaryDisplay();
 
     NSPoint ns_point = NSPointFromCGPoint(point.ToCGPoint());
-    NSScreen* primary = [screens objectAtIndex:0];
+    NSScreen* primary = screens[0];
     ns_point.y = NSMaxY([primary frame]) - ns_point.y;
     for (NSScreen* screen in screens) {
       if (NSMouseInRect(ns_point, [screen frame], NO))
@@ -378,33 +412,49 @@ class ScreenMac : public Screen {
   }
 
  private:
+  // Updates the display data structures.
+  void UpdateDisplays() {
+    displays_mac_ = BuildDisplaysFromQuartz();
+
+    // Keep |displays_| in sync with |displays_mac_|. It would be better to have
+    // only the |displays_mac_| data structure and generate an array of Displays
+    // from it as needed but GetAllDisplays() is defined as returning a
+    // reference. There are no restrictions on how long a caller to
+    // GetAllDisplays() can hold onto the reference so we have to assume callers
+    // expect the vector's contents to always reflect the current state of the
+    // world. Therefore update |displays_| whenever we update |displays_mac_|.
+    displays_ = DisplaysFromDisplaysMac(displays_mac_);
+  }
+
   Display GetCachedDisplayForScreen(NSScreen* screen) const {
-    const CGDirectDisplayID display_id = [[[screen deviceDescription]
-        objectForKey:@"NSScreenNumber"] unsignedIntValue];
-    for (const Display& display : displays_) {
-      if (display_id == display.id())
-        return display;
+    for (const DisplayMac& display_mac : displays_mac_) {
+      if (display_mac.ns_screen == screen)
+        return display_mac.display;
     }
     // In theory, this should not be reached, but in practice, on Catalina, it
     // has been observed that -[NSScreen screens] changes before any
     // notifications are received.
     // https://crbug.com/1021340.
     DLOG(ERROR) << "Value of -[NSScreen screens] changed before notification.";
-    return BuildDisplayForScreen(screen);
+    return BuildDisplayForScreen(screen).display;
   }
 
   void OnNSScreensMayHaveChanged() {
     TRACE_EVENT0("ui", "OnNSScreensMayHaveChanged");
-    auto new_displays = BuildDisplaysFromQuartz();
-    if (displays_ == new_displays)
-      return;
+
     auto old_displays = std::move(displays_);
-    displays_ = std::move(new_displays);
-    change_notifier_.NotifyDisplaysChanged(old_displays, displays_);
+
+    UpdateDisplays();
+
+    if (old_displays != displays_) {
+      change_notifier_.NotifyDisplaysChanged(old_displays, displays_);
+    }
   }
 
   // The displays currently attached to the device. Updated by
   // OnNSScreensMayHaveChanged.
+  std::vector<DisplayMac> displays_mac_;
+
   std::vector<Display> displays_;
 
   // The observers notified by NSScreenColorSpaceDidChangeNotification and
@@ -413,27 +463,18 @@ class ScreenMac : public Screen {
   base::scoped_nsobject<id> screen_params_change_observer_;
 
   DisplayChangeNotifier change_notifier_;
-
-  DISALLOW_COPY_AND_ASSIGN(ScreenMac);
 };
 
 }  // namespace
 
 // static
 gfx::NativeWindow Screen::GetWindowForView(gfx::NativeView native_view) {
-#if !defined(USE_AURA)
   NSView* view = native_view.GetNativeNSView();
   return [view window];
-#else
-  gfx::NativeWindow window = nil;
-  return window;
-#endif
 }
 
-#if !defined(USE_AURA)
 Screen* CreateNativeScreen() {
   return new ScreenMac;
 }
-#endif
 
 }  // namespace display

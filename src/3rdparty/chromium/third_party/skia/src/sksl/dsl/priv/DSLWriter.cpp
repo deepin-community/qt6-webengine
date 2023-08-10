@@ -7,207 +7,144 @@
 
 #include "src/sksl/dsl/priv/DSLWriter.h"
 
-#if !defined(SKSL_STANDALONE) && SK_SUPPORT_GPU
-#include "src/gpu/mock/GrMockCaps.h"
-#endif // !defined(SKSL_STANDALONE) && SK_SUPPORT_GPU
-#include "src/sksl/SkSLCompiler.h"
-#include "src/sksl/SkSLDefines.h"
-#include "src/sksl/SkSLIRGenerator.h"
-#include "src/sksl/dsl/DSLCore.h"
-#include "src/sksl/ir/SkSLConstructor.h"
-#include "src/sksl/ir/SkSLSwitchStatement.h"
+#include "include/core/SkTypes.h"
+#include "include/private/SkSLDefines.h"
+#include "include/private/SkSLProgramElement.h"
+#include "include/private/SkSLStatement.h"
+#include "include/sksl/DSLCore.h"
+#include "include/sksl/DSLExpression.h"
+#include "include/sksl/DSLModifiers.h"
+#include "include/sksl/DSLStatement.h"
+#include "include/sksl/DSLSymbols.h"
+#include "include/sksl/DSLType.h"
+#include "include/sksl/DSLVar.h"
+#include "include/sksl/SkSLPosition.h"
+#include "src/sksl/SkSLMangler.h"
+#include "src/sksl/SkSLModifiersPool.h"
+#include "src/sksl/SkSLProgramSettings.h"
+#include "src/sksl/SkSLThreadContext.h"
+#include "src/sksl/ir/SkSLBlock.h"
+#include "src/sksl/ir/SkSLExpression.h"
+#include "src/sksl/ir/SkSLNop.h"
+#include "src/sksl/ir/SkSLType.h"
+#include "src/sksl/ir/SkSLVarDeclarations.h"
+#include "src/sksl/ir/SkSLVariable.h"
 
-#if !SKSL_USE_THREAD_LOCAL
-#include <pthread.h>
-#endif // !SKSL_USE_THREAD_LOCAL
+#include <string>
+#include <type_traits>
+#include <utility>
+#include <vector>
 
 namespace SkSL {
 
 namespace dsl {
 
-DSLWriter::DSLWriter(SkSL::Compiler* compiler)
-    : fCompiler(compiler) {
-    SkSL::ParsedModule module = fCompiler->moduleForProgramKind(SkSL::ProgramKind::kFragment);
-    fConfig.fKind = SkSL::ProgramKind::kFragment;
-
-    SkSL::IRGenerator& ir = *fCompiler->fIRGenerator;
-    fOldSymbolTable = ir.fSymbolTable;
-    fOldConfig = fCompiler->fContext->fConfig;
-    ir.fSymbolTable = module.fSymbols;
-    fCompiler->fContext->fConfig = &fConfig;
-    ir.pushSymbolTable();
+bool DSLWriter::ManglingEnabled() {
+    return ThreadContext::Instance().fSettings.fDSLMangling;
 }
 
-DSLWriter::~DSLWriter() {
-    SkSL::IRGenerator& ir = *fCompiler->fIRGenerator;
-    ir.fSymbolTable = fOldSymbolTable;
-    fCompiler->fContext->fConfig = fOldConfig;
-}
-
-SkSL::IRGenerator& DSLWriter::IRGenerator() {
-    return *Compiler().fIRGenerator;
-}
-
-const SkSL::Context& DSLWriter::Context() {
-    return IRGenerator().fContext;
-}
-
-const std::shared_ptr<SkSL::SymbolTable>& DSLWriter::SymbolTable() {
-    return IRGenerator().fSymbolTable;
-}
-
-const SkSL::Modifiers* DSLWriter::Modifiers(SkSL::Modifiers modifiers) {
-    return IRGenerator().fModifiers->addToPool(modifiers);
-}
-
-const char* DSLWriter::Name(const char* name) {
+std::string_view DSLWriter::Name(std::string_view name) {
     if (ManglingEnabled()) {
-        auto mangled =
-                std::make_unique<String>(Instance().fMangler.uniqueName(name, SymbolTable().get()));
-        const SkSL::String* s = SymbolTable()->takeOwnershipOfString(std::move(mangled));
+        const std::string* s = ThreadContext::SymbolTable()->takeOwnershipOfString(
+                ThreadContext::Instance().fMangler.uniqueName(name,
+                    ThreadContext::SymbolTable().get()));
         return s->c_str();
     }
     return name;
 }
 
-#if !defined(SKSL_STANDALONE) && SK_SUPPORT_GPU
-void DSLWriter::StartFragmentProcessor(GrGLSLFragmentProcessor* processor,
-                                       GrGLSLFragmentProcessor::EmitArgs* emitArgs) {
-    Instance().fStack.push({processor, emitArgs});
-    IRGenerator().pushSymbolTable();
-}
-
-void DSLWriter::EndFragmentProcessor() {
-    DSLWriter& instance = Instance();
-    SkASSERT(!instance.fStack.empty());
-    instance.fStack.pop();
-    IRGenerator().popSymbolTable();
-}
-
-GrGLSLUniformHandler::UniformHandle DSLWriter::VarUniformHandle(const DSLVar& var) {
-    return var.uniformHandle();
-}
-#endif // !defined(SKSL_STANDALONE) && SK_SUPPORT_GPU
-
-std::unique_ptr<SkSL::Expression> DSLWriter::Check(std::unique_ptr<SkSL::Expression> expr) {
-    if (DSLWriter::Compiler().errorCount()) {
-        DSLWriter::ReportError(DSLWriter::Compiler().errorText(/*showCount=*/false).c_str());
-        DSLWriter::Compiler().setErrorCount(0);
-    }
-    return expr;
-}
-
-DSLExpression DSLWriter::Coerce(std::unique_ptr<Expression> left, const SkSL::Type& type) {
-    return DSLExpression(Check(IRGenerator().coerce(std::move(left), type)));
-}
-
-DSLExpression DSLWriter::Construct(const SkSL::Type& type, std::vector<DSLExpression> rawArgs) {
-    SkSL::ExpressionArray args;
-    args.reserve_back(rawArgs.size());
-
-    for (DSLExpression& arg : rawArgs) {
-        args.push_back(arg.release());
-    }
-    return DSLExpression(SkSL::Constructor::Make(Context(), /*offset=*/-1, type, std::move(args)));
-}
-
-DSLExpression DSLWriter::ConvertBinary(std::unique_ptr<Expression> left, Operator op,
-                                       std::unique_ptr<Expression> right) {
-    return IRGenerator().convertBinaryExpression(std::move(left), op, std::move(right));
-}
-
-DSLExpression DSLWriter::ConvertField(std::unique_ptr<Expression> base, const char* name) {
-    return IRGenerator().convertField(std::move(base), name);
-}
-
-DSLExpression DSLWriter::ConvertIndex(std::unique_ptr<Expression> base,
-                                      std::unique_ptr<Expression> index) {
-    return IRGenerator().convertIndex(std::move(base), std::move(index));
-}
-
-DSLExpression DSLWriter::ConvertPostfix(std::unique_ptr<Expression> expr, Operator op) {
-    return IRGenerator().convertPostfixExpression(std::move(expr), op);
-}
-
-DSLExpression DSLWriter::ConvertPrefix(Operator op, std::unique_ptr<Expression> expr) {
-    return IRGenerator().convertPrefixExpression(op, std::move(expr));
-}
-
-DSLStatement DSLWriter::ConvertSwitch(std::unique_ptr<Expression> value,
-                                      ExpressionArray caseValues,
-                                      SkTArray<SkSL::StatementArray> caseStatements) {
-    return SwitchStatement::Make(Context(), /*offset=*/-1, /*isStatic=*/false, std::move(value),
-                                 std::move(caseValues), std::move(caseStatements),
-                                 IRGenerator().fSymbolTable);
-}
-
-
-void DSLWriter::ReportError(const char* msg) {
-    if (Instance().fErrorHandler) {
-        Instance().fErrorHandler->handleError(msg);
-    } else {
-        SK_ABORT("%sNo SkSL DSL error handler configured, treating this as a fatal error\n", msg);
-    }
-}
-
-const SkSL::Variable& DSLWriter::Var(const DSLVar& var) {
-    return *var.var();
-}
-
-#if !SK_SUPPORT_GPU || defined(SKSL_STANDALONE)
-
-DSLWriter& DSLWriter::Instance() {
-    SkUNREACHABLE;
-}
-
-void DSLWriter::SetInstance(std::unique_ptr<DSLWriter> instance) {
-    SkDEBUGFAIL("unimplemented");
-}
-
-#elif SKSL_USE_THREAD_LOCAL
-
-thread_local DSLWriter* instance = nullptr;
-
-DSLWriter& DSLWriter::Instance() {
-    SkASSERTF(instance, "dsl::Start() has not been called");
-    return *instance;
-}
-
-void DSLWriter::SetInstance(std::unique_ptr<DSLWriter> newInstance) {
-    SkASSERT((instance == nullptr) != (newInstance == nullptr));
-    delete instance;
-    instance = newInstance.release();
-}
-
-#else
-
-static void destroy_dslwriter(void* dslWriter) {
-    delete static_cast<DSLWriter*>(dslWriter);
-}
-
-static pthread_key_t get_pthread_key() {
-    static pthread_key_t sKey = []{
-        pthread_key_t key;
-        int result = pthread_key_create(&key, destroy_dslwriter);
-        if (result != 0) {
-            SK_ABORT("pthread_key_create failure: %d", result);
+const SkSL::Variable* DSLWriter::Var(DSLVarBase& var) {
+    // fInitialized is true if we have attempted to create a var, whether or not we actually
+    // succeeded. If it's true, we don't want to try again, to avoid reporting the same error
+    // multiple times.
+    if (!var.fInitialized) {
+        // We haven't even attempted to create a var yet, so fVar ought to be null
+        SkASSERT(!var.fVar);
+        var.fInitialized = true;
+        if (var.storage() != SkSL::VariableStorage::kParameter) {
+            const SkSL::Type* baseType = &var.fType.skslType();
+            if (baseType->isArray()) {
+                baseType = &baseType->componentType();
+            }
         }
-        return key;
-    }();
-    return sKey;
+        std::unique_ptr<SkSL::Variable> skslvar = SkSL::Variable::Convert(ThreadContext::Context(),
+                var.fPosition, var.fModifiers.fPosition, var.fModifiers.fModifiers,
+                &var.fType.skslType(), var.fName, /*isArray=*/false, /*arraySize=*/nullptr,
+                var.storage());
+        SkSL::Variable* varPtr = skslvar.get();
+        if (var.storage() != SkSL::VariableStorage::kParameter) {
+            var.fDeclaration = VarDeclaration::Convert(ThreadContext::Context(), std::move(skslvar),
+                    var.fInitialValue.releaseIfPossible(), /*addToSymbolTable=*/false);
+            if (var.fDeclaration) {
+                var.fVar = varPtr;
+                var.fInitialized = true;
+            }
+        }
+        ThreadContext::ReportErrors(var.fPosition);
+    }
+    return var.fVar;
 }
 
-DSLWriter& DSLWriter::Instance() {
-    DSLWriter* instance = static_cast<DSLWriter*>(pthread_getspecific(get_pthread_key()));
-    SkASSERTF(instance, "dsl::Start() has not been called");
-    return *instance;
+std::unique_ptr<SkSL::Variable> DSLWriter::CreateParameterVar(DSLParameter& var) {
+    // This should only be called on undeclared parameter variables, but we allow the creation to go
+    // ahead regardless so we don't have to worry about null pointers potentially sneaking in and
+    // breaking things. DSLFunction is responsible for reporting errors for invalid parameters.
+    return SkSL::Variable::Convert(ThreadContext::Context(), var.fPosition,
+            var.fModifiers.fPosition, var.fModifiers.fModifiers, &var.fType.skslType(), var.fName,
+            /*isArray=*/false, /*arraySize=*/nullptr, var.storage());
 }
 
-void DSLWriter::SetInstance(std::unique_ptr<DSLWriter> instance) {
-    delete static_cast<DSLWriter*>(pthread_getspecific(get_pthread_key()));
-    pthread_setspecific(get_pthread_key(), instance.release());
+std::unique_ptr<SkSL::Statement> DSLWriter::Declaration(DSLVarBase& var) {
+    Var(var);
+    if (!var.fDeclaration) {
+        // We should have already reported an error before ending up here, just clean up the
+        // initial value so it doesn't assert and return a nop.
+        var.fInitialValue.releaseIfPossible();
+        return SkSL::Nop::Make();
+    }
+    return std::move(var.fDeclaration);
+}
+
+void DSLWriter::MarkDeclared(DSLVarBase& var) {
+    SkASSERT(!var.fDeclared);
+    var.fDeclared = true;
+}
+
+bool DSLWriter::MarkVarsDeclared() {
+    return ThreadContext::Instance().fSettings.fDSLMarkVarsDeclared;
+}
+
+void DSLWriter::AddVarDeclaration(DSLStatement& existing, DSLVar& additional) {
+    if (existing.fStatement->is<Block>()) {
+        SkSL::Block& block = existing.fStatement->as<Block>();
+        SkASSERT(!block.isScope());
+        block.children().push_back(Declare(additional).release());
+    } else if (existing.fStatement->is<VarDeclaration>()) {
+        Position pos = existing.fStatement->fPosition;
+        StatementArray stmts;
+        stmts.reserve_back(2);
+        stmts.push_back(std::move(existing.fStatement));
+        stmts.push_back(Declare(additional).release());
+        existing.fStatement = SkSL::Block::Make(pos, std::move(stmts),
+                                                Block::Kind::kCompoundStatement);
+    } else if (existing.fStatement->isEmpty()) {
+        // If the variable declaration generated an error, we can end up with a Nop statement here.
+        existing.fStatement = Declare(additional).release();
+    }
+}
+
+#if !defined(SKSL_STANDALONE) && SK_SUPPORT_GPU
+GrGLSLUniformHandler::UniformHandle DSLWriter::VarUniformHandle(const DSLGlobalVar& var) {
+    return GrGLSLUniformHandler::UniformHandle(var.fUniformHandle);
 }
 #endif
+
+void DSLWriter::Reset() {
+    dsl::PopSymbolTable();
+    dsl::PushSymbolTable();
+    ThreadContext::ProgramElements().clear();
+    ThreadContext::GetModifiersPool()->clear();
+}
 
 } // namespace dsl
 

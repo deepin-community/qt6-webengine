@@ -8,10 +8,12 @@
 #include <utility>
 
 #include "base/callback_helpers.h"
+#include "base/task/bind_post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "components/viz/service/gl/gpu_service_impl.h"
 #include "gpu/command_buffer/service/scheduler.h"
+#include "gpu/ipc/command_buffer_task_executor.h"
 #include "gpu/ipc/gpu_task_scheduler_helper.h"
 #include "gpu/ipc/scheduler_sequence.h"
 #include "gpu/ipc/service/image_transport_surface.h"
@@ -31,7 +33,8 @@ SkiaOutputSurfaceDependencyImpl::~SkiaOutputSurfaceDependencyImpl() = default;
 std::unique_ptr<gpu::SingleTaskSequence>
 SkiaOutputSurfaceDependencyImpl::CreateSequence() {
   return std::make_unique<gpu::SchedulerSequence>(
-      gpu_service_impl_->GetGpuScheduler());
+      gpu_service_impl_->GetGpuScheduler(),
+      gpu_service_impl_->gpu_task_runner());
 }
 
 gpu::SharedImageManager*
@@ -45,11 +48,14 @@ gpu::SyncPointManager* SkiaOutputSurfaceDependencyImpl::GetSyncPointManager() {
 
 const gpu::GpuDriverBugWorkarounds&
 SkiaOutputSurfaceDependencyImpl::GetGpuDriverBugWorkarounds() {
-  return gpu_service_impl_->gpu_channel_manager()->gpu_driver_bug_workarounds();
+  return gpu_service_impl_->gpu_driver_bug_workarounds();
 }
 
 scoped_refptr<gpu::SharedContextState>
 SkiaOutputSurfaceDependencyImpl::GetSharedContextState() {
+  if (gpu_service_impl_->compositor_gpu_thread()) {
+    return gpu_service_impl_->compositor_gpu_thread()->GetSharedContextState();
+  }
   return gpu_service_impl_->GetContextState();
 }
 
@@ -60,6 +66,10 @@ SkiaOutputSurfaceDependencyImpl::GetGrShaderCache() {
 
 VulkanContextProvider*
 SkiaOutputSurfaceDependencyImpl::GetVulkanContextProvider() {
+  if (gpu_service_impl_->compositor_gpu_thread()) {
+    return gpu_service_impl_->compositor_gpu_thread()
+        ->vulkan_context_provider();
+  }
   return gpu_service_impl_->vulkan_context_provider();
 }
 
@@ -106,16 +116,14 @@ scoped_refptr<gl::GLSurface> SkiaOutputSurfaceDependencyImpl::CreateGLSurface(
 
 base::ScopedClosureRunner SkiaOutputSurfaceDependencyImpl::CacheGLSurface(
     gl::GLSurface* surface) {
-  gpu_service_impl_->main_runner()->PostTask(
+  gpu_service_impl_->gpu_task_runner()->PostTask(
       FROM_HERE,
       base::BindOnce(&gl::GLSurface::AddRef, base::Unretained(surface)));
-  auto release_callback = base::BindOnce(
-      [](const scoped_refptr<base::SequencedTaskRunner>& runner,
-         gl::GLSurface* surface) {
-        runner->PostTask(FROM_HERE, base::BindOnce(&gl::GLSurface::Release,
-                                                   base::Unretained(surface)));
-      },
-      gpu_service_impl_->main_runner(), base::Unretained(surface));
+
+  auto release_callback = base::BindPostTask(
+      gpu_service_impl_->gpu_task_runner(),
+      base::BindOnce(&gl::GLSurface::Release, base::Unretained(surface)));
+
   return base::ScopedClosureRunner(std::move(release_callback));
 }
 
@@ -125,20 +133,17 @@ void SkiaOutputSurfaceDependencyImpl::PostTaskToClientThread(
 }
 
 void SkiaOutputSurfaceDependencyImpl::ScheduleGrContextCleanup() {
-  gpu_service_impl_->gpu_channel_manager()->ScheduleGrContextCleanup();
+  GetSharedContextState()->ScheduleGrContextCleanup();
 }
 
 void SkiaOutputSurfaceDependencyImpl::ScheduleDelayedGPUTaskFromGPUThread(
     base::OnceClosure task) {
-  DCHECK(gpu_service_impl_->main_runner()->BelongsToCurrentThread());
-
-  constexpr base::TimeDelta kDelayForDelayedWork =
-      base::TimeDelta::FromMilliseconds(2);
-  gpu_service_impl_->main_runner()->PostDelayedTask(FROM_HERE, std::move(task),
-                                                    kDelayForDelayedWork);
+  constexpr base::TimeDelta kDelayForDelayedWork = base::Milliseconds(2);
+  gpu_service_impl_->gpu_task_runner()->PostDelayedTask(
+      FROM_HERE, std::move(task), kDelayForDelayedWork);
 }
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 void SkiaOutputSurfaceDependencyImpl::DidCreateAcceleratedSurfaceChildWindow(
     gpu::SurfaceHandle parent_window,
     gpu::SurfaceHandle child_window) {

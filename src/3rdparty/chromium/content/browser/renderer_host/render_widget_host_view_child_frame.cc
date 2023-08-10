@@ -11,7 +11,7 @@
 #include "base/bind.h"
 #include "base/debug/dump_without_crashing.h"
 #include "base/location.h"
-#include "base/single_thread_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "components/viz/common/frame_sinks/copy_output_request.h"
@@ -23,7 +23,6 @@
 #include "content/browser/gpu/compositor_util.h"
 #include "content/browser/renderer_host/cross_process_frame_connector.h"
 #include "content/browser/renderer_host/cursor_manager.h"
-#include "content/browser/renderer_host/display_util.h"
 #include "content/browser/renderer_host/input/synthetic_gesture_target.h"
 #include "content/browser/renderer_host/input/touch_selection_controller_client_child_frame.h"
 #include "content/browser/renderer_host/render_view_host_impl.h"
@@ -33,10 +32,11 @@
 #include "content/browser/renderer_host/render_widget_host_view_event_handler.h"
 #include "content/browser/renderer_host/text_input_manager.h"
 #include "content/public/browser/render_process_host.h"
-#include "gpu/ipc/common/gpu_messages.h"
 #include "third_party/blink/public/common/input/web_touch_event.h"
+#include "third_party/blink/public/mojom/frame/intrinsic_sizing_info.mojom.h"
 #include "third_party/blink/public/mojom/frame/viewport_intersection_state.mojom.h"
 #include "ui/base/ime/mojom/text_input_state.mojom.h"
+#include "ui/display/display_util.h"
 #include "ui/gfx/geometry/dip_util.h"
 #include "ui/gfx/geometry/size_conversions.h"
 #include "ui/gfx/geometry/size_f.h"
@@ -47,22 +47,23 @@ namespace content {
 // static
 RenderWidgetHostViewChildFrame* RenderWidgetHostViewChildFrame::Create(
     RenderWidgetHost* widget,
-    const blink::ScreenInfo& screen_info) {
+    const display::ScreenInfos& parent_screen_infos) {
   RenderWidgetHostViewChildFrame* view =
-      new RenderWidgetHostViewChildFrame(widget, screen_info);
+      new RenderWidgetHostViewChildFrame(widget, parent_screen_infos);
   view->Init();
   return view;
 }
 
 RenderWidgetHostViewChildFrame::RenderWidgetHostViewChildFrame(
     RenderWidgetHost* widget_host,
-    const blink::ScreenInfo& screen_info)
+    const display::ScreenInfos& parent_screen_infos)
     : RenderWidgetHostViewBase(widget_host),
       frame_sink_id_(
           base::checked_cast<uint32_t>(widget_host->GetProcess()->GetID()),
           base::checked_cast<uint32_t>(widget_host->GetRoutingID())),
-      frame_connector_(nullptr),
-      screen_info_(screen_info) {
+      frame_connector_(nullptr) {
+  // TODO(enne): this appears to have a null current() in some tests.
+  screen_infos_ = parent_screen_infos;
   GetHostFrameSinkManager()->RegisterFrameSinkId(
       frame_sink_id_, this, viz::ReportFirstSurfaceActivation::kNo);
   GetHostFrameSinkManager()->SetFrameSinkDebugLabel(
@@ -131,8 +132,7 @@ void RenderWidgetHostViewChildFrame::SetFrameConnector(
     SetParentFrameSinkId(parent_view->GetFrameSinkId());
   }
 
-  set_current_device_scale_factor(
-      frame_connector_->screen_info().device_scale_factor);
+  UpdateScreenInfo();
 
   auto* root_view = frame_connector_->GetRootRenderWidgetHostView();
   if (root_view) {
@@ -212,7 +212,8 @@ uint32_t RenderWidgetHostViewChildFrame::GetCaptureSequenceNumber() const {
   return frame_connector_->capture_sequence_number();
 }
 
-void RenderWidgetHostViewChildFrame::Show() {
+void RenderWidgetHostViewChildFrame::ShowWithVisibility(
+    PageVisibilityState /*page_visibility*/) {
   if (!host()->is_hidden())
     return;
 
@@ -316,14 +317,29 @@ void RenderWidgetHostViewChildFrame::UpdateBackgroundColor() {
   }
 }
 
-base::Optional<DisplayFeature>
+absl::optional<DisplayFeature>
 RenderWidgetHostViewChildFrame::GetDisplayFeature() {
   NOTREACHED();
-  return base::nullopt;
+  return absl::nullopt;
 }
 
 void RenderWidgetHostViewChildFrame::SetDisplayFeatureForTesting(
     const DisplayFeature*) {
+  NOTREACHED();
+}
+
+void RenderWidgetHostViewChildFrame::NotifyHostAndDelegateOnWasShown(
+    blink::mojom::RecordContentToVisibleTimeRequestPtr) {
+  NOTREACHED();
+}
+
+void RenderWidgetHostViewChildFrame::RequestPresentationTimeFromHostOrDelegate(
+    blink::mojom::RecordContentToVisibleTimeRequestPtr) {
+  NOTREACHED();
+}
+
+void RenderWidgetHostViewChildFrame::
+    CancelPresentationTimeRequestForHostAndDelegate() {
   NOTREACHED();
 }
 
@@ -340,7 +356,8 @@ RenderWidgetHostViewBase* RenderWidgetHostViewChildFrame::GetRootView() {
 
 void RenderWidgetHostViewChildFrame::InitAsPopup(
     RenderWidgetHostView* parent_host_view,
-    const gfx::Rect& bounds) {
+    const gfx::Rect& bounds,
+    const gfx::Rect& anchor_rect) {
   NOTREACHED();
 }
 
@@ -349,11 +366,16 @@ void RenderWidgetHostViewChildFrame::UpdateCursor(const WebCursor& cursor) {
     frame_connector_->UpdateCursor(cursor);
 }
 
+void RenderWidgetHostViewChildFrame::UpdateScreenInfo() {
+  if (frame_connector_)
+    screen_infos_ = frame_connector_->screen_infos();
+}
+
 void RenderWidgetHostViewChildFrame::SendInitialPropertiesIfNeeded() {
   if (initial_properties_sent_ || !frame_connector_)
     return;
   UpdateViewportIntersection(frame_connector_->intersection_state(),
-                             base::nullopt);
+                             absl::nullopt);
   SetIsInert();
   UpdateInheritedEffectiveTouchAction();
   UpdateRenderThrottlingStatus();
@@ -395,8 +417,8 @@ void RenderWidgetHostViewChildFrame::Destroy() {
   delete this;
 }
 
-void RenderWidgetHostViewChildFrame::SetTooltipText(
-    const base::string16& tooltip_text) {
+void RenderWidgetHostViewChildFrame::UpdateTooltipUnderCursor(
+    const std::u16string& tooltip_text) {
   if (!frame_connector_)
     return;
 
@@ -410,7 +432,36 @@ void RenderWidgetHostViewChildFrame::SetTooltipText(
   if (!cursor_manager)
     return;
 
-  cursor_manager->SetTooltipTextForView(this, tooltip_text);
+  if (cursor_manager->IsViewUnderCursor(this))
+    root_view->UpdateTooltip(tooltip_text);
+}
+
+void RenderWidgetHostViewChildFrame::UpdateTooltipFromKeyboard(
+    const std::u16string& tooltip_text,
+    const gfx::Rect& bounds) {
+  if (!frame_connector_)
+    return;
+
+  auto* root_view = frame_connector_->GetRootRenderWidgetHostView();
+  if (!root_view)
+    return;
+
+  // TODO(bebeaudr): Keyboard-triggered tooltips are not positioned correctly
+  // when set for an element in an OOPIF. See https://crbug.com/1210269.
+  gfx::Rect adjusted_bounds(TransformPointToRootCoordSpace(bounds.origin()),
+                            bounds.size());
+  root_view->UpdateTooltipFromKeyboard(tooltip_text, adjusted_bounds);
+}
+
+void RenderWidgetHostViewChildFrame::ClearKeyboardTriggeredTooltip() {
+  if (!frame_connector_)
+    return;
+
+  auto* root_view = frame_connector_->GetRootRenderWidgetHostView();
+  if (!root_view)
+    return;
+
+  root_view->ClearKeyboardTriggeredTooltip();
 }
 
 RenderWidgetHostViewBase* RenderWidgetHostViewChildFrame::GetParentView() {
@@ -441,13 +492,18 @@ void RenderWidgetHostViewChildFrame::UnregisterFrameSinkId() {
 
 void RenderWidgetHostViewChildFrame::UpdateViewportIntersection(
     const blink::mojom::ViewportIntersectionState& intersection_state,
-    const base::Optional<blink::VisualProperties>& visual_properties) {
+    const absl::optional<blink::VisualProperties>& visual_properties) {
   if (host()) {
     host()->SetIntersectsViewport(
         !intersection_state.viewport_intersection.IsEmpty());
 
-    // Do not send viewport intersection to main frames.
-    if (!host()->owner_delegate()) {
+    // Do not send |visual_properties| to main frames.
+    DCHECK(!visual_properties.has_value() || !host()->owner_delegate());
+
+    // TODO(crbug.com/1148960): Also propagate this for portals.
+    bool is_fenced_frame =
+        host()->frame_tree()->type() == FrameTree::Type::kFencedFrame;
+    if (!host()->owner_delegate() || is_fenced_frame) {
       host()->GetAssociatedFrameWidget()->SetViewportIntersection(
           intersection_state.Clone(), visual_properties);
     }
@@ -640,7 +696,7 @@ const viz::LocalSurfaceId& RenderWidgetHostViewChildFrame::GetLocalSurfaceId()
 void RenderWidgetHostViewChildFrame::NotifyHitTestRegionUpdated(
     const viz::AggregatedHitTestRegion& region) {
   gfx::RectF screen_rect(region.rect);
-  if (!region.transform().TransformRectReverse(&screen_rect)) {
+  if (!region.transform.TransformRectReverse(&screen_rect)) {
     last_stable_screen_rect_ = gfx::RectF();
     screen_rect_stable_since_ = base::TimeTicks::Now();
     return;
@@ -657,8 +713,8 @@ void RenderWidgetHostViewChildFrame::NotifyHitTestRegionUpdated(
 
 bool RenderWidgetHostViewChildFrame::ScreenRectIsUnstableFor(
     const blink::WebInputEvent& event) {
-  if (event.TimeStamp() - base::TimeDelta::FromMilliseconds(
-                              blink::mojom::kMinScreenRectStableTimeMs) <
+  if (event.TimeStamp() -
+          base::Milliseconds(blink::mojom::kMinScreenRectStableTimeMs) <
       screen_rect_stable_since_) {
     return true;
   }
@@ -741,7 +797,7 @@ bool RenderWidgetHostViewChildFrame::IsRenderWidgetHostViewChildFrame() {
   return true;
 }
 
-#if defined(OS_MAC)
+#if BUILDFLAG(IS_MAC)
 void RenderWidgetHostViewChildFrame::SetActive(bool active) {}
 
 void RenderWidgetHostViewChildFrame::ShowDefinitionForSelection() {
@@ -755,7 +811,14 @@ void RenderWidgetHostViewChildFrame::SpeakSelection() {}
 
 void RenderWidgetHostViewChildFrame::SetWindowFrameInScreen(
     const gfx::Rect& rect) {}
-#endif  // defined(OS_MAC)
+
+void RenderWidgetHostViewChildFrame::ShowSharePicker(
+    const std::string& title,
+    const std::string& text,
+    const std::string& url,
+    const std::vector<std::string>& file_paths,
+    blink::mojom::ShareService::ShareCallback callback) {}
+#endif  // BUILDFLAG(IS_MAC)
 
 void RenderWidgetHostViewChildFrame::CopyFromSurface(
     const gfx::Rect& src_subrect,
@@ -768,22 +831,22 @@ void RenderWidgetHostViewChildFrame::CopyFromSurface(
 
   std::unique_ptr<viz::CopyOutputRequest> request =
       std::make_unique<viz::CopyOutputRequest>(
-          viz::CopyOutputRequest::ResultFormat::RGBA_BITMAP,
+          viz::CopyOutputRequest::ResultFormat::RGBA,
+          viz::CopyOutputRequest::ResultDestination::kSystemMemory,
           base::BindOnce(
               [](base::OnceCallback<void(const SkBitmap&)> callback,
                  std::unique_ptr<viz::CopyOutputResult> result) {
-                std::move(callback).Run(result->AsSkBitmap());
+                auto scoped_bitmap = result->ScopedAccessSkBitmap();
+                std::move(callback).Run(scoped_bitmap.GetOutScopedBitmap());
               },
               std::move(callback)));
 
   if (src_subrect.IsEmpty()) {
     request->set_area(gfx::Rect(GetCompositorViewportPixelSize()));
   } else {
-    blink::ScreenInfo screen_info;
-    GetScreenInfo(&screen_info);
     // |src_subrect| is in DIP coordinates; convert to Surface coordinates.
     request->set_area(
-        gfx::ScaleToRoundedRect(src_subrect, screen_info.device_scale_factor));
+        gfx::ScaleToRoundedRect(src_subrect, GetDeviceScaleFactor()));
   }
 
   if (!output_size.IsEmpty()) {
@@ -831,7 +894,7 @@ void RenderWidgetHostViewChildFrame::
     const cc::RenderFrameMetadata& metadata =
         host()->render_frame_metadata_provider()->LastRenderFrameMetadata();
     selection_controller_client_->UpdateSelectionBoundsIfNeeded(
-        metadata.selection, current_device_scale_factor());
+        metadata.selection, GetDeviceScaleFactor());
   }
 }
 
@@ -895,13 +958,6 @@ RenderWidgetHostViewChildFrame::FilterInputEvent(
   }
 
   return blink::mojom::InputEventResultState::kNotConsumed;
-}
-
-void RenderWidgetHostViewChildFrame::GetScreenInfo(
-    blink::ScreenInfo* screen_info) {
-  if (frame_connector_)
-    screen_info_ = frame_connector_->screen_info();
-  *screen_info = screen_info_;
 }
 
 void RenderWidgetHostViewChildFrame::EnableAutoResize(
@@ -970,6 +1026,12 @@ void RenderWidgetHostViewChildFrame::OnDidUpdateVisualPropertiesComplete(
 
 void RenderWidgetHostViewChildFrame::DidNavigate() {
   host()->SynchronizeVisualProperties();
+}
+
+ui::Compositor* RenderWidgetHostViewChildFrame::GetCompositor() {
+  if (!GetRootView())
+    return nullptr;
+  return GetRootView()->GetCompositor();
 }
 
 }  // namespace content

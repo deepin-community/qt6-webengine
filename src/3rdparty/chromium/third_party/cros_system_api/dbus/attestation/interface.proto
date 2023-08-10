@@ -10,7 +10,7 @@ import "attestation_ca.proto";
 import "keystore.proto";
 
 package attestation;
-option go_package = "attestation_proto";
+option go_package = "chromiumos/system_api/attestation_proto";
 
 enum AttestationStatus {
   STATUS_SUCCESS = 0;
@@ -385,6 +385,8 @@ message SignEnterpriseChallengeRequest {
   // the same key used to sign the challenge response (EMK or EUK) will be used
   // for SignedPublicKeyAndChallenge.
   optional string key_name_for_spkac = 8;
+  // Device Trust Signals
+  optional DeviceTrustSignals device_trust_signals = 9;
 }
 
 message SignEnterpriseChallengeReply {

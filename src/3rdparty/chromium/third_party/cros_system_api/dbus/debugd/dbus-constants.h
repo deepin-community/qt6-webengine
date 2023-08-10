@@ -20,6 +20,7 @@ const char kGetInterfaces[] = "GetInterfaces";
 const char kGetNetworkStatus[] = "GetNetworkStatus";
 const char kGetPerfOutput[] = "GetPerfOutput";
 const char kGetPerfOutputFd[] = "GetPerfOutputFd";
+const char kGetPerfOutputV2[] = "GetPerfOutputV2";
 const char kStopPerf[] = "StopPerf";
 const char kGetIpAddrs[] = "GetIpAddrs";
 const char kGetRoutes[] = "GetRoutes";
@@ -55,6 +56,14 @@ const char kSetSchedulerConfigurationV2[] = "SetSchedulerConfigurationV2";
 const char kSwapSetParameter[] = "SwapSetParameter";
 const char kBackupArcBugReport[] = "BackupArcBugReport";
 const char kDeleteArcBugReportBackup[] = "DeleteArcBugReportBackup";
+const char kKernelFeatureList[] = "KernelFeatureList";
+const char kKernelFeatureEnable[] = "KernelFeatureEnable";
+// PacketCaptureStart method isn't defined as it's not needed by any component.
+const char kPacketCaptureStop[] = "PacketCaptureStop";
+
+// Signals.
+const char kPacketCaptureStartSignal[] = "PacketCaptureStart";
+const char kPacketCaptureStopSignal[] = "PacketCaptureStop";
 
 // Properties.
 const char kCrashSenderTestMode[] = "CrashSenderTestMode";
@@ -83,6 +92,35 @@ enum CupsResult {
   CUPS_PRINTER_UNREACHABLE = 8,
   CUPS_PRINTER_WRONG_RESPONSE = 9,
   CUPS_PRINTER_NOT_AUTOCONF = 10
+};
+
+// DRMTraceCategories flags. These values must align with those in
+// org.chromium.debug.xml.
+enum DRMTraceCategories {
+  DRMTraceCategory_CORE = 0x001,
+  DRMTraceCategory_DRIVER = 0x002,
+  DRMTraceCategory_KMS = 0x004,
+  DRMTraceCategory_PRIME = 0x008,
+  DRMTraceCategory_ATOMIC = 0x010,
+  DRMTraceCategory_VBL = 0x020,
+  DRMTraceCategory_STATE = 0x040,
+  DRMTraceCategory_LEASE = 0x080,
+  DRMTraceCategory_DP = 0x100,
+  DRMTraceCategory_DRMRES = 0x200,
+};
+
+// DRMTraceSizes enum. These values must align with those in
+// org.chromium.debugd.xml
+enum DRMTraceSizes {
+  DRMTraceSize_DEFAULT = 0,
+  DRMTraceSize_DEBUG = 1,
+};
+
+// DRMSnapshotType enum. These values must align with those in
+// org.chromium.debugd.xml
+enum DRMSnapshotType {
+  DRMSnapshotType_TRACE = 0,
+  DRMSnapshotType_MODETEST = 1,
 };
 
 // Debug log keys which should be substituted in the system info dialog.

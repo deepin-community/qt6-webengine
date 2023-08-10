@@ -51,10 +51,12 @@ template <typename T,
           T InvalidValue,
           bool CheckClose = true,
           class Checker = internal::DefaultValidityChecker<T, InvalidValue>>
-class PERFETTO_EXPORT ScopedResource {
+class ScopedResource {
  public:
-  explicit ScopedResource(T t = InvalidValue) : t_(t) {}
+  using ValidityChecker = Checker;
   static constexpr T kInvalid = InvalidValue;
+
+  explicit ScopedResource(T t = InvalidValue) : t_(t) {}
   ScopedResource(ScopedResource&& other) noexcept {
     t_ = other.t_;
     other.t_ = InvalidValue;

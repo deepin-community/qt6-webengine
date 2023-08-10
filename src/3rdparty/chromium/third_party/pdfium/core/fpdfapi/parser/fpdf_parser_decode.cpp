@@ -6,10 +6,10 @@
 
 #include "core/fpdfapi/parser/fpdf_parser_decode.h"
 
+#include <ctype.h>
 #include <limits.h>
 
 #include <algorithm>
-#include <sstream>
 #include <utility>
 #include <vector>
 
@@ -19,12 +19,12 @@
 #include "core/fpdfapi/parser/fpdf_parser_utility.h"
 #include "core/fxcodec/fax/faxmodule.h"
 #include "core/fxcodec/flate/flatemodule.h"
-#include "core/fxcodec/fx_codec.h"
 #include "core/fxcodec/scanlinedecoder.h"
 #include "core/fxcrt/fx_extension.h"
 #include "core/fxcrt/fx_safe_types.h"
+#include "core/fxcrt/span_util.h"
 #include "third_party/base/check.h"
-#include "third_party/base/stl_util.h"
+#include "third_party/base/containers/contains.h"
 
 namespace {
 
@@ -57,7 +57,7 @@ uint8_t GetA85Result(uint32_t res, size_t i) {
 
 }  // namespace
 
-const uint16_t PDFDocEncoding[256] = {
+const uint16_t kPDFDocEncoding[256] = {
     0x0000, 0x0001, 0x0002, 0x0003, 0x0004, 0x0005, 0x0006, 0x0007, 0x0008,
     0x0009, 0x000a, 0x000b, 0x000c, 0x000d, 0x000e, 0x000f, 0x0010, 0x0011,
     0x0012, 0x0013, 0x0014, 0x0015, 0x0016, 0x0017, 0x02d8, 0x02c7, 0x02c6,
@@ -219,7 +219,7 @@ uint32_t HexDecode(pdfium::span<const uint8_t> src_span,
       ++i;
       break;
     }
-    if (!std::isxdigit(ch))
+    if (!isxdigit(ch))
       continue;
 
     int digit = FXSYS_HexCharToInt(ch);
@@ -273,18 +273,17 @@ uint32_t RunLengthDecode(pdfium::span<const uint8_t> src_span,
       if (buf_left < copy_len) {
         uint32_t delta = copy_len - buf_left;
         copy_len = buf_left;
-        memset(&dest_span[dest_count + copy_len], '\0', delta);
+        fxcrt::spanclr(dest_span.subspan(dest_count + copy_len, delta));
       }
       auto copy_span = src_span.subspan(i + 1, copy_len);
-      memcpy(&dest_span[dest_count], copy_span.data(), copy_span.size());
+      fxcrt::spancpy(dest_span.subspan(dest_count), copy_span);
       dest_count += src_span[i] + 1;
       i += src_span[i] + 2;
     } else {
-      int fill = 0;
-      if (i < src_span.size() - 1)
-        fill = src_span[i + 1];
-      memset(&dest_span[dest_count], fill, 257 - src_span[i]);
-      dest_count += 257 - src_span[i];
+      const uint8_t fill = i < src_span.size() - 1 ? src_span[i + 1] : 0;
+      const size_t fill_size = 257 - src_span[i];
+      fxcrt::spanset(dest_span.subspan(dest_count, fill_size), fill);
+      dest_count += fill_size;
       i += 2;
     }
   }
@@ -365,13 +364,13 @@ uint32_t FlateOrLZWDecode(bool bLZW,
                                        estimated_size, dest_buf, dest_size);
 }
 
-Optional<DecoderArray> GetDecoderArray(const CPDF_Dictionary* pDict) {
+absl::optional<DecoderArray> GetDecoderArray(const CPDF_Dictionary* pDict) {
   const CPDF_Object* pFilter = pDict->GetDirectObjectFor("Filter");
   if (!pFilter)
     return DecoderArray();
 
   if (!pFilter->IsArray() && !pFilter->IsName())
-    return pdfium::nullopt;
+    return absl::nullopt;
 
   const CPDF_Object* pParams =
       pDict->GetDirectObjectFor(pdfium::stream::kDecodeParms);
@@ -379,7 +378,7 @@ Optional<DecoderArray> GetDecoderArray(const CPDF_Dictionary* pDict) {
   DecoderArray decoder_array;
   if (const CPDF_Array* pDecoders = pFilter->AsArray()) {
     if (!ValidateDecoderPipeline(pDecoders))
-      return pdfium::nullopt;
+      return absl::nullopt;
 
     const CPDF_Array* pParamsArray = ToArray(pParams);
     for (size_t i = 0; i < pDecoders->size(); ++i) {
@@ -509,14 +508,14 @@ WideString PDF_DecodeText(pdfium::span<const uint8_t> span) {
   } else {
     pdfium::span<wchar_t> dest_buf = result.GetBuffer(span.size());
     for (size_t i = 0; i < span.size(); ++i)
-      dest_buf[i] = PDFDocEncoding[span[i]];
+      dest_buf[i] = kPDFDocEncoding[span[i]];
     dest_pos = span.size();
   }
   result.ReleaseBuffer(dest_pos);
   return result;
 }
 
-ByteString PDF_EncodeText(const WideString& str) {
+ByteString PDF_EncodeText(WideStringView str) {
   size_t i = 0;
   size_t len = str.GetLength();
   ByteString result;
@@ -525,7 +524,7 @@ ByteString PDF_EncodeText(const WideString& str) {
     for (i = 0; i < len; ++i) {
       int code;
       for (code = 0; code < 256; ++code) {
-        if (PDFDocEncoding[code] == str[i])
+        if (kPDFDocEncoding[code] == str[i])
           break;
       }
       if (code == 256)
@@ -559,44 +558,46 @@ ByteString PDF_EncodeText(const WideString& str) {
   return result;
 }
 
-ByteString PDF_EncodeString(const ByteString& src, bool bHex) {
-  std::ostringstream result;
-  int srclen = src.GetLength();
-  if (bHex) {
-    result << '<';
-    for (int i = 0; i < srclen; ++i) {
-      char buf[2];
-      FXSYS_IntToTwoHexChars(src[i], buf);
-      result << buf[0];
-      result << buf[1];
-    }
-    result << '>';
-    return ByteString(result);
-  }
-  result << '(';
-  for (int i = 0; i < srclen; ++i) {
+ByteString PDF_EncodeString(ByteStringView src) {
+  ByteString result;
+  result.Reserve(src.GetLength() + 2);
+  result += '(';
+  for (size_t i = 0; i < src.GetLength(); ++i) {
     uint8_t ch = src[i];
     if (ch == 0x0a) {
-      result << "\\n";
+      result += "\\n";
       continue;
     }
     if (ch == 0x0d) {
-      result << "\\r";
+      result += "\\r";
       continue;
     }
     if (ch == ')' || ch == '\\' || ch == '(')
-      result << '\\';
-    result << static_cast<char>(ch);
+      result += '\\';
+    result += static_cast<char>(ch);
   }
-  result << ')';
-  return ByteString(result);
+  result += ')';
+  return result;
+}
+
+ByteString PDF_HexEncodeString(ByteStringView src) {
+  ByteString result;
+  result.Reserve(2 * src.GetLength() + 2);
+  result += '<';
+  for (size_t i = 0; i < src.GetLength(); ++i) {
+    char buf[2];
+    FXSYS_IntToTwoHexChars(src[i], buf);
+    result += buf[0];
+    result += buf[1];
+  }
+  result += '>';
+  return result;
 }
 
 bool FlateEncode(pdfium::span<const uint8_t> src_span,
                  std::unique_ptr<uint8_t, FxFreeDeleter>* dest_buf,
                  uint32_t* dest_size) {
-  return FlateModule::Encode(src_span.data(), src_span.size(), dest_buf,
-                             dest_size);
+  return FlateModule::Encode(src_span, dest_buf, dest_size);
 }
 
 uint32_t FlateDecode(pdfium::span<const uint8_t> src_span,

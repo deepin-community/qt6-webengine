@@ -24,13 +24,14 @@ bool FixupAndValidateStartupPage(const std::string& url_string,
   return valid;
 }
 
-base::RefCountedMemory* GetFaviconResourceBytes(ui::ScaleFactor scale_factor) {
+base::RefCountedMemory* GetFaviconResourceBytes(
+    ui::ResourceScaleFactor scale_factor) {
   return ui::ResourceBundle::GetSharedInstance().LoadDataResourceBytesForScale(
       IDR_SETTINGS_FAVICON, scale_factor);
 }
 
 base::RefCountedMemory* GetPrivacySandboxFaviconResourceBytes(
-    ui::ScaleFactor scale_factor) {
+    ui::ResourceScaleFactor scale_factor) {
   return ui::ResourceBundle::GetSharedInstance().LoadDataResourceBytesForScale(
       IDR_FLAGS_FAVICON, scale_factor);
 }
@@ -41,7 +42,7 @@ std::string ResolveFontList(const std::string& font_name_or_list) {
   return font_name_or_list;
 }
 
-#if !defined(OS_WIN)
+#if !BUILDFLAG(IS_WIN)
 std::string MaybeGetLocalizedFontName(const std::string& font_name_or_list) {
   return ResolveFontList(font_name_or_list);
 }

@@ -9,17 +9,14 @@
 
 #include <algorithm>
 #include <memory>
+#include <set>
+#include <string>
 #include <vector>
 
 #include "base/check_op.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/observer_list.h"
-#include "base/strings/string16.h"
 #include "ui/base/models/tree_model.h"
-
-namespace bookmarks {
-class BookmarkModel;
-}
 
 namespace ui {
 
@@ -44,9 +41,9 @@ namespace ui {
 // std::unique_ptr<TreeNodeWithValue<int>> root =
 //     std::make_unique<TreeNodeWithValue<int>>();
 // root->Add(
-//     std::make_unique<TreeNodeWithValue<int>>(ASCIIToUTF16("child 1"), 0));
+//     std::make_unique<TreeNodeWithValue<int>>(u"child 1", 0));
 // root->Add(
-//     std::make_unique<TreeNodeWithValue<int>>(ASCIIToUTF16("child 2"), 1));
+//     std::make_unique<TreeNodeWithValue<int>>(u"child 2", 1));
 // TreeNodeModel<TreeNodeWithValue<int>> model(std::move(root));
 //
 // Two variants of TreeNode are provided here:
@@ -80,8 +77,11 @@ class TreeNode : public TreeModelNode {
 
   TreeNode() : parent_(nullptr) {}
 
-  explicit TreeNode(const base::string16& title)
+  explicit TreeNode(const std::u16string& title)
       : title_(title), parent_(nullptr) {}
+
+  TreeNode(const TreeNode&) = delete;
+  TreeNode& operator=(const TreeNode&) = delete;
 
   ~TreeNode() override {}
 
@@ -143,10 +143,10 @@ class TreeNode : public TreeModelNode {
   }
 
   // Sets the title of the node.
-  virtual void SetTitle(const base::string16& title) { title_ = title; }
+  virtual void SetTitle(const std::u16string& title) { title_ = title; }
 
   // TreeModelNode:
-  const base::string16& GetTitle() const override { return title_; }
+  const std::u16string& GetTitle() const override { return title_; }
 
   // Returns true if this == ancestor, or one of this nodes parents is
   // ancestor.
@@ -158,20 +158,41 @@ class TreeNode : public TreeModelNode {
     return parent_ ? parent_->HasAncestor(ancestor) : false;
   }
 
- private:
-  // TODO(https://crbug.com/956314): Remove this.
-  friend class bookmarks::BookmarkModel;
+  // Reorders children according to a new arbitrary order. |new_order| must
+  // contain one entry per child node, and the value of the entry at position
+  // |i| represents the new position, which must be unique and in the range
+  // between 0 (inclusive) and the number of children (exclusive).
+  void ReorderChildren(const std::vector<size_t>& new_order) {
+    const size_t children_count = children_.size();
+    DCHECK_EQ(children_count, new_order.size());
+    DCHECK_EQ(children_count,
+              std::set(new_order.begin(), new_order.end()).size());
+    TreeNodes new_children(children_count);
+    for (size_t old_index = 0; old_index < children_count; ++old_index) {
+      const size_t new_index = new_order[old_index];
+      DCHECK_LT(new_index, children_count);
+      DCHECK(children_[old_index]);
+      DCHECK(!new_children[new_index]);
+      new_children[new_index] = std::move(children_[old_index]);
+    }
+    children_ = std::move(new_children);
+  }
 
+  // Sorts children according to a comparator.
+  template <typename Compare>
+  void SortChildren(Compare comp) {
+    std::stable_sort(children_.begin(), children_.end(), comp);
+  }
+
+ private:
   // Title displayed in the tree.
-  base::string16 title_;
+  std::u16string title_;
 
   // This node's parent.
-  NodeType* parent_;
+  raw_ptr<NodeType> parent_;
 
   // This node's children.
   TreeNodes children_;
-
-  DISALLOW_COPY_AND_ASSIGN(TreeNode);
 };
 
 // TreeNodeWithValue ----------------------------------------------------------
@@ -186,17 +207,18 @@ class TreeNodeWithValue : public TreeNode<TreeNodeWithValue<ValueType>> {
   TreeNodeWithValue() {}
 
   explicit TreeNodeWithValue(const ValueType& value)
-      : ParentType(base::string16()), value(value) {}
+      : ParentType(std::u16string()), value(value) {}
 
-  TreeNodeWithValue(const base::string16& title, const ValueType& value)
+  TreeNodeWithValue(const std::u16string& title, const ValueType& value)
       : ParentType(title), value(value) {}
+
+  TreeNodeWithValue(const TreeNodeWithValue&) = delete;
+  TreeNodeWithValue& operator=(const TreeNodeWithValue&) = delete;
 
   ValueType value;
 
  private:
   using ParentType = TreeNode<TreeNodeWithValue<ValueType>>;
-
-  DISALLOW_COPY_AND_ASSIGN(TreeNodeWithValue);
 };
 
 // TreeNodeModel --------------------------------------------------------------
@@ -208,6 +230,10 @@ class TreeNodeModel : public TreeModel {
   // Creates a TreeNodeModel with the specified root node.
   explicit TreeNodeModel(std::unique_ptr<NodeType> root)
       : root_(std::move(root)) {}
+
+  TreeNodeModel(const TreeNodeModel&) = delete;
+  TreeNodeModel& operator=(const TreeNodeModel&) = delete;
+
   virtual ~TreeNodeModel() override {}
 
   static NodeType* AsNode(TreeModelNode* model_node) {
@@ -241,7 +267,7 @@ class TreeNodeModel : public TreeModel {
 
   std::unique_ptr<NodeType> Remove(NodeType* parent, NodeType* node) {
     DCHECK(parent);
-    return Remove(parent, size_t{parent->GetIndexOf(node)});
+    return Remove(parent, static_cast<size_t>(parent->GetIndexOf(node)));
   }
 
   void NotifyObserverTreeNodesAdded(NodeType* parent,
@@ -306,8 +332,7 @@ class TreeNodeModel : public TreeModel {
     observer_list_.RemoveObserver(observer);
   }
 
-  void SetTitle(TreeModelNode* node,
-                const base::string16& title) override {
+  void SetTitle(TreeModelNode* node, const std::u16string& title) override {
     DCHECK(node);
     AsNode(node)->SetTitle(title);
     NotifyObserverTreeNodeChanged(node);
@@ -319,8 +344,6 @@ class TreeNodeModel : public TreeModel {
 
   // The root.
   std::unique_ptr<NodeType> root_;
-
-  DISALLOW_COPY_AND_ASSIGN(TreeNodeModel);
 };
 
 }  // namespace ui

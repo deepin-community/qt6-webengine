@@ -89,7 +89,7 @@ class RegistryControlledDomainTest : public testing::Test {
   template <typename Graph>
   void UseDomainData(const Graph& graph) {
     // This is undone in TearDown.
-    SetFindDomainGraph(graph, sizeof(Graph));
+    SetFindDomainGraphForTesting(graph, sizeof(Graph));
   }
 
   bool CompareDomains(const std::string& url1, const std::string& url2) {
@@ -103,7 +103,7 @@ class RegistryControlledDomainTest : public testing::Test {
     return SameDomainOrHost(g1, g2, EXCLUDE_PRIVATE_REGISTRIES);
   }
 
-  void TearDown() override { SetFindDomainGraph(); }
+  void TearDown() override { ResetFindDomainGraphForTesting(); }
 };
 
 TEST_F(RegistryControlledDomainTest, TestGetDomainAndRegistry) {
@@ -627,8 +627,7 @@ TEST_F(RegistryControlledDomainTest, Permissive) {
   EXPECT_EQ(7U,
             PermissiveGetHostRegistryLength("foo.\xE4\xB8\xAD\xE5\x9B\xBD."));
   // UTF-16 IDN.
-  EXPECT_EQ(2U, PermissiveGetHostRegistryLength(
-                    base::WideToUTF16(L"foo.\x4e2d\x56fd")));
+  EXPECT_EQ(2U, PermissiveGetHostRegistryLength(u"foo.\x4e2d\x56fd"));
 
   // Fullwidth dot (u+FF0E) that will get canonicalized to a dot.
   EXPECT_EQ(2U, PermissiveGetHostRegistryLength("Www.Google\xEF\xBC\x8Ejp"));
@@ -641,7 +640,7 @@ TEST_F(RegistryControlledDomainTest, Permissive) {
                      "Www.Google%EF%BC%8E%EF%BC%AA%EF%BD%90%EF%BC%8E"));
   // UTF-16 (ending in a dot).
   EXPECT_EQ(3U, PermissiveGetHostRegistryLength(
-                    base::WideToUTF16(L"Www.Google\xFF0E\xFF2A\xFF50\xFF0E")));
+                    u"Www.Google\xFF0E\xFF2A\xFF50\xFF0E"));
 #endif
 }
 

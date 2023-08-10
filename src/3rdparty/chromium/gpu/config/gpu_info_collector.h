@@ -13,9 +13,9 @@
 #include "gpu/gpu_export.h"
 #include "ui/gfx/gpu_extra_info.h"
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 #include <d3dcommon.h>
-#endif  // OS_WIN
+#endif  // BUILDFLAG(IS_WIN)
 
 namespace angle {
 struct SystemInfo;
@@ -26,7 +26,6 @@ class CommandLine;
 }
 
 namespace gpu {
-
 // Collects basic GPU info without creating a GL/DirectX context (and without
 // the danger of crashing), including vendor_id and device_id.
 // This is called at browser process startup time.
@@ -42,12 +41,15 @@ GPU_EXPORT bool CollectBasicGraphicsInfo(const base::CommandLine* command_line,
 // This is called at GPU process startup time.
 GPU_EXPORT bool CollectContextGraphicsInfo(GPUInfo* gpu_info);
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 // Collect the DirectX Disagnostics information about the attached displays.
 GPU_EXPORT bool GetDxDiagnostics(DxDiagNode* output);
-GPU_EXPORT uint32_t GetGpuSupportedD3D12Version();
+GPU_EXPORT void GetGpuSupportedD3D12Version(
+    uint32_t& d3d12_feature_level,
+    uint32_t& highest_shader_model_version);
 GPU_EXPORT void RecordGpuSupportedDx12VersionHistograms(
-    uint32_t d3d12_feature_level);
+    uint32_t d3d12_feature_level,
+    uint32_t highest_shader_model_version);
 GPU_EXPORT uint32_t
 GetGpuSupportedVulkanVersion(const gpu::GPUInfo::GPUDevice& gpu_device);
 
@@ -65,7 +67,7 @@ GPU_EXPORT void CollectHardwareOverlayInfo(OverlayInfo* overlay_info);
 
 // Identify the active GPU based on LUIDs.
 bool IdentifyActiveGPUWithLuid(GPUInfo* gpu_info);
-#endif  // OS_WIN
+#endif  // BUILDFLAG(IS_WIN)
 
 // Create a GL context and collect GL strings and versions.
 GPU_EXPORT bool CollectGraphicsInfoGL(GPUInfo* gpu_info);
@@ -86,6 +88,10 @@ GPU_EXPORT void CollectGraphicsInfoForTesting(GPUInfo* gpu_info);
 // Collect Graphics info related to the current process
 GPU_EXPORT bool CollectGpuExtraInfo(gfx::GpuExtraInfo* gpu_extra_info,
                                     const GpuPreferences& prefs);
+
+// Collect Dawn Toggle name info for about:gpu
+GPU_EXPORT void CollectDawnInfo(const gpu::GpuPreferences& gpu_preferences,
+                                std::vector<std::string>* dawn_info_list);
 
 }  // namespace gpu
 

@@ -7,7 +7,6 @@
 #include "base/bind.h"
 #include "base/callback_helpers.h"
 #include "content/browser/renderer_host/media/peer_connection_tracker_host.h"
-#include "content/browser/renderer_host/render_process_host_impl.h"
 #include "content/browser/webrtc/webrtc_internals.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_frame_host.h"
@@ -33,46 +32,46 @@ WebRTCInternalsMessageHandler::~WebRTCInternalsMessageHandler() {
 }
 
 void WebRTCInternalsMessageHandler::RegisterMessages() {
-  web_ui()->RegisterMessageCallback(
+  web_ui()->RegisterDeprecatedMessageCallback(
       "getStandardStats",
       base::BindRepeating(&WebRTCInternalsMessageHandler::OnGetStandardStats,
                           base::Unretained(this)));
-  web_ui()->RegisterMessageCallback(
+  web_ui()->RegisterDeprecatedMessageCallback(
       "getLegacyStats",
       base::BindRepeating(&WebRTCInternalsMessageHandler::OnGetLegacyStats,
                           base::Unretained(this)));
 
-  web_ui()->RegisterMessageCallback(
+  web_ui()->RegisterDeprecatedMessageCallback(
       "enableAudioDebugRecordings",
       base::BindRepeating(
           &WebRTCInternalsMessageHandler::OnSetAudioDebugRecordingsEnabled,
           base::Unretained(this), true));
 
-  web_ui()->RegisterMessageCallback(
+  web_ui()->RegisterDeprecatedMessageCallback(
       "disableAudioDebugRecordings",
       base::BindRepeating(
           &WebRTCInternalsMessageHandler::OnSetAudioDebugRecordingsEnabled,
           base::Unretained(this), false));
 
-  web_ui()->RegisterMessageCallback(
+  web_ui()->RegisterDeprecatedMessageCallback(
       "enableEventLogRecordings",
       base::BindRepeating(
           &WebRTCInternalsMessageHandler::OnSetEventLogRecordingsEnabled,
           base::Unretained(this), true));
 
-  web_ui()->RegisterMessageCallback(
+  web_ui()->RegisterDeprecatedMessageCallback(
       "disableEventLogRecordings",
       base::BindRepeating(
           &WebRTCInternalsMessageHandler::OnSetEventLogRecordingsEnabled,
           base::Unretained(this), false));
 
-  web_ui()->RegisterMessageCallback(
+  web_ui()->RegisterDeprecatedMessageCallback(
       "finishedDOMLoad",
       base::BindRepeating(&WebRTCInternalsMessageHandler::OnDOMLoadDone,
                           base::Unretained(this)));
 }
 
-RenderFrameHost* WebRTCInternalsMessageHandler::GetWebRTCInternalsHost() const {
+RenderFrameHost* WebRTCInternalsMessageHandler::GetWebRTCInternalsHost() {
   RenderFrameHost* host = web_ui()->GetWebContents()->GetMainFrame();
   if (host) {
     // Make sure we only ever execute the script in the webrtc-internals page.
@@ -91,23 +90,15 @@ RenderFrameHost* WebRTCInternalsMessageHandler::GetWebRTCInternalsHost() const {
 
 void WebRTCInternalsMessageHandler::OnGetStandardStats(
     const base::ListValue* /* unused_list */) {
-  for (RenderProcessHost::iterator i(
-           content::RenderProcessHost::AllHostsIterator());
-       !i.IsAtEnd(); i.Advance()) {
-    auto* render_process_host =
-        static_cast<RenderProcessHostImpl*>(i.GetCurrentValue());
-    render_process_host->GetPeerConnectionTrackerHost()->GetStandardStats();
+  for (auto* host : PeerConnectionTrackerHost::GetAllHosts()) {
+    host->GetStandardStats();
   }
 }
 
 void WebRTCInternalsMessageHandler::OnGetLegacyStats(
     const base::ListValue* /* unused_list */) {
-  for (RenderProcessHost::iterator i(
-       content::RenderProcessHost::AllHostsIterator());
-       !i.IsAtEnd(); i.Advance()) {
-    auto* render_process_host =
-        static_cast<RenderProcessHostImpl*>(i.GetCurrentValue());
-    render_process_host->GetPeerConnectionTrackerHost()->GetLegacyStats();
+  for (auto* host : PeerConnectionTrackerHost::GetAllHosts()) {
+    host->GetLegacyStats();
   }
 }
 
@@ -136,43 +127,44 @@ void WebRTCInternalsMessageHandler::OnSetEventLogRecordingsEnabled(
   }
 }
 
-void WebRTCInternalsMessageHandler::OnDOMLoadDone(
-    const base::ListValue* /* unused_list */) {
+void WebRTCInternalsMessageHandler::OnDOMLoadDone(const base::ListValue* args) {
+  base::Value::ConstListView args_list = args->GetListDeprecated();
+  CHECK_GE(args_list.size(), 1u);
+
+  const std::string callback_id = args_list[0].GetString();
+  AllowJavascript();
+
   webrtc_internals_->UpdateObserver(this);
 
-  if (webrtc_internals_->IsAudioDebugRecordingsEnabled())
-    ExecuteJavascriptCommand("setAudioDebugRecordingsEnabled", nullptr);
+  base::Value params(base::Value::Type::DICTIONARY);
+  params.SetBoolKey("audioDebugRecordingsEnabled",
+                    webrtc_internals_->IsAudioDebugRecordingsEnabled());
+  params.SetBoolKey("eventLogRecordingsEnabled",
+                    webrtc_internals_->IsEventLogRecordingsEnabled());
+  params.SetBoolKey("eventLogRecordingsToggleable",
+                    webrtc_internals_->CanToggleEventLogRecordings());
 
-  if (webrtc_internals_->IsEventLogRecordingsEnabled())
-    ExecuteJavascriptCommand("setEventLogRecordingsEnabled", nullptr);
-
-  const base::Value can_toggle(
-      webrtc_internals_->CanToggleEventLogRecordings());
-  ExecuteJavascriptCommand("setEventLogRecordingsToggleability", &can_toggle);
+  ResolveJavascriptCallback(base::Value(callback_id), std::move(params));
 }
 
-void WebRTCInternalsMessageHandler::OnUpdate(const char* command,
-                                             const base::Value* args) {
-  ExecuteJavascriptCommand(command, args);
-}
-
-// TODO(eladalon): Make this function accept a vector of base::Values.
-// https://crbug.com/817384
-void WebRTCInternalsMessageHandler::ExecuteJavascriptCommand(
-    const char* command,
-    const base::Value* args) {
+void WebRTCInternalsMessageHandler::OnUpdate(const std::string& event_name,
+                                             const base::Value* event_data) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  if (!IsJavascriptAllowed()) {
+    // Javascript is disallowed, either due to the page still loading, or in the
+    // process of being unloaded. Skip this update.
+    return;
+  }
 
   RenderFrameHost* host = GetWebRTCInternalsHost();
   if (!host)
     return;
 
-  std::vector<const base::Value*> args_vector;
-  if (args)
-    args_vector.push_back(args);
-
-  base::string16 script = WebUI::GetJavascriptCall(command, args_vector);
-  host->ExecuteJavaScript(script, base::NullCallback());
+  if (event_data) {
+    FireWebUIListener(event_name, *event_data);
+  } else {
+    FireWebUIListener(event_name, base::Value());
+  }
 }
 
 }  // namespace content

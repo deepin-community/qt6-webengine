@@ -8,7 +8,7 @@
 #include "media/cast/sender/external_video_encoder.h"
 #include "media/cast/sender/video_encoder_impl.h"
 
-#if defined(OS_MAC)
+#if BUILDFLAG(IS_MAC)
 #include "media/cast/sender/h264_vt_encoder.h"
 #endif
 
@@ -20,23 +20,22 @@ std::unique_ptr<VideoEncoder> VideoEncoder::Create(
     const scoped_refptr<CastEnvironment>& cast_environment,
     const FrameSenderConfig& video_config,
     StatusChangeCallback status_change_cb,
-    const CreateVideoEncodeAcceleratorCallback& create_vea_cb,
-    const CreateVideoEncodeMemoryCallback& create_video_encode_memory_cb) {
+    const CreateVideoEncodeAcceleratorCallback& create_vea_cb) {
 // On MacOS or IOS, attempt to use the system VideoToolbox library to
 // perform optimized H.264 encoding.
-#if defined(OS_MAC)
+#if BUILDFLAG(IS_MAC)
   if (H264VideoToolboxEncoder::IsSupported(video_config)) {
     return std::unique_ptr<VideoEncoder>(new H264VideoToolboxEncoder(
         cast_environment, video_config, status_change_cb));
   }
-#endif  // defined(OS_MAC)
+#endif  // BUILDFLAG(IS_MAC)
 
-#if !defined(OS_IOS)
+#if !BUILDFLAG(IS_IOS)
   // If the system provides a hardware-accelerated encoder, use it.
   if (ExternalVideoEncoder::IsSupported(video_config)) {
     return std::unique_ptr<VideoEncoder>(new SizeAdaptableExternalVideoEncoder(
         cast_environment, video_config, std::move(status_change_cb),
-        create_vea_cb, create_video_encode_memory_cb));
+        create_vea_cb));
   }
 
   // Attempt to use the software encoder implementation.
@@ -44,7 +43,7 @@ std::unique_ptr<VideoEncoder> VideoEncoder::Create(
     return std::unique_ptr<VideoEncoder>(
         new VideoEncoderImpl(cast_environment, video_config, status_change_cb));
   }
-#endif  // !defined(OS_IOS)
+#endif  // !BUILDFLAG(IS_IOS)
 
   // No encoder implementation will suffice.
   return nullptr;

@@ -21,23 +21,26 @@
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "components/permissions/permission_manager.h"
 #include "components/permissions/permission_result.h"
+#include "components/permissions/permission_util.h"
+#include "components/permissions/permissions_client.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_service.h"
 #include "components/webrtc/media_stream_devices_controller.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 #include <vector>
 
-#include "chrome/browser/media/webrtc/screen_capture_infobar_delegate_android.h"
+#include "chrome/browser/media/webrtc/screen_capture_permission_handler_android.h"
 #include "components/permissions/permission_uma_util.h"
 #include "components/permissions/permission_util.h"
 #include "content/public/common/content_features.h"
-#endif  // defined(OS_ANDROID)
+#endif  // BUILDFLAG(IS_ANDROID)
 
-#if defined(OS_MAC)
+#if BUILDFLAG(IS_MAC)
 #include "base/metrics/histogram_macros.h"
 #include "chrome/browser/content_settings/chrome_content_settings_utils.h"
 #include "chrome/browser/media/webrtc/system_media_capture_permissions_mac.h"
@@ -46,12 +49,12 @@
 
 using content::BrowserThread;
 
-using RepeatingMediaResponseCallback =
-    base::RepeatingCallback<void(const blink::MediaStreamDevices& devices,
-                                 blink::mojom::MediaStreamRequestResult result,
-                                 std::unique_ptr<content::MediaStreamUI> ui)>;
+using MediaResponseCallback =
+    base::OnceCallback<void(const blink::MediaStreamDevices& devices,
+                            blink::mojom::MediaStreamRequestResult result,
+                            std::unique_ptr<content::MediaStreamUI> ui)>;
 
-#if defined(OS_MAC)
+#if BUILDFLAG(IS_MAC)
 using system_media_permissions::SystemPermission;
 #endif
 
@@ -65,10 +68,12 @@ void UpdatePageSpecificContentSettings(
   if (!web_contents)
     return;
 
-  // TODO(https://crbug.com/1103176): We should extract the frame from |request|
+  content::RenderFrameHost* const render_frame_host =
+      content::RenderFrameHost::FromID(request.render_process_id,
+                                       request.render_frame_id);
   auto* content_settings =
       content_settings::PageSpecificContentSettings::GetForFrame(
-          web_contents->GetMainFrame());
+          render_frame_host);
   if (!content_settings)
     return;
 
@@ -109,10 +114,23 @@ void UpdatePageSpecificContentSettings(
              : content_settings::PageSpecificContentSettings::CAMERA_BLOCKED);
   }
 
+  // TODO(crbug.com/698985): Use `GetLastCommittedURL` if web_contents represent
+  // NTP.
+  GURL embedding_origin;
+  if (permissions::PermissionsClient::Get()->DoOriginsMatchNewTabPage(
+          request.security_origin,
+          web_contents->GetLastCommittedURL().DeprecatedGetOriginAsURL())) {
+    embedding_origin =
+        web_contents->GetLastCommittedURL().DeprecatedGetOriginAsURL();
+  } else {
+    embedding_origin = permissions::PermissionUtil::GetLastCommittedOriginAsURL(
+        render_frame_host->GetMainFrame());
+  }
+
   content_settings->OnMediaStreamPermissionSet(
       PermissionManagerFactory::GetForProfile(profile)->GetCanonicalOrigin(
           ContentSettingsType::MEDIASTREAM_CAMERA, request.security_origin,
-          web_contents->GetLastCommittedURL()),
+          embedding_origin),
       microphone_camera_state, selected_audio_device, selected_video_device,
       requested_audio_device, requested_video_device);
 }
@@ -121,14 +139,13 @@ void UpdatePageSpecificContentSettings(
 
 struct PermissionBubbleMediaAccessHandler::PendingAccessRequest {
   PendingAccessRequest(const content::MediaStreamRequest& request,
-                       RepeatingMediaResponseCallback callback)
-      : request(request), callback(callback) {}
-  ~PendingAccessRequest() {}
+                       MediaResponseCallback callback)
+      : request(request), callback(std::move(callback)) {}
 
   // TODO(gbillock): make the MediaStreamDevicesController owned by
   // this object when we're using bubbles.
   content::MediaStreamRequest request;
-  RepeatingMediaResponseCallback callback;
+  MediaResponseCallback callback;
 };
 
 PermissionBubbleMediaAccessHandler::PermissionBubbleMediaAccessHandler()
@@ -141,7 +158,7 @@ bool PermissionBubbleMediaAccessHandler::SupportsStreamType(
     content::WebContents* web_contents,
     const blink::mojom::MediaStreamType type,
     const extensions::Extension* extension) {
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   return type == blink::mojom::MediaStreamType::DEVICE_VIDEO_CAPTURE ||
          type == blink::mojom::MediaStreamType::DEVICE_AUDIO_CAPTURE ||
          type == blink::mojom::MediaStreamType::GUM_DESKTOP_VIDEO_CAPTURE ||
@@ -158,17 +175,14 @@ bool PermissionBubbleMediaAccessHandler::CheckMediaAccessPermission(
     const GURL& security_origin,
     blink::mojom::MediaStreamType type,
     const extensions::Extension* extension) {
-  content::WebContents* web_contents =
-      content::WebContents::FromRenderFrameHost(render_frame_host);
   Profile* profile =
-      Profile::FromBrowserContext(web_contents->GetBrowserContext());
+      Profile::FromBrowserContext(render_frame_host->GetBrowserContext());
   ContentSettingsType content_settings_type =
       type == blink::mojom::MediaStreamType::DEVICE_AUDIO_CAPTURE
           ? ContentSettingsType::MEDIASTREAM_MIC
           : ContentSettingsType::MEDIASTREAM_CAMERA;
 
   DCHECK(!security_origin.is_empty());
-  GURL embedding_origin = web_contents->GetLastCommittedURL().GetOrigin();
   permissions::PermissionManager* permission_manager =
       PermissionManagerFactory::GetForProfile(profile);
   return permission_manager
@@ -184,7 +198,7 @@ void PermissionBubbleMediaAccessHandler::HandleRequest(
     const extensions::Extension* extension) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   if (blink::IsScreenCaptureMediaType(request.video_type) &&
       !base::FeatureList::IsEnabled(features::kUserMediaScreenCapturing)) {
     // If screen capturing isn't enabled on Android, we'll use "invalid state"
@@ -194,16 +208,14 @@ void PermissionBubbleMediaAccessHandler::HandleRequest(
         blink::mojom::MediaStreamRequestResult::INVALID_STATE, nullptr);
     return;
   }
-#endif  // defined(OS_ANDROID)
+#endif  // BUILDFLAG(IS_ANDROID)
 
   // Ensure we are observing the deletion of |web_contents|.
   web_contents_collection_.StartObserving(web_contents);
 
   RequestsMap& requests_map = pending_requests_[web_contents];
-  requests_map.emplace(
-      next_request_id_++,
-      PendingAccessRequest(
-          request, base::AdaptCallbackForRepeating(std::move(callback))));
+  requests_map.emplace(next_request_id_++,
+                       PendingAccessRequest(request, std::move(callback)));
 
   // If this is the only request then show the infobar.
   if (requests_map.size() == 1)
@@ -226,9 +238,11 @@ void PermissionBubbleMediaAccessHandler::ProcessQueuedAccessRequest(
   const int64_t request_id = it->second.begin()->first;
   const content::MediaStreamRequest& request =
       it->second.begin()->second.request;
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
+  // TODO(https://crbug.com/1157166): This should be split into
+  // DisplayMediaAccessHandler and DesktopCaptureAccessHandler.
   if (blink::IsScreenCaptureMediaType(request.video_type)) {
-    ScreenCaptureInfoBarDelegateAndroid::Create(
+    screen_capture::GetScreenCapturePermissionAndroid(
         web_contents, request,
         base::BindOnce(
             &PermissionBubbleMediaAccessHandler::OnAccessRequestResponse,
@@ -288,7 +302,7 @@ void PermissionBubbleMediaAccessHandler::OnMediaStreamRequestResponse(
     content::MediaStreamRequest request,
     const blink::MediaStreamDevices& devices,
     blink::mojom::MediaStreamRequestResult result,
-    bool blocked_by_feature_policy,
+    bool blocked_by_permissions_policy,
     ContentSetting audio_setting,
     ContentSetting video_setting) {
   if (pending_requests_.find(web_contents) == pending_requests_.end()) {
@@ -296,10 +310,10 @@ void PermissionBubbleMediaAccessHandler::OnMediaStreamRequestResponse(
     return;
   }
 
-  // If the kill switch is, or the request was blocked because of feature
+  // If the kill switch is, or the request was blocked because of permissions
   // policy we don't update the tab context.
   if (result != blink::mojom::MediaStreamRequestResult::KILL_SWITCH_ON &&
-      !blocked_by_feature_policy) {
+      !blocked_by_permissions_policy) {
     UpdatePageSpecificContentSettings(web_contents, request, audio_setting,
                                       video_setting);
   }
@@ -339,7 +353,7 @@ void PermissionBubbleMediaAccessHandler::OnAccessRequestResponse(
 
   blink::mojom::MediaStreamRequestResult final_result = result;
 
-#if defined(OS_MAC)
+#if BUILDFLAG(IS_MAC)
   // If the request was approved, ask for system permissions if needed, and run
   // this function again when done.
   if (result == blink::mojom::MediaStreamRequestResult::OK) {
@@ -401,10 +415,9 @@ void PermissionBubbleMediaAccessHandler::OnAccessRequestResponse(
       }
     }
   }
-#endif  // defined(OS_MAC)
+#endif  // BUILDFLAG(IS_MAC)
 
-  RepeatingMediaResponseCallback callback =
-      std::move(request_it->second.callback);
+  MediaResponseCallback callback = std::move(request_it->second.callback);
   requests_map.erase(request_it);
 
   if (!requests_map.empty()) {

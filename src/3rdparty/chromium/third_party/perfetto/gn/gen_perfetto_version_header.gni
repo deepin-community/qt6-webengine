@@ -21,14 +21,20 @@
 
 import("perfetto.gni")
 
+_ver_script = "${perfetto_root_path}tools/write_version_header.py"
+_has_git = false
+if (perfetto_enable_git_rev_version_header) {
+  _has_git = "1" == exec_script(_ver_script, [ "--check_git" ], "trim string")
+}
+
 template("gen_perfetto_version_header") {
   action(target_name) {
-    script = "${perfetto_root_path}tools/write_version_header.py"
+    script = _ver_script
     changelog = "${perfetto_root_path}CHANGELOG"
     inputs = [ changelog ]
     outputs = []
     args = []
-    if (perfetto_build_standalone && !is_perfetto_build_generator) {
+    if (_has_git) {
       inputs += [ "${perfetto_root_path}.git/HEAD" ]
     }
 
@@ -47,6 +53,9 @@ template("gen_perfetto_version_header") {
         rebase_path(invoker.ts_out, root_build_dir),
       ]
       outputs += [ invoker.ts_out ]
+    }
+    if (!_has_git) {
+      args += [ "--no_git" ]
     }
   }
 }

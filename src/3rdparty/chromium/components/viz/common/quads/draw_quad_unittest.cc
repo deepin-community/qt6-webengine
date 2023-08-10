@@ -10,13 +10,11 @@
 #include <memory>
 
 #include "base/bind.h"
-#include "base/compiler_specific.h"
 #include "base/logging.h"
 #include "base/unguessable_token.h"
 #include "cc/base/math_util.h"
 #include "cc/paint/filter_operations.h"
 #include "cc/test/fake_raster_source.h"
-#include "cc/test/geometry_test_utils.h"
 #include "components/viz/common/quads/aggregated_render_pass.h"
 #include "components/viz/common/quads/aggregated_render_pass_draw_quad.h"
 #include "components/viz/common/quads/compositor_render_pass.h"
@@ -24,6 +22,7 @@
 #include "components/viz/common/quads/debug_border_draw_quad.h"
 #include "components/viz/common/quads/largest_draw_quad.h"
 #include "components/viz/common/quads/picture_draw_quad.h"
+#include "components/viz/common/quads/shared_element_draw_quad.h"
 #include "components/viz/common/quads/solid_color_draw_quad.h"
 #include "components/viz/common/quads/stream_video_draw_quad.h"
 #include "components/viz/common/quads/surface_draw_quad.h"
@@ -31,9 +30,12 @@
 #include "components/viz/common/quads/tile_draw_quad.h"
 #include "components/viz/common/quads/video_hole_draw_quad.h"
 #include "components/viz/common/quads/yuv_video_draw_quad.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/gfx/geometry/transform.h"
 #include "ui/gfx/hdr_metadata.h"
-#include "ui/gfx/transform.h"
+
+using testing::ElementsAreArray;
 
 namespace viz {
 namespace {
@@ -49,7 +51,6 @@ TEST(DrawQuadTest, CopySharedQuadState) {
   gfx::Rect layer_rect(26, 28);
   gfx::Rect visible_layer_rect(10, 12, 14, 16);
   gfx::Rect clip_rect(19, 21, 23, 25);
-  bool is_clipped = true;
   bool are_contents_opaque = true;
   float opacity = 0.25f;
   SkBlendMode blend_mode = SkBlendMode::kMultiply;
@@ -57,15 +58,14 @@ TEST(DrawQuadTest, CopySharedQuadState) {
 
   auto state = std::make_unique<SharedQuadState>();
   state->SetAll(quad_transform, layer_rect, visible_layer_rect,
-                gfx::MaskFilterInfo(), clip_rect, is_clipped,
-                are_contents_opaque, opacity, blend_mode, sorting_context_id);
+                gfx::MaskFilterInfo(), clip_rect, are_contents_opaque, opacity,
+                blend_mode, sorting_context_id);
 
   auto copy = std::make_unique<SharedQuadState>(*state);
   EXPECT_EQ(quad_transform, copy->quad_to_target_transform);
   EXPECT_EQ(visible_layer_rect, copy->visible_quad_layer_rect);
   EXPECT_EQ(opacity, copy->opacity);
   EXPECT_EQ(clip_rect, copy->clip_rect);
-  EXPECT_EQ(is_clipped, copy->is_clipped);
   EXPECT_EQ(are_contents_opaque, copy->are_contents_opaque);
   EXPECT_EQ(blend_mode, copy->blend_mode);
 }
@@ -74,8 +74,6 @@ SharedQuadState* CreateSharedQuadState(CompositorRenderPass* render_pass) {
   gfx::Transform quad_transform = gfx::Transform(1.0, 0.0, 0.5, 1.0, 0.5, 0.0);
   gfx::Rect layer_rect(26, 28);
   gfx::Rect visible_layer_rect(10, 12, 14, 16);
-  gfx::Rect clip_rect(19, 21, 23, 25);
-  bool is_clipped = false;
   bool are_contents_opaque = true;
   float opacity = 1.f;
   int sorting_context_id = 65536;
@@ -83,8 +81,8 @@ SharedQuadState* CreateSharedQuadState(CompositorRenderPass* render_pass) {
 
   SharedQuadState* state = render_pass->CreateAndAppendSharedQuadState();
   state->SetAll(quad_transform, layer_rect, visible_layer_rect,
-                gfx::MaskFilterInfo(), clip_rect, is_clipped,
-                are_contents_opaque, opacity, blend_mode, sorting_context_id);
+                gfx::MaskFilterInfo(), absl::nullopt, are_contents_opaque,
+                opacity, blend_mode, sorting_context_id);
   return state;
 }
 
@@ -96,7 +94,6 @@ void CompareSharedQuadState(const SharedQuadState* source_sqs,
   EXPECT_EQ(source_sqs->visible_quad_layer_rect,
             copy_sqs->visible_quad_layer_rect);
   EXPECT_EQ(source_sqs->clip_rect, copy_sqs->clip_rect);
-  EXPECT_EQ(source_sqs->is_clipped, copy_sqs->is_clipped);
   EXPECT_EQ(source_sqs->opacity, copy_sqs->opacity);
   EXPECT_EQ(source_sqs->blend_mode, copy_sqs->blend_mode);
   EXPECT_EQ(source_sqs->sorting_context_id, copy_sqs->sorting_context_id);
@@ -117,18 +114,15 @@ void CompareDrawQuad(DrawQuad* quad, DrawQuad* copy) {
       render_pass->CreateAndAppendSharedQuadState();                       \
   *copy_shared_state = *shared_state;
 
-#define QUAD_DATA                              \
-  gfx::Rect quad_rect(30, 40, 50, 60);         \
-  gfx::Rect quad_visible_rect(40, 50, 30, 20); \
-  ALLOW_UNUSED_LOCAL(quad_visible_rect);       \
-  bool needs_blending = true;                  \
-  ALLOW_UNUSED_LOCAL(needs_blending);
+#define QUAD_DATA                                               \
+  gfx::Rect quad_rect(30, 40, 50, 60);                          \
+  [[maybe_unused]] gfx::Rect quad_visible_rect(40, 50, 30, 20); \
+  [[maybe_unused]] bool needs_blending = true;
 
 #define SETUP_AND_COPY_QUAD_NEW(Type, quad)                              \
   DrawQuad* copy_new = render_pass->CopyFromAndAppendDrawQuad(quad_new); \
   CompareDrawQuad(quad_new, copy_new);                                   \
-  const Type* copy_quad = Type::MaterialCast(copy_new);                  \
-  ALLOW_UNUSED_LOCAL(copy_quad);
+  [[maybe_unused]] const Type* copy_quad = Type::MaterialCast(copy_new);
 
 #define SETUP_AND_COPY_QUAD_ALL(Type, quad)                              \
   DrawQuad* copy_all = render_pass->CopyFromAndAppendDrawQuad(quad_all); \
@@ -139,8 +133,7 @@ void CompareDrawQuad(DrawQuad* quad, DrawQuad* copy) {
   DrawQuad* copy_new =                                               \
       render_pass->CopyFromAndAppendRenderPassDrawQuad(quad_new, a); \
   CompareDrawQuad(quad_new, copy_new);                               \
-  const Type* copy_quad = Type::MaterialCast(copy_new);              \
-  ALLOW_UNUSED_LOCAL(copy_quad);
+  [[maybe_unused]] const Type* copy_quad = Type::MaterialCast(copy_new);
 
 #define SETUP_AND_COPY_QUAD_ALL_RP(Type, quad, a)                    \
   DrawQuad* copy_all =                                               \
@@ -252,19 +245,18 @@ TEST(DrawQuadTest, CopySolidColorDrawQuad) {
 
 TEST(DrawQuadTest, CopyStreamVideoDrawQuad) {
   gfx::Rect visible_rect(40, 50, 30, 20);
-  bool needs_blending = true;
+  bool blending = true;
   ResourceId resource_id(64);
   gfx::Size resource_size_in_pixels = gfx::Size(40, 41);
   gfx::PointF uv_top_left(0.25f, 0.3f);
   gfx::PointF uv_bottom_right(0.75f, 0.7f);
   CREATE_SHARED_STATE();
 
-  CREATE_QUAD_NEW(StreamVideoDrawQuad, visible_rect, needs_blending,
-                  resource_id, resource_size_in_pixels, uv_top_left,
-                  uv_bottom_right);
+  CREATE_QUAD_NEW(StreamVideoDrawQuad, visible_rect, blending, resource_id,
+                  resource_size_in_pixels, uv_top_left, uv_bottom_right);
   EXPECT_EQ(DrawQuad::Material::kStreamVideoContent, copy_quad->material);
   EXPECT_EQ(visible_rect, copy_quad->visible_rect);
-  EXPECT_EQ(needs_blending, copy_quad->needs_blending);
+  EXPECT_EQ(blending, copy_quad->needs_blending);
   EXPECT_EQ(resource_id, copy_quad->resource_id());
   EXPECT_EQ(resource_size_in_pixels, copy_quad->resource_size_in_pixels());
   EXPECT_EQ(uv_top_left, copy_quad->uv_top_left);
@@ -311,7 +303,7 @@ TEST(DrawQuadTest, CopySurfaceDrawQuad) {
 
 TEST(DrawQuadTest, CopyTextureDrawQuad) {
   gfx::Rect visible_rect(40, 50, 30, 20);
-  bool needs_blending = true;
+  bool blending = true;
   ResourceId resource_id(82);
   gfx::Size resource_size_in_pixels = gfx::Size(40, 41);
   bool premultiplied_alpha = true;
@@ -325,18 +317,18 @@ TEST(DrawQuadTest, CopyTextureDrawQuad) {
       gfx::ProtectedVideoType::kSoftwareProtected;
   CREATE_SHARED_STATE();
 
-  CREATE_QUAD_NEW(TextureDrawQuad, visible_rect, needs_blending, resource_id,
+  CREATE_QUAD_NEW(TextureDrawQuad, visible_rect, blending, resource_id,
                   premultiplied_alpha, uv_top_left, uv_bottom_right,
                   SK_ColorTRANSPARENT, vertex_opacity, y_flipped,
                   nearest_neighbor, secure_output_only, protected_video_type);
   EXPECT_EQ(DrawQuad::Material::kTextureContent, copy_quad->material);
   EXPECT_EQ(visible_rect, copy_quad->visible_rect);
-  EXPECT_EQ(needs_blending, copy_quad->needs_blending);
+  EXPECT_EQ(blending, copy_quad->needs_blending);
   EXPECT_EQ(resource_id, copy_quad->resource_id());
   EXPECT_EQ(premultiplied_alpha, copy_quad->premultiplied_alpha);
   EXPECT_EQ(uv_top_left, copy_quad->uv_top_left);
   EXPECT_EQ(uv_bottom_right, copy_quad->uv_bottom_right);
-  EXPECT_FLOAT_ARRAY_EQ(vertex_opacity, copy_quad->vertex_opacity, 4);
+  EXPECT_THAT(copy_quad->vertex_opacity, ElementsAreArray(vertex_opacity));
   EXPECT_EQ(y_flipped, copy_quad->y_flipped);
   EXPECT_EQ(nearest_neighbor, copy_quad->nearest_neighbor);
   EXPECT_EQ(secure_output_only, copy_quad->secure_output_only);
@@ -352,7 +344,7 @@ TEST(DrawQuadTest, CopyTextureDrawQuad) {
   EXPECT_EQ(premultiplied_alpha, copy_quad->premultiplied_alpha);
   EXPECT_EQ(uv_top_left, copy_quad->uv_top_left);
   EXPECT_EQ(uv_bottom_right, copy_quad->uv_bottom_right);
-  EXPECT_FLOAT_ARRAY_EQ(vertex_opacity, copy_quad->vertex_opacity, 4);
+  EXPECT_THAT(copy_quad->vertex_opacity, ElementsAreArray(vertex_opacity));
   EXPECT_EQ(y_flipped, copy_quad->y_flipped);
   EXPECT_EQ(nearest_neighbor, copy_quad->nearest_neighbor);
   EXPECT_EQ(secure_output_only, copy_quad->secure_output_only);
@@ -361,7 +353,7 @@ TEST(DrawQuadTest, CopyTextureDrawQuad) {
 
 TEST(DrawQuadTest, CopyTileDrawQuad) {
   gfx::Rect visible_rect(40, 50, 30, 20);
-  bool needs_blending = true;
+  bool blending = true;
   ResourceId resource_id(104);
   gfx::RectF tex_coord_rect(31.f, 12.f, 54.f, 20.f);
   gfx::Size texture_size(85, 32);
@@ -370,12 +362,12 @@ TEST(DrawQuadTest, CopyTileDrawQuad) {
   bool force_anti_aliasing_off = false;
   CREATE_SHARED_STATE();
 
-  CREATE_QUAD_NEW(TileDrawQuad, visible_rect, needs_blending, resource_id,
+  CREATE_QUAD_NEW(TileDrawQuad, visible_rect, blending, resource_id,
                   tex_coord_rect, texture_size, contents_premultiplied,
                   nearest_neighbor, force_anti_aliasing_off);
   EXPECT_EQ(DrawQuad::Material::kTiledContent, copy_quad->material);
   EXPECT_EQ(visible_rect, copy_quad->visible_rect);
-  EXPECT_EQ(needs_blending, copy_quad->needs_blending);
+  EXPECT_EQ(blending, copy_quad->needs_blending);
   EXPECT_EQ(resource_id, copy_quad->resource_id());
   EXPECT_EQ(tex_coord_rect, copy_quad->tex_coord_rect);
   EXPECT_EQ(texture_size, copy_quad->texture_size);
@@ -408,7 +400,7 @@ TEST(DrawQuadTest, CopyVideoHoleDrawQuad) {
 
 TEST(DrawQuadTest, CopyYUVVideoDrawQuad) {
   gfx::Rect visible_rect(40, 50, 30, 20);
-  bool needs_blending = true;
+  bool blending = true;
   gfx::RectF ya_tex_coord_rect(40, 50, 30, 20);
   gfx::RectF uv_tex_coord_rect(20, 25, 15, 10);
   gfx::Size ya_tex_size(32, 68);
@@ -429,14 +421,14 @@ TEST(DrawQuadTest, CopyYUVVideoDrawQuad) {
 
   CREATE_SHARED_STATE();
 
-  CREATE_QUAD_NEW(YUVVideoDrawQuad, visible_rect, needs_blending,
-                  ya_tex_coord_rect, uv_tex_coord_rect, ya_tex_size,
-                  uv_tex_size, y_plane_resource_id, u_plane_resource_id,
-                  v_plane_resource_id, a_plane_resource_id, video_color_space,
-                  resource_offset, resource_multiplier, bits_per_channel);
+  CREATE_QUAD_NEW(YUVVideoDrawQuad, visible_rect, blending, ya_tex_coord_rect,
+                  uv_tex_coord_rect, ya_tex_size, uv_tex_size,
+                  y_plane_resource_id, u_plane_resource_id, v_plane_resource_id,
+                  a_plane_resource_id, video_color_space, resource_offset,
+                  resource_multiplier, bits_per_channel);
   EXPECT_EQ(DrawQuad::Material::kYuvVideoContent, copy_quad->material);
   EXPECT_EQ(visible_rect, copy_quad->visible_rect);
-  EXPECT_EQ(needs_blending, copy_quad->needs_blending);
+  EXPECT_EQ(blending, copy_quad->needs_blending);
   EXPECT_EQ(ya_tex_coord_rect, copy_quad->ya_tex_coord_rect);
   EXPECT_EQ(uv_tex_coord_rect, copy_quad->uv_tex_coord_rect);
   EXPECT_EQ(ya_tex_size, copy_quad->ya_tex_size);
@@ -474,7 +466,7 @@ TEST(DrawQuadTest, CopyYUVVideoDrawQuad) {
 
 TEST(DrawQuadTest, CopyPictureDrawQuad) {
   gfx::Rect visible_rect(40, 50, 30, 20);
-  bool needs_blending = true;
+  bool blending = true;
   gfx::RectF tex_coord_rect(31.f, 12.f, 54.f, 20.f);
   gfx::Size texture_size(85, 32);
   bool nearest_neighbor = true;
@@ -486,12 +478,12 @@ TEST(DrawQuadTest, CopyPictureDrawQuad) {
           ->GetDisplayItemList();
   CREATE_SHARED_STATE();
 
-  CREATE_QUAD_NEW(PictureDrawQuad, visible_rect, needs_blending, tex_coord_rect,
+  CREATE_QUAD_NEW(PictureDrawQuad, visible_rect, blending, tex_coord_rect,
                   texture_size, nearest_neighbor, texture_format, content_rect,
                   contents_scale, {}, display_item_list);
   EXPECT_EQ(DrawQuad::Material::kPictureContent, copy_quad->material);
   EXPECT_EQ(visible_rect, copy_quad->visible_rect);
-  EXPECT_EQ(needs_blending, copy_quad->needs_blending);
+  EXPECT_EQ(blending, copy_quad->needs_blending);
   EXPECT_EQ(tex_coord_rect, copy_quad->tex_coord_rect);
   EXPECT_EQ(texture_size, copy_quad->texture_size);
   EXPECT_EQ(nearest_neighbor, copy_quad->nearest_neighbor);
@@ -606,7 +598,7 @@ TEST_F(DrawQuadIteratorTest, SurfaceDrawQuad) {
 
   CREATE_SHARED_STATE();
   CREATE_QUAD_NEW(SurfaceDrawQuad, visible_rect,
-                  SurfaceRange(base::nullopt, surface_id), SK_ColorWHITE,
+                  SurfaceRange(absl::nullopt, surface_id), SK_ColorWHITE,
                   /*stretch_content_to_fill_bounds=*/false);
   EXPECT_EQ(0, IterateAndCount(quad_new));
 }
@@ -729,6 +721,9 @@ TEST(DrawQuadTest, LargestQuadType) {
       case DrawQuad::Material::kVideoHole:
         largest = std::max(largest, sizeof(VideoHoleDrawQuad));
         break;
+      case DrawQuad::Material::kSharedElement:
+        largest = std::max(largest, sizeof(SharedElementDrawQuad));
+        break;
       case DrawQuad::Material::kInvalid:
         break;
     }
@@ -776,6 +771,9 @@ TEST(DrawQuadTest, LargestQuadType) {
         break;
       case DrawQuad::Material::kVideoHole:
         LOG(ERROR) << "VideoHoleDrawQuad " << sizeof(VideoHoleDrawQuad);
+        break;
+      case DrawQuad::Material::kSharedElement:
+        LOG(ERROR) << "SharedElementDrawQuad " << sizeof(SharedElementDrawQuad);
         break;
       case DrawQuad::Material::kInvalid:
         break;

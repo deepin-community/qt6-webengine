@@ -21,6 +21,7 @@
 #include "content/public/common/content_switches.h"
 #include "net/base/escape.h"
 #include "third_party/modp_b64/modp_b64.h"
+#include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/template_expressions.h"
@@ -32,7 +33,7 @@
 #include "ui/strings/grit/app_locale_settings.h"
 #include "url/gurl.h"
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 #include "base/win/windows_version.h"
 #endif
 
@@ -57,7 +58,7 @@ std::string GetBitmapDataUrl(const SkBitmap& bitmap) {
 
 std::string GetPngDataUrl(const unsigned char* data, size_t size) {
   constexpr char kPrefix[] = "data:image/png;base64,";
-  constexpr size_t kPrefixLen = base::size(kPrefix) - 1;
+  constexpr size_t kPrefixLen = std::size(kPrefix) - 1;
   // Includes room for trailing null byte.
   size_t max_encode_len = modp_b64_encode_len(size);
   std::string output;
@@ -74,17 +75,13 @@ std::string GetPngDataUrl(const unsigned char* data, size_t size) {
 
 WindowOpenDisposition GetDispositionFromClick(const base::ListValue* args,
                                               int start_index) {
-  double button = 0.0;
-  bool alt_key = false;
-  bool ctrl_key = false;
-  bool meta_key = false;
-  bool shift_key = false;
+  base::Value::ConstListView list = args->GetListDeprecated();
+  double button = list[start_index].GetDouble();
+  bool alt_key = list[start_index + 1].GetBool();
+  bool ctrl_key = list[start_index + 2].GetBool();
+  bool meta_key = list[start_index + 3].GetBool();
+  bool shift_key = list[start_index + 4].GetBool();
 
-  CHECK(args->GetDouble(start_index++, &button));
-  CHECK(args->GetBoolean(start_index++, &alt_key));
-  CHECK(args->GetBoolean(start_index++, &ctrl_key));
-  CHECK(args->GetBoolean(start_index++, &meta_key));
-  CHECK(args->GetBoolean(start_index++, &shift_key));
   return ui::DispositionFromClick(
       button == 1.0, alt_key, ctrl_key, meta_key, shift_key);
 }
@@ -186,11 +183,16 @@ void ParsePathAndScale(const GURL& url,
 }
 
 void SetLoadTimeDataDefaults(const std::string& app_locale,
-                             base::DictionaryValue* localized_strings) {
-  localized_strings->SetString("fontfamily", GetFontFamily());
-  localized_strings->SetString("fontsize", GetFontSize());
-  localized_strings->SetString("language", l10n_util::GetLanguage(app_locale));
-  localized_strings->SetString("textdirection", GetTextDirection());
+                             base::Value* localized_strings) {
+  SetLoadTimeDataDefaults(app_locale, localized_strings->GetIfDict());
+}
+
+void SetLoadTimeDataDefaults(const std::string& app_locale,
+                             base::Value::Dict* localized_strings) {
+  localized_strings->Set("fontfamily", GetFontFamily());
+  localized_strings->Set("fontsize", GetFontSize());
+  localized_strings->Set("language", l10n_util::GetLanguage(app_locale));
+  localized_strings->Set("textdirection", GetTextDirection());
 }
 
 void SetLoadTimeDataDefaults(const std::string& app_locale,
@@ -226,12 +228,12 @@ std::string GetFontFamily() {
 
 // TODO(crbug.com/1052397): Revisit the macro expression once build flag switch
 // of lacros-chrome is complete.
-#if defined(OS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS)
   const base::CommandLine* cmdline = base::CommandLine::ForCurrentProcess();
   if (!cmdline->HasSwitch(switches::kSingleProcess)) {
     std::string font_name = ui::ResourceBundle::GetSharedInstance()
-                               .GetFont(ui::ResourceBundle::BaseFont)
-                               .GetFontName();
+                                .GetFont(ui::ResourceBundle::BaseFont)
+                                .GetFontName();
     // Wrap |font_name| with quotes to ensure it will always be parsed correctly
     // in CSS.
     font_family = "\"" + font_name + "\", " + font_family;

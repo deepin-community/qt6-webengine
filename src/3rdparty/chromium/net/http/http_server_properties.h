@@ -16,10 +16,9 @@
 #include <vector>
 
 #include "base/callback.h"
-#include "base/containers/mru_cache.h"
-#include "base/macros.h"
+#include "base/containers/lru_cache.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
-#include "base/optional.h"
 #include "base/threading/thread_checker.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
@@ -30,11 +29,12 @@
 #include "net/base/network_isolation_key.h"
 #include "net/http/alternative_service.h"
 #include "net/http/broken_alternative_services.h"
-#include "net/third_party/quiche/src/quic/core/quic_bandwidth.h"
-#include "net/third_party/quiche/src/quic/core/quic_server_id.h"
-#include "net/third_party/quiche/src/quic/core/quic_versions.h"
-#include "net/third_party/quiche/src/spdy/core/spdy_framer.h"  // TODO(willchan): Reconsider this.
-#include "net/third_party/quiche/src/spdy/core/spdy_protocol.h"
+#include "net/third_party/quiche/src/quiche/quic/core/quic_bandwidth.h"
+#include "net/third_party/quiche/src/quiche/quic/core/quic_server_id.h"
+#include "net/third_party/quiche/src/quiche/quic/core/quic_versions.h"
+#include "net/third_party/quiche/src/quiche/spdy/core/spdy_framer.h"  // TODO(willchan): Reconsider this.
+#include "net/third_party/quiche/src/quiche/spdy/core/spdy_protocol.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/scheme_host_port.h"
 
 namespace base {
@@ -151,14 +151,14 @@ class NET_EXPORT HttpServerProperties
     // indicates unknown. The difference between false and not set only matters
     // when loading from disk, when an initialized false value will take
     // priority over a not set value.
-    base::Optional<bool> supports_spdy;
+    absl::optional<bool> supports_spdy;
 
     // True if the server has previously indicated it required HTTP/1.1. Unlike
     // other fields, not persisted to disk.
-    base::Optional<bool> requires_http11;
+    absl::optional<bool> requires_http11;
 
-    base::Optional<AlternativeServiceInfoVector> alternative_services;
-    base::Optional<ServerNetworkStats> server_network_stats;
+    absl::optional<AlternativeServiceInfoVector> alternative_services;
+    absl::optional<ServerNetworkStats> server_network_stats;
   };
 
   struct NET_EXPORT ServerInfoMapKey {
@@ -182,9 +182,12 @@ class NET_EXPORT HttpServerProperties
   };
 
   class NET_EXPORT ServerInfoMap
-      : public base::MRUCache<ServerInfoMapKey, ServerInfo> {
+      : public base::LRUCache<ServerInfoMapKey, ServerInfo> {
    public:
     ServerInfoMap();
+
+    ServerInfoMap(const ServerInfoMap&) = delete;
+    ServerInfoMap& operator=(const ServerInfoMap&) = delete;
 
     // If there's an entry corresponding to |key|, brings that entry to the
     // front and returns an iterator to it. Otherwise, inserts an empty
@@ -195,9 +198,6 @@ class NET_EXPORT HttpServerProperties
     // data. The iterator must point to an entry in the map. Regardless of
     // whether the entry is removed or not, returns iterator for the next entry.
     iterator EraseIfEmpty(iterator server_info_it);
-
-   private:
-    DISALLOW_COPY_AND_ASSIGN(ServerInfoMap);
   };
 
   struct NET_EXPORT QuicServerInfoMapKey {
@@ -218,12 +218,12 @@ class NET_EXPORT HttpServerProperties
   };
 
   // Max number of quic servers to store is not hardcoded and can be set.
-  // Because of this, QuicServerInfoMap will not be a subclass of MRUCache.
+  // Because of this, QuicServerInfoMap will not be a subclass of LRUCache.
   // Separate from ServerInfoMap because the key includes privacy mode (Since
   // this is analogous to the SSL session cache, which has separate caches for
   // privacy mode), and each entry can be quite large, so it has its own size
   // limit, which is much smaller than the ServerInfoMap's limit.
-  typedef base::MRUCache<QuicServerInfoMapKey, std::string> QuicServerInfoMap;
+  typedef base::LRUCache<QuicServerInfoMapKey, std::string> QuicServerInfoMap;
 
   // If a |pref_delegate| is specified, it will be used to read/write the
   // properties to a pref file. Writes are rate limited to improve performance.
@@ -238,6 +238,9 @@ class NET_EXPORT HttpServerProperties
                        NetLog* net_log = nullptr,
                        const base::TickClock* tick_clock = nullptr,
                        base::Clock* clock = nullptr);
+
+  HttpServerProperties(const HttpServerProperties&) = delete;
+  HttpServerProperties& operator=(const HttpServerProperties&) = delete;
 
   ~HttpServerProperties() override;
 
@@ -409,6 +412,13 @@ class NET_EXPORT HttpServerProperties
   // Sets the number of server configs (QuicServerInfo objects) to be persisted.
   void SetMaxServerConfigsStoredInProperties(
       size_t max_server_configs_stored_in_properties);
+
+  // If values are present, sets initial_delay and
+  // exponential_backoff_on_initial_delay which are used to calculate delay of
+  // broken alternative services.
+  void SetBrokenAlternativeServicesDelayParams(
+      absl::optional<base::TimeDelta> initial_delay,
+      absl::optional<bool> exponential_backoff_on_initial_delay);
 
   // Returns whether HttpServerProperties is initialized.
   bool IsInitialized() const;
@@ -586,8 +596,8 @@ class NET_EXPORT HttpServerProperties
   // Invokes |callback| on completion, if non-null.
   void WriteProperties(base::OnceClosure callback) const;
 
-  const base::TickClock* tick_clock_;  // Unowned
-  base::Clock* clock_;                 // Unowned
+  raw_ptr<const base::TickClock> tick_clock_;  // Unowned
+  raw_ptr<base::Clock> clock_;                 // Unowned
 
   // Cached value of kPartitionHttpServerPropertiesByNetworkIsolationKey
   // feature. Cached to improve performance.
@@ -637,8 +647,6 @@ class NET_EXPORT HttpServerProperties
   base::OneShotTimer prefs_update_timer_;
 
   THREAD_CHECKER(thread_checker_);
-
-  DISALLOW_COPY_AND_ASSIGN(HttpServerProperties);
 };
 
 }  // namespace net

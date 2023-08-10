@@ -26,14 +26,18 @@ void VideoPainter::PaintReplaced(const PaintInfo& paint_info,
 
   WebMediaPlayer* media_player =
       layout_video_.MediaElement()->GetWebMediaPlayer();
+  bool force_video_poster =
+      layout_video_.GetDocument().GetPaintPreviewState() ==
+      Document::kPaintingPreviewSkipAcceleratedContent;
   bool should_display_poster =
-      layout_video_.GetDisplayMode() == LayoutVideo::kPoster;
+      layout_video_.GetDisplayMode() == LayoutVideo::kPoster ||
+      force_video_poster;
   if (!should_display_poster && !media_player)
     return;
 
   PhysicalRect replaced_rect = layout_video_.ReplacedContentRect();
   replaced_rect.Move(paint_offset);
-  IntRect snapped_replaced_rect = PixelSnappedIntRect(replaced_rect);
+  gfx::Rect snapped_replaced_rect = ToPixelSnappedRect(replaced_rect);
 
   if (snapped_replaced_rect.IsEmpty())
     return;
@@ -50,7 +54,8 @@ void VideoPainter::PaintReplaced(const PaintInfo& paint_info,
   PhysicalRect content_box_rect = layout_video_.PhysicalContentBoxRect();
   content_box_rect.Move(paint_offset);
 
-  if (layout_video_.GetDocument().IsPaintingPreview()) {
+  if (layout_video_.GetDocument().GetPaintPreviewState() !=
+      Document::kNotPaintingPreview) {
     // Create a canvas and draw a URL rect to it for the paint preview.
     BoxDrawingRecorder recorder(context, layout_video_, paint_info.phase,
                                 paint_offset);
@@ -66,20 +71,19 @@ void VideoPainter::PaintReplaced(const PaintInfo& paint_info,
   // Video frames are only painted in software for printing or capturing node
   // images via web APIs.
   bool force_software_video_paint =
-      paint_info.GetGlobalPaintFlags() & kGlobalPaintFlattenCompositingLayers;
+      paint_info.ShouldOmitCompositingInfo() && !force_video_poster;
 
-  bool paint_with_foreign_layer =
-      RuntimeEnabledFeatures::CompositeAfterPaintEnabled() &&
-      paint_info.phase == PaintPhase::kForeground && !should_display_poster &&
-      !force_software_video_paint;
+  bool paint_with_foreign_layer = paint_info.phase == PaintPhase::kForeground &&
+                                  !should_display_poster &&
+                                  !force_software_video_paint;
   if (paint_with_foreign_layer) {
     if (cc::Layer* layer = layout_video_.MediaElement()->CcLayer()) {
-      layer->SetBounds(gfx::Size(snapped_replaced_rect.Size()));
+      layer->SetBounds(snapped_replaced_rect.size());
       layer->SetIsDrawable(true);
       layer->SetHitTestable(true);
       RecordForeignLayer(context, layout_video_,
                          DisplayItem::kForeignLayerVideo, layer,
-                         snapped_replaced_rect.Location());
+                         snapped_replaced_rect.origin());
       return;
     }
   }
@@ -90,11 +94,10 @@ void VideoPainter::PaintReplaced(const PaintInfo& paint_info,
   if (should_display_poster || !force_software_video_paint) {
     // This will display the poster image, if one is present, and otherwise
     // paint nothing.
-    DCHECK(paint_info.PaintContainer());
     ImagePainter(layout_video_)
         .PaintIntoRect(context, replaced_rect, content_box_rect);
   } else {
-    PaintFlags video_flags = context.FillFlags();
+    cc::PaintFlags video_flags = context.FillFlags();
     video_flags.setColor(SK_ColorBLACK);
     layout_video_.VideoElement()->PaintCurrentFrame(
         context.Canvas(), snapped_replaced_rect, &video_flags);

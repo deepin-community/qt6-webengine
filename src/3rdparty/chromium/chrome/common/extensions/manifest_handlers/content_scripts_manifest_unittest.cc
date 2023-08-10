@@ -5,7 +5,6 @@
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/path_service.h"
-#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/test/scoped_feature_list.h"
 #include "chrome/common/chrome_paths.h"
@@ -43,7 +42,7 @@ TEST_F(ContentScriptsManifestTest, MatchPattern) {
                "Error at key 'content_scripts'. Parsing array failed at index "
                "0: Error at key 'matches': Parsing array failed at index 0: "
                "expected string, got integer")};
-  RunTestcases(testcases, base::size(testcases), EXPECT_TYPE_ERROR);
+  RunTestcases(testcases, std::size(testcases), EXPECT_TYPE_ERROR);
 
   LoadAndExpectSuccess("ports_in_content_scripts.json");
 }
@@ -97,8 +96,9 @@ TEST_F(ContentScriptsManifestTest, FailLoadingNonUTF8Scripts) {
                     .AppendASCII("bad_encoding");
 
   std::string error;
-  scoped_refptr<Extension> extension(file_util::LoadExtension(
-      install_dir, Manifest::UNPACKED, Extension::NO_FLAGS, &error));
+  scoped_refptr<Extension> extension(
+      file_util::LoadExtension(install_dir, mojom::ManifestLocation::kUnpacked,
+                               Extension::NO_FLAGS, &error));
   ASSERT_TRUE(extension.get() == NULL);
   ASSERT_STREQ(
       "Could not load file 'bad_encoding.js' for content script. "
@@ -141,6 +141,19 @@ TEST_F(ContentScriptsManifestTest, MatchOriginAsFallback_FeatureEnabled) {
   // The seventh and final does not specify a value for either.
   EXPECT_EQ(MatchOriginAsFallbackBehavior::kNever,
             user_scripts[6]->match_origin_as_fallback());
+}
+
+TEST_F(ContentScriptsManifestTest, MatchOriginAsFallback_InvalidCases) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeature(
+      extensions_features::kContentScriptsMatchOriginAsFallback);
+
+  LoadAndExpectWarning(
+      "content_script_match_origin_as_fallback_warning_for_mv2.json",
+      errors::kMatchOriginAsFallbackRestrictedToMV3);
+  LoadAndExpectError(
+      "content_script_match_origin_as_fallback_invalid_with_paths.json",
+      errors::kMatchOriginAsFallbackCantHavePaths);
 }
 
 TEST_F(ContentScriptsManifestTest, MatchOriginAsFallback_FeatureDisabled) {

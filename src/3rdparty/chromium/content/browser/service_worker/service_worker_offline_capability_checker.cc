@@ -8,20 +8,23 @@
 #include "base/callback_helpers.h"
 #include "base/guid.h"
 #include "content/browser/service_worker/service_worker_context_core.h"
+#include "content/browser/service_worker/service_worker_context_wrapper.h"
+#include "content/browser/service_worker/service_worker_metrics.h"
 #include "content/browser/service_worker/service_worker_registration.h"
 #include "content/browser/service_worker/service_worker_version.h"
-#include "content/browser/storage_partition_impl.h"
 #include "content/common/fetch/fetch_request_type_converters.h"
 #include "services/network/public/mojom/fetch_api.mojom.h"
+#include "third_party/blink/public/common/storage_key/storage_key.h"
 #include "third_party/blink/public/mojom/service_worker/service_worker_database.mojom.h"
 #include "url/gurl.h"
 
 namespace content {
 
 ServiceWorkerOfflineCapabilityChecker::ServiceWorkerOfflineCapabilityChecker(
-    const GURL& url)
-    : url_(url) {
-  DCHECK_CURRENTLY_ON(ServiceWorkerContext::GetCoreThreadId());
+    const GURL& url,
+    const blink::StorageKey& key)
+    : url_(url), key_(key) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
 }
 
 ServiceWorkerOfflineCapabilityChecker::
@@ -32,11 +35,12 @@ void ServiceWorkerOfflineCapabilityChecker::Start(
     ServiceWorkerContext::CheckOfflineCapabilityCallback callback) {
   callback_ = std::move(callback);
   registry->FindRegistrationForClientUrl(
-      url_, base::BindOnce(
-                &ServiceWorkerOfflineCapabilityChecker::DidFindRegistration,
-                // We can use base::Unretained(this) because |this| is expected
-                // to be alive until the |callback_| is called.
-                base::Unretained(this)));
+      url_, key_,
+      base::BindOnce(
+          &ServiceWorkerOfflineCapabilityChecker::DidFindRegistration,
+          // We can use base::Unretained(this) because |this| is expected
+          // to be alive until the |callback_| is called.
+          base::Unretained(this)));
 }
 
 void ServiceWorkerOfflineCapabilityChecker::DidFindRegistration(
@@ -117,8 +121,7 @@ void ServiceWorkerOfflineCapabilityChecker::DidFindRegistration(
       /*is_offline_capability_check=*/true);
 
   fetch_dispatcher_->MaybeStartNavigationPreload(
-      resource_request, context->loader_factory_getter(),
-      context->wrapper(), /*frame_tree_node_id=*/-1);
+      resource_request, context->wrapper(), /*frame_tree_node_id=*/-1);
 
   fetch_dispatcher_->Run();
 }

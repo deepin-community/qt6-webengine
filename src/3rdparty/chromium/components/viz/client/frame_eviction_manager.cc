@@ -107,7 +107,7 @@ FrameEvictionManager::FrameEvictionManager()
           base::BindRepeating(&FrameEvictionManager::OnMemoryPressure,
                               base::Unretained(this)))) {
   max_number_of_saved_frames_ =
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
       // If the amount of memory on the device is >= 3.5 GB, save up to 5
       // frames.
       base::SysInfo::AmountOfPhysicalMemoryMB() < 1024 * 3.5f ? 1 : 5;
@@ -127,7 +127,8 @@ void FrameEvictionManager::CullUnlockedFrames(size_t saved_frame_limit) {
     size_t old_size = unlocked_frames_.size();
     // Should remove self from list.
     unlocked_frames_.back()->EvictCurrentFrame();
-    DCHECK_EQ(unlocked_frames_.size() + 1, old_size);
+    if (unlocked_frames_.size() == old_size)
+      break;
   }
 }
 

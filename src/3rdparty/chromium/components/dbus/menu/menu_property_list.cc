@@ -4,9 +4,11 @@
 
 #include "components/dbus/menu/menu_property_list.h"
 
+#include <string>
 #include <utility>
 
-#include "base/strings/string16.h"
+#include "base/containers/contains.h"
+#include "base/memory/ref_counted_memory.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "ui/base/accelerators/accelerator.h"
@@ -15,13 +17,7 @@
 #include "ui/base/models/menu_model.h"
 #include "ui/gfx/image/image.h"
 
-#if defined(USE_X11)
-#include "ui/events/keycodes/keyboard_code_conversion_x.h"  // nogncheck
-#include "ui/events/keycodes/keysym_to_unicode.h"           // nogncheck
-#endif
-
 #if defined(USE_OZONE)
-#include "ui/base/ui_base_features.h"             // nogncheck
 #include "ui/ozone/public/ozone_platform.h"       // nogncheck
 #include "ui/ozone/public/platform_menu_utils.h"  // nogncheck
 #endif
@@ -30,18 +26,10 @@ namespace {
 
 std::string ToDBusKeySym(ui::KeyboardCode code) {
 #if defined(USE_OZONE)
-  if (features::IsUsingOzonePlatform()) {
-    const auto* const platorm_menu_utils =
-        ui::OzonePlatform::GetInstance()->GetPlatformMenuUtils();
-    if (platorm_menu_utils)
-      return platorm_menu_utils->ToDBusKeySym(code);
-    return {};
+  if (const auto* const platorm_menu_utils =
+          ui::OzonePlatform::GetInstance()->GetPlatformMenuUtils()) {
+    return platorm_menu_utils->ToDBusKeySym(code);
   }
-#endif
-#if defined(USE_X11)
-  return base::UTF16ToUTF8(
-      base::string16(1, ui::GetUnicodeCharacterFromXKeySym(
-                            XKeysymForWindowsKeyCode(code, false))));
 #endif
   return {};
 }
@@ -74,7 +62,7 @@ MenuItemProperties ComputeMenuPropertiesForMenuItem(ui::MenuModel* menu,
   // The dbusmenu interface has no concept of a "sublabel", "minor text", or
   // "minor icon" like MenuModel has.  Ignore these rather than trying to
   // merge them with the regular label and icon.
-  base::string16 label = menu->GetLabelAt(i);
+  std::u16string label = menu->GetLabelAt(i);
   if (!label.empty()) {
     properties["label"] = MakeDbusVariant(DbusString(
         ui::ConvertAcceleratorsFromWindowsStyle(base::UTF16ToUTF8(label))));

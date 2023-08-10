@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/python3
 #
 # Copyright 2017 The ANGLE Project Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
@@ -7,6 +7,7 @@
 # run_code_generation.py:
 #   Runs ANGLE format table and other script code generation scripts.
 
+import argparse
 import hashlib
 import json
 import os
@@ -55,7 +56,7 @@ def grab_from_script(script, param):
     f = open(os.path.basename(script), 'r')
     exe = get_executable_name(f.readline())
     try:
-        res = subprocess.check_output([exe, script, param]).strip()
+        res = subprocess.check_output([exe, script, param]).decode().strip()
     except Exception:
         print('Error grabbing script output: %s, executable %s' % (script, exe))
         raise
@@ -79,6 +80,8 @@ def auto_script(script):
 
 
 generators = {
+    'ANGLE features':
+        'include/platform/gen_features.py',
     'ANGLE format':
         'src/libANGLE/renderer/gen_angle_format_table.py',
     'ANGLE load functions table':
@@ -97,6 +100,8 @@ generators = {
         'src/libANGLE/renderer/gen_dxgi_support_tables.py',
     'Emulated HLSL functions':
         'src/compiler/translator/gen_emulated_builtin_function_tables.py',
+    'Extension files':
+        'src/libANGLE/gen_extensions.py',
     'GL copy conversion table':
         'src/libANGLE/gen_copy_conversion_table.py',
     'GL CTS (dEQP) build files':
@@ -129,6 +134,8 @@ generators = {
         'src/common/spirv/gen_spirv_builder_and_parser.py',
     'Static builtins':
         'src/compiler/translator/gen_builtin_symbols.py',
+    'Test spec JSON':
+        'infra/specs/generate_test_spec_json.py',
     'uniform type':
         'src/common/gen_uniform_type_table.py',
     'Vulkan format':
@@ -143,8 +150,8 @@ generators = {
 def md5(fname):
     hash_md5 = hashlib.md5()
     with open(fname, "r") as f:
-        for chunk in iter(lambda: f.read(4096), b""):
-            hash_md5.update(chunk)
+        for chunk in iter(lambda: f.read(4096), ""):
+            hash_md5.update(chunk.encode())
     return hash_md5.hexdigest()
 
 
@@ -169,12 +176,12 @@ def any_hash_dirty(name, filenames, new_hashes, old_hashes):
 
 def any_old_hash_missing(all_new_hashes, all_old_hashes):
     result = False
-    for file, old_hashes in all_old_hashes.iteritems():
+    for file, old_hashes in all_old_hashes.items():
         if file not in all_new_hashes:
             print('"%s" does not exist. Code gen dirty.' % file)
             result = True
         else:
-            for name, _ in old_hashes.iteritems():
+            for name, _ in old_hashes.items():
                 if name not in all_new_hashes[file]:
                     print('Hash for %s is missing from "%s". Code gen is dirty.' % (name, file))
                     result = True
@@ -208,11 +215,29 @@ def main():
     all_new_hashes = {}
     any_dirty = False
 
-    verify_only = False
-    if len(sys.argv) > 1 and sys.argv[1] == '--verify-no-dirty':
-        verify_only = True
+    parser = argparse.ArgumentParser(description='Generate ANGLE internal code.')
+    parser.add_argument(
+        '-v',
+        '--verify-no-dirty',
+        dest='verify_only',
+        action='store_true',
+        help='verify hashes are not dirty')
+    parser.add_argument(
+        '-g', '--generator', action='append', nargs='*', type=str, dest='specified_generators'),
 
-    for name, script in sorted(generators.iteritems()):
+    args = parser.parse_args()
+
+    ranGenerators = generators
+    runningSingleGenerator = False
+    if (args.specified_generators):
+        ranGenerators = {k: v for k, v in generators.items() if k in args.specified_generators[0]}
+        runningSingleGenerator = True
+
+    if len(ranGenerators) == 0:
+        print("No valid generators specified.")
+        return 1
+
+    for name, script in sorted(ranGenerators.items()):
         info = auto_script(script)
         fname = get_hash_file_name(name)
         filenames = info['inputs'] + info['outputs'] + [script]
@@ -222,7 +247,7 @@ def main():
         if any_hash_dirty(name, filenames, new_hashes, all_old_hashes[fname]):
             any_dirty = True
 
-            if not verify_only:
+            if not args.verify_only:
                 print('Running ' + name + ' code generator')
 
                 # Set the CWD to the script directory.
@@ -237,10 +262,10 @@ def main():
         # Update the hash dictionary.
         all_new_hashes[fname] = new_hashes
 
-    if any_old_hash_missing(all_new_hashes, all_old_hashes):
+    if not runningSingleGenerator and any_old_hash_missing(all_new_hashes, all_old_hashes):
         any_dirty = True
 
-    if verify_only:
+    if args.verify_only:
         sys.exit(any_dirty)
 
     if any_dirty:
@@ -251,14 +276,14 @@ def main():
             sys.exit(1)
 
         # Update the output hashes again since they can be formatted.
-        for name, script in sorted(generators.iteritems()):
+        for name, script in sorted(ranGenerators.items()):
             info = auto_script(script)
             fname = get_hash_file_name(name)
             update_output_hashes(name, info['outputs'], all_new_hashes[fname])
 
         os.chdir(script_dir)
 
-        for fname, new_hashes in all_new_hashes.iteritems():
+        for fname, new_hashes in all_new_hashes.items():
             hash_fname = os.path.join(hash_dir, fname)
             json.dump(
                 new_hashes,

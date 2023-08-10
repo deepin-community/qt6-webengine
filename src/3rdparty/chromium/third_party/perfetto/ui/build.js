@@ -58,15 +58,15 @@
 // +----------------------+   | +----------+ +---------+ +--------------------+|
 // | src/assets/*.png     |   | | assets/  | |*.wasm.js| | frontend_bundle.js ||
 // +----------------------+   | |  *.css   | |*.wasm   | +--------------------+|
-// | buildtools/typefaces |-->| |  *.png   | +---------+ |controller_bundle.js||
+// | buildtools/typefaces |-->| |  *.png   | +---------+ |  engine_bundle.js  ||
 // +----------------------+   | |  *.woff2 |             +--------------------+|
-// | buildtools/legacy_tv |   | |  tv.html |             |  engine_bundle.js  ||
+// | buildtools/legacy_tv |   | |  tv.html |             |traceconv_bundle.js ||
 // +----------------------+   | +----------+             +--------------------+|
 //                            +------------------------------------------------+
 
 const argparse = require('argparse');
 const child_process = require('child_process');
-var crypto = require('crypto');
+const crypto = require('crypto');
 const fs = require('fs');
 const http = require('http');
 const path = require('path');
@@ -75,14 +75,16 @@ const pjoin = path.join;
 
 const ROOT_DIR = path.dirname(__dirname);  // The repo root.
 const VERSION_SCRIPT = pjoin(ROOT_DIR, 'tools/write_version_header.py');
+const GEN_IMPORTS_SCRIPT = pjoin(ROOT_DIR, 'tools/gen_ui_imports');
 
 const cfg = {
   watch: false,
   verbose: false,
   debug: false,
   startHttpServer: false,
+  httpServerListenHost: '127.0.0.1',
+  httpServerListenPort: 10000,
   wasmModules: ['trace_processor', 'trace_to_text'],
-  testConfigs: ['jest.unit.config.js'],
 
   // The fields below will be changed by main() after cmdline parsing.
   // Directory structure:
@@ -99,7 +101,6 @@ const cfg = {
   outDistRootDir: '',
   outTscDir: '',
   outGenDir: '',
-  outDistRootDir: '',
   outDistDir: '',
   outExtDir: '',
 };
@@ -118,21 +119,26 @@ const RULES = [
 
 let tasks = [];
 let tasksTot = 0, tasksRan = 0;
-let serverStarted = false;
 let httpWatches = [];
 let tStart = Date.now();
 let subprocesses = [];
 
-function main() {
+async function main() {
   const parser = new argparse.ArgumentParser();
   parser.addArgument('--out', {help: 'Output directory'});
   parser.addArgument(['--watch', '-w'], {action: 'storeTrue'});
   parser.addArgument(['--serve', '-s'], {action: 'storeTrue'});
+  parser.addArgument('--serve-host', {help: '--serve bind host'});
+  parser.addArgument('--serve-port', {help: '--serve bind port', type: 'int'});
   parser.addArgument(['--verbose', '-v'], {action: 'storeTrue'});
   parser.addArgument(['--no-build', '-n'], {action: 'storeTrue'});
   parser.addArgument(['--no-wasm', '-W'], {action: 'storeTrue'});
-  parser.addArgument(['--run-tests', '-t'], {action: 'storeTrue'});
+  parser.addArgument(['--run-unittests', '-t'], {action: 'storeTrue'});
+  parser.addArgument(['--run-integrationtests', '-T'], {action: 'storeTrue'});
   parser.addArgument(['--debug', '-d'], {action: 'storeTrue'});
+  parser.addArgument(['--interactive', '-i'], {action: 'storeTrue'});
+  parser.addArgument(['--rebaseline', '-r'], {action: 'storeTrue'});
+  parser.addArgument(['--no-depscheck'], {action: 'storeTrue'});
 
   const args = parser.parseArgs();
   const clean = !args.no_build;
@@ -149,6 +155,18 @@ function main() {
   cfg.verbose = !!args.verbose;
   cfg.debug = !!args.debug;
   cfg.startHttpServer = args.serve;
+  if (args.serve_host) {
+    cfg.httpServerListenHost = args.serve_host
+  }
+  if (args.serve_port) {
+    cfg.httpServerListenPort = args.serve_port
+  }
+  if (args.interactive) {
+    process.env.PERFETTO_UI_TESTS_INTERACTIVE = '1';
+  }
+  if (args.rebaseline) {
+    process.env.PERFETTO_UI_TESTS_REBASELINE = '1';
+  }
 
   process.on('SIGINT', () => {
     console.log('\nSIGINT received. Killing all child processes and exiting');
@@ -158,10 +176,27 @@ function main() {
     process.exit(130);  // 130 -> Same behavior of bash when killed by SIGINT.
   });
 
-  // Check that deps are current before starting.
-  const installBuildDeps = pjoin(ROOT_DIR, 'tools/install-build-deps');
-  const depsArgs = ['--check-only', pjoin(cfg.outDir, '.check_deps'), '--ui'];
-  exec(installBuildDeps, depsArgs);
+  if (!args.no_depscheck) {
+    // Check that deps are current before starting.
+    const installBuildDeps = pjoin(ROOT_DIR, 'tools/install-build-deps');
+    const checkDepsPath = pjoin(cfg.outDir, '.check_deps');
+    let args = [installBuildDeps, `--check-only=${checkDepsPath}`, '--ui'];
+
+    if (process.platform === "darwin") {
+      const result = child_process.spawnSync("arch", ["-arm64", "true"]);
+      const isArm64Capable = result.status === 0;
+      if (isArm64Capable) {
+        const archArgs = [
+          "arch",
+          "-arch",
+          "arm64",
+        ];
+        args = archArgs.concat(args);
+      }
+    }
+    const cmd = args.shift();
+    exec(cmd, args);
+  }
 
   console.log('Entering', cfg.outDir);
   process.chdir(cfg.outDir);
@@ -179,6 +214,7 @@ function main() {
     scanDir('ui/src/chrome_extension');
     scanDir('buildtools/typefaces');
     scanDir('buildtools/catapult_trace_viewer');
+    generateImports('ui/src/tracks', 'all_tracks.ts');
     compileProtos();
     genVersion();
     transpileTsProject('ui');
@@ -192,8 +228,25 @@ function main() {
     scanDir(cfg.outDistRootDir);
   }
 
-  if (args.run_tests) {
-    runTests();
+
+  // We should enter the loop only in watch mode, where tsc and rollup are
+  // asynchronous because they run in watch mode.
+  const tStart = Date.now();
+  while (!isDistComplete()) {
+    const secs = Math.ceil((Date.now() - tStart) / 1000);
+    process.stdout.write(`Waiting for first build to complete... ${secs} s\r`);
+    await new Promise(r => setTimeout(r, 500));
+  }
+  if (cfg.watch) console.log('\nFirst build completed!');
+
+  if (cfg.startHttpServer) {
+    startServer();
+  }
+  if (args.run_unittests) {
+    runTests('jest.unittest.config.js');
+  }
+  if (args.run_integrationtests) {
+    runTests('jest.integrationtest.config.js');
   }
 }
 
@@ -201,12 +254,17 @@ function main() {
 // Build rules
 // -----------
 
-function runTests() {
-  const args =
-      ['--rootDir', cfg.outTscDir, '--verbose', '--runInBand', '--forceExit'];
-  for (const cfgFile of cfg.testConfigs) {
-    args.push('--projects', pjoin(ROOT_DIR, 'ui/config', cfgFile));
-  }
+function runTests(cfgFile) {
+  const args = [
+    '--rootDir',
+    cfg.outTscDir,
+    '--verbose',
+    '--runInBand',
+    '--detectOpenHandles',
+    '--forceExit',
+    '--projects',
+    pjoin(ROOT_DIR, 'ui/config', cfgFile)
+  ];
   if (cfg.watch) {
     args.push('--watchAll');
     addTask(execNode, ['jest', args, {async: true}]);
@@ -242,7 +300,7 @@ function compileScss() {
   const src = pjoin(ROOT_DIR, 'ui/src/assets/perfetto.scss');
   const dst = pjoin(cfg.outDistDir, 'perfetto.css');
   // In watch mode, don't exit(1) if scss fails. It can easily happen by
-  // having a typo in the css. It will still print an errror.
+  // having a typo in the css. It will still print an error.
   const noErrCheck = !!cfg.watch;
   addTask(execNode, ['node-sass', ['--quiet', src, dst], {noErrCheck}]);
 }
@@ -275,16 +333,35 @@ function compileProtos() {
   addTask(execNode, ['pbts', pbtsArgs]);
 }
 
+function generateImports(dir, name) {
+  // We have to use the symlink (ui/src/gen) rather than cfg.outGenDir
+  // below since we want to generate the correct relative imports. For example:
+  // ui/src/frontend/foo.ts
+  //    import '../gen/all_plugins.ts';
+  // ui/src/gen/all_plugins.ts (aka ui/out/tsc/gen/all_plugins.ts)
+  //    import '../frontend/some_plugin.ts';
+  const dstTs = pjoin(ROOT_DIR, 'ui/src/gen', name);
+  const inputDir = pjoin(ROOT_DIR, dir);
+  const args = [GEN_IMPORTS_SCRIPT, inputDir, '--out', dstTs];
+  addTask(exec, ['python3', args]);
+}
+
 // Generates a .ts source that defines the VERSION and SCM_REVISION constants.
 function genVersion() {
   const cmd = 'python3';
   const args =
-      [VERSION_SCRIPT, '--ts_out', pjoin(cfg.outGenDir, 'perfetto_version.ts')]
+      [VERSION_SCRIPT, '--ts_out', pjoin(cfg.outGenDir, 'perfetto_version.ts')];
   addTask(exec, [cmd, args]);
 }
 
 function updateSymlinks() {
+  // /ui/out -> /out/ui.
   mklink(cfg.outUiDir, pjoin(ROOT_DIR, 'ui/out'));
+
+  // /out/ui/test/data -> /test/data (For UI tests).
+  mklink(
+      pjoin(ROOT_DIR, 'test/data'),
+      pjoin(ensureDir(pjoin(cfg.outDir, 'test')), 'data'));
 
   // Creates a out/dist_version -> out/dist/v1.2.3 symlink, so rollup config
   // can point to that without having to know the current version number.
@@ -304,7 +381,7 @@ function buildWasm(skipWasmBuild) {
     const gnArgs = ['gen', `--args=is_debug=${cfg.debug}`, cfg.outDir];
     addTask(exec, [pjoin(ROOT_DIR, 'tools/gn'), gnArgs]);
 
-    const ninjaArgs = ['-C', cfg.outDir]
+    const ninjaArgs = ['-C', cfg.outDir];
     ninjaArgs.push(...cfg.wasmModules.map(x => `${x}_wasm`));
     addTask(exec, [pjoin(ROOT_DIR, 'tools/ninja'), ninjaArgs]);
   }
@@ -338,7 +415,7 @@ function transpileTsProject(project) {
 
 // Creates the three {frontend, controller, engine}_bundle.js in one invocation.
 function bundleJs(cfgName) {
-  const rcfg = pjoin(ROOT_DIR, 'ui/config', cfgName)
+  const rcfg = pjoin(ROOT_DIR, 'ui/config', cfgName);
   const args = ['-c', rcfg, '--no-indent'];
   args.push(...(cfg.verbose ? [] : ['--silent']));
   if (cfg.watch) {
@@ -371,8 +448,9 @@ function genServiceWorkerManifestJson() {
 }
 
 function startServer() {
-  const port = 10000;
-  console.log(`Starting HTTP server on http://localhost:${port}`)
+  console.log(
+      'Starting HTTP server on',
+      `http://${cfg.httpServerListenHost}:${cfg.httpServerListenPort}`);
   http.createServer(function(req, res) {
         console.debug(req.method, req.url);
         let uri = req.url.split('?', 1)[0];
@@ -397,7 +475,21 @@ function startServer() {
           return;
         }
 
-        const absPath = path.normalize(path.join(cfg.outDistRootDir, uri));
+        let absPath = path.normalize(path.join(cfg.outDistRootDir, uri));
+        // We want to be able to use the data in '/test/' for e2e tests.
+        // However, we don't want do create a symlink into the 'dist/' dir,
+        // because 'dist/' gets shipped on the production server.
+        if (uri.startsWith('/test/')) {
+          absPath = pjoin(ROOT_DIR, uri);
+        }
+
+        // Don't serve contents outside of the project root (b/221101533).
+        if (path.relative(ROOT_DIR, absPath).startsWith('..')) {
+          res.writeHead(403);
+          res.end('403 Forbidden - Request path outside of the repo root');
+          return;
+        }
+
         fs.readFile(absPath, function(err, data) {
           if (err) {
             res.writeHead(404);
@@ -424,7 +516,25 @@ function startServer() {
           res.end();
         });
       })
-      .listen(port, '127.0.0.1');
+      .listen(cfg.httpServerListenPort, cfg.httpServerListenHost);
+}
+
+function isDistComplete() {
+  const requiredArtifacts = [
+    'frontend_bundle.js',
+    'engine_bundle.js',
+    'traceconv_bundle.js',
+    'trace_processor.wasm',
+    'perfetto.css',
+  ];
+  const relPaths = new Set();
+  walk(cfg.outDistDir, absPath => {
+    relPaths.add(path.relative(cfg.outDistDir, absPath));
+  });
+  for (const fName of requiredArtifacts) {
+    if (!relPaths.has(fName)) return false;
+  }
+  return true;
 }
 
 // Called whenever a change in the out/dist directory is detected. It sends a
@@ -475,11 +585,6 @@ function runTasks() {
     const descr = task.description.substr(0, 80);
     console.log(`${ts} ${BRT}${++tasksRan}/${tasksTot}${RST}\t${descr}`);
     task.func.apply(/*this=*/ undefined, task.args);
-  }
-  // Start the web server once reaching quiescence.
-  if (tasks.length === 0 && !serverStarted && cfg.startHttpServer) {
-    serverStarted = true;
-    startServer();
   }
 }
 
@@ -553,7 +658,6 @@ function execNode(module, args, opts) {
   const modPath = pjoin(ROOT_DIR, 'ui/node_modules/.bin', module);
   const nodeBin = pjoin(ROOT_DIR, 'tools/node');
   args = [modPath].concat(args || []);
-  const argsJson = JSON.stringify(args);
   return exec(nodeBin, args, opts);
 }
 

@@ -30,6 +30,8 @@
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
 #include "avcodec.h"
+#include "bsf.h"
+#include "codec_internal.h"
 #include "encode.h"
 #include "internal.h"
 
@@ -443,23 +445,32 @@ static int librav1e_receive_packet(AVCodecContext *avctx, AVPacket *pkt)
             return ret;
 
         if (frame->buf[0]) {
-        const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(frame->format);
+            const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(frame->format);
 
-        rframe = rav1e_frame_new(ctx->ctx);
-        if (!rframe) {
-            av_log(avctx, AV_LOG_ERROR, "Could not allocate new rav1e frame.\n");
+            int64_t *pts = av_malloc(sizeof(int64_t));
+            if (!pts) {
+                av_log(avctx, AV_LOG_ERROR, "Could not allocate PTS buffer.\n");
+                return AVERROR(ENOMEM);
+            }
+            *pts = frame->pts;
+
+            rframe = rav1e_frame_new(ctx->ctx);
+            if (!rframe) {
+                av_log(avctx, AV_LOG_ERROR, "Could not allocate new rav1e frame.\n");
+                av_frame_unref(frame);
+                av_freep(&pts);
+                return AVERROR(ENOMEM);
+            }
+
+            for (int i = 0; i < desc->nb_components; i++) {
+                int shift = i ? desc->log2_chroma_h : 0;
+                int bytes = desc->comp[0].depth == 8 ? 1 : 2;
+                rav1e_frame_fill_plane(rframe, i, frame->data[i],
+                                       (frame->height >> shift) * frame->linesize[i],
+                                       frame->linesize[i], bytes);
+            }
             av_frame_unref(frame);
-            return AVERROR(ENOMEM);
-        }
-
-        for (int i = 0; i < desc->nb_components; i++) {
-            int shift = i ? desc->log2_chroma_h : 0;
-            int bytes = desc->comp[0].depth == 8 ? 1 : 2;
-            rav1e_frame_fill_plane(rframe, i, frame->data[i],
-                                   (frame->height >> shift) * frame->linesize[i],
-                                   frame->linesize[i], bytes);
-        }
-        av_frame_unref(frame);
+            rav1e_frame_set_opaque(rframe, pts, av_free);
         }
     }
 
@@ -468,7 +479,7 @@ static int librav1e_receive_packet(AVCodecContext *avctx, AVPacket *pkt)
         if (ret == RA_ENCODER_STATUS_ENOUGH_DATA) {
             ctx->rframe = rframe; /* Queue is full. Store the RaFrame to retry next call */
         } else {
-         rav1e_frame_unref(rframe); /* No need to unref if flushing. */
+            rav1e_frame_unref(rframe); /* No need to unref if flushing. */
             ctx->rframe = NULL;
         }
 
@@ -523,7 +534,7 @@ retry:
         return AVERROR_UNKNOWN;
     }
 
-    ret = av_new_packet(pkt, rpkt->len);
+    ret = ff_get_encode_buffer(avctx, pkt, rpkt->len, 0);
     if (ret < 0) {
         av_log(avctx, AV_LOG_ERROR, "Could not allocate packet.\n");
         rav1e_packet_unref(rpkt);
@@ -535,7 +546,8 @@ retry:
     if (rpkt->frame_type == RA_FRAME_TYPE_KEY)
         pkt->flags |= AV_PKT_FLAG_KEY;
 
-    pkt->pts = pkt->dts = rpkt->input_frameno * avctx->ticks_per_frame;
+    pkt->pts = pkt->dts = *((int64_t *) rpkt->opaque);
+    av_free(rpkt->opaque);
     rav1e_packet_unref(rpkt);
 
     if (avctx->flags & AV_CODEC_FLAG_GLOBAL_HEADER) {
@@ -570,7 +582,7 @@ static const AVOption options[] = {
     { NULL }
 };
 
-static const AVCodecDefault librav1e_defaults[] = {
+static const FFCodecDefault librav1e_defaults[] = {
     { "b",           "0" },
     { "g",           "0" },
     { "keyint_min",  "0" },
@@ -602,19 +614,20 @@ static const AVClass class = {
     .version    = LIBAVUTIL_VERSION_INT,
 };
 
-AVCodec ff_librav1e_encoder = {
-    .name           = "librav1e",
-    .long_name      = NULL_IF_CONFIG_SMALL("librav1e AV1"),
-    .type           = AVMEDIA_TYPE_VIDEO,
-    .id             = AV_CODEC_ID_AV1,
+const FFCodec ff_librav1e_encoder = {
+    .p.name         = "librav1e",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("librav1e AV1"),
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_AV1,
     .init           = librav1e_encode_init,
     .receive_packet = librav1e_receive_packet,
     .close          = librav1e_encode_close,
     .priv_data_size = sizeof(librav1eContext),
-    .priv_class     = &class,
+    .p.priv_class   = &class,
     .defaults       = librav1e_defaults,
-    .pix_fmts       = librav1e_pix_fmts,
-    .capabilities   = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_AUTO_THREADS,
-    .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
-    .wrapper_name   = "librav1e",
+    .p.pix_fmts     = librav1e_pix_fmts,
+    .p.capabilities = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_OTHER_THREADS |
+                      AV_CODEC_CAP_DR1,
+    .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP | FF_CODEC_CAP_AUTO_THREADS,
+    .p.wrapper_name = "librav1e",
 };

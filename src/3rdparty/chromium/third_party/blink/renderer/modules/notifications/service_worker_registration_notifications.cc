@@ -10,6 +10,7 @@
 #include "base/metrics/histogram_functions.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/platform/web_security_origin.h"
+#include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_get_notification_options.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_notification_options.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
@@ -19,16 +20,14 @@
 #include "third_party/blink/renderer/modules/notifications/notification_resources_loader.h"
 #include "third_party/blink/renderer/modules/service_worker/service_worker_registration.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
-#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
-#include "third_party/blink/renderer/platform/wtf/assertions.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 
 namespace blink {
 
 ServiceWorkerRegistrationNotifications::ServiceWorkerRegistrationNotifications(
     ExecutionContext* context,
     ServiceWorkerRegistration* registration)
-    : ExecutionContextLifecycleObserver(context), registration_(registration) {}
+    : Supplement(*registration), ExecutionContextLifecycleObserver(context) {}
 
 ScriptPromise ServiceWorkerRegistrationNotifications::showNotification(
     ScriptState* script_state,
@@ -103,7 +102,6 @@ void ServiceWorkerRegistrationNotifications::ContextDestroyed() {
 }
 
 void ServiceWorkerRegistrationNotifications::Trace(Visitor* visitor) const {
-  visitor->Trace(registration_);
   visitor->Trace(loaders_);
   Supplement<ServiceWorkerRegistration>::Trace(visitor);
   ExecutionContextLifecycleObserver::Trace(visitor);
@@ -149,7 +147,7 @@ void ServiceWorkerRegistrationNotifications::DidLoadResources(
   DCHECK(loaders_.Contains(loader));
 
   NotificationManager::From(GetExecutionContext())
-      ->DisplayPersistentNotification(registration_->RegistrationId(),
+      ->DisplayPersistentNotification(GetSupplementable()->RegistrationId(),
                                       std::move(data), loader->GetResources(),
                                       WrapPersistent(resolver));
   loaders_.erase(loader);

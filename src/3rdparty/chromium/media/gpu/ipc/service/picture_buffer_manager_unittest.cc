@@ -6,7 +6,6 @@
 
 #include "media/gpu/ipc/service/picture_buffer_manager.h"
 
-#include "base/macros.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/test/mock_callback.h"
 #include "base/test/task_environment.h"
@@ -25,6 +24,10 @@ class PictureBufferManagerImplTest : public testing::Test {
         environment_.GetMainThreadTaskRunner());
     pbm_ = PictureBufferManager::Create(reuse_cb_.Get());
   }
+
+  PictureBufferManagerImplTest(const PictureBufferManagerImplTest&) = delete;
+  PictureBufferManagerImplTest& operator=(const PictureBufferManagerImplTest&) =
+      delete;
 
   ~PictureBufferManagerImplTest() override {
     // Drop ownership of anything that may have an async destruction process,
@@ -65,8 +68,8 @@ class PictureBufferManagerImplTest : public testing::Test {
                 gfx::ColorSpace::CreateSRGB(),  // color_space
                 false),                         // allow_overlay
         base::TimeDelta(),                      // timestamp
-        gfx::Rect(),                            // visible_rect
-        gfx::Size());                           // natural_size
+        gfx::Rect(1, 1),                        // visible_rect
+        gfx::Size(1, 1));                       // natural_size
   }
 
   gpu::SyncToken GenerateSyncToken(scoped_refptr<VideoFrame> video_frame) {
@@ -86,8 +89,6 @@ class PictureBufferManagerImplTest : public testing::Test {
       reuse_cb_;
   scoped_refptr<FakeCommandBufferHelper> cbh_;
   scoped_refptr<PictureBufferManager> pbm_;
-
-  DISALLOW_COPY_AND_ASSIGN(PictureBufferManagerImplTest);
 };
 
 TEST_F(PictureBufferManagerImplTest, CreateAndDestroy) {}

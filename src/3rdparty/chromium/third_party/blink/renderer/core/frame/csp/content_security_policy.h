@@ -29,8 +29,10 @@
 #include <memory>
 #include <utility>
 
+#include "base/gtest_prod_util.h"
 #include "services/network/public/mojom/content_security_policy.mojom-blink.h"
 #include "services/network/public/mojom/web_sandbox_flags.mojom-blink-forward.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/mojom/devtools/console_message.mojom-blink.h"
 #include "third_party/blink/public/mojom/devtools/inspector_issue.mojom-blink.h"
 #include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom-blink-forward.h"
@@ -39,9 +41,11 @@
 #include "third_party/blink/renderer/bindings/core/v8/source_location.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/execution_context/security_context.h"
+#include "third_party/blink/renderer/core/frame/csp/content_security_policy_violation_type.h"
 #include "third_party/blink/renderer/core/frame/web_feature.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/collection_support/heap_vector.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/loader/fetch/integrity_metadata.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_loader_options.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_request.h"
@@ -61,7 +65,7 @@ class OrdinalNumber;
 
 namespace blink {
 
-class ContentSecurityPolicyResponseHeaders;
+class AuditsIssue;
 class ConsoleMessage;
 class DOMWrapperWorld;
 class Element;
@@ -105,7 +109,7 @@ class CORE_EXPORT ContentSecurityPolicyDelegate : public GarbageCollectedMixin {
   // See https://w3c.github.io/webappsec-csp/#create-violation-for-global.
   // These functions are used to create the violation object.
   virtual std::unique_ptr<SourceLocation> GetSourceLocation() = 0;
-  virtual base::Optional<uint16_t> GetStatusCode() = 0;
+  virtual absl::optional<uint16_t> GetStatusCode() = 0;
   // If the Delegate is not bound to a document, a null string should be
   // returned as the referrer.
   virtual String GetDocumentReferrer() = 0;
@@ -121,7 +125,7 @@ class CORE_EXPORT ContentSecurityPolicyDelegate : public GarbageCollectedMixin {
   virtual void Count(WebFeature) = 0;
 
   virtual void AddConsoleMessage(ConsoleMessage*) = 0;
-  virtual void AddInspectorIssue(mojom::blink::InspectorIssueInfoPtr) = 0;
+  virtual void AddInspectorIssue(AuditsIssue) = 0;
   virtual void DisableEval(const String& error_message) = 0;
   virtual void ReportBlockedScriptExecutionToInspector(
       const String& directive_text) = 0;
@@ -133,21 +137,6 @@ class CORE_EXPORT ContentSecurityPolicy final
     : public GarbageCollected<ContentSecurityPolicy> {
  public:
   enum ExceptionStatus { kWillThrowException, kWillNotThrowException };
-
-  // This covers the possible values of a violation's 'resource', as defined in
-  // https://w3c.github.io/webappsec-csp/#violation-resource. By the time we
-  // generate a report, we're guaranteed that the value isn't 'null', so we
-  // don't need that state in this enum.
-  //
-  // Trusted Types violation's 'resource' values are defined in
-  // https://wicg.github.io/trusted-types/dist/spec/#csp-violation-object-hdr.
-  enum ContentSecurityPolicyViolationType {
-    kInlineViolation,
-    kEvalViolation,
-    kURLViolation,
-    kTrustedTypesSinkViolation,
-    kTrustedTypesPolicyViolation
-  };
 
   // The |type| argument given to inline checks, e.g.:
   // https://w3c.github.io/webappsec-csp/#should-block-inline
@@ -184,24 +173,12 @@ class CORE_EXPORT ContentSecurityPolicy final
 
   static const size_t kMaxSampleLength = 40;
 
-  // Parse raw Content Security Policy strings into mojo types.
-  static WTF::Vector<network::mojom::blink::ContentSecurityPolicyPtr>
-  ParseHeaders(const ContentSecurityPolicyResponseHeaders& headers);
-
   ContentSecurityPolicy();
   ~ContentSecurityPolicy();
   void Trace(Visitor*) const;
 
   bool IsBound();
   void BindToDelegate(ContentSecurityPolicyDelegate&);
-  void CopyStateFrom(const ContentSecurityPolicy*);
-
-  void DidReceiveHeaders(const ContentSecurityPolicyResponseHeaders&);
-  void DidReceiveHeader(const String&,
-                        const SecurityOrigin& self_origin,
-                        network::mojom::ContentSecurityPolicyType,
-                        network::mojom::ContentSecurityPolicySource);
-  void ReportAccumulatedHeaders() const;
 
   void AddPolicies(
       Vector<network::mojom::blink::ContentSecurityPolicyPtr> policies);
@@ -221,9 +198,9 @@ class CORE_EXPORT ContentSecurityPolicy final
   bool AllowEval(ReportingDisposition,
                  ExceptionStatus,
                  const String& script_content);
-  bool AllowWasmEval(ReportingDisposition,
-                     ExceptionStatus,
-                     const String& script_content);
+  bool AllowWasmCodeGeneration(ReportingDisposition,
+                               ExceptionStatus,
+                               const String& script_content);
 
   // AllowFromSource() wrappers.
   bool AllowBaseURI(const KURL&);
@@ -253,9 +230,11 @@ class CORE_EXPORT ContentSecurityPolicy final
       CheckHeaderType = CheckHeaderType::kCheckAll);
   bool AllowWorkerContextFromSource(const KURL&);
 
-  bool AllowTrustedTypePolicy(const String& policy_name,
-                              bool is_duplicate,
-                              AllowTrustedTypePolicyDetails& violation_details);
+  bool AllowTrustedTypePolicy(
+      const String& policy_name,
+      bool is_duplicate,
+      AllowTrustedTypePolicyDetails& violation_details,
+      absl::optional<base::UnguessableToken> issue_id = absl::nullopt);
 
   // Passing 'String()' into the |nonce| arguments in the following methods
   // represents an unnonced resource load.
@@ -307,7 +286,8 @@ class CORE_EXPORT ContentSecurityPolicy final
   bool AllowTrustedTypeAssignmentFailure(
       const String& message,
       const String& sample = String(),
-      const String& sample_prefix = String());
+      const String& sample_prefix = String(),
+      absl::optional<base::UnguessableToken> issue_id = absl::nullopt);
 
   void UsesScriptHashAlgorithms(uint8_t content_security_policy_hash_algorithm);
   void UsesStyleHashAlgorithms(uint8_t content_security_policy_hash_algorithm);
@@ -323,27 +303,8 @@ class CORE_EXPORT ContentSecurityPolicy final
   // |m_executionContext|.
   void LogToConsole(ConsoleMessage*, LocalFrame* = nullptr);
 
-  void ReportDirectiveAsSourceExpression(const String& directive_name,
-                                         const String& source_expression);
-  void ReportDuplicateDirective(const String&);
-  void ReportInvalidDirectiveValueCharacter(const String& directive_name,
-                                            const String& value);
-  void ReportInvalidPathCharacter(const String& directive_name,
-                                  const String& value,
-                                  const char);
-  void ReportInvalidRequireTrustedTypesFor(const String&);
-  void ReportInvalidSandboxFlags(const String&);
-  void ReportInvalidSourceExpression(const String& directive_name,
-                                     const String& source);
-  void ReportMultipleReportToEndpoints();
-  void ReportUnsupportedDirective(const String&);
-  void ReportInvalidInReportOnly(const String&);
-  void ReportInvalidDirectiveInMeta(const String& directive_name);
   void ReportReportOnlyInMeta(const String&);
   void ReportMetaOutsideHead(const String&);
-  void ReportValueForEmptyDirective(const String& directive_name,
-                                    const String& value);
-  void ReportMixedContentReportURI(const String& endpoint);
 
   // If a frame is passed in, the report will be sent using it as a context. If
   // no frame is passed in, the report will be sent via this object's
@@ -351,21 +312,26 @@ class CORE_EXPORT ContentSecurityPolicy final
   // available).
   // If |sourceLocation| is not set, the source location will be the context's
   // current location.
-  void ReportViolation(const String& directive_text,
-                       CSPDirectiveName effective_type,
-                       const String& console_message,
-                       const KURL& blocked_url,
-                       const Vector<String>& report_endpoints,
-                       bool use_reporting_api,
-                       const String& header,
-                       network::mojom::ContentSecurityPolicyType,
-                       ContentSecurityPolicyViolationType,
-                       std::unique_ptr<SourceLocation>,
-                       LocalFrame* = nullptr,
-                       RedirectStatus = RedirectStatus::kFollowedRedirect,
-                       Element* = nullptr,
-                       const String& source = g_empty_string,
-                       const String& source_prefix = g_empty_string);
+  // If an inspector issue is reported, and |issue_id| is present, it will be
+  // reported on the issue. This is useful to provide a link from the
+  // JavaScript TypeError to the inspector issue in the DevTools front-end.
+  void ReportViolation(
+      const String& directive_text,
+      CSPDirectiveName effective_type,
+      const String& console_message,
+      const KURL& blocked_url,
+      const Vector<String>& report_endpoints,
+      bool use_reporting_api,
+      const String& header,
+      network::mojom::ContentSecurityPolicyType,
+      ContentSecurityPolicyViolationType,
+      std::unique_ptr<SourceLocation>,
+      LocalFrame* = nullptr,
+      RedirectStatus = RedirectStatus::kFollowedRedirect,
+      Element* = nullptr,
+      const String& source = g_empty_string,
+      const String& source_prefix = g_empty_string,
+      absl::optional<base::UnguessableToken> issue_id = absl::nullopt);
 
   // Called when mixed content is detected on a page; will trigger a violation
   // report if the 'block-all-mixed-content' directive is specified for a
@@ -393,24 +359,20 @@ class CORE_EXPORT ContentSecurityPolicy final
 
   bool ExperimentalFeaturesEnabled() const;
 
-  bool ShouldSendCSPHeader(ResourceType) const;
-
   // Whether the main world's CSP should be bypassed based on the current
   // javascript world we are in.
   // Note: This is deprecated. New usages should not be added. Operations in an
   // isolated world should use the isolated world CSP instead of bypassing the
   // main world CSP. See
   // ExecutionContext::GetContentSecurityPolicyForCurrentWorld.
-  // TODO(karandeepb): Rename to ShouldBypassMainWorldDeprecated.
-  static bool ShouldBypassMainWorld(const ExecutionContext*);
+  static bool ShouldBypassMainWorldDeprecated(const ExecutionContext*);
 
   // Whether the main world's CSP should be bypassed for operations in the given
   // |world|.
   // Note: This is deprecated. New usages should not be added. Operations in an
   // isolated world should use the isolated world CSP instead of bypassing the
   // main world CSP. See ExecutionContext::GetContentSecurityPolicyForWorld.
-  // TODO(karandeepb): Rename to ShouldBypassMainWorldDeprecated.
-  static bool ShouldBypassMainWorld(const DOMWrapperWorld* world);
+  static bool ShouldBypassMainWorldDeprecated(const DOMWrapperWorld* world);
 
   static bool IsNonceableElement(const Element*);
 
@@ -437,18 +399,6 @@ class CORE_EXPORT ContentSecurityPolicy final
 
   bool HasPolicyFromSource(network::mojom::ContentSecurityPolicySource) const;
 
-  static bool IsScriptDirective(CSPDirectiveName directive_type) {
-    return (directive_type == CSPDirectiveName::ScriptSrc ||
-            directive_type == CSPDirectiveName::ScriptSrcAttr ||
-            directive_type == CSPDirectiveName::ScriptSrcElem);
-  }
-
-  static bool IsStyleDirective(CSPDirectiveName directive_type) {
-    return (directive_type == CSPDirectiveName::StyleSrc ||
-            directive_type == CSPDirectiveName::StyleSrcAttr ||
-            directive_type == CSPDirectiveName::StyleSrcElem);
-  }
-
   void Count(WebFeature feature) const;
 
  private:
@@ -463,11 +413,6 @@ class CORE_EXPORT ContentSecurityPolicy final
   FRIEND_TEST_ALL_PREFIXES(FrameFetchContextTest,
                            PopulateResourceRequestChecksReportOnlyCSP);
 
-  Vector<network::mojom::blink::ContentSecurityPolicyPtr> Parse(
-      const String&,
-      const SecurityOrigin& self_origin,
-      network::mojom::ContentSecurityPolicyType,
-      network::mojom::ContentSecurityPolicySource);
   void ApplyPolicySideEffectsToDelegate();
   void ReportUseCounters(
       const Vector<network::mojom::blink::ContentSecurityPolicyPtr>& policies);
@@ -514,15 +459,7 @@ class CORE_EXPORT ContentSecurityPolicy final
   // TODO: Consider replacing 'ContentSecurityPolicy::ViolationType' with the
   // mojo enum.
   mojom::blink::ContentSecurityPolicyViolationType BuildCSPViolationType(
-      ContentSecurityPolicy::ContentSecurityPolicyViolationType violation_type);
-
-  void ReportContentSecurityPolicyIssue(
-      const blink::SecurityPolicyViolationEventInit& violation_data,
-      network::mojom::ContentSecurityPolicyType header_type,
-      ContentSecurityPolicyViolationType violation_type,
-      LocalFrame*,
-      Element*,
-      SourceLocation*);
+      ContentSecurityPolicyViolationType violation_type);
 
   Member<ContentSecurityPolicyDelegate> delegate_;
   bool override_inline_style_allowed_ = false;
@@ -543,8 +480,6 @@ class CORE_EXPORT ContentSecurityPolicy final
   bool require_trusted_types_;
   String disable_eval_error_message_;
   mojom::blink::InsecureRequestPolicy insecure_request_policy_;
-
-  String self_protocol_;
 
   bool supports_wasm_eval_ = false;
 };

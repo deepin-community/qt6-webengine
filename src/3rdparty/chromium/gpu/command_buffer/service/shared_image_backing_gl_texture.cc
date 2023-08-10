@@ -13,7 +13,6 @@
 #include "base/trace_event/memory_dump_manager.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
-#include "components/viz/common/resources/resource_format_utils.h"
 #include "components/viz/common/resources/resource_sizes.h"
 #include "gpu/command_buffer/common/gles2_cmd_utils.h"
 #include "gpu/command_buffer/common/shared_image_trace_utils.h"
@@ -33,6 +32,7 @@
 #include "gpu/config/gpu_finch_features.h"
 #include "gpu/config/gpu_preferences.h"
 #include "third_party/skia/include/core/SkPromiseImageTexture.h"
+#include "third_party/skia/include/gpu/GrContextThreadSafeProxy.h"
 #include "ui/gfx/buffer_format_util.h"
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/geometry/size.h"
@@ -45,16 +45,21 @@
 #include "ui/gl/gl_implementation.h"
 #include "ui/gl/gl_version_info.h"
 #include "ui/gl/scoped_binders.h"
+#include "ui/gl/scoped_make_current.h"
 #include "ui/gl/shared_gl_fence_egl.h"
 #include "ui/gl/trace_util.h"
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 #include "gpu/command_buffer/service/shared_image_backing_egl_image.h"
 #include "gpu/command_buffer/service/shared_image_batch_access_manager.h"
 #endif
 
-#if defined(OS_MAC)
+#if BUILDFLAG(IS_MAC)
 #include "gpu/command_buffer/service/shared_image_backing_factory_iosurface.h"
+#endif
+
+#if BUILDFLAG(USE_DAWN) && BUILDFLAG(DAWN_ENABLE_BACKEND_OPENGLES)
+#include "gpu/command_buffer/service/shared_image_representation_dawn_egl_image.h"
 #endif
 
 namespace gpu {
@@ -84,15 +89,15 @@ SharedImageBackingGLTexture::SharedImageBackingGLTexture(
     SkAlphaType alpha_type,
     uint32_t usage,
     bool is_passthrough)
-    : SharedImageBacking(mailbox,
-                         format,
-                         size,
-                         color_space,
-                         surface_origin,
-                         alpha_type,
-                         usage,
-                         EstimatedSize(format, size),
-                         false /* is_thread_safe */),
+    : ClearTrackingSharedImageBacking(mailbox,
+                                      format,
+                                      size,
+                                      color_space,
+                                      surface_origin,
+                                      alpha_type,
+                                      usage,
+                                      EstimatedSize(format, size),
+                                      false /* is_thread_safe */),
       is_passthrough_(is_passthrough) {}
 
 SharedImageBackingGLTexture::~SharedImageBackingGLTexture() {
@@ -134,19 +139,24 @@ void SharedImageBackingGLTexture::OnMemoryDump(
 }
 
 gfx::Rect SharedImageBackingGLTexture::ClearedRect() const {
-  if (IsPassthrough()) {
-    // This backing is used exclusively with ANGLE which handles clear tracking
-    // internally. Act as though the texture is always cleared.
-    return gfx::Rect(size());
-  } else {
+  if (!IsPassthrough())
     return texture_->GetLevelClearedRect(texture_->target(), 0);
-  }
+
+  // Use shared image based tracking for passthrough, because we don't always
+  // use angle robust initialization.
+  return ClearTrackingSharedImageBacking::ClearedRect();
 }
 
 void SharedImageBackingGLTexture::SetClearedRect(
     const gfx::Rect& cleared_rect) {
-  if (!IsPassthrough())
+  if (!IsPassthrough()) {
     texture_->SetLevelClearedRect(texture_->target(), 0, cleared_rect);
+    return;
+  }
+
+  // Use shared image based tracking for passthrough, because we don't always
+  // use angle robust initialization.
+  ClearTrackingSharedImageBacking::SetClearedRect(cleared_rect);
 }
 
 bool SharedImageBackingGLTexture::ProduceLegacyMailbox(
@@ -178,14 +188,31 @@ SharedImageBackingGLTexture::ProduceGLTexturePassthrough(
 std::unique_ptr<SharedImageRepresentationDawn>
 SharedImageBackingGLTexture::ProduceDawn(SharedImageManager* manager,
                                          MemoryTypeTracker* tracker,
-                                         WGPUDevice device) {
+                                         WGPUDevice device,
+                                         WGPUBackendType backend_type) {
+#if BUILDFLAG(USE_DAWN) && BUILDFLAG(DAWN_ENABLE_BACKEND_OPENGLES)
+  if (backend_type == WGPUBackendType_OpenGLES) {
+    if (!image_egl_) {
+      CreateEGLImage();
+    }
+    std::unique_ptr<SharedImageRepresentationGLTextureBase> texture;
+    if (IsPassthrough()) {
+      texture = ProduceGLTexturePassthrough(manager, tracker);
+    } else {
+      texture = ProduceGLTexture(manager, tracker);
+    }
+    return std::make_unique<SharedImageRepresentationDawnEGLImage>(
+        std::move(texture), manager, this, tracker, device);
+  }
+#endif
+
   if (!factory()) {
     DLOG(ERROR) << "No SharedImageFactory to create a dawn representation.";
     return nullptr;
   }
 
   return SharedImageBackingGLCommon::ProduceDawnCommon(
-      factory(), manager, tracker, device, this, IsPassthrough());
+      factory(), manager, tracker, device, backend_type, this, IsPassthrough());
 }
 
 std::unique_ptr<SharedImageRepresentationSkia>
@@ -196,7 +223,9 @@ SharedImageBackingGLTexture::ProduceSkia(
   if (!cached_promise_texture_) {
     GrBackendTexture backend_texture;
     GetGrBackendTexture(context_state->feature_info(), GetGLTarget(), size(),
-                        GetGLServiceId(), format(), &backend_texture);
+                        GetGLServiceId(), format(),
+                        context_state->gr_context()->threadSafeProxy(),
+                        &backend_texture);
     cached_promise_texture_ = SkPromiseImageTexture::Make(backend_texture);
   }
   return std::make_unique<SharedImageRepresentationSkiaImpl>(
@@ -217,6 +246,7 @@ void SharedImageBackingGLTexture::InitializeGLTexture(
 
   if (IsPassthrough()) {
     passthrough_texture_->SetEstimatedSize(EstimatedSize(format(), size()));
+    SetClearedRect(params.is_cleared ? gfx::Rect(size()) : gfx::Rect());
   } else {
     texture_->SetLevelInfo(params.target, 0, params.internal_format,
                            size().width(), size().height(), 1, 0, params.format,
@@ -224,6 +254,25 @@ void SharedImageBackingGLTexture::InitializeGLTexture(
                            params.is_cleared ? gfx::Rect(size()) : gfx::Rect());
     texture_->SetImmutable(true, params.has_immutable_storage);
   }
+}
+
+void SharedImageBackingGLTexture::CreateEGLImage() {
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || defined(USE_OZONE)
+  SharedContextState* shared_context_state = factory()->GetSharedContextState();
+  ui::ScopedMakeCurrent smc(shared_context_state->context(),
+                            shared_context_state->surface());
+  auto image_np = base::MakeRefCounted<gl::GLImageNativePixmap>(
+      size(), viz::BufferFormat(format()));
+  image_np->InitializeFromTexture(GetGLServiceId());
+  image_egl_ = image_np;
+  if (passthrough_texture_) {
+    passthrough_texture_->SetLevelImage(passthrough_texture_->target(), 0,
+                                        image_egl_.get());
+  } else if (texture_) {
+    texture_->SetLevelImage(texture_->target(), 0, image_egl_.get(),
+                            gles2::Texture::ImageState::BOUND);
+  }
+#endif
 }
 
 void SharedImageBackingGLTexture::SetCompatibilitySwizzle(

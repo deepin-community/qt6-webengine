@@ -13,6 +13,7 @@
 #include "base/lazy_instance.h"
 #include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/time/time.h"
 #include "chrome/browser/devtools/global_confirm_info_bar.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/infobars/core/confirm_infobar_delegate.h"
@@ -67,7 +68,7 @@ void ExtensionDevToolsInfoBarDelegate::NotifyExtensionDetached(
   if (iter != delegates.cend()) {
     // Infobar_ was set in Create() which makes the following access safe.
     iter->second->timer_.Start(FROM_HERE, kAutoCloseDelay,
-                               iter->second->infobar_,
+                               iter->second->infobar_.get(),
                                &GlobalConfirmInfoBar::Close);
   }
 }
@@ -82,7 +83,7 @@ bool ExtensionDevToolsInfoBarDelegate::ShouldExpire(
   return false;
 }
 
-base::string16 ExtensionDevToolsInfoBarDelegate::GetMessageText() const {
+std::u16string ExtensionDevToolsInfoBarDelegate::GetMessageText() const {
   return l10n_util::GetStringFUTF16(IDS_DEV_TOOLS_INFOBAR_LABEL,
                                     extension_name_);
 }

@@ -26,7 +26,7 @@ bool DeviceHasEnoughMemoryForBackForwardCache() {
     // devices. The default threshold value is set to 1700 MB to account for all
     // 2GB devices which report lower RAM due to carveouts.
     int default_memory_threshold_mb =
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
         1700;
 #else
         // Desktop has lower memory limitations compared to Android allowing us
@@ -70,8 +70,11 @@ bool IsBackForwardCacheEnabled() {
 bool IsSameSiteBackForwardCacheEnabled() {
   if (!IsBackForwardCacheEnabled())
     return false;
+
+  // Same-site back-forward cache is enabled by default, but can be disabled
+  // through kBackForwardCache's "enable_same_site" param.
   static constexpr base::FeatureParam<bool> enable_same_site_back_forward_cache(
-      &features::kBackForwardCache, "enable_same_site", false);
+      &features::kBackForwardCache, "enable_same_site", true);
   return enable_same_site_back_forward_cache.Get();
 }
 
@@ -169,8 +172,10 @@ bool ShouldCreateNewHostForSameSiteSubframe() {
 }
 
 bool ShouldSkipEarlyCommitPendingForCrashedFrame() {
-  return base::FeatureList::IsEnabled(
-      features::kSkipEarlyCommitPendingForCrashedFrame);
+  static bool skip_early_commit_pending_for_crashed_frame =
+      base::FeatureList::IsEnabled(
+          features::kSkipEarlyCommitPendingForCrashedFrame);
+  return skip_early_commit_pending_for_crashed_frame;
 }
 
 }  // namespace content

@@ -7,9 +7,9 @@
 #include <algorithm>
 #include <memory>
 #include <string>
+#include <utility>
 
-#include "base/memory/ptr_util.h"
-#include "base/optional.h"
+#include "base/memory/scoped_refptr.h"
 #include "mojo/public/cpp/bindings/associated_receiver.h"
 #include "mojo/public/cpp/bindings/associated_remote.h"
 #include "services/network/public/mojom/fetch_api.mojom-blink.h"
@@ -29,6 +29,7 @@
 #include "third_party/blink/renderer/bindings/core/v8/v8_request_init.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_response.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_response_init.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_union_request_usvstring.h"
 #include "third_party/blink/renderer/core/dom/abort_controller.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
@@ -60,16 +61,19 @@ class ScopedFetcherForTests final
   ScopedFetcherForTests() = default;
 
   ScriptPromise Fetch(ScriptState* script_state,
-                      const RequestInfo& request_info,
+                      const V8RequestInfo* request_info,
                       const RequestInit*,
                       ExceptionState& exception_state) override {
     ++fetch_count_;
     if (expected_url_) {
-      String fetched_url;
-      if (request_info.IsRequest())
-        EXPECT_EQ(*expected_url_, request_info.GetAsRequest()->url());
-      else
-        EXPECT_EQ(*expected_url_, request_info.GetAsUSVString());
+      switch (request_info->GetContentType()) {
+        case V8RequestInfo::ContentType::kRequest:
+          EXPECT_EQ(*expected_url_, request_info->GetAsRequest()->url());
+          break;
+        case V8RequestInfo::ContentType::kUSVString:
+          EXPECT_EQ(*expected_url_, request_info->GetAsUSVString());
+          break;
+      }
     }
 
     if (response_) {
@@ -141,6 +145,7 @@ class ErrorCacheForTests : public mojom::blink::CacheStorageCache {
   void Match(mojom::blink::FetchAPIRequestPtr fetch_api_request,
              mojom::blink::CacheQueryOptionsPtr query_options,
              bool in_related_fetch_event,
+             bool in_range_fetch_event,
              int64_t trace_id,
              MatchCallback callback) override {
     last_error_web_cache_method_called_ = "dispatchMatch";
@@ -305,7 +310,7 @@ class TestCache : public Cache {
 
 class CacheStorageTest : public PageTestBase {
  public:
-  void SetUp() override { PageTestBase::SetUp(IntSize(1, 1)); }
+  void SetUp() override { PageTestBase::SetUp(gfx::Size(1, 1)); }
 
   TestCache* CreateCache(ScopedFetcherForTests* fetcher,
                          std::unique_ptr<ErrorCacheForTests> cache) {
@@ -374,16 +379,12 @@ class CacheStorageTest : public PageTestBase {
       receiver_;
 };
 
-RequestInfo StringToRequestInfo(const String& value) {
-  RequestInfo info;
-  info.SetUSVString(value);
-  return info;
+V8RequestInfo* RequestToRequestInfo(Request* value) {
+  return MakeGarbageCollected<V8RequestInfo>(value);
 }
 
-RequestInfo RequestToRequestInfo(Request* value) {
-  RequestInfo info;
-  info.SetRequest(value);
-  return info;
+V8RequestInfo* StringToRequestInfo(const String& value) {
+  return MakeGarbageCollected<V8RequestInfo>(value);
 }
 
 TEST_F(CacheStorageTest, Basics) {
@@ -442,7 +443,7 @@ TEST_F(CacheStorageTest, BasicArguments) {
   test_cache()->SetExpectedCacheQueryOptions(&expected_query_options);
 
   CacheQueryOptions* options = CacheQueryOptions::Create();
-  options->setIgnoreVary(1);
+  options->setIgnoreVary(true);
 
   Request* request = NewRequestFromUrl(url);
   DCHECK(request);
@@ -582,6 +583,7 @@ class MatchTestCache : public NotImplementedErrorCache {
   void Match(mojom::blink::FetchAPIRequestPtr fetch_api_request,
              mojom::blink::CacheQueryOptionsPtr query_options,
              bool in_related_fetch_event,
+             bool in_range_fetch_event,
              int64_t trace_id,
              MatchCallback callback) override {
     mojom::blink::MatchResultPtr result = mojom::blink::MatchResult::New();
@@ -820,7 +822,7 @@ TEST_F(CacheStorageTest, AddAllAbortOne) {
   Response* response = Response::error(GetScriptState());
   fetcher->SetResponse(response);
 
-  HeapVector<RequestInfo> info_list;
+  HeapVector<Member<V8RequestInfo>> info_list;
   info_list.push_back(RequestToRequestInfo(request));
 
   ScriptPromise promise =
@@ -849,7 +851,7 @@ TEST_F(CacheStorageTest, AddAllAbortMany) {
   Response* response = Response::error(GetScriptState());
   fetcher->SetResponse(response);
 
-  HeapVector<RequestInfo> info_list;
+  HeapVector<Member<V8RequestInfo>> info_list;
   info_list.push_back(RequestToRequestInfo(request));
   info_list.push_back(RequestToRequestInfo(request));
 

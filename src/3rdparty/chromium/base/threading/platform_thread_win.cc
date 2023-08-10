@@ -6,11 +6,14 @@
 
 #include <stddef.h>
 
+#include "base/allocator/buildflags.h"
 #include "base/debug/activity_tracker.h"
 #include "base/debug/alias.h"
 #include "base/debug/crash_logging.h"
 #include "base/debug/profiler.h"
+#include "base/feature_list.h"
 #include "base/logging.h"
+#include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/process/memory.h"
 #include "base/strings/string_number_conversions.h"
@@ -26,9 +29,21 @@
 
 #include <windows.h>
 
+#if BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
+#include "base/allocator/partition_allocator/starscan/pcscan.h"
+#include "base/allocator/partition_allocator/starscan/stack/stack.h"
+#endif
+
 namespace base {
 
+const Feature kUseThreadPriorityLowest = {"UseThreadPriorityLowest",
+                                          base::FEATURE_DISABLED_BY_DEFAULT};
+
 namespace {
+
+// Flag used to set thread priority to |THREAD_PRIORITY_LOWEST| for
+// |kUseThreadPriorityLowest| Feature.
+std::atomic<bool> g_use_thread_priority_lowest;
 
 // The most common value returned by ::GetThreadPriority() after background
 // thread mode is enabled on Windows 7.
@@ -73,7 +88,7 @@ void SetNameInternal(PlatformThreadId thread_id, const char* name) {
 }
 
 struct ThreadParams {
-  PlatformThread::Delegate* delegate;
+  raw_ptr<PlatformThread::Delegate> delegate;
   bool joinable;
   ThreadPriority priority;
 };
@@ -82,7 +97,7 @@ DWORD __stdcall ThreadFunc(void* params) {
   ThreadParams* thread_params = static_cast<ThreadParams*>(params);
   PlatformThread::Delegate* delegate = thread_params->delegate;
   if (!thread_params->joinable)
-    base::ThreadRestrictions::SetSingletonAllowed(false);
+    base::DisallowSingleton();
 
   if (thread_params->priority != ThreadPriority::NORMAL)
     PlatformThread::SetCurrentThreadPriority(thread_params->priority);
@@ -98,23 +113,29 @@ DWORD __stdcall ThreadFunc(void* params) {
                                 FALSE,
                                 DUPLICATE_SAME_ACCESS);
 
+#if BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
+  internal::PCScan::NotifyThreadCreated(internal::GetStackPointer());
+#endif
+
   win::ScopedHandle scoped_platform_handle;
 
   if (did_dup) {
     scoped_platform_handle.Set(platform_handle);
     ThreadIdNameManager::GetInstance()->RegisterThread(
-        scoped_platform_handle.Get(),
-        PlatformThread::CurrentId());
+        scoped_platform_handle.get(), PlatformThread::CurrentId());
   }
 
   delete thread_params;
   delegate->ThreadMain();
 
   if (did_dup) {
-    ThreadIdNameManager::GetInstance()->RemoveName(
-        scoped_platform_handle.Get(),
-        PlatformThread::CurrentId());
+    ThreadIdNameManager::GetInstance()->RemoveName(scoped_platform_handle.get(),
+                                                   PlatformThread::CurrentId());
   }
+
+#if BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
+  internal::PCScan::NotifyThreadDestroyed();
+#endif
 
   // Ensure thread priority is at least NORMAL before initiating thread
   // destruction. Thread destruction on Windows holds the LdrLock while
@@ -340,7 +361,8 @@ void PlatformThread::Detach(PlatformThreadHandle thread_handle) {
 }
 
 // static
-bool PlatformThread::CanIncreaseThreadPriority(ThreadPriority priority) {
+bool PlatformThread::CanChangeThreadPriority(ThreadPriority from,
+                                             ThreadPriority to) {
   return true;
 }
 
@@ -349,7 +371,7 @@ void PlatformThread::SetCurrentThreadPriorityImpl(ThreadPriority priority) {
   PlatformThreadHandle::Handle thread_handle =
       PlatformThread::CurrentHandle().platform_handle();
 
-  if (priority != ThreadPriority::BACKGROUND) {
+  if (!g_use_thread_priority_lowest && priority != ThreadPriority::BACKGROUND) {
     // Exit background mode if the new priority is not BACKGROUND. This is a
     // no-op if not in background mode.
     ::SetThreadPriority(thread_handle, THREAD_MODE_BACKGROUND_END);
@@ -366,7 +388,10 @@ void PlatformThread::SetCurrentThreadPriorityImpl(ThreadPriority priority) {
       // MSDN recommends THREAD_MODE_BACKGROUND_BEGIN for threads that perform
       // background work, as it reduces disk and memory priority in addition to
       // CPU priority.
-      desired_priority = THREAD_MODE_BACKGROUND_BEGIN;
+      desired_priority =
+          g_use_thread_priority_lowest.load(std::memory_order_relaxed)
+              ? THREAD_PRIORITY_LOWEST
+              : THREAD_MODE_BACKGROUND_BEGIN;
       break;
     case ThreadPriority::NORMAL:
       desired_priority = THREAD_PRIORITY_NORMAL;
@@ -390,7 +415,7 @@ void PlatformThread::SetCurrentThreadPriorityImpl(ThreadPriority priority) {
   DPLOG_IF(ERROR, !success) << "Failed to set thread priority to "
                             << desired_priority;
 
-  if (priority == ThreadPriority::BACKGROUND) {
+  if (!g_use_thread_priority_lowest && priority == ThreadPriority::BACKGROUND) {
     // In a background process, THREAD_MODE_BACKGROUND_BEGIN lowers the memory
     // and I/O priorities but not the CPU priority (kernel bug?). Use
     // THREAD_PRIORITY_LOWEST to also lower the CPU priority.
@@ -449,11 +474,11 @@ ThreadPriority PlatformThread::GetCurrentThreadPriority() {
       return ThreadPriority::BACKGROUND;
     case kWin7NormalPriority:
       DCHECK_EQ(win::GetVersion(), win::Version::WIN7);
-      FALLTHROUGH;
+      [[fallthrough]];
     case THREAD_PRIORITY_NORMAL:
       return ThreadPriority::NORMAL;
     case kWinNormalPriority1:
-      FALLTHROUGH;
+      [[fallthrough]];
     case kWinNormalPriority2:
       return ThreadPriority::NORMAL;
     case THREAD_PRIORITY_ABOVE_NORMAL:
@@ -467,6 +492,12 @@ ThreadPriority PlatformThread::GetCurrentThreadPriority() {
 
   NOTREACHED() << "::GetThreadPriority returned " << priority << ".";
   return ThreadPriority::NORMAL;
+}
+
+void InitializePlatformThreadFeatures() {
+  g_use_thread_priority_lowest.store(
+      FeatureList::IsEnabled(kUseThreadPriorityLowest),
+      std::memory_order_relaxed);
 }
 
 // static

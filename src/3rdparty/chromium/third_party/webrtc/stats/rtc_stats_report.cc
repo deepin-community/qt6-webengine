@@ -56,14 +56,11 @@ bool RTCStatsReport::ConstIterator::operator!=(
 
 rtc::scoped_refptr<RTCStatsReport> RTCStatsReport::Create(
     int64_t timestamp_us) {
-  return rtc::scoped_refptr<RTCStatsReport>(
-      new rtc::RefCountedObject<RTCStatsReport>(timestamp_us));
+  return rtc::scoped_refptr<RTCStatsReport>(new RTCStatsReport(timestamp_us));
 }
 
 RTCStatsReport::RTCStatsReport(int64_t timestamp_us)
     : timestamp_us_(timestamp_us) {}
-
-RTCStatsReport::~RTCStatsReport() {}
 
 rtc::scoped_refptr<RTCStatsReport> RTCStatsReport::Copy() const {
   rtc::scoped_refptr<RTCStatsReport> copy = Create(timestamp_us_);
@@ -74,12 +71,15 @@ rtc::scoped_refptr<RTCStatsReport> RTCStatsReport::Copy() const {
 }
 
 void RTCStatsReport::AddStats(std::unique_ptr<const RTCStats> stats) {
+#if RTC_DCHECK_IS_ON
   auto result =
+#endif
       stats_.insert(std::make_pair(std::string(stats->id()), std::move(stats)));
+#if RTC_DCHECK_IS_ON
   RTC_DCHECK(result.second)
-      << "A stats object with ID " << result.first->second->id()
-      << " is already "
-         "present in this stats report.";
+      << "A stats object with ID \"" << result.first->second->id() << "\" is "
+      << "already present in this stats report.";
+#endif
 }
 
 const RTCStats* RTCStatsReport::Get(const std::string& id) const {

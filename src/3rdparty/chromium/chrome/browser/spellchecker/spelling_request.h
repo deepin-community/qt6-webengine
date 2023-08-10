@@ -23,11 +23,14 @@ class SpellingRequest {
 
   SpellingRequest(PlatformSpellChecker* platform_spell_checker,
                   SpellingServiceClient* client,
-                  const base::string16& text,
+                  const std::u16string& text,
                   int render_process_id,
                   int document_tag,
                   RequestTextCheckCallback callback,
                   DestructionCallback destruction_callback);
+
+  SpellingRequest(const SpellingRequest&) = delete;
+  SpellingRequest& operator=(const SpellingRequest&) = delete;
 
   ~SpellingRequest();
 
@@ -49,7 +52,7 @@ class SpellingRequest {
 
   // Called when server-side checking is complete. Must be called on UI thread.
   void OnRemoteCheckCompleted(bool success,
-                              const base::string16& text,
+                              const std::u16string& text,
                               const std::vector<SpellCheckResult>& results);
 
   // Called when local checking is complete. Must be called on UI thread.
@@ -68,7 +71,7 @@ class SpellingRequest {
   bool remote_success_;
 
   // The string to be spell-checked.
-  base::string16 text_;
+  std::u16string text_;
 
   // Callback to send the results to renderer. Note that both RequestTextCheck
   // and RequestPartialTextCheck have the same callback signatures, so both
@@ -80,8 +83,6 @@ class SpellingRequest {
   DestructionCallback destruction_callback_;
 
   base::WeakPtrFactory<SpellingRequest> weak_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(SpellingRequest);
 };
 
 #endif  // CHROME_BROWSER_SPELLCHECKER_SPELLING_REQUEST_H_

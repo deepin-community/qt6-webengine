@@ -37,6 +37,7 @@
 
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
 #include "services/network/public/mojom/content_security_policy.mojom-blink-forward.h"
 #include "services/network/public/mojom/fetch_api.mojom-shared.h"
@@ -91,7 +92,6 @@ class CORE_EXPORT WebSharedWorkerImpl final : public WebSharedWorker {
 
   WebSharedWorkerImpl(
       const blink::SharedWorkerToken& token,
-      const base::UnguessableToken& appcache_host_id,
       CrossVariantMojoRemote<mojom::SharedWorkerHostInterfaceBase> host,
       WebSharedWorkerClient*);
 
@@ -101,7 +101,10 @@ class CORE_EXPORT WebSharedWorkerImpl final : public WebSharedWorker {
       network::mojom::CredentialsMode,
       const WebString& name,
       WebSecurityOrigin constructor_origin,
+      bool is_constructor_secure_context,
       const WebString& user_agent,
+      const WebString& full_user_agent,
+      const WebString& reduced_user_agent,
       const blink::UserAgentMetadata& ua_metadata,
       const WebVector<WebContentSecurityPolicy>& content_security_policies,
       network::mojom::IPAddressSpace,

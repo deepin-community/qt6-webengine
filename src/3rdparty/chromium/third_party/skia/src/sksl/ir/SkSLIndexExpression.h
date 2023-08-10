@@ -15,40 +15,34 @@
 namespace SkSL {
 
 /**
- * Given a type, returns the type that will result from extracting an array value from it.
- */
-static const Type& index_type(const Context& context, const Type& type) {
-    if (type.isMatrix()) {
-        if (type.componentType() == *context.fTypes.fFloat) {
-            switch (type.rows()) {
-                case 2: return *context.fTypes.fFloat2;
-                case 3: return *context.fTypes.fFloat3;
-                case 4: return *context.fTypes.fFloat4;
-                default: SkASSERT(false);
-            }
-        } else if (type.componentType() == *context.fTypes.fHalf) {
-            switch (type.rows()) {
-                case 2: return *context.fTypes.fHalf2;
-                case 3: return *context.fTypes.fHalf3;
-                case 4: return *context.fTypes.fHalf4;
-                default: SkASSERT(false);
-            }
-        }
-    }
-    return type.componentType();
-}
-
-/**
  * An expression which extracts a value from an array or matrix, as in 'm[2]'.
  */
 struct IndexExpression final : public Expression {
-    static constexpr Kind kExpressionKind = Kind::kIndex;
+    inline static constexpr Kind kExpressionKind = Kind::kIndex;
 
-    IndexExpression(const Context& context, std::unique_ptr<Expression> base,
+    IndexExpression(const Context& context, Position pos, std::unique_ptr<Expression> base,
                     std::unique_ptr<Expression> index)
-        : INHERITED(base->fOffset, kExpressionKind, &index_type(context, base->type()))
+        : INHERITED(pos, kExpressionKind, &IndexType(context, base->type()))
         , fBase(std::move(base))
         , fIndex(std::move(index)) {}
+
+    // Returns a simplified index-expression; reports errors via the ErrorReporter.
+    static std::unique_ptr<Expression> Convert(const Context& context,
+                                               SymbolTable& symbolTable,
+                                               Position pos,
+                                               std::unique_ptr<Expression> base,
+                                               std::unique_ptr<Expression> index);
+
+    // Returns a simplified index-expression; reports errors via ASSERT.
+    static std::unique_ptr<Expression> Make(const Context& context,
+                                            Position pos,
+                                            std::unique_ptr<Expression> base,
+                                            std::unique_ptr<Expression> index);
+
+    /**
+     * Given a type, returns the type that will result from extracting an array value from it.
+     */
+    static const Type& IndexType(const Context& context, const Type& type);
 
     std::unique_ptr<Expression>& base() {
         return fBase;
@@ -76,7 +70,7 @@ struct IndexExpression final : public Expression {
                                                                &this->type()));
     }
 
-    String description() const override {
+    std::string description() const override {
         return this->base()->description() + "[" + this->index()->description() + "]";
     }
 
@@ -85,10 +79,9 @@ struct IndexExpression final : public Expression {
 private:
     IndexExpression(std::unique_ptr<Expression> base, std::unique_ptr<Expression> index,
                     const Type* type)
-        : INHERITED(base->fOffset, Kind::kIndex, type)
+        : INHERITED(base->fPosition, Kind::kIndex, type)
         , fBase(std::move(base))
         , fIndex(std::move(index)) {}
-
 
     std::unique_ptr<Expression> fBase;
     std::unique_ptr<Expression> fIndex;

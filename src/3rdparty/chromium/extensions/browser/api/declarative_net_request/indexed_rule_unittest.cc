@@ -7,11 +7,10 @@
 #include <memory>
 #include <utility>
 
+#include "base/containers/flat_set.h"
 #include "base/format_macros.h"
 #include "base/json/json_reader.h"
-#include "base/macros.h"
 #include "base/numerics/safe_conversions.h"
-#include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "extensions/browser/api/declarative_net_request/constants.h"
@@ -60,14 +59,14 @@ TEST_F(IndexedRuleTest, IDParsing) {
       {kMinValidID, ParseResult::SUCCESS},
       {kMinValidID + 1, ParseResult::SUCCESS},
   };
-  for (size_t i = 0; i < base::size(cases); ++i) {
+  for (size_t i = 0; i < std::size(cases); ++i) {
     SCOPED_TRACE(base::StringPrintf("Testing case[%" PRIuS "]", i));
     dnr_api::Rule rule = CreateGenericParsedRule();
     rule.id = cases[i].id;
 
     IndexedRule indexed_rule;
     ParseResult result = IndexedRule::CreateIndexedRule(
-        std::move(rule), GetBaseURL(), &indexed_rule);
+        std::move(rule), GetBaseURL(), kMinValidStaticRulesetID, &indexed_rule);
 
     EXPECT_EQ(cases[i].expected_result, result);
     if (result == ParseResult::SUCCESS)
@@ -108,7 +107,7 @@ TEST_F(IndexedRuleTest, PriorityParsing) {
        kMinValidPriority},
   };
 
-  for (size_t i = 0; i < base::size(cases); ++i) {
+  for (size_t i = 0; i < std::size(cases); ++i) {
     SCOPED_TRACE(base::StringPrintf("Testing case[%" PRIuS "]", i));
     dnr_api::Rule rule = CreateGenericParsedRule();
     rule.priority = std::move(cases[i].priority);
@@ -120,7 +119,7 @@ TEST_F(IndexedRuleTest, PriorityParsing) {
 
     IndexedRule indexed_rule;
     ParseResult result = IndexedRule::CreateIndexedRule(
-        std::move(rule), GetBaseURL(), &indexed_rule);
+        std::move(rule), GetBaseURL(), kMinValidStaticRulesetID, &indexed_rule);
 
     EXPECT_EQ(cases[i].expected_result, result);
     if (result == ParseResult::SUCCESS)
@@ -151,7 +150,7 @@ TEST_F(IndexedRuleTest, OptionsParsing) {
            flat_rule::OptionFlag_IS_CASE_INSENSITIVE},
   };
 
-  for (size_t i = 0; i < base::size(cases); ++i) {
+  for (size_t i = 0; i < std::size(cases); ++i) {
     SCOPED_TRACE(base::StringPrintf("Testing case[%" PRIuS "]", i));
     dnr_api::Rule rule = CreateGenericParsedRule();
     rule.condition.domain_type = cases[i].domain_type;
@@ -161,7 +160,7 @@ TEST_F(IndexedRuleTest, OptionsParsing) {
 
     IndexedRule indexed_rule;
     ParseResult result = IndexedRule::CreateIndexedRule(
-        std::move(rule), GetBaseURL(), &indexed_rule);
+        std::move(rule), GetBaseURL(), kMinValidStaticRulesetID, &indexed_rule);
 
     EXPECT_EQ(ParseResult::SUCCESS, result);
     EXPECT_EQ(cases[i].expected_options, indexed_rule.options);
@@ -203,7 +202,9 @@ TEST_F(IndexedRuleTest, ResourceTypesParsing) {
             dnr_api::RESOURCE_TYPE_OBJECT,
             dnr_api::RESOURCE_TYPE_XMLHTTPREQUEST, dnr_api::RESOURCE_TYPE_PING,
             dnr_api::RESOURCE_TYPE_CSP_REPORT, dnr_api::RESOURCE_TYPE_MEDIA,
-            dnr_api::RESOURCE_TYPE_WEBSOCKET, dnr_api::RESOURCE_TYPE_OTHER})),
+            dnr_api::RESOURCE_TYPE_WEBSOCKET,
+            dnr_api::RESOURCE_TYPE_WEBTRANSPORT,
+            dnr_api::RESOURCE_TYPE_WEBBUNDLE, dnr_api::RESOURCE_TYPE_OTHER})),
        ParseResult::ERROR_NO_APPLICABLE_RESOURCE_TYPES,
        flat_rule::ElementType_NONE},
       {std::make_unique<ResourceTypeVec>(), std::make_unique<ResourceTypeVec>(),
@@ -215,7 +216,7 @@ TEST_F(IndexedRuleTest, ResourceTypesParsing) {
        ParseResult::SUCCESS, flat_rule::ElementType_SCRIPT},
   };
 
-  for (size_t i = 0; i < base::size(cases); ++i) {
+  for (size_t i = 0; i < std::size(cases); ++i) {
     SCOPED_TRACE(base::StringPrintf("Testing case[%" PRIuS "]", i));
     dnr_api::Rule rule = CreateGenericParsedRule();
     rule.condition.resource_types = std::move(cases[i].resource_types);
@@ -224,7 +225,7 @@ TEST_F(IndexedRuleTest, ResourceTypesParsing) {
 
     IndexedRule indexed_rule;
     ParseResult result = IndexedRule::CreateIndexedRule(
-        std::move(rule), GetBaseURL(), &indexed_rule);
+        std::move(rule), GetBaseURL(), kMinValidStaticRulesetID, &indexed_rule);
 
     EXPECT_EQ(cases[i].expected_result, result);
     if (result == ParseResult::SUCCESS)
@@ -289,14 +290,14 @@ TEST_F(IndexedRuleTest, UrlFilterParsing) {
        flat_rule::UrlPatternType_WILDCARDED, flat_rule::AnchorType_SUBDOMAIN,
        flat_rule::AnchorType_NONE, "", ParseResult::ERROR_INVALID_URL_FILTER}};
 
-  for (size_t i = 0; i < base::size(cases); ++i) {
+  for (size_t i = 0; i < std::size(cases); ++i) {
     SCOPED_TRACE(base::StringPrintf("Testing case[%" PRIuS "]", i));
     dnr_api::Rule rule = CreateGenericParsedRule();
     rule.condition.url_filter = std::move(cases[i].input_url_filter);
 
     IndexedRule indexed_rule;
     ParseResult result = IndexedRule::CreateIndexedRule(
-        std::move(rule), GetBaseURL(), &indexed_rule);
+        std::move(rule), GetBaseURL(), kMinValidStaticRulesetID, &indexed_rule);
     if (result != ParseResult::SUCCESS)
       continue;
 
@@ -330,6 +331,7 @@ TEST_F(IndexedRuleTest, CaseInsensitiveLowerCased) {
     IndexedRule indexed_rule;
     ASSERT_EQ(ParseResult::SUCCESS,
               IndexedRule::CreateIndexedRule(std::move(rule), GetBaseURL(),
+                                             kMinValidStaticRulesetID,
                                              &indexed_rule));
     EXPECT_EQ(test_case.expected_pattern, indexed_rule.url_pattern);
   }
@@ -338,67 +340,162 @@ TEST_F(IndexedRuleTest, CaseInsensitiveLowerCased) {
 TEST_F(IndexedRuleTest, DomainsParsing) {
   using DomainVec = std::vector<std::string>;
   struct {
-    std::unique_ptr<DomainVec> domains;
-    std::unique_ptr<DomainVec> excluded_domains;
+    absl::optional<DomainVec> domains;
+    absl::optional<DomainVec> excluded_domains;
     const ParseResult expected_result;
     // Only valid if |expected_result| is SUCCESS.
     const DomainVec expected_domains;
     const DomainVec expected_excluded_domains;
   } cases[] = {
-      {nullptr, nullptr, ParseResult::SUCCESS, {}, {}},
-      {std::make_unique<DomainVec>(),
-       nullptr,
+      {absl::nullopt, absl::nullopt, ParseResult::SUCCESS, {}, {}},
+      {DomainVec({}),
+       absl::nullopt,
        ParseResult::ERROR_EMPTY_DOMAINS_LIST,
        {},
        {}},
-      {nullptr, std::make_unique<DomainVec>(), ParseResult::SUCCESS, {}, {}},
-      {std::make_unique<DomainVec>(DomainVec({"a.com", "b.com", "a.com"})),
-       std::make_unique<DomainVec>(
-           DomainVec({"g.com", "XY.COM", "zzz.com", "a.com", "google.com"})),
+      {absl::nullopt, DomainVec({}), ParseResult::SUCCESS, {}, {}},
+      {DomainVec({"a.com", "b.com", "a.com"}),
+       DomainVec({"g.com", "XY.COM", "zzz.com", "a.com", "google.com"}),
        ParseResult::SUCCESS,
        {"a.com", "a.com", "b.com"},
        {"google.com", "zzz.com", "xy.com", "a.com", "g.com"}},
       // Domain with non-ascii characters.
-      {std::make_unique<DomainVec>(
-           DomainVec({base::WideToUTF8(L"abc\x2010" /*hyphen*/ L"def.com")})),
-       nullptr,
+      {DomainVec({base::WideToUTF8(L"abc\x2010" /*hyphen*/ L"def.com")}),
+       absl::nullopt,
        ParseResult::ERROR_NON_ASCII_DOMAIN,
        {},
        {}},
       // Excluded domain with non-ascii characters.
-      {nullptr,
-       std::make_unique<DomainVec>(
-           DomainVec({base::WideToUTF8(L"36\x00b0"
-                                       L"c.com" /*36°c.com*/)})),
+      {absl::nullopt,
+       DomainVec({base::WideToUTF8(L"36\x00b0c.com" /*36°c.com*/)}),
        ParseResult::ERROR_NON_ASCII_EXCLUDED_DOMAIN,
        {},
        {}},
       // Internationalized domain in punycode.
-      {std::make_unique<DomainVec>(
-           DomainVec({"xn--36c-tfa.com" /* punycode for 36°c.com*/})),
-       nullptr,
+      {DomainVec({"xn--36c-tfa.com" /* punycode for 36°c.com*/}),
+       absl::nullopt,
        ParseResult::SUCCESS,
        {"xn--36c-tfa.com"},
        {}},
   };
 
-  for (size_t i = 0; i < base::size(cases); ++i) {
+  for (size_t i = 0; i < std::size(cases); ++i) {
     SCOPED_TRACE(base::StringPrintf("Testing case[%" PRIuS "]", i));
-    dnr_api::Rule rule = CreateGenericParsedRule();
-    rule.condition.domains = std::move(cases[i].domains);
-    rule.condition.excluded_domains = std::move(cases[i].excluded_domains);
+    dnr_api::Rule domains_rule = CreateGenericParsedRule();
+    dnr_api::Rule initiator_domains_rule = CreateGenericParsedRule();
+    dnr_api::Rule request_domains_rule = CreateGenericParsedRule();
 
-    IndexedRule indexed_rule;
-    ParseResult result = IndexedRule::CreateIndexedRule(
-        std::move(rule), GetBaseURL(), &indexed_rule);
+    if (cases[i].domains) {
+      auto domains = std::make_unique<DomainVec>(*cases[i].domains);
+      auto initiator_domains = std::make_unique<DomainVec>(*cases[i].domains);
+      auto request_domains = std::make_unique<DomainVec>(*cases[i].domains);
+      domains_rule.condition.domains = std::move(domains);
+      initiator_domains_rule.condition.initiator_domains =
+          std::move(initiator_domains);
+      request_domains_rule.condition.request_domains =
+          std::move(request_domains);
+    }
 
-    EXPECT_EQ(cases[i].expected_result, result);
-    if (result == ParseResult::SUCCESS) {
-      EXPECT_EQ(cases[i].expected_domains, indexed_rule.domains);
+    if (cases[i].excluded_domains) {
+      auto excluded_domains =
+          std::make_unique<DomainVec>(*cases[i].excluded_domains);
+      auto excluded_initiator_domains =
+          std::make_unique<DomainVec>(*cases[i].excluded_domains);
+      auto excluded_request_domains =
+          std::make_unique<DomainVec>(*cases[i].excluded_domains);
+      domains_rule.condition.excluded_domains = std::move(excluded_domains);
+      initiator_domains_rule.condition.excluded_initiator_domains =
+          std::move(excluded_initiator_domains);
+      request_domains_rule.condition.excluded_request_domains =
+          std::move(excluded_request_domains);
+    }
+
+    IndexedRule indexed_domains_rule;
+    ParseResult domains_result = IndexedRule::CreateIndexedRule(
+        std::move(domains_rule), GetBaseURL(), kMinValidStaticRulesetID,
+        &indexed_domains_rule);
+
+    IndexedRule indexed_initiator_domains_rule;
+    ParseResult initiator_domains_result = IndexedRule::CreateIndexedRule(
+        std::move(initiator_domains_rule), GetBaseURL(),
+        kMinValidStaticRulesetID, &indexed_initiator_domains_rule);
+
+    IndexedRule indexed_request_domains_rule;
+    ParseResult request_domains_result = IndexedRule::CreateIndexedRule(
+        std::move(request_domains_rule), GetBaseURL(), kMinValidStaticRulesetID,
+        &indexed_request_domains_rule);
+
+    EXPECT_EQ(cases[i].expected_result, domains_result);
+
+    switch (cases[i].expected_result) {
+      case ParseResult::ERROR_EMPTY_DOMAINS_LIST:
+        EXPECT_EQ(ParseResult::ERROR_EMPTY_INITIATOR_DOMAINS_LIST,
+                  initiator_domains_result);
+        EXPECT_EQ(ParseResult::ERROR_EMPTY_REQUEST_DOMAINS_LIST,
+                  request_domains_result);
+        break;
+      case ParseResult::ERROR_NON_ASCII_DOMAIN:
+        EXPECT_EQ(ParseResult::ERROR_NON_ASCII_INITIATOR_DOMAIN,
+                  initiator_domains_result);
+        EXPECT_EQ(ParseResult::ERROR_NON_ASCII_REQUEST_DOMAIN,
+                  request_domains_result);
+        break;
+      case ParseResult::ERROR_NON_ASCII_EXCLUDED_DOMAIN:
+        EXPECT_EQ(ParseResult::ERROR_NON_ASCII_EXCLUDED_INITIATOR_DOMAIN,
+                  initiator_domains_result);
+        EXPECT_EQ(ParseResult::ERROR_NON_ASCII_EXCLUDED_REQUEST_DOMAIN,
+                  request_domains_result);
+        break;
+      default:
+        EXPECT_EQ(cases[i].expected_result, initiator_domains_result);
+        EXPECT_EQ(cases[i].expected_result, request_domains_result);
+    }
+
+    if (cases[i].expected_result == ParseResult::SUCCESS) {
+      // The `domains` and `excluded_domains` rule conditions are deprecated and
+      // mapped to `initiator_domains` and `excluded_initiator_domains`.
+      EXPECT_EQ(cases[i].expected_domains,
+                indexed_domains_rule.initiator_domains);
       EXPECT_EQ(cases[i].expected_excluded_domains,
-                indexed_rule.excluded_domains);
+                indexed_domains_rule.excluded_initiator_domains);
+
+      EXPECT_EQ(cases[i].expected_domains,
+                indexed_initiator_domains_rule.initiator_domains);
+      EXPECT_EQ(cases[i].expected_excluded_domains,
+                indexed_initiator_domains_rule.excluded_initiator_domains);
+
+      EXPECT_EQ(cases[i].expected_domains,
+                indexed_request_domains_rule.request_domains);
+      EXPECT_EQ(cases[i].expected_excluded_domains,
+                indexed_request_domains_rule.excluded_request_domains);
     }
   }
+
+  // Test that attempting to include both domains + initiatorDomains, or
+  // excludedDomains + excludedInitiatorDomains results in an parsing error.
+  dnr_api::Rule both_domains_rule = CreateGenericParsedRule();
+  dnr_api::Rule both_excluded_domains_rule = CreateGenericParsedRule();
+  both_domains_rule.condition.domains =
+      std::make_unique<DomainVec>(DomainVec({"foo"}));
+  both_domains_rule.condition.initiator_domains =
+      std::make_unique<DomainVec>(DomainVec({"bar"}));
+  both_excluded_domains_rule.condition.excluded_domains =
+      std::make_unique<DomainVec>(DomainVec({"flib"}));
+  both_excluded_domains_rule.condition.excluded_initiator_domains =
+      std::make_unique<DomainVec>(DomainVec({"flob"}));
+
+  IndexedRule indexed_both_domains_rule;
+  IndexedRule indexed_both_excluded_domains_rule;
+  EXPECT_EQ(ParseResult::ERROR_DOMAINS_AND_INITIATOR_DOMAINS_BOTH_SPECIFIED,
+            IndexedRule::CreateIndexedRule(
+                std::move(both_domains_rule), GetBaseURL(),
+                kMinValidStaticRulesetID, &indexed_both_domains_rule));
+  EXPECT_EQ(
+      ParseResult::
+          ERROR_EXCLUDED_DOMAINS_AND_EXCLUDED_INITIATOR_DOMAINS_BOTH_SPECIFIED,
+      IndexedRule::CreateIndexedRule(std::move(both_excluded_domains_rule),
+                                     GetBaseURL(), kMinValidStaticRulesetID,
+                                     &indexed_both_excluded_domains_rule));
 }
 
 TEST_F(IndexedRuleTest, RedirectUrlParsing) {
@@ -413,7 +510,7 @@ TEST_F(IndexedRuleTest, RedirectUrlParsing) {
       {"/relative/url?q=1", ParseResult::ERROR_INVALID_REDIRECT_URL, ""},
       {"abc", ParseResult::ERROR_INVALID_REDIRECT_URL, ""}};
 
-  for (size_t i = 0; i < base::size(cases); ++i) {
+  for (size_t i = 0; i < std::size(cases); ++i) {
     SCOPED_TRACE(base::StringPrintf("Testing case[%" PRIuS "]", i));
     dnr_api::Rule rule = CreateGenericParsedRule();
     rule.action.redirect = MakeRedirectUrl(cases[i].redirect_url);
@@ -421,7 +518,7 @@ TEST_F(IndexedRuleTest, RedirectUrlParsing) {
 
     IndexedRule indexed_rule;
     ParseResult result = IndexedRule::CreateIndexedRule(
-        std::move(rule), GetBaseURL(), &indexed_rule);
+        std::move(rule), GetBaseURL(), kMinValidStaticRulesetID, &indexed_rule);
 
     EXPECT_EQ(cases[i].expected_result, result) << static_cast<int>(result);
     if (result == ParseResult::SUCCESS)
@@ -433,23 +530,23 @@ TEST_F(IndexedRuleTest, RedirectParsing) {
   struct {
     std::string redirect_dictionary_json;
     ParseResult expected_result;
-    base::Optional<std::string> expected_redirect_url;
+    absl::optional<std::string> expected_redirect_url;
   } cases[] = {
       // clang-format off
     {
       "{}",
       ParseResult::ERROR_INVALID_REDIRECT,
-      base::nullopt
+      absl::nullopt
     },
     {
       R"({"url": "xyz"})",
       ParseResult::ERROR_INVALID_REDIRECT_URL,
-      base::nullopt
+      absl::nullopt
     },
     {
       R"({"url": "javascript:window.alert(\"hello,world\");"})",
       ParseResult::ERROR_JAVASCRIPT_REDIRECT,
-      base::nullopt
+      absl::nullopt
     },
     {
       R"({"url": "http://google.com"})",
@@ -459,7 +556,7 @@ TEST_F(IndexedRuleTest, RedirectParsing) {
     {
       R"({"extensionPath": "foo/xyz/"})",
       ParseResult::ERROR_INVALID_EXTENSION_PATH,
-      base::nullopt
+      absl::nullopt
     },
     {
       R"({"extensionPath": "/foo/xyz?q=1"})",
@@ -473,7 +570,7 @@ TEST_F(IndexedRuleTest, RedirectParsing) {
           "scheme": "",
           "host": "foo.com"
         }
-      })", ParseResult::ERROR_INVALID_TRANSFORM_SCHEME, base::nullopt
+      })", ParseResult::ERROR_INVALID_TRANSFORM_SCHEME, absl::nullopt
     },
     {
       R"(
@@ -482,7 +579,7 @@ TEST_F(IndexedRuleTest, RedirectParsing) {
           "scheme": "javascript",
           "host": "foo.com"
         }
-      })", ParseResult::ERROR_INVALID_TRANSFORM_SCHEME, base::nullopt
+      })", ParseResult::ERROR_INVALID_TRANSFORM_SCHEME, absl::nullopt
     },
     {
       R"(
@@ -491,7 +588,7 @@ TEST_F(IndexedRuleTest, RedirectParsing) {
           "scheme": "http",
           "port": "-1"
         }
-      })", ParseResult::ERROR_INVALID_TRANSFORM_PORT, base::nullopt
+      })", ParseResult::ERROR_INVALID_TRANSFORM_PORT, absl::nullopt
     },
     {
       R"(
@@ -500,22 +597,22 @@ TEST_F(IndexedRuleTest, RedirectParsing) {
           "scheme": "http",
           "query": "abc"
         }
-      })", ParseResult::ERROR_INVALID_TRANSFORM_QUERY, base::nullopt
+      })", ParseResult::ERROR_INVALID_TRANSFORM_QUERY, absl::nullopt
     },
     {
       R"({"transform": {"path": "abc"}})",
       ParseResult::SUCCESS,
-      base::nullopt
+      absl::nullopt
     },
     {
       R"({"transform": {"fragment": "abc"}})",
       ParseResult::ERROR_INVALID_TRANSFORM_FRAGMENT,
-      base::nullopt
+      absl::nullopt
     },
     {
       R"({"transform": {"path": ""}})",
       ParseResult::SUCCESS,
-      base::nullopt
+      absl::nullopt
     },
     {
       R"(
@@ -527,7 +624,7 @@ TEST_F(IndexedRuleTest, RedirectParsing) {
             "removeParams": ["abc"]
           }
         }
-      })", ParseResult::ERROR_QUERY_AND_TRANSFORM_BOTH_SPECIFIED, base::nullopt
+      })", ParseResult::ERROR_QUERY_AND_TRANSFORM_BOTH_SPECIFIED, absl::nullopt
     },
     {
       R"(
@@ -546,28 +643,28 @@ TEST_F(IndexedRuleTest, RedirectParsing) {
           "fragment": "",
           "username": "user"
         }
-      })", ParseResult::SUCCESS, base::nullopt
+      })", ParseResult::SUCCESS, absl::nullopt
     }
   };
   // clang-format on
 
-  for (size_t i = 0; i < base::size(cases); ++i) {
+  for (size_t i = 0; i < std::size(cases); ++i) {
     SCOPED_TRACE(base::StringPrintf("Testing case[%" PRIuS "]", i));
     dnr_api::Rule rule = CreateGenericParsedRule();
     rule.action.type = dnr_api::RULE_ACTION_TYPE_REDIRECT;
 
-    base::Optional<base::Value> redirect_val =
+    absl::optional<base::Value> redirect_val =
         base::JSONReader::Read(cases[i].redirect_dictionary_json);
     ASSERT_TRUE(redirect_val);
 
-    base::string16 error;
+    std::u16string error;
     rule.action.redirect = dnr_api::Redirect::FromValue(*redirect_val, &error);
     ASSERT_TRUE(rule.action.redirect);
     ASSERT_TRUE(error.empty());
 
     IndexedRule indexed_rule;
     ParseResult result = IndexedRule::CreateIndexedRule(
-        std::move(rule), GetBaseURL(), &indexed_rule);
+        std::move(rule), GetBaseURL(), kMinValidStaticRulesetID, &indexed_rule);
     EXPECT_EQ(cases[i].expected_result, result) << static_cast<int>(result);
     if (result != ParseResult::SUCCESS)
       continue;
@@ -603,7 +700,7 @@ TEST_F(IndexedRuleTest, RegexFilterParsing) {
 
     IndexedRule indexed_rule;
     ParseResult result = IndexedRule::CreateIndexedRule(
-        std::move(rule), GetBaseURL(), &indexed_rule);
+        std::move(rule), GetBaseURL(), kMinValidStaticRulesetID, &indexed_rule);
     EXPECT_EQ(result, test_case.result);
 
     if (result == ParseResult::SUCCESS) {
@@ -621,7 +718,7 @@ TEST_F(IndexedRuleTest, MultipleFiltersSpecified) {
 
   IndexedRule indexed_rule;
   ParseResult result = IndexedRule::CreateIndexedRule(
-      std::move(rule), GetBaseURL(), &indexed_rule);
+      std::move(rule), GetBaseURL(), kMinValidStaticRulesetID, &indexed_rule);
   EXPECT_EQ(ParseResult::ERROR_MULTIPLE_FILTERS_SPECIFIED, result);
 }
 
@@ -669,7 +766,7 @@ TEST_F(IndexedRuleTest, RegexSubstitutionParsing) {
 
     IndexedRule indexed_rule;
     ParseResult result = IndexedRule::CreateIndexedRule(
-        std::move(rule), GetBaseURL(), &indexed_rule);
+        std::move(rule), GetBaseURL(), kMinValidStaticRulesetID, &indexed_rule);
     EXPECT_EQ(test_case.result, result);
 
     if (result == ParseResult::SUCCESS) {
@@ -700,7 +797,7 @@ TEST_F(IndexedRuleTest, MultipleRedirectKeys) {
 
   IndexedRule indexed_rule;
   ParseResult result = IndexedRule::CreateIndexedRule(
-      std::move(rule), GetBaseURL(), &indexed_rule);
+      std::move(rule), GetBaseURL(), kMinValidStaticRulesetID, &indexed_rule);
   EXPECT_EQ(ParseResult::SUCCESS, result);
 
   // The redirect "url" is given preference in this case.
@@ -738,7 +835,7 @@ TEST_F(IndexedRuleTest, InvalidAllowAllRequestsResourceType) {
        flat_rule::ElementType_MAIN_FRAME},
   };
 
-  for (size_t i = 0; i < base::size(cases); ++i) {
+  for (size_t i = 0; i < std::size(cases); ++i) {
     SCOPED_TRACE(base::StringPrintf("Testing case[%" PRIuS "]", i));
     dnr_api::Rule rule = CreateGenericParsedRule();
 
@@ -754,7 +851,7 @@ TEST_F(IndexedRuleTest, InvalidAllowAllRequestsResourceType) {
 
     IndexedRule indexed_rule;
     ParseResult result = IndexedRule::CreateIndexedRule(
-        std::move(rule), GetBaseURL(), &indexed_rule);
+        std::move(rule), GetBaseURL(), kMinValidStaticRulesetID, &indexed_rule);
 
     EXPECT_EQ(cases[i].expected_result, result);
     if (result == ParseResult::SUCCESS)
@@ -766,7 +863,7 @@ TEST_F(IndexedRuleTest, ModifyHeadersParsing) {
   struct RawHeaderInfo {
     dnr_api::HeaderOperation operation;
     std::string header;
-    base::Optional<std::string> value;
+    absl::optional<std::string> value;
   };
 
   using RawHeaderInfoList = std::vector<RawHeaderInfo>;
@@ -776,37 +873,37 @@ TEST_F(IndexedRuleTest, ModifyHeadersParsing) {
   // specifying test cases because elements are copied when initializing a
   // vector from an array.
   struct {
-    base::Optional<RawHeaderInfoList> request_headers;
-    base::Optional<RawHeaderInfoList> response_headers;
+    absl::optional<RawHeaderInfoList> request_headers;
+    absl::optional<RawHeaderInfoList> response_headers;
     ParseResult expected_result;
   } cases[] = {
       // Raise an error if no headers are specified.
-      {base::nullopt, base::nullopt, ParseResult::ERROR_NO_HEADERS_SPECIFIED},
+      {absl::nullopt, absl::nullopt, ParseResult::ERROR_NO_HEADERS_SPECIFIED},
 
       // Raise an error if the request or response headers list is specified,
       // but empty.
       {RawHeaderInfoList(),
        RawHeaderInfoList(
-           {{dnr_api::HEADER_OPERATION_REMOVE, "set-cookie", base::nullopt}}),
+           {{dnr_api::HEADER_OPERATION_REMOVE, "set-cookie", absl::nullopt}}),
        ParseResult::ERROR_EMPTY_REQUEST_HEADERS_LIST},
 
-      {base::nullopt, RawHeaderInfoList(),
+      {absl::nullopt, RawHeaderInfoList(),
        ParseResult::ERROR_EMPTY_RESPONSE_HEADERS_LIST},
 
       // Raise an error if a header list contains an empty or invalid header
       // name.
-      {base::nullopt,
+      {absl::nullopt,
        RawHeaderInfoList(
-           {{dnr_api::HEADER_OPERATION_REMOVE, "", base::nullopt}}),
+           {{dnr_api::HEADER_OPERATION_REMOVE, "", absl::nullopt}}),
        ParseResult::ERROR_INVALID_HEADER_NAME},
 
-      {base::nullopt,
+      {absl::nullopt,
        RawHeaderInfoList(
-           {{dnr_api::HEADER_OPERATION_REMOVE, "<<invalid>>", base::nullopt}}),
+           {{dnr_api::HEADER_OPERATION_REMOVE, "<<invalid>>", absl::nullopt}}),
        ParseResult::ERROR_INVALID_HEADER_NAME},
 
       // Raise an error if a header list contains an invalid header value.
-      {base::nullopt,
+      {absl::nullopt,
        RawHeaderInfoList({{dnr_api::HEADER_OPERATION_APPEND, "set-cookie",
                            "invalid\nvalue"}}),
        ParseResult::ERROR_INVALID_HEADER_VALUE},
@@ -814,37 +911,37 @@ TEST_F(IndexedRuleTest, ModifyHeadersParsing) {
       // Raise an error if a header value is specified for a remove rule.
       {RawHeaderInfoList(
            {{dnr_api::HEADER_OPERATION_REMOVE, "cookie", "remove"}}),
-       base::nullopt, ParseResult::ERROR_HEADER_VALUE_PRESENT},
+       absl::nullopt, ParseResult::ERROR_HEADER_VALUE_PRESENT},
 
       // Raise an error if no header value is specified for an append or set
       // rule.
       {RawHeaderInfoList(
-           {{dnr_api::HEADER_OPERATION_SET, "cookie", base::nullopt}}),
-       base::nullopt, ParseResult::ERROR_HEADER_VALUE_NOT_SPECIFIED},
+           {{dnr_api::HEADER_OPERATION_SET, "cookie", absl::nullopt}}),
+       absl::nullopt, ParseResult::ERROR_HEADER_VALUE_NOT_SPECIFIED},
 
-      {base::nullopt,
+      {absl::nullopt,
        RawHeaderInfoList(
-           {{dnr_api::HEADER_OPERATION_APPEND, "set-cookie", base::nullopt}}),
+           {{dnr_api::HEADER_OPERATION_APPEND, "set-cookie", absl::nullopt}}),
        ParseResult::ERROR_HEADER_VALUE_NOT_SPECIFIED},
 
       // Raise an error if a rule specifies a request header to be appended.
       {RawHeaderInfoList(
            {{dnr_api::HEADER_OPERATION_APPEND, "cookie", "cookie-value"}}),
-       base::nullopt, ParseResult::ERROR_APPEND_REQUEST_HEADER_UNSUPPORTED},
+       absl::nullopt, ParseResult::ERROR_APPEND_REQUEST_HEADER_UNSUPPORTED},
 
       {RawHeaderInfoList(
-           {{dnr_api::HEADER_OPERATION_REMOVE, "cookie", base::nullopt},
+           {{dnr_api::HEADER_OPERATION_REMOVE, "cookie", absl::nullopt},
             {dnr_api::HEADER_OPERATION_SET, "referer", ""}}),
-       base::nullopt, ParseResult::SUCCESS},
+       absl::nullopt, ParseResult::SUCCESS},
 
       {RawHeaderInfoList(
-           {{dnr_api::HEADER_OPERATION_REMOVE, "referer", base::nullopt}}),
+           {{dnr_api::HEADER_OPERATION_REMOVE, "referer", absl::nullopt}}),
        RawHeaderInfoList(
            {{dnr_api::HEADER_OPERATION_APPEND, "set-cookie", "abcd"}}),
        ParseResult::SUCCESS},
   };
 
-  for (size_t i = 0; i < base::size(cases); ++i) {
+  for (size_t i = 0; i < std::size(cases); ++i) {
     SCOPED_TRACE(base::StringPrintf("Testing case[%" PRIuS "]", i));
     dnr_api::Rule rule = CreateGenericParsedRule();
     rule.action.type = dnr_api::RULE_ACTION_TYPE_MODIFYHEADERS;
@@ -875,7 +972,7 @@ TEST_F(IndexedRuleTest, ModifyHeadersParsing) {
 
     IndexedRule indexed_rule;
     ParseResult result = IndexedRule::CreateIndexedRule(
-        std::move(rule), GetBaseURL(), &indexed_rule);
+        std::move(rule), GetBaseURL(), kMinValidStaticRulesetID, &indexed_rule);
     EXPECT_EQ(cases[i].expected_result, result);
     if (result != ParseResult::SUCCESS)
       continue;
@@ -889,6 +986,119 @@ TEST_F(IndexedRuleTest, ModifyHeadersParsing) {
     EXPECT_TRUE(std::equal(
         expected_response_headers.begin(), expected_response_headers.end(),
         indexed_rule.response_headers.begin(), EqualsForTesting));
+  }
+}
+
+TEST_F(IndexedRuleTest, RequestMethodsParsing) {
+  using RequestMethodVec = std::vector<dnr_api::RequestMethod>;
+
+  struct {
+    std::unique_ptr<RequestMethodVec> request_methods;
+    std::unique_ptr<RequestMethodVec> excluded_request_methods;
+    const ParseResult expected_result;
+    // Only valid if `expected_result` is SUCCESS.
+    const uint16_t expected_request_methods_mask;
+  } cases[] = {
+      {nullptr, nullptr, ParseResult::SUCCESS, flat_rule::RequestMethod_ANY},
+      {nullptr,
+       std::make_unique<RequestMethodVec>(
+           RequestMethodVec({dnr_api::REQUEST_METHOD_PUT})),
+       ParseResult::SUCCESS,
+       flat_rule::RequestMethod_ANY & ~flat_rule::RequestMethod_PUT},
+      {std::make_unique<RequestMethodVec>(RequestMethodVec(
+           {dnr_api::REQUEST_METHOD_DELETE, dnr_api::REQUEST_METHOD_GET})),
+       nullptr, ParseResult::SUCCESS,
+       flat_rule::RequestMethod_DELETE | flat_rule::RequestMethod_GET},
+      {std::make_unique<RequestMethodVec>(RequestMethodVec(
+           {dnr_api::REQUEST_METHOD_HEAD, dnr_api::REQUEST_METHOD_OPTIONS,
+            dnr_api::REQUEST_METHOD_PATCH})),
+       nullptr, ParseResult::SUCCESS,
+       flat_rule::RequestMethod_HEAD | flat_rule::RequestMethod_OPTIONS |
+           flat_rule::RequestMethod_PATCH},
+      {std::make_unique<RequestMethodVec>(
+           RequestMethodVec({dnr_api::REQUEST_METHOD_POST})),
+       std::make_unique<RequestMethodVec>(
+           RequestMethodVec({dnr_api::REQUEST_METHOD_POST})),
+       ParseResult::ERROR_REQUEST_METHOD_DUPLICATED,
+       flat_rule::RequestMethod_NONE},
+      {std::make_unique<RequestMethodVec>(), nullptr,
+       ParseResult::ERROR_EMPTY_REQUEST_METHODS_LIST,
+       flat_rule::RequestMethod_NONE}};
+
+  for (size_t i = 0; i < std::size(cases); ++i) {
+    SCOPED_TRACE(base::StringPrintf("Testing case[%" PRIuS "]", i));
+    dnr_api::Rule rule = CreateGenericParsedRule();
+    rule.condition.request_methods = std::move(cases[i].request_methods);
+    rule.condition.excluded_request_methods =
+        std::move(cases[i].excluded_request_methods);
+
+    IndexedRule indexed_rule;
+    ParseResult result = IndexedRule::CreateIndexedRule(
+        std::move(rule), GetBaseURL(), kMinValidStaticRulesetID, &indexed_rule);
+
+    EXPECT_EQ(cases[i].expected_result, result);
+    if (result == ParseResult::SUCCESS)
+      EXPECT_EQ(cases[i].expected_request_methods_mask,
+                indexed_rule.request_methods);
+  }
+}
+
+TEST_F(IndexedRuleTest, TabID) {
+  using IntVec = std::vector<int>;
+  struct {
+    absl::optional<IntVec> tab_ids;
+    absl::optional<IntVec> excluded_tab_ids;
+    RulesetID ruleset_id;
+    ParseResult expected_result;
+
+    // Only relevant if `expected_result` is ParseResult::SUCCESS.
+    base::flat_set<int> expected_tab_ids;
+    base::flat_set<int> expected_excluded_tab_ids;
+  } cases[] = {
+      {absl::nullopt, absl::nullopt, kSessionRulesetID, ParseResult::SUCCESS},
+      {IntVec(), IntVec({3, 4, 4}), kSessionRulesetID,
+       ParseResult::ERROR_EMPTY_TAB_IDS_LIST},
+      {IntVec({1, 2}),
+       IntVec({3, 4, 3}),
+       kSessionRulesetID,
+       ParseResult::SUCCESS,
+       {1, 2},
+       {}},
+      {absl::nullopt,
+       IntVec({3, 4, 3}),
+       kSessionRulesetID,
+       ParseResult::SUCCESS,
+       {},
+       {3, 4}},
+      {IntVec({1, 2, 3}), IntVec({5, 2}), kSessionRulesetID,
+       ParseResult::ERROR_TAB_ID_DUPLICATED},
+      {IntVec({1, 2}), absl::nullopt, kDynamicRulesetID,
+       ParseResult::ERROR_TAB_IDS_ON_NON_SESSION_RULE},
+      {IntVec({1, 2}), IntVec({3}), kMinValidStaticRulesetID,
+       ParseResult::ERROR_TAB_IDS_ON_NON_SESSION_RULE},
+  };
+
+  for (size_t i = 0; i < std::size(cases); ++i) {
+    SCOPED_TRACE(base::StringPrintf("Testing case[%" PRIuS "]", i));
+    dnr_api::Rule rule = CreateGenericParsedRule();
+    if (cases[i].tab_ids) {
+      rule.condition.tab_ids = std::make_unique<IntVec>(*cases[i].tab_ids);
+    }
+
+    if (cases[i].excluded_tab_ids) {
+      rule.condition.excluded_tab_ids =
+          std::make_unique<IntVec>(*cases[i].excluded_tab_ids);
+    }
+
+    IndexedRule indexed_rule;
+    ParseResult result = IndexedRule::CreateIndexedRule(
+        std::move(rule), GetBaseURL(), cases[i].ruleset_id, &indexed_rule);
+    EXPECT_EQ(cases[i].expected_result, result);
+    if (result == ParseResult::SUCCESS) {
+      EXPECT_EQ(cases[i].expected_tab_ids, indexed_rule.tab_ids);
+      EXPECT_EQ(cases[i].expected_excluded_tab_ids,
+                indexed_rule.excluded_tab_ids);
+    }
   }
 }
 

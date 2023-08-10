@@ -3,10 +3,10 @@
 // found in the LICENSE file.
 
 // This is implementation of a clang tool that rewrites raw pointer fields into
-// CheckedPtr<T>:
+// raw_ptr<T>:
 //     Pointee* field_
 // becomes:
-//     CheckedPtr<Pointee> field_
+//     raw_ptr<Pointee> field_
 //
 // Note that the tool always emits two kinds of output:
 // 1. Fields to exclude:
@@ -61,12 +61,12 @@ using namespace clang::ast_matchers;
 
 namespace {
 
-// Include path that needs to be added to all the files where CheckedPtr<...>
+// Include path that needs to be added to all the files where raw_ptr<...>
 // replaces a raw pointer.
-const char kIncludePath[] = "base/memory/checked_ptr.h";
+const char kIncludePath[] = "base/memory/raw_ptr.h";
 
 // Name of a cmdline parameter that can be used to specify a file listing fields
-// that should not be rewritten to use CheckedPtr<T>.
+// that should not be rewritten to use raw_ptr<T>.
 //
 // See also:
 // - OutputSectionHelper
@@ -235,12 +235,13 @@ class OutputHelper : public clang::tooling::SourceFileCallbacks {
 
       case clang::Language::C:
       case clang::Language::ObjC:
-        // CheckedPtr requires C++.  In particular, attempting to #include
-        // "base/memory/checked_ptr.h" from C-only compilation units will lead
+        // raw_ptr<T> requires C++.  In particular, attempting to #include
+        // "base/memory/raw_ptr.h" from C-only compilation units will lead
         // to compilation errors.
         return true;
 
       case clang::Language::CXX:
+      case clang::Language::OpenCLCXX:
       case clang::Language::ObjCXX:
         return false;
     }
@@ -436,6 +437,12 @@ AST_MATCHER(clang::ClassTemplateSpecializationDecl,
   return !Node.isExplicitSpecialization();
 }
 
+// Matches CXXRecordDecls that are classified as trivial:
+// https://en.cppreference.com/w/cpp/named_req/TrivialType
+AST_MATCHER(clang::CXXRecordDecl, isTrivial) {
+  return Node.isTrivial();
+}
+
 // Given:
 //   template <typename T, typename T2> void foo(T t, T2 t2) {};  // N1 and N4
 //   template <typename T2> void foo<int, T2>(int t, T2 t) {};    // N2
@@ -475,6 +482,16 @@ AST_POLYMORPHIC_MATCHER(isInMacroLocation,
                                                         clang::Stmt,
                                                         clang::TypeLoc)) {
   return Node.getBeginLoc().isMacroID();
+}
+
+static bool IsAnnotated(const clang::Decl* decl,
+                        const std::string& expected_annotation) {
+  clang::AnnotateAttr* attr = decl->getAttr<clang::AnnotateAttr>();
+  return attr && (attr->getAnnotation() == expected_annotation);
+}
+
+AST_MATCHER(clang::Decl, IsExclusionAnnotated) {
+  return IsAnnotated(&Node, "raw_ptr_exclusion");
 }
 
 // If |field_decl| declares a field in an implicit template specialization, then
@@ -555,7 +572,7 @@ const clang::ParmVarDecl* GetExplicitDecl(
   if (!original_func) {
     // |!original_func| may happen when the ParmVarDecl is part of a
     // FunctionType, but not part of a FunctionDecl:
-    //     base::Callback<void(int parm_var_decl_here)>
+    //     base::RepeatingCallback<void(int parm_var_decl_here)>
     //
     // In theory, |parm_var_decl_here| can also represent an implicit template
     // specialization in this scenario.  OTOH, it should be rare + shouldn't
@@ -702,6 +719,9 @@ AST_MATCHER(clang::FieldDecl, overlapsOtherDeclsWithinRecordDecl) {
       Finder->getASTContext().getSourceManager();
 
   const clang::RecordDecl* record_decl = self.getParent();
+  if (!record_decl)
+    return false;
+
   clang::SourceRange self_range(self.getBeginLoc(), self.getEndLoc());
 
   auto is_overlapping_sibling = [&](const clang::Decl* other_decl) {
@@ -773,8 +793,8 @@ AST_MATCHER_P2(clang::InitListExpr,
 
   bool is_matching = false;
   clang::ast_matchers::internal::BoundNodesTreeBuilder result;
-  const std::vector<const clang::FieldDecl*> field_decls(
-      record_decl->field_begin(), record_decl->field_end());
+  const llvm::SmallVector<const clang::FieldDecl*> field_decls(
+      record_decl->fields());
   for (unsigned i = 0; i < init_list_expr.getNumInits(); i++) {
     const clang::Expr* expr = init_list_expr.getInit(i);
 
@@ -812,8 +832,8 @@ AST_MATCHER_P2(clang::InitListExpr,
 }
 
 // Rewrites |SomeClass* field| (matched as "affectedFieldDecl") into
-// |CheckedPtr<SomeClass> field| and for each file rewritten in such way adds an
-// |#include "base/memory/checked_ptr.h"|.
+// |raw_ptr<SomeClass> field| and for each file rewritten in such way adds an
+// |#include "base/memory/raw_ptr.h"|.
 class FieldDeclRewriter : public MatchFinder::MatchCallback {
  public:
   explicit FieldDeclRewriter(OutputHelper* output_helper)
@@ -875,7 +895,7 @@ class FieldDeclRewriter : public MatchFinder::MatchCallback {
 
     // Preserve qualifiers.
     assert(!pointer_type.isRestrictQualified() &&
-           "|restrict| is a C-only qualifier and CheckedPtr<T> needs C++");
+           "|restrict| is a C-only qualifier and raw_ptr<T> needs C++");
     if (pointer_type.isConstQualified())
       result += "const ";
     if (pointer_type.isVolatileQualified())
@@ -886,7 +906,7 @@ class FieldDeclRewriter : public MatchFinder::MatchCallback {
     printing_policy.SuppressScope = 1;  // s/blink::Pointee/Pointee/
     std::string pointee_type_as_string =
         pointee_type.getAsString(printing_policy);
-    result += llvm::formatv("CheckedPtr<{0}> ", pointee_type_as_string);
+    result += llvm::formatv("raw_ptr<{0}> ", pointee_type_as_string);
 
     return result;
   }
@@ -955,7 +975,7 @@ int main(int argc, const char* argv[]) {
   llvm::InitializeNativeTarget();
   llvm::InitializeNativeTargetAsmParser();
   llvm::cl::OptionCategory category(
-      "rewrite_raw_ptr_fields: changes |T* field_| to |CheckedPtr<T> field_|.");
+      "rewrite_raw_ptr_fields: changes |T* field_| to |raw_ptr<T> field_|.");
   llvm::cl::opt<std::string> exclude_fields_param(
       kExcludeFieldsParamName, llvm::cl::value_desc("filepath"),
       llvm::cl::desc("file listing fields to be blocked (not rewritten)"));
@@ -1022,13 +1042,14 @@ int main(int argc, const char* argv[]) {
                              isInThirdPartyLocation(), isInGeneratedLocation(),
                              isInLocationListedInFilterFile(&paths_to_exclude),
                              isFieldDeclListedInFilterFile(&fields_to_exclude),
+                             IsExclusionAnnotated(),
                              implicit_field_decl_matcher))))
           .bind("affectedFieldDecl");
   FieldDeclRewriter field_decl_rewriter(&output_helper);
   match_finder.addMatcher(field_decl_matcher, &field_decl_rewriter);
 
   // Matches expressions that used to return a value of type |SomeClass*|
-  // but after the rewrite return an instance of |CheckedPtr<SomeClass>|.
+  // but after the rewrite return an instance of |raw_ptr<SomeClass>|.
   // Many such expressions might need additional changes after the rewrite:
   // - Some expressions (printf args, const_cast args, etc.) might need |.get()|
   //   appended.
@@ -1105,9 +1126,11 @@ int main(int argc, const char* argv[]) {
   //
   // See also testcases in tests/affected-expr-original.cc
   auto templated_function_arg_matcher = forEachArgumentWithParam(
-      affected_expr_matcher, parmVarDecl(hasType(qualType(allOf(
-                                 findAll(qualType(substTemplateTypeParmType())),
-                                 unless(referenceType()))))));
+      affected_expr_matcher,
+      parmVarDecl(allOf(
+          hasType(qualType(allOf(findAll(qualType(substTemplateTypeParmType())),
+                                 unless(referenceType())))),
+          unless(hasAncestor(functionDecl(hasName("Unretained")))))));
   match_finder.addMatcher(callExpr(templated_function_arg_matcher),
                           &affected_expr_rewriter);
   // TODO(lukasza): It is unclear why |traverse| below is needed.  Maybe it can
@@ -1248,37 +1271,6 @@ int main(int argc, const char* argv[]) {
   FilteredExprWriter global_destructor_writer(&output_helper, "global-scope");
   match_finder.addMatcher(global_destructor_matcher, &global_destructor_writer);
 
-  // Matches CXXRecordDecls with a deleted operator new - e.g.
-  // StructWithNoOperatorNew below:
-  //     struct StructWithNoOperatorNew {
-  //       void* operator new(size_t) = delete;
-  //     };
-  auto record_with_deleted_allocation_operator_type_matcher = cxxRecordDecl(
-      hasMethod(allOf(hasOverloadedOperatorName("new"), isDeleted())));
-  // Matches rewritable fields inside structs with no operator new.  See the
-  // testcase in tests/gen-deleted-operator-new-test.cc
-  auto field_in_record_with_deleted_operator_new_matcher = fieldDecl(
-      allOf(field_decl_matcher,
-            hasParent(record_with_deleted_allocation_operator_type_matcher)));
-  FilteredExprWriter field_in_record_with_deleted_operator_new_writer(
-      &output_helper, "embedder-has-no-operator-new");
-  match_finder.addMatcher(field_in_record_with_deleted_operator_new_matcher,
-                          &field_in_record_with_deleted_operator_new_writer);
-  // Matches rewritable fields that contain a pointer, pointing to a pointee
-  // with no operator new.  See the testcase in
-  // tests/gen-deleted-operator-new-test.cc
-  auto field_pointing_to_record_with_deleted_operator_new_matcher =
-      fieldDecl(allOf(
-          field_decl_matcher,
-          hasType(pointerType(
-              pointee(hasUnqualifiedDesugaredType(recordType(hasDeclaration(
-                  record_with_deleted_allocation_operator_type_matcher))))))));
-  FilteredExprWriter field_pointing_to_record_with_deleted_operator_new_writer(
-      &output_helper, "pointee-has-no-operator-new");
-  match_finder.addMatcher(
-      field_pointing_to_record_with_deleted_operator_new_matcher,
-      &field_pointing_to_record_with_deleted_operator_new_writer);
-
   // Matches fields in unions (both directly rewritable fields as well as union
   // fields that embed a struct that contains a rewritable field).  See also the
   // testcases in tests/gen-unions-test.cc.
@@ -1290,13 +1282,15 @@ int main(int argc, const char* argv[]) {
   match_finder.addMatcher(union_field_decl_matcher, &union_field_decl_writer);
 
   // Matches rewritable fields of struct `SomeStruct` if that struct happens to
-  // be a destination type of a `reinterpret_cast<SomeStruct*>` cast.
+  // be a destination type of a `reinterpret_cast<SomeStruct*>` cast and is a
+  // trivial type (otherwise `reinterpret_cast<SomeStruct*>` wouldn't be valid
+  // before the rewrite if it skipped non-trivial constructors).
   auto reinterpret_cast_struct_matcher =
-      cxxReinterpretCastExpr(hasDestinationType(
-          pointerType(pointee(hasUnqualifiedDesugaredType(recordType(
-              hasDeclaration(recordDecl(forEach(field_decl_matcher)))))))));
-  FilteredExprWriter reinterpret_cast_struct_writer(&output_helper,
-                                                    "reinterpret-cast-struct");
+      cxxReinterpretCastExpr(hasDestinationType(pointerType(pointee(
+          hasUnqualifiedDesugaredType(recordType(hasDeclaration(cxxRecordDecl(
+              allOf(forEach(field_decl_matcher), isTrivial())))))))));
+  FilteredExprWriter reinterpret_cast_struct_writer(
+      &output_helper, "reinterpret-cast-trivial-type");
   match_finder.addMatcher(reinterpret_cast_struct_matcher,
                           &reinterpret_cast_struct_writer);
 

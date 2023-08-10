@@ -6,7 +6,7 @@
 
 #include <stddef.h>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -19,12 +19,15 @@ namespace {
 
 class ErrorBuilder {
  public:
-  explicit ErrorBuilder(base::string16* error) : error_(error) {}
+  explicit ErrorBuilder(std::u16string* error) : error_(error) {}
+
+  ErrorBuilder(const ErrorBuilder&) = delete;
+  ErrorBuilder& operator=(const ErrorBuilder&) = delete;
 
   // Appends a literal string |error|.
   void Append(base::StringPiece error) {
     if (!error_->empty())
-      error_->append(base::ASCIIToUTF16("; "));
+      error_->append(u"; ");
     error_->append(base::UTF8ToUTF16(error));
   }
 
@@ -34,8 +37,7 @@ class ErrorBuilder {
   }
 
  private:
-  base::string16* const error_;
-  DISALLOW_COPY_AND_ASSIGN(ErrorBuilder);
+  const raw_ptr<std::u16string> error_;
 };
 
 // Converts a rule defined in the manifest into a JSON internal format. The
@@ -61,8 +63,8 @@ bool ConvertManifestRule(const DeclarativeManifestData::Rule& rule,
           }
           if (type == declarative_content_constants::kLegacyShowAction)
             type = declarative_content_constants::kShowAction;
-          dictionary->Remove("type", nullptr);
-          dictionary->SetString("instanceType", type);
+          dictionary->RemoveKey("type");
+          dictionary->SetStringKey("instanceType", type);
         }
         return true;
       };
@@ -87,7 +89,7 @@ DeclarativeManifestData* DeclarativeManifestData::Get(
 // static
 std::unique_ptr<DeclarativeManifestData> DeclarativeManifestData::FromValue(
     const base::Value& value,
-    base::string16* error) {
+    std::u16string* error) {
   //  The following is an example of how an event programmatic rule definition
   //  translates to a manifest definition.
   //
@@ -123,34 +125,33 @@ std::unique_ptr<DeclarativeManifestData> DeclarativeManifestData::FromValue(
   ErrorBuilder error_builder(error);
   std::unique_ptr<DeclarativeManifestData> result(
       new DeclarativeManifestData());
-  const base::ListValue* list = nullptr;
-  if (!value.GetAsList(&list)) {
+  if (!value.is_list()) {
     error_builder.Append("'event_rules' expected list, got %s",
                          base::Value::GetTypeName(value.type()));
-    return std::unique_ptr<DeclarativeManifestData>();
+    return nullptr;
   }
 
-  for (const auto& element : *list) {
+  for (const auto& element : value.GetListDeprecated()) {
     const base::DictionaryValue* dict = nullptr;
     if (!element.GetAsDictionary(&dict)) {
       error_builder.Append("expected dictionary, got %s",
                            base::Value::GetTypeName(element.type()));
-      return std::unique_ptr<DeclarativeManifestData>();
+      return nullptr;
     }
     std::string event;
     if (!dict->GetString("event", &event)) {
       error_builder.Append("'event' is required");
-      return std::unique_ptr<DeclarativeManifestData>();
+      return nullptr;
     }
 
     Rule rule;
     if (!Rule::Populate(*dict, &rule)) {
       error_builder.Append("rule failed to populate");
-      return std::unique_ptr<DeclarativeManifestData>();
+      return nullptr;
     }
 
     if (!ConvertManifestRule(rule, &error_builder))
-      return std::unique_ptr<DeclarativeManifestData>();
+      return nullptr;
 
     result->event_rules_map_[event].push_back(std::move(rule));
   }

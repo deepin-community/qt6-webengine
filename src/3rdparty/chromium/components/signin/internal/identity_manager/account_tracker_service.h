@@ -5,16 +5,14 @@
 #ifndef COMPONENTS_SIGNIN_INTERNAL_IDENTITY_MANAGER_ACCOUNT_TRACKER_SERVICE_H_
 #define COMPONENTS_SIGNIN_INTERNAL_IDENTITY_MANAGER_ACCOUNT_TRACKER_SERVICE_H_
 
-#include <list>
 #include <map>
 #include <string>
 #include <vector>
 
 #include "base/callback.h"
 #include "base/files/file_path.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
-#include "base/observer_list.h"
 #include "base/sequence_checker.h"
 #include "base/timer/timer.h"
 #include "build/build_config.h"
@@ -23,10 +21,11 @@
 #include "google_apis/gaia/core_account_id.h"
 #include "google_apis/gaia/gaia_auth_util.h"
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 #include "base/android/scoped_java_ref.h"
 #endif
 
+class AccountCapabilities;
 class PrefRegistrySimple;
 class PrefService;
 
@@ -73,12 +72,14 @@ class AccountTrackerService {
   };
 
   AccountTrackerService();
+
+  AccountTrackerService(const AccountTrackerService&) = delete;
+  AccountTrackerService& operator=(const AccountTrackerService&) = delete;
+
   ~AccountTrackerService();
 
   // Registers the preferences used by AccountTrackerService.
   static void RegisterPrefs(PrefRegistrySimple* registry);
-
-  void Shutdown();
 
   // Initializes the list of accounts from |pref_service| and load images from
   // |user_data_dir|. If |user_data_dir| is empty, images will not be saved to
@@ -124,7 +125,7 @@ class AccountTrackerService {
   AccountIdMigrationState GetMigrationState() const;
   void SetMigrationDone();
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   // Returns a reference to the corresponding Java AccountTrackerService object.
   base::android::ScopedJavaLocalRef<jobject> GetJavaObject();
 
@@ -133,11 +134,6 @@ class AccountTrackerService {
       JNIEnv* env,
       const base::android::JavaParamRef<jobjectArray>& gaiaIds,
       const base::android::JavaParamRef<jobjectArray>& accountNames);
-
-  // Checks whether all the accounts with |accountNames| are seeded.
-  jboolean AreAccountsSeeded(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobjectArray>& accountNames) const;
 #endif
 
   // If set, this callback will be invoked whenever the details of a tracked
@@ -152,6 +148,10 @@ class AccountTrackerService {
   // this function does not block on disk IO.
   void CommitPendingAccountChanges();
 
+  // Only used in tests to simulate a restart of the service. Accounts are
+  // reloaded.
+  void ResetForTesting();
+
  protected:
   // Available to be called in tests.
   void SetAccountInfoFromUserInfo(const CoreAccountId& account_id,
@@ -162,6 +162,11 @@ class AccountTrackerService {
   void SetAccountImage(const CoreAccountId& account_id,
                        const std::string& image_url_with_size,
                        const gfx::Image& image);
+
+  // Updates the account capabilities in AccountInfo for |account_id|. Does
+  // nothing if |account_id| does not exist in |accounts_|.
+  void SetAccountCapabilities(const CoreAccountId& account_id,
+                              const AccountCapabilities& account_capabilities);
 
  private:
   friend class AccountFetcherService;
@@ -223,7 +228,7 @@ class AccountTrackerService {
   static AccountIdMigrationState GetMigrationState(
       const PrefService* pref_service);
 
-  PrefService* pref_service_ = nullptr;  // Not owned.
+  raw_ptr<PrefService> pref_service_ = nullptr;  // Not owned.
   std::map<CoreAccountId, AccountInfo> accounts_;
   base::FilePath user_data_dir_;
 
@@ -233,7 +238,7 @@ class AccountTrackerService {
   // Task runner used for file operations on avatar images.
   scoped_refptr<base::SequencedTaskRunner> image_storage_task_runner_;
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   // A reference to the Java counterpart of this object.
   base::android::ScopedJavaGlobalRef<jobject> java_ref_;
 #endif
@@ -243,8 +248,6 @@ class AccountTrackerService {
   // Used to pass weak pointers of |this| to tasks created by
   // |image_storage_task_runner_|.
   base::WeakPtrFactory<AccountTrackerService> weak_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(AccountTrackerService);
 };
 
 #endif  // COMPONENTS_SIGNIN_INTERNAL_IDENTITY_MANAGER_ACCOUNT_TRACKER_SERVICE_H_

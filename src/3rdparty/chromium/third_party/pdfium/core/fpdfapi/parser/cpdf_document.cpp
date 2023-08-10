@@ -14,10 +14,14 @@
 #include "core/fpdfapi/parser/cpdf_parser.h"
 #include "core/fpdfapi/parser/cpdf_read_validator.h"
 #include "core/fpdfapi/parser/cpdf_reference.h"
+#include "core/fpdfapi/parser/cpdf_stream.h"
+#include "core/fpdfapi/parser/fpdf_parser_utility.h"
 #include "core/fxcodec/jbig2/JBig2_DocumentContext.h"
 #include "core/fxcrt/fx_codepage.h"
+#include "core/fxcrt/scoped_set_insertion.h"
+#include "core/fxcrt/stl_util.h"
 #include "third_party/base/check.h"
-#include "third_party/base/stl_util.h"
+#include "third_party/base/containers/contains.h"
 
 namespace {
 
@@ -38,8 +42,7 @@ int CountPages(CPDF_Dictionary* pPages,
       continue;
     if (pKid->KeyExist("Kids")) {
       // Use |visited_pages| to help detect circular references of pages.
-      pdfium::ScopedSetInsertion<CPDF_Dictionary*> local_add(visited_pages,
-                                                             pKid);
+      ScopedSetInsertion<CPDF_Dictionary*> local_add(visited_pages, pKid);
       count += CountPages(pKid, visited_pages);
     } else {
       // This page is a leaf node.
@@ -121,8 +124,8 @@ CPDF_Document::~CPDF_Document() {
 
 // static
 bool CPDF_Document::IsValidPageObject(const CPDF_Object* obj) {
-  const CPDF_Dictionary* dict = ToDictionary(obj);
-  return dict && dict->GetNameFor("Type") == "Page";
+  // See ISO 32000-1:2008 spec, table 30.
+  return ValidateDictType(ToDictionary(obj), "Page");
 }
 
 RetainPtr<CPDF_Object> CPDF_Document::ParseIndirectObject(uint32_t objnum) {
@@ -142,7 +145,7 @@ bool CPDF_Document::TryInit() {
 
 CPDF_Parser::Error CPDF_Document::LoadDoc(
     const RetainPtr<IFX_SeekableReadStream>& pFileAccess,
-    const char* password) {
+    const ByteString& password) {
   if (!m_pParser)
     SetParser(std::make_unique<CPDF_Parser>(this));
 
@@ -151,7 +154,7 @@ CPDF_Parser::Error CPDF_Document::LoadDoc(
 
 CPDF_Parser::Error CPDF_Document::LoadLinearizedDoc(
     const RetainPtr<CPDF_ReadValidator>& validator,
-    const char* password) {
+    const ByteString& password) {
   if (!m_pParser)
     SetParser(std::make_unique<CPDF_Parser>(this));
 
@@ -276,7 +279,7 @@ bool CPDF_Document::IsPageLoaded(int iPage) const {
 }
 
 CPDF_Dictionary* CPDF_Document::GetPageDictionary(int iPage) {
-  if (!pdfium::IndexInBounds(m_PageList, iPage))
+  if (!fxcrt::IndexInBounds(m_PageList, iPage))
     return nullptr;
 
   const uint32_t objnum = m_PageList[iPage];
@@ -310,6 +313,16 @@ JBig2_DocumentContext* CPDF_Document::GetOrCreateCodecContext() {
   return m_pCodecContext.get();
 }
 
+CPDF_Stream* CPDF_Document::CreateModifiedAPStream() {
+  auto* stream = NewIndirect<CPDF_Stream>();
+  m_ModifiedAPStreamIDs.insert(stream->GetObjNum());
+  return stream;
+}
+
+bool CPDF_Document::IsModifiedAPStream(const CPDF_Stream* stream) const {
+  return stream && pdfium::Contains(m_ModifiedAPStreamIDs, stream->GetObjNum());
+}
+
 int CPDF_Document::GetPageIndex(uint32_t objnum) {
   uint32_t skip_count = 0;
   bool bSkipped = false;
@@ -330,7 +343,7 @@ int CPDF_Document::GetPageIndex(uint32_t objnum) {
   int found_index = FindPageIndex(pPages, &skip_count, objnum, &start_index, 0);
 
   // Corrupt page tree may yield out-of-range results.
-  if (!pdfium::IndexInBounds(m_PageList, found_index))
+  if (!fxcrt::IndexInBounds(m_PageList, found_index))
     return -1;
 
   // Only update |m_PageList| when |objnum| points to a /Page object.
@@ -340,7 +353,7 @@ int CPDF_Document::GetPageIndex(uint32_t objnum) {
 }
 
 int CPDF_Document::GetPageCount() const {
-  return pdfium::CollectionSize<int>(m_PageList);
+  return fxcrt::CollectionSize<int>(m_PageList);
 }
 
 int CPDF_Document::RetrievePageCount() {
@@ -424,7 +437,7 @@ bool CPDF_Document::InsertDeletePDFPage(CPDF_Dictionary* pPages,
     if (pdfium::Contains(*pVisited, pKid))
       return false;
 
-    pdfium::ScopedSetInsertion<CPDF_Dictionary*> insertion(pVisited, pKid);
+    ScopedSetInsertion<CPDF_Dictionary*> insertion(pVisited, pKid);
     if (!InsertDeletePDFPage(pKid, nPagesToGo, pPageDict, bInsert, pVisited))
       return false;
 
@@ -446,9 +459,7 @@ bool CPDF_Document::InsertNewPage(int iPage, CPDF_Dictionary* pPageDict) {
     return false;
 
   if (iPage == nPages) {
-    CPDF_Array* pPagesList = pPages->GetArrayFor("Kids");
-    if (!pPagesList)
-      pPagesList = pPages->SetNewFor<CPDF_Array>("Kids");
+    CPDF_Array* pPagesList = GetOrCreateArray(pPages, "Kids");
     pPagesList->AppendNew<CPDF_Reference>(this, pPageDict->GetObjNum());
     pPages->SetNewFor<CPDF_Number>("Count", nPages + 1);
     pPageDict->SetNewFor<CPDF_Reference>("Parent", this, pPages->GetObjNum());

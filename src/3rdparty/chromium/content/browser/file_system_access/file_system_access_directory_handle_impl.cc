@@ -10,12 +10,15 @@
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "content/browser/file_system_access/file_system_access_error.h"
+#include "content/browser/file_system_access/file_system_access_manager_impl.h"
 #include "content/browser/file_system_access/file_system_access_transfer_token_impl.h"
+#include "content/browser/file_system_access/file_system_access_write_lock_manager.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "net/base/escape.h"
 #include "net/base/filename_util.h"
 #include "storage/browser/file_system/file_system_context.h"
 #include "storage/browser/file_system/file_system_operation_runner.h"
+#include "storage/browser/file_system/file_system_url.h"
 #include "storage/common/file_system/file_system_util.h"
 #include "third_party/blink/public/mojom/file_system_access/file_system_access_error.mojom.h"
 #include "third_party/blink/public/mojom/file_system_access/file_system_access_file_handle.mojom.h"
@@ -31,6 +34,7 @@ using storage::FileSystemOperationRunner;
 namespace content {
 
 using HandleType = FileSystemAccessPermissionContext::HandleType;
+using WriteLockType = FileSystemAccessWriteLockManager::WriteLockType;
 
 FileSystemAccessDirectoryHandleImpl::FileSystemAccessDirectoryHandleImpl(
     FileSystemAccessManagerImpl* manager,
@@ -76,7 +80,7 @@ void FileSystemAccessDirectoryHandleImpl::GetFile(const std::string& basename,
   }
 
   if (create) {
-    // If |create| is true, write permission is required unconditionally, i.e.
+    // If `create` is true, write permission is required unconditionally, i.e.
     // even if the file already exists. This is intentional, and matches the
     // behavior that is specified in the spec.
     RunWithWritePermission(
@@ -89,7 +93,7 @@ void FileSystemAccessDirectoryHandleImpl::GetFile(const std::string& basename,
         }),
         std::move(callback));
   } else {
-    DoFileSystemOperation(
+    manager()->DoFileSystemOperation(
         FROM_HERE, &FileSystemOperationRunner::FileExists,
         base::BindOnce(&FileSystemAccessDirectoryHandleImpl::DidGetFile,
                        weak_factory_.GetWeakPtr(), child_url,
@@ -121,7 +125,7 @@ void FileSystemAccessDirectoryHandleImpl::GetDirectory(
   }
 
   if (create) {
-    // If |create| is true, write permission is required unconditionally, i.e.
+    // If `create` is true, write permission is required unconditionally, i.e.
     // even if the file already exists. This is intentional, and matches the
     // behavior that is specified in the spec.
     RunWithWritePermission(
@@ -134,7 +138,7 @@ void FileSystemAccessDirectoryHandleImpl::GetDirectory(
         }),
         std::move(callback));
   } else {
-    DoFileSystemOperation(
+    manager()->DoFileSystemOperation(
         FROM_HERE, &FileSystemOperationRunner::DirectoryExists,
         base::BindOnce(&FileSystemAccessDirectoryHandleImpl::DidGetDirectory,
                        weak_factory_.GetWeakPtr(), child_url,
@@ -166,12 +170,49 @@ void FileSystemAccessDirectoryHandleImpl::GetEntries(
     return;
   }
 
-  DoFileSystemOperation(
+  manager()->DoFileSystemOperation(
       FROM_HERE, &FileSystemOperationRunner::ReadDirectory,
       base::BindRepeating(
           &FileSystemAccessDirectoryHandleImpl::DidReadDirectory,
           weak_factory_.GetWeakPtr(), base::Owned(std::move(listener))),
       url());
+}
+
+void FileSystemAccessDirectoryHandleImpl::Move(
+    mojo::PendingRemote<blink::mojom::FileSystemAccessTransferToken>
+        destination_directory,
+    const std::string& new_entry_name,
+    MoveCallback callback) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  // TODO(crbug.com/1250534): Implement move for directory handles.
+  std::move(callback).Run(file_system_access_error::FromStatus(
+      blink::mojom::FileSystemAccessStatus::kOperationAborted));
+}
+
+void FileSystemAccessDirectoryHandleImpl::Rename(
+    const std::string& new_entry_name,
+    RenameCallback callback) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  // TODO(crbug.com/1250534): Implement rename for directory handles.
+  std::move(callback).Run(file_system_access_error::FromStatus(
+      blink::mojom::FileSystemAccessStatus::kOperationAborted));
+}
+
+void FileSystemAccessDirectoryHandleImpl::Remove(bool recurse,
+                                                 RemoveCallback callback) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  RunWithWritePermission(
+      base::BindOnce(&FileSystemAccessHandleBase::DoRemove,
+                     weak_factory_.GetWeakPtr(), url(), recurse,
+                     WriteLockType::kExclusive),
+      base::BindOnce([](blink::mojom::FileSystemAccessErrorPtr result,
+                        RemoveEntryCallback callback) {
+        std::move(callback).Run(std::move(result));
+      }),
+      std::move(callback));
 }
 
 void FileSystemAccessDirectoryHandleImpl::RemoveEntry(
@@ -188,15 +229,22 @@ void FileSystemAccessDirectoryHandleImpl::RemoveEntry(
     return;
   }
 
+  // TODO(crbug.com/1254078): Consider requiring an exclusive lock to match the
+  // behavior of `remove()`.
+  //
+  // Use a shared write lock to allow the file to be removed if it has an open
+  // writable, but not if it has an open access handle.
   RunWithWritePermission(
-      base::BindOnce(&FileSystemAccessDirectoryHandleImpl::RemoveEntryImpl,
-                     weak_factory_.GetWeakPtr(), child_url, recurse),
+      base::BindOnce(&FileSystemAccessHandleBase::DoRemove,
+                     weak_factory_.GetWeakPtr(), child_url, recurse,
+                     WriteLockType::kShared),
       base::BindOnce([](blink::mojom::FileSystemAccessErrorPtr result,
                         RemoveEntryCallback callback) {
         std::move(callback).Run(std::move(result));
       }),
       std::move(callback));
 }
+
 void FileSystemAccessDirectoryHandleImpl::Resolve(
     mojo::PendingRemote<blink::mojom::FileSystemAccessTransferToken>
         possible_child,
@@ -216,7 +264,7 @@ void FileSystemAccessDirectoryHandleImpl::ResolveImpl(
     std::move(callback).Run(
         file_system_access_error::FromStatus(
             blink::mojom::FileSystemAccessStatus::kOperationFailed),
-        base::nullopt);
+        absl::nullopt);
     return;
   }
 
@@ -225,7 +273,7 @@ void FileSystemAccessDirectoryHandleImpl::ResolveImpl(
 
   // If two URLs are of a different type they are definitely not related.
   if (parent_url.type() != child_url.type()) {
-    std::move(callback).Run(file_system_access_error::Ok(), base::nullopt);
+    std::move(callback).Run(file_system_access_error::Ok(), absl::nullopt);
     return;
   }
 
@@ -238,8 +286,8 @@ void FileSystemAccessDirectoryHandleImpl::ResolveImpl(
     std::move(callback).Run(
         file_system_access_error::Ok(),
         possible_child->type() == HandleType::kDirectory
-            ? base::make_optional(std::vector<std::string>())
-            : base::nullopt);
+            ? absl::make_optional(std::vector<std::string>())
+            : absl::nullopt);
     return;
   }
 
@@ -250,13 +298,13 @@ void FileSystemAccessDirectoryHandleImpl::ResolveImpl(
     // case the child path is already the relative path.
     relative_path = child_path;
   } else if (!parent_path.AppendRelativePath(child_path, &relative_path)) {
-    std::move(callback).Run(file_system_access_error::Ok(), base::nullopt);
+    std::move(callback).Run(file_system_access_error::Ok(), absl::nullopt);
     return;
   }
 
-  std::vector<base::FilePath::StringType> components;
-  relative_path.GetComponents(&components);
-#if defined(OS_WIN)
+  std::vector<base::FilePath::StringType> components =
+      relative_path.GetComponents();
+#if BUILDFLAG(IS_WIN)
   std::vector<std::string> result;
   result.reserve(components.size());
   for (const auto& component : components) {
@@ -283,7 +331,7 @@ void FileSystemAccessDirectoryHandleImpl::GetFileWithWritePermission(
   DCHECK_EQ(GetWritePermissionStatus(),
             blink::mojom::PermissionStatus::GRANTED);
 
-  DoFileSystemOperation(
+  manager()->DoFileSystemOperation(
       FROM_HERE, &FileSystemOperationRunner::CreateFile,
       base::BindOnce(&FileSystemAccessDirectoryHandleImpl::DidGetFile,
                      weak_factory_.GetWeakPtr(), child_url,
@@ -316,7 +364,7 @@ void FileSystemAccessDirectoryHandleImpl::GetDirectoryWithWritePermission(
   DCHECK_EQ(GetWritePermissionStatus(),
             blink::mojom::PermissionStatus::GRANTED);
 
-  DoFileSystemOperation(
+  manager()->DoFileSystemOperation(
       FROM_HERE, &FileSystemOperationRunner::CreateDirectory,
       base::BindOnce(&FileSystemAccessDirectoryHandleImpl::DidGetDirectory,
                      weak_factory_.GetWeakPtr(), child_url,
@@ -383,25 +431,6 @@ void FileSystemAccessDirectoryHandleImpl::DidReadDirectory(
                                 std::move(entries), has_more_entries);
 }
 
-void FileSystemAccessDirectoryHandleImpl::RemoveEntryImpl(
-    const storage::FileSystemURL& url,
-    bool recurse,
-    RemoveEntryCallback callback) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  DCHECK_EQ(GetWritePermissionStatus(),
-            blink::mojom::PermissionStatus::GRANTED);
-
-  DoFileSystemOperation(
-      FROM_HERE, &FileSystemOperationRunner::Remove,
-      base::BindOnce(
-          [](RemoveEntryCallback callback, base::File::Error result) {
-            std::move(callback).Run(
-                file_system_access_error::FromFileError(result));
-          },
-          std::move(callback)),
-      url, recurse);
-}
-
 namespace {
 
 // Returns whether the specified extension receives special handling by the
@@ -409,10 +438,13 @@ namespace {
 bool IsShellIntegratedExtension(const base::FilePath::StringType& extension) {
   base::FilePath::StringType extension_lower = base::ToLowerASCII(extension);
 
-  // .lnk files may be used to execute arbitrary code (see
-  // https://nvd.nist.gov/vuln/detail/CVE-2010-2568).
-  if (extension_lower == FILE_PATH_LITERAL("lnk"))
+  // .lnk and .scf files may be used to execute arbitrary code (see
+  // https://nvd.nist.gov/vuln/detail/CVE-2010-2568 and
+  // https://crbug.com/1227995, respectively).
+  if (extension_lower == FILE_PATH_LITERAL("lnk") ||
+      extension_lower == FILE_PATH_LITERAL("scf")) {
     return true;
+  }
 
   // Setting a file's extension to a CLSID may conceal its actual file type on
   // some Windows versions (see https://nvd.nist.gov/vuln/detail/CVE-2004-0420).
@@ -452,8 +484,8 @@ bool FileSystemAccessDirectoryHandleImpl::IsSafePathComponent(
     return false;
   }
 
-  base::string16 component16;
-#if defined(OS_WIN)
+  std::u16string component16;
+#if BUILDFLAG(IS_WIN)
   component16.assign(component.value().begin(), component.value().end());
 #else
   std::string component8 = component.AsUTF8Unsafe();
@@ -497,8 +529,12 @@ FileSystemAccessDirectoryHandleImpl::GetChildURL(
 
   const storage::FileSystemURL parent = url();
   *result = file_system_context()->CreateCrackedFileSystemURL(
-      parent.origin(), parent.mount_type(),
+      parent.storage_key(), parent.mount_type(),
       parent.virtual_path().Append(base::FilePath::FromUTF8Unsafe(basename)));
+  // Child URLs inherit their parent's storage bucket.
+  if (parent.bucket()) {
+    result->SetBucket(parent.bucket().value());
+  }
   return file_system_access_error::Ok();
 }
 

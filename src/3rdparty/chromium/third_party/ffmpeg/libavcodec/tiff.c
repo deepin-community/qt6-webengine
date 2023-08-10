@@ -39,8 +39,10 @@
 #include "libavutil/intreadwrite.h"
 #include "libavutil/imgutils.h"
 #include "libavutil/opt.h"
+#include "libavutil/reverse.h"
 #include "avcodec.h"
 #include "bytestream.h"
+#include "codec_internal.h"
 #include "faxcompr.h"
 #include "internal.h"
 #include "lzw.h"
@@ -58,6 +60,7 @@ typedef struct TiffContext {
 
     /* JPEG decoding for DNG */
     AVCodecContext *avctx_mjpeg; // wrapper context for MJPEG
+    AVPacket *jpkt;              // encoded JPEG tile
     AVFrame *jpgframe;           // decoded JPEG tile
 
     int get_subimage;
@@ -107,8 +110,6 @@ typedef struct TiffContext {
     int deinvert_buf_size;
     uint8_t *yuv_line;
     unsigned int yuv_line_size;
-    uint8_t *fax_buffer;
-    unsigned int fax_buffer_size;
 
     int geotag_count;
     TiffGeoTag *geotags;
@@ -132,8 +133,8 @@ static void free_geotags(TiffContext *const s)
 
 #define RET_GEOKEY(TYPE, array, element)\
     if (key >= TIFF_##TYPE##_KEY_ID_OFFSET &&\
-        key - TIFF_##TYPE##_KEY_ID_OFFSET < FF_ARRAY_ELEMS(ff_tiff_##array##_name_type_map))\
-        return ff_tiff_##array##_name_type_map[key - TIFF_##TYPE##_KEY_ID_OFFSET].element;
+        key - TIFF_##TYPE##_KEY_ID_OFFSET < FF_ARRAY_ELEMS(tiff_##array##_name_type_map))\
+        return tiff_##array##_name_type_map[key - TIFF_##TYPE##_KEY_ID_OFFSET].element;
 
 static const char *get_geokey_name(int key)
 {
@@ -180,8 +181,8 @@ static char *get_geokey_val(int key, int val)
 
 #define RET_GEOKEY_VAL(TYPE, array)\
     if (val >= TIFF_##TYPE##_OFFSET &&\
-        val - TIFF_##TYPE##_OFFSET < FF_ARRAY_ELEMS(ff_tiff_##array##_codes))\
-        return av_strdup(ff_tiff_##array##_codes[val - TIFF_##TYPE##_OFFSET]);
+        val - TIFF_##TYPE##_OFFSET < FF_ARRAY_ELEMS(tiff_##array##_codes))\
+        return av_strdup(tiff_##array##_codes[val - TIFF_##TYPE##_OFFSET]);
 
     switch (key) {
     case TIFF_GT_MODEL_TYPE_GEOKEY:
@@ -214,11 +215,11 @@ static char *get_geokey_val(int key, int val)
         RET_GEOKEY_VAL(PRIME_MERIDIAN, prime_meridian);
         break;
     case TIFF_PROJECTED_CS_TYPE_GEOKEY:
-        ap = av_strdup(search_keyval(ff_tiff_proj_cs_type_codes, FF_ARRAY_ELEMS(ff_tiff_proj_cs_type_codes), val));
+        ap = av_strdup(search_keyval(tiff_proj_cs_type_codes, FF_ARRAY_ELEMS(tiff_proj_cs_type_codes), val));
         if(ap) return ap;
         break;
     case TIFF_PROJECTION_GEOKEY:
-        ap = av_strdup(search_keyval(ff_tiff_projection_codes, FF_ARRAY_ELEMS(ff_tiff_projection_codes), val));
+        ap = av_strdup(search_keyval(tiff_projection_codes, FF_ARRAY_ELEMS(tiff_projection_codes), val));
         if(ap) return ap;
         break;
     case TIFF_PROJ_COORD_TRANS_GEOKEY:
@@ -274,9 +275,101 @@ static int add_metadata(int count, int type,
     };
 }
 
+/**
+ * Map stored raw sensor values into linear reference values (see: DNG Specification - Chapter 5)
+ */
+static uint16_t av_always_inline dng_process_color16(uint16_t value,
+                                                     const uint16_t *lut,
+                                                     uint16_t black_level,
+                                                     float scale_factor)
+{
+    float value_norm;
+
+    // Lookup table lookup
+    if (lut)
+        value = lut[value];
+
+    // Black level subtraction
+    value = av_clip_uint16_c((unsigned)value - black_level);
+
+    // Color scaling
+    value_norm = (float)value * scale_factor;
+
+    value = av_clip_uint16_c(value_norm * 65535);
+
+    return value;
+}
+
+static uint16_t av_always_inline dng_process_color8(uint16_t value,
+                                                    const uint16_t *lut,
+                                                    uint16_t black_level,
+                                                    float scale_factor)
+{
+    return dng_process_color16(value, lut, black_level, scale_factor) >> 8;
+}
+
 static void av_always_inline dng_blit(TiffContext *s, uint8_t *dst, int dst_stride,
                                       const uint8_t *src, int src_stride, int width, int height,
-                                      int is_single_comp, int is_u16);
+                                      int is_single_comp, int is_u16)
+{
+    int line, col;
+    float scale_factor;
+
+    scale_factor = 1.0f / (s->white_level - s->black_level);
+
+    if (is_single_comp) {
+        if (!is_u16)
+            return; /* <= 8bpp unsupported */
+
+        /* Image is double the width and half the height we need, each row comprises 2 rows of the output
+           (split vertically in the middle). */
+        for (line = 0; line < height / 2; line++) {
+            uint16_t *dst_u16 = (uint16_t *)dst;
+            uint16_t *src_u16 = (uint16_t *)src;
+
+            /* Blit first half of input row row to initial row of output */
+            for (col = 0; col < width; col++)
+                *dst_u16++ = dng_process_color16(*src_u16++, s->dng_lut, s->black_level, scale_factor);
+
+            /* Advance the destination pointer by a row (source pointer remains in the same place) */
+            dst += dst_stride * sizeof(uint16_t);
+            dst_u16 = (uint16_t *)dst;
+
+            /* Blit second half of input row row to next row of output */
+            for (col = 0; col < width; col++)
+                *dst_u16++ = dng_process_color16(*src_u16++, s->dng_lut, s->black_level, scale_factor);
+
+            dst += dst_stride * sizeof(uint16_t);
+            src += src_stride * sizeof(uint16_t);
+        }
+    } else {
+        /* Input and output image are the same size and the MJpeg decoder has done per-component
+           deinterleaving, so blitting here is straightforward. */
+        if (is_u16) {
+            for (line = 0; line < height; line++) {
+                uint16_t *dst_u16 = (uint16_t *)dst;
+                uint16_t *src_u16 = (uint16_t *)src;
+
+                for (col = 0; col < width; col++)
+                    *dst_u16++ = dng_process_color16(*src_u16++, s->dng_lut, s->black_level, scale_factor);
+
+                dst += dst_stride * sizeof(uint16_t);
+                src += src_stride * sizeof(uint16_t);
+            }
+        } else {
+            for (line = 0; line < height; line++) {
+                uint8_t *dst_u8 = dst;
+                const uint8_t *src_u8 = src;
+
+                for (col = 0; col < width; col++)
+                    *dst_u8++ = dng_process_color8(*src_u8++, s->dng_lut, s->black_level, scale_factor);
+
+                dst += dst_stride;
+                src += src_stride;
+            }
+        }
+    }
+}
 
 static void av_always_inline horizontal_fill(TiffContext *s,
                                              unsigned int bpp, uint8_t* dst,
@@ -522,27 +615,15 @@ static int tiff_unpack_lzma(TiffContext *s, AVFrame *p, uint8_t *dst, int stride
 static int tiff_unpack_fax(TiffContext *s, uint8_t *dst, int stride,
                            const uint8_t *src, int size, int width, int lines)
 {
-    int i, ret = 0;
     int line;
-    uint8_t *src2;
+    int ret;
 
-    av_fast_padded_malloc(&s->fax_buffer, &s->fax_buffer_size, size);
-    src2 = s->fax_buffer;
-
-    if (!src2) {
-        av_log(s->avctx, AV_LOG_ERROR,
-               "Error allocating temporary buffer\n");
-        return AVERROR(ENOMEM);
+    if (s->fill_order) {
+        if ((ret = deinvert_buffer(s, src, size)) < 0)
+            return ret;
+        src = s->deinvert_buf;
     }
-
-    if (!s->fill_order) {
-        memcpy(src2, src, size);
-    } else {
-        for (i = 0; i < size; i++)
-            src2[i] = ff_reverse[src[i]];
-    }
-    memset(src2 + size, 0, AV_INPUT_BUFFER_PADDING_SIZE);
-    ret = ff_ccitt_unpack(s->avctx, src2, size, dst, lines, stride,
+    ret = ff_ccitt_unpack(s->avctx, src, size, dst, lines, stride,
                           s->compr, s->fax_opts);
     if (s->bpp < 8 && s->avctx->pix_fmt == AV_PIX_FMT_PAL8)
         for (line = 0; line < lines; line++) {
@@ -552,7 +633,95 @@ static int tiff_unpack_fax(TiffContext *s, uint8_t *dst, int stride,
     return ret;
 }
 
-static int dng_decode_strip(AVCodecContext *avctx, AVFrame *frame);
+static int dng_decode_jpeg(AVCodecContext *avctx, AVFrame *frame,
+                           int tile_byte_count, int dst_x, int dst_y, int w, int h)
+{
+    TiffContext *s = avctx->priv_data;
+    uint8_t *dst_data, *src_data;
+    uint32_t dst_offset; /* offset from dst buffer in pixels */
+    int is_single_comp, is_u16, pixel_size;
+    int ret;
+
+    if (tile_byte_count < 0 || tile_byte_count > bytestream2_get_bytes_left(&s->gb))
+        return AVERROR_INVALIDDATA;
+
+    /* Prepare a packet and send to the MJPEG decoder */
+    av_packet_unref(s->jpkt);
+    s->jpkt->data = (uint8_t*)s->gb.buffer;
+    s->jpkt->size = tile_byte_count;
+
+    if (s->is_bayer) {
+        MJpegDecodeContext *mjpegdecctx = s->avctx_mjpeg->priv_data;
+        /* We have to set this information here, there is no way to know if a given JPEG is a DNG-embedded
+           image or not from its own data (and we need that information when decoding it). */
+        mjpegdecctx->bayer = 1;
+    }
+
+    ret = avcodec_send_packet(s->avctx_mjpeg, s->jpkt);
+    if (ret < 0) {
+        av_log(avctx, AV_LOG_ERROR, "Error submitting a packet for decoding\n");
+        return ret;
+    }
+
+    ret = avcodec_receive_frame(s->avctx_mjpeg, s->jpgframe);
+    if (ret < 0) {
+        av_log(avctx, AV_LOG_ERROR, "JPEG decoding error: %s.\n", av_err2str(ret));
+
+        /* Normally skip, error if explode */
+        if (avctx->err_recognition & AV_EF_EXPLODE)
+            return AVERROR_INVALIDDATA;
+        else
+            return 0;
+    }
+
+    is_u16 = (s->bpp > 8);
+
+    /* Copy the outputted tile's pixels from 'jpgframe' to 'frame' (final buffer) */
+
+    if (s->jpgframe->width  != s->avctx_mjpeg->width  ||
+        s->jpgframe->height != s->avctx_mjpeg->height ||
+        s->jpgframe->format != s->avctx_mjpeg->pix_fmt)
+        return AVERROR_INVALIDDATA;
+
+    /* See dng_blit for explanation */
+    if (s->avctx_mjpeg->width  == w * 2 &&
+        s->avctx_mjpeg->height == h / 2 &&
+        s->avctx_mjpeg->pix_fmt == AV_PIX_FMT_GRAY16LE) {
+        is_single_comp = 1;
+    } else if (s->avctx_mjpeg->width  >= w &&
+               s->avctx_mjpeg->height >= h &&
+               s->avctx_mjpeg->pix_fmt == (is_u16 ? AV_PIX_FMT_GRAY16 : AV_PIX_FMT_GRAY8)
+              ) {
+        is_single_comp = 0;
+    } else
+        return AVERROR_INVALIDDATA;
+
+    pixel_size = (is_u16 ? sizeof(uint16_t) : sizeof(uint8_t));
+
+    if (is_single_comp && !is_u16) {
+        av_log(s->avctx, AV_LOG_ERROR, "DNGs with bpp <= 8 and 1 component are unsupported\n");
+        av_frame_unref(s->jpgframe);
+        return AVERROR_PATCHWELCOME;
+    }
+
+    dst_offset = dst_x + frame->linesize[0] * dst_y / pixel_size;
+    dst_data = frame->data[0] + dst_offset * pixel_size;
+    src_data = s->jpgframe->data[0];
+
+    dng_blit(s,
+             dst_data,
+             frame->linesize[0] / pixel_size,
+             src_data,
+             s->jpgframe->linesize[0] / pixel_size,
+             w,
+             h,
+             is_single_comp,
+             is_u16);
+
+    av_frame_unref(s->jpgframe);
+
+    return 0;
+}
 
 static int tiff_unpack_strip(TiffContext *s, AVFrame *p, uint8_t *dst, int stride,
                              const uint8_t *src, int size, int strip_start, int lines)
@@ -675,7 +844,7 @@ static int tiff_unpack_strip(TiffContext *s, AVFrame *p, uint8_t *dst, int strid
             av_log(s->avctx, AV_LOG_ERROR, "More than one DNG JPEG strips unsupported\n");
             return AVERROR_PATCHWELCOME;
         }
-        if ((ret = dng_decode_strip(s->avctx, p)) < 0)
+        if ((ret = dng_decode_jpeg(s->avctx, p, s->stripsize, 0, 0, s->width, s->height)) < 0)
             return ret;
         return 0;
     }
@@ -779,192 +948,8 @@ static int tiff_unpack_strip(TiffContext *s, AVFrame *p, uint8_t *dst, int strid
     return 0;
 }
 
-/**
- * Map stored raw sensor values into linear reference values (see: DNG Specification - Chapter 5)
- */
-static uint16_t av_always_inline dng_process_color16(uint16_t value,
-                                                     const uint16_t *lut,
-                                                     uint16_t black_level,
-                                                     float scale_factor) {
-    float value_norm;
-
-    // Lookup table lookup
-    if (lut)
-        value = lut[value];
-
-    // Black level subtraction
-    value = av_clip_uint16_c((unsigned)value - black_level);
-
-    // Color scaling
-    value_norm = (float)value * scale_factor;
-
-    value = av_clip_uint16_c(value_norm * 65535);
-
-    return value;
-}
-
-static uint16_t av_always_inline dng_process_color8(uint16_t value,
-                                                    const uint16_t *lut,
-                                                    uint16_t black_level,
-                                                    float scale_factor) {
-    return dng_process_color16(value, lut, black_level, scale_factor) >> 8;
-}
-
-static void dng_blit(TiffContext *s, uint8_t *dst, int dst_stride,
-                     const uint8_t *src, int src_stride,
-                     int width, int height, int is_single_comp, int is_u16)
-{
-    int line, col;
-    float scale_factor;
-
-    scale_factor = 1.0f / (s->white_level - s->black_level);
-
-    if (is_single_comp) {
-        if (!is_u16)
-            return; /* <= 8bpp unsupported */
-
-        /* Image is double the width and half the height we need, each row comprises 2 rows of the output
-           (split vertically in the middle). */
-        for (line = 0; line < height / 2; line++) {
-            uint16_t *dst_u16 = (uint16_t *)dst;
-            uint16_t *src_u16 = (uint16_t *)src;
-
-            /* Blit first half of input row row to initial row of output */
-            for (col = 0; col < width; col++)
-                *dst_u16++ = dng_process_color16(*src_u16++, s->dng_lut, s->black_level, scale_factor);
-
-            /* Advance the destination pointer by a row (source pointer remains in the same place) */
-            dst += dst_stride * sizeof(uint16_t);
-            dst_u16 = (uint16_t *)dst;
-
-            /* Blit second half of input row row to next row of output */
-            for (col = 0; col < width; col++)
-                *dst_u16++ = dng_process_color16(*src_u16++, s->dng_lut, s->black_level, scale_factor);
-
-            dst += dst_stride * sizeof(uint16_t);
-            src += src_stride * sizeof(uint16_t);
-        }
-    } else {
-        /* Input and output image are the same size and the MJpeg decoder has done per-component
-           deinterleaving, so blitting here is straightforward. */
-        if (is_u16) {
-            for (line = 0; line < height; line++) {
-                uint16_t *dst_u16 = (uint16_t *)dst;
-                uint16_t *src_u16 = (uint16_t *)src;
-
-                for (col = 0; col < width; col++)
-                    *dst_u16++ = dng_process_color16(*src_u16++, s->dng_lut, s->black_level, scale_factor);
-
-                dst += dst_stride * sizeof(uint16_t);
-                src += src_stride * sizeof(uint16_t);
-            }
-        } else {
-            for (line = 0; line < height; line++) {
-                uint8_t *dst_u8 = dst;
-                const uint8_t *src_u8 = src;
-
-                for (col = 0; col < width; col++)
-                    *dst_u8++ = dng_process_color8(*src_u8++, s->dng_lut, s->black_level, scale_factor);
-
-                dst += dst_stride;
-                src += src_stride;
-            }
-        }
-    }
-}
-
-static int dng_decode_jpeg(AVCodecContext *avctx, AVFrame *frame,
-                           int tile_byte_count, int dst_x, int dst_y, int w, int h)
-{
-    TiffContext *s = avctx->priv_data;
-    AVPacket jpkt;
-    uint8_t *dst_data, *src_data;
-    uint32_t dst_offset; /* offset from dst buffer in pixels */
-    int is_single_comp, is_u16, pixel_size;
-    int ret;
-
-    if (tile_byte_count < 0 || tile_byte_count > bytestream2_get_bytes_left(&s->gb))
-        return AVERROR_INVALIDDATA;
-
-    /* Prepare a packet and send to the MJPEG decoder */
-    av_init_packet(&jpkt);
-    jpkt.data = (uint8_t*)s->gb.buffer;
-    jpkt.size = tile_byte_count;
-
-    if (s->is_bayer) {
-        MJpegDecodeContext *mjpegdecctx = s->avctx_mjpeg->priv_data;
-        /* We have to set this information here, there is no way to know if a given JPEG is a DNG-embedded
-           image or not from its own data (and we need that information when decoding it). */
-        mjpegdecctx->bayer = 1;
-    }
-
-    ret = avcodec_send_packet(s->avctx_mjpeg, &jpkt);
-    if (ret < 0) {
-        av_log(avctx, AV_LOG_ERROR, "Error submitting a packet for decoding\n");
-        return ret;
-    }
-
-    ret = avcodec_receive_frame(s->avctx_mjpeg, s->jpgframe);
-    if (ret < 0) {
-        av_log(avctx, AV_LOG_ERROR, "JPEG decoding error: %s.\n", av_err2str(ret));
-
-        /* Normally skip, error if explode */
-        if (avctx->err_recognition & AV_EF_EXPLODE)
-            return AVERROR_INVALIDDATA;
-        else
-            return 0;
-    }
-
-    is_u16 = (s->bpp > 8);
-
-    /* Copy the outputted tile's pixels from 'jpgframe' to 'frame' (final buffer) */
-
-    if (s->jpgframe->width  != s->avctx_mjpeg->width  ||
-        s->jpgframe->height != s->avctx_mjpeg->height ||
-        s->jpgframe->format != s->avctx_mjpeg->pix_fmt)
-        return AVERROR_INVALIDDATA;
-
-    /* See dng_blit for explanation */
-    if (s->avctx_mjpeg->width  == w * 2 &&
-        s->avctx_mjpeg->height == h / 2 &&
-        s->avctx_mjpeg->pix_fmt == AV_PIX_FMT_GRAY16LE) {
-        is_single_comp = 1;
-    } else if (s->avctx_mjpeg->width  >= w &&
-               s->avctx_mjpeg->height >= h &&
-               s->avctx_mjpeg->pix_fmt == (is_u16 ? AV_PIX_FMT_GRAY16 : AV_PIX_FMT_GRAY8)
-              ) {
-        is_single_comp = 0;
-    } else
-        return AVERROR_INVALIDDATA;
-
-    pixel_size = (is_u16 ? sizeof(uint16_t) : sizeof(uint8_t));
-
-    if (is_single_comp && !is_u16) {
-        av_log(s->avctx, AV_LOG_ERROR, "DNGs with bpp <= 8 and 1 component are unsupported\n");
-        av_frame_unref(s->jpgframe);
-        return AVERROR_PATCHWELCOME;
-    }
-
-    dst_offset = dst_x + frame->linesize[0] * dst_y / pixel_size;
-    dst_data = frame->data[0] + dst_offset * pixel_size;
-    src_data = s->jpgframe->data[0];
-
-    dng_blit(s,
-             dst_data,
-             frame->linesize[0] / pixel_size,
-             src_data,
-             s->jpgframe->linesize[0] / pixel_size,
-             w,
-             h,
-             is_single_comp,
-             is_u16);
-
-    av_frame_unref(s->jpgframe);
-
-    return 0;
-}
-
-static int dng_decode_tiles(AVCodecContext *avctx, AVFrame *frame, AVPacket *avpkt)
+static int dng_decode_tiles(AVCodecContext *avctx, AVFrame *frame,
+                            const AVPacket *avpkt)
 {
     TiffContext *s = avctx->priv_data;
     int tile_idx;
@@ -976,12 +961,6 @@ static int dng_decode_tiles(AVCodecContext *avctx, AVFrame *frame, AVPacket *avp
     int tile_x = 0, tile_y = 0;
     int pos_x = 0, pos_y = 0;
     int ret;
-
-    s->jpgframe->width  = s->tile_width;
-    s->jpgframe->height = s->tile_length;
-
-    s->avctx_mjpeg->width = s->tile_width;
-    s->avctx_mjpeg->height = s->tile_length;
 
     has_width_leftover = (s->width % s->tile_width != 0);
     has_height_leftover = (s->height % s->tile_length != 0);
@@ -1039,20 +1018,7 @@ static int dng_decode_tiles(AVCodecContext *avctx, AVFrame *frame, AVPacket *avp
     return avpkt->size;
 }
 
-static int dng_decode_strip(AVCodecContext *avctx, AVFrame *frame)
-{
-    TiffContext *s = avctx->priv_data;
-
-    s->jpgframe->width  = s->width;
-    s->jpgframe->height = s->height;
-
-    s->avctx_mjpeg->width = s->width;
-    s->avctx_mjpeg->height = s->height;
-
-    return dng_decode_jpeg(avctx, frame, s->stripsize, 0, 0, s->width, s->height);
-}
-
-static int init_image(TiffContext *s, ThreadFrame *frame)
+static int init_image(TiffContext *s, AVFrame *frame)
 {
     int ret;
     int create_gray_palette = 0;
@@ -1213,11 +1179,11 @@ static int init_image(TiffContext *s, ThreadFrame *frame)
         return ret;
     if (s->avctx->pix_fmt == AV_PIX_FMT_PAL8) {
         if (!create_gray_palette)
-            memcpy(frame->f->data[1], s->palette, sizeof(s->palette));
+            memcpy(frame->data[1], s->palette, sizeof(s->palette));
         else {
             /* make default grayscale pal */
             int i;
-            uint32_t *pal = (uint32_t *)frame->f->data[1];
+            uint32_t *pal = (uint32_t *)frame->data[1];
             for (i = 0; i < 1<<s->bpp; i++)
                 pal[i] = 0xFFU << 24 | i * 255 / ((1<<s->bpp) - 1) * 0x010101;
         }
@@ -1277,8 +1243,8 @@ static int tiff_decode_tag(TiffContext *s, AVFrame *frame)
             value  = ff_tget(&s->gb, TIFF_LONG, s->le);
             value2 = ff_tget(&s->gb, TIFF_LONG, s->le);
             if (!value2) {
-                av_log(s->avctx, AV_LOG_ERROR, "Invalid denominator in rational\n");
-                return AVERROR_INVALIDDATA;
+                av_log(s->avctx, AV_LOG_WARNING, "Invalid denominator in rational\n");
+                value2 = 1;
             }
 
             break;
@@ -1457,8 +1423,8 @@ static int tiff_decode_tag(TiffContext *s, AVFrame *frame)
                 value  = ff_tget(&s->gb, TIFF_LONG, s->le);
                 value2 = ff_tget(&s->gb, TIFF_LONG, s->le);
                 if (!value2) {
-                    av_log(s->avctx, AV_LOG_ERROR, "Invalid black level denominator\n");
-                    return AVERROR_INVALIDDATA;
+                    av_log(s->avctx, AV_LOG_WARNING, "Invalid black level denominator\n");
+                    value2 = 1;
                 }
 
                 s->black_level = value / value2;
@@ -1605,7 +1571,7 @@ static int tiff_decode_tag(TiffContext *s, AVFrame *frame)
             s->geotag_count = 0;
             return -1;
         }
-        s->geotags = av_mallocz_array(s->geotag_count, sizeof(TiffGeoTag));
+        s->geotags = av_calloc(s->geotag_count, sizeof(*s->geotags));
         if (!s->geotags) {
             av_log(s->avctx, AV_LOG_ERROR, "Error allocating temporary buffer\n");
             s->geotag_count = 0;
@@ -1779,7 +1745,6 @@ static int decode_frame(AVCodecContext *avctx,
 {
     TiffContext *const s = avctx->priv_data;
     AVFrame *const p = data;
-    ThreadFrame frame = { .f = data };
     unsigned off, last_off;
     int le, ret, plane, planes;
     int i, j, entries, stride;
@@ -1923,14 +1888,17 @@ again:
     has_strip_bits = s->strippos || s->strips || s->stripoff || s->rps || s->sot || s->sstype || s->stripsize || s->stripsizesoff;
 
     if (has_tile_bits && has_strip_bits) {
-        av_log(avctx, AV_LOG_WARNING, "Tiled TIFF is not allowed to strip\n");
+        int tiled_dng = s->is_tiled && is_dng;
+        av_log(avctx, tiled_dng ? AV_LOG_WARNING : AV_LOG_ERROR, "Tiled TIFF is not allowed to strip\n");
+        if (!tiled_dng)
+            return AVERROR_INVALIDDATA;
     }
 
     /* now we have the data and may start decoding */
-    if ((ret = init_image(s, &frame)) < 0)
+    if ((ret = init_image(s, p)) < 0)
         return ret;
 
-    if (!s->is_tiled) {
+    if (!s->is_tiled || has_strip_bits) {
         if (s->strips == 1 && !s->stripsize) {
             av_log(avctx, AV_LOG_WARNING, "Image data size missing\n");
             s->stripsize = avpkt->size - s->stripoff;
@@ -2154,7 +2122,8 @@ static av_cold int tiff_init(AVCodecContext *avctx)
 
     /* Allocate JPEG frame */
     s->jpgframe = av_frame_alloc();
-    if (!s->jpgframe)
+    s->jpkt     = av_packet_alloc();
+    if (!s->jpgframe || !s->jpkt)
         return AVERROR(ENOMEM);
 
     /* Prepare everything needed for JPEG decoding */
@@ -2168,6 +2137,7 @@ static av_cold int tiff_init(AVCodecContext *avctx)
     s->avctx_mjpeg->flags2 = avctx->flags2;
     s->avctx_mjpeg->dct_algo = avctx->dct_algo;
     s->avctx_mjpeg->idct_algo = avctx->idct_algo;
+    s->avctx_mjpeg->max_pixels = avctx->max_pixels;
     ret = avcodec_open2(s->avctx_mjpeg, codec, NULL);
     if (ret < 0) {
         return ret;
@@ -2187,9 +2157,8 @@ static av_cold int tiff_end(AVCodecContext *avctx)
     s->deinvert_buf_size = 0;
     av_freep(&s->yuv_line);
     s->yuv_line_size = 0;
-    av_freep(&s->fax_buffer);
-    s->fax_buffer_size = 0;
     av_frame_free(&s->jpgframe);
+    av_packet_free(&s->jpkt);
     avcodec_free_context(&s->avctx_mjpeg);
     return 0;
 }
@@ -2209,16 +2178,16 @@ static const AVClass tiff_decoder_class = {
     .version    = LIBAVUTIL_VERSION_INT,
 };
 
-AVCodec ff_tiff_decoder = {
-    .name           = "tiff",
-    .long_name      = NULL_IF_CONFIG_SMALL("TIFF image"),
-    .type           = AVMEDIA_TYPE_VIDEO,
-    .id             = AV_CODEC_ID_TIFF,
+const FFCodec ff_tiff_decoder = {
+    .p.name         = "tiff",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("TIFF image"),
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_TIFF,
     .priv_data_size = sizeof(TiffContext),
     .init           = tiff_init,
     .close          = tiff_end,
     .decode         = decode_frame,
-    .capabilities   = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_FRAME_THREADS,
+    .p.capabilities = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_FRAME_THREADS,
     .caps_internal  = FF_CODEC_CAP_INIT_THREADSAFE | FF_CODEC_CAP_INIT_CLEANUP,
-    .priv_class     = &tiff_decoder_class,
+    .p.priv_class   = &tiff_decoder_class,
 };

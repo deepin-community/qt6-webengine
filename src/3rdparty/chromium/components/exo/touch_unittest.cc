@@ -62,9 +62,12 @@ class TestDataSourceDelegate : public DataSourceDelegate {
  public:
   TestDataSourceDelegate() {}
 
+  TestDataSourceDelegate(const TestDataSourceDelegate&) = delete;
+  TestDataSourceDelegate& operator=(const TestDataSourceDelegate&) = delete;
+
   // Overridden from DataSourceDelegate:
   void OnDataSourceDestroying(DataSource* device) override {}
-  void OnTarget(const base::Optional<std::string>& mime_type) override {}
+  void OnTarget(const absl::optional<std::string>& mime_type) override {}
   void OnSend(const std::string& mime_type, base::ScopedFD fd) override {}
   void OnCancelled() override {}
   void OnDndDropPerformed() override {}
@@ -73,8 +76,6 @@ class TestDataSourceDelegate : public DataSourceDelegate {
   bool CanAcceptDataEventsForSurface(Surface* surface) const override {
     return true;
   }
-
-  DISALLOW_COPY_AND_ASSIGN(TestDataSourceDelegate);
 };
 
 TEST_F(TouchTest, OnTouchDown) {

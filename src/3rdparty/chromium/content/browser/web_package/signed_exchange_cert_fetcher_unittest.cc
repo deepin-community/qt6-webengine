@@ -7,7 +7,7 @@
 #include "base/base64.h"
 #include "base/bind.h"
 #include "base/callback.h"
-#include "base/optional.h"
+#include "base/callback_helpers.h"
 #include "base/strings/string_piece.h"
 #include "base/test/task_environment.h"
 #include "components/cbor/values.h"
@@ -22,12 +22,14 @@
 #include "net/test/cert_test_util.h"
 #include "net/test/test_data_directory.h"
 #include "services/network/public/cpp/features.h"
+#include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
 #include "services/network/public/mojom/fetch_api.mojom-shared.h"
 #include "services/network/public/mojom/url_loader_factory.mojom.h"
 #include "services/network/public/mojom/url_response_head.mojom.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/common/loader/url_loader_throttle.h"
 
 namespace content {
@@ -37,6 +39,11 @@ namespace {
 class DeferringURLLoaderThrottle final : public blink::URLLoaderThrottle {
  public:
   DeferringURLLoaderThrottle() = default;
+
+  DeferringURLLoaderThrottle(const DeferringURLLoaderThrottle&) = delete;
+  DeferringURLLoaderThrottle& operator=(const DeferringURLLoaderThrottle&) =
+      delete;
+
   ~DeferringURLLoaderThrottle() override = default;
 
   void WillStartRequest(network::ResourceRequest* request,
@@ -77,8 +84,6 @@ class DeferringURLLoaderThrottle final : public blink::URLLoaderThrottle {
   bool will_start_request_called_ = false;
   bool will_redirect_request_called_ = false;
   bool will_process_response_called_ = false;
-
-  DISALLOW_COPY_AND_ASSIGN(DeferringURLLoaderThrottle);
 };
 
 class MockURLLoader final : public network::mojom::URLLoader {
@@ -86,13 +91,17 @@ class MockURLLoader final : public network::mojom::URLLoader {
   MockURLLoader(
       mojo::PendingReceiver<network::mojom::URLLoader> url_loader_receiver)
       : receiver_(this, std::move(url_loader_receiver)) {}
+
+  MockURLLoader(const MockURLLoader&) = delete;
+  MockURLLoader& operator=(const MockURLLoader&) = delete;
+
   ~MockURLLoader() override = default;
 
   MOCK_METHOD4(FollowRedirect,
                void(const std::vector<std::string>&,
                     const net::HttpRequestHeaders&,
                     const net::HttpRequestHeaders&,
-                    const base::Optional<GURL>&));
+                    const absl::optional<GURL>&));
   MOCK_METHOD2(SetPriority,
                void(net::RequestPriority priority,
                     int32_t intra_priority_value));
@@ -101,20 +110,22 @@ class MockURLLoader final : public network::mojom::URLLoader {
 
  private:
   mojo::Receiver<network::mojom::URLLoader> receiver_;
-
-  DISALLOW_COPY_AND_ASSIGN(MockURLLoader);
 };
 
 class URLLoaderFactoryForMockLoader final
     : public network::mojom::URLLoaderFactory {
  public:
   URLLoaderFactoryForMockLoader() = default;
+
+  URLLoaderFactoryForMockLoader(const URLLoaderFactoryForMockLoader&) = delete;
+  URLLoaderFactoryForMockLoader& operator=(
+      const URLLoaderFactoryForMockLoader&) = delete;
+
   ~URLLoaderFactoryForMockLoader() override = default;
 
   // network::mojom::URLLoaderFactory implementation.
   void CreateLoaderAndStart(
       mojo::PendingReceiver<network::mojom::URLLoader> url_loader_receiver,
-      int32_t routing_id,
       int32_t request_id,
       uint32_t options,
       const network::ResourceRequest& url_request,
@@ -136,16 +147,14 @@ class URLLoaderFactoryForMockLoader final
   }
   void CloseClientPipe() { client_remote_.reset(); }
 
-  base::Optional<network::ResourceRequest> url_request() const {
+  absl::optional<network::ResourceRequest> url_request() const {
     return url_request_;
   }
 
  private:
   std::unique_ptr<MockURLLoader> loader_;
   mojo::Remote<network::mojom::URLLoaderClient> client_remote_;
-  base::Optional<network::ResourceRequest> url_request_;
-
-  DISALLOW_COPY_AND_ASSIGN(URLLoaderFactoryForMockLoader);
+  absl::optional<network::ResourceRequest> url_request_;
 };
 
 void ForwardCertificateCallback(
@@ -164,6 +173,11 @@ class SignedExchangeCertFetcherTest : public testing::Test {
  public:
   SignedExchangeCertFetcherTest()
       : url_(GURL("https://www.example.com/cert")) {}
+
+  SignedExchangeCertFetcherTest(const SignedExchangeCertFetcherTest&) = delete;
+  SignedExchangeCertFetcherTest& operator=(
+      const SignedExchangeCertFetcherTest&) = delete;
+
   ~SignedExchangeCertFetcherTest() override {}
 
  protected:
@@ -184,7 +198,7 @@ class SignedExchangeCertFetcherTest : public testing::Test {
     cbor_array.push_back(cbor::Value(u8"\U0001F4DC\u26D3"));
     cbor_array.push_back(cbor::Value(std::move(cbor_map)));
 
-    base::Optional<std::vector<uint8_t>> serialized =
+    absl::optional<std::vector<uint8_t>> serialized =
         cbor::Writer::Write(cbor::Value(std::move(cbor_array)));
     if (!serialized)
       return std::string();
@@ -230,7 +244,7 @@ class SignedExchangeCertFetcherTest : public testing::Test {
         base::MakeRefCounted<network::WeakWrapperSharedURLLoaderFactory>(
             &mock_loader_factory_),
         std::move(throttles_), url, force_fetch, std::move(callback),
-        nullptr /* devtools_proxy */, base::nullopt /* throttling_profile_id */,
+        nullptr /* devtools_proxy */, absl::nullopt /* throttling_profile_id */,
         net::IsolationInfo());
   }
 
@@ -242,7 +256,7 @@ class SignedExchangeCertFetcherTest : public testing::Test {
                                       "application/cert-chain+cbor");
     response_head->mime_type = "application/cert-chain+cbor";
     mock_loader_factory_.client_remote()->OnReceiveResponse(
-        std::move(response_head));
+        std::move(response_head), mojo::ScopedDataPipeConsumerHandle());
   }
 
   DeferringURLLoaderThrottle* InitializeDeferringURLLoaderThrottle() {
@@ -263,9 +277,6 @@ class SignedExchangeCertFetcherTest : public testing::Test {
   std::vector<std::unique_ptr<blink::URLLoaderThrottle>> throttles_;
 
   base::test::TaskEnvironment task_environment_;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(SignedExchangeCertFetcherTest);
 };
 
 }  // namespace
@@ -456,7 +467,7 @@ TEST_F(SignedExchangeCertFetcherTest, MaxCertSize_ContentLengthCheck) {
       base::MakeRefCounted<net::HttpResponseHeaders>("HTTP/1.1 200 OK");
   response_head->content_length = message.size();
   mock_loader_factory_.client_remote()->OnReceiveResponse(
-      std::move(response_head));
+      std::move(response_head), mojo::ScopedDataPipeConsumerHandle());
   mojo::ScopedDataPipeProducerHandle producer_handle;
   mojo::ScopedDataPipeConsumerHandle consumer_handle;
   ASSERT_EQ(
@@ -495,7 +506,7 @@ TEST_F(SignedExchangeCertFetcherTest, Abort_404) {
   response_head->headers =
       base::MakeRefCounted<net::HttpResponseHeaders>("HTTP/1.1 404 Not Found");
   mock_loader_factory_.client_remote()->OnReceiveResponse(
-      std::move(response_head));
+      std::move(response_head), mojo::ScopedDataPipeConsumerHandle());
   RunUntilIdle();
 
   EXPECT_TRUE(callback_called_);
@@ -512,7 +523,7 @@ TEST_F(SignedExchangeCertFetcherTest, WrongMimeType) {
   response_head->headers->SetHeader("Content-Type", "application/octet-stream");
   response_head->mime_type = "application/octet-stream";
   mock_loader_factory_.client_remote()->OnReceiveResponse(
-      std::move(response_head));
+      std::move(response_head), mojo::ScopedDataPipeConsumerHandle());
   RunUntilIdle();
 
   EXPECT_TRUE(callback_called_);

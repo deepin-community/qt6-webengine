@@ -5,9 +5,6 @@
 #ifndef STORAGE_BROWSER_QUOTA_SPECIAL_STORAGE_POLICY_H_
 #define STORAGE_BROWSER_QUOTA_SPECIAL_STORAGE_POLICY_H_
 
-#include <string>
-
-#include "base/callback_forward.h"
 #include "base/component_export.h"
 #include "base/memory/ref_counted.h"
 #include "base/observer_list.h"
@@ -31,6 +28,8 @@ namespace storage {
 class COMPONENT_EXPORT(STORAGE_BROWSER) SpecialStoragePolicy
     : public base::RefCountedThreadSafe<SpecialStoragePolicy> {
  public:
+  REQUIRE_ADOPTION_FOR_REFCOUNTED_TYPE();
+
   using StoragePolicy = int;
   enum ChangeFlags {
     STORAGE_PROTECTED = 1 << 0,

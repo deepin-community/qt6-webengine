@@ -4,6 +4,7 @@ usr/include/${DEB_HOST_MULTIARCH}/qt6/QtWebEngineCore/QWebEngineClientCertificat
 usr/include/${DEB_HOST_MULTIARCH}/qt6/QtWebEngineCore/QWebEngineContextMenuRequest
 usr/include/${DEB_HOST_MULTIARCH}/qt6/QtWebEngineCore/QWebEngineCookieStore
 usr/include/${DEB_HOST_MULTIARCH}/qt6/QtWebEngineCore/QWebEngineDownloadRequest
+usr/include/${DEB_HOST_MULTIARCH}/qt6/QtWebEngineCore/QWebEngineFileSystemAccessRequest
 usr/include/${DEB_HOST_MULTIARCH}/qt6/QtWebEngineCore/QWebEngineFindTextResult
 usr/include/${DEB_HOST_MULTIARCH}/qt6/QtWebEngineCore/QWebEngineFullScreenRequest
 usr/include/${DEB_HOST_MULTIARCH}/qt6/QtWebEngineCore/QWebEngineHistory
@@ -38,6 +39,7 @@ usr/include/${DEB_HOST_MULTIARCH}/qt6/QtWebEngineCore/qwebengineclientcertificat
 usr/include/${DEB_HOST_MULTIARCH}/qt6/QtWebEngineCore/qwebenginecontextmenurequest.h
 usr/include/${DEB_HOST_MULTIARCH}/qt6/QtWebEngineCore/qwebenginecookiestore.h
 usr/include/${DEB_HOST_MULTIARCH}/qt6/QtWebEngineCore/qwebenginedownloadrequest.h
+usr/include/${DEB_HOST_MULTIARCH}/qt6/QtWebEngineCore/qwebenginefilesystemaccessrequest.h
 usr/include/${DEB_HOST_MULTIARCH}/qt6/QtWebEngineCore/qwebenginefindtextresult.h
 usr/include/${DEB_HOST_MULTIARCH}/qt6/QtWebEngineCore/qwebenginefullscreenrequest.h
 usr/include/${DEB_HOST_MULTIARCH}/qt6/QtWebEngineCore/qwebenginehistory.h
@@ -91,6 +93,7 @@ usr/lib/${DEB_HOST_MULTIARCH}/cmake/Qt6WebEngineCore/Qt6WebEngineCoreConfig.cmak
 usr/lib/${DEB_HOST_MULTIARCH}/cmake/Qt6WebEngineCore/Qt6WebEngineCoreConfigVersion.cmake
 usr/lib/${DEB_HOST_MULTIARCH}/cmake/Qt6WebEngineCore/Qt6WebEngineCoreConfigVersionImpl.cmake
 usr/lib/${DEB_HOST_MULTIARCH}/cmake/Qt6WebEngineCore/Qt6WebEngineCoreDependencies.cmake
+usr/lib/${DEB_HOST_MULTIARCH}/cmake/Qt6WebEngineCore/Qt6WebEngineCoreMacros.cmake
 usr/lib/${DEB_HOST_MULTIARCH}/cmake/Qt6WebEngineCore/Qt6WebEngineCoreTargets-none.cmake
 usr/lib/${DEB_HOST_MULTIARCH}/cmake/Qt6WebEngineCore/Qt6WebEngineCoreTargets.cmake
 usr/lib/${DEB_HOST_MULTIARCH}/cmake/Qt6WebEngineCore/Qt6WebEngineCoreVersionlessTargets.cmake
@@ -137,6 +140,13 @@ usr/lib/${DEB_HOST_MULTIARCH}/metatypes/qt6webenginecore_none_metatypes.json
 usr/lib/${DEB_HOST_MULTIARCH}/metatypes/qt6webenginequick_none_metatypes.json
 usr/lib/${DEB_HOST_MULTIARCH}/metatypes/qt6webenginequickdelegatesqml_none_metatypes.json
 usr/lib/${DEB_HOST_MULTIARCH}/metatypes/qt6webenginewidgets_none_metatypes.json
+usr/lib/${DEB_HOST_MULTIARCH}/pkgconfig/Qt6Pdf.pc
+usr/lib/${DEB_HOST_MULTIARCH}/pkgconfig/Qt6PdfQuick.pc
+usr/lib/${DEB_HOST_MULTIARCH}/pkgconfig/Qt6PdfWidgets.pc
+usr/lib/${DEB_HOST_MULTIARCH}/pkgconfig/Qt6WebEngineCore.pc
+usr/lib/${DEB_HOST_MULTIARCH}/pkgconfig/Qt6WebEngineQuick.pc
+usr/lib/${DEB_HOST_MULTIARCH}/pkgconfig/Qt6WebEngineQuickDelegatesQml.pc
+usr/lib/${DEB_HOST_MULTIARCH}/pkgconfig/Qt6WebEngineWidgets.pc
 usr/lib/${DEB_HOST_MULTIARCH}/qt6/mkspecs/modules/qt_lib_webenginecore.pri
 usr/lib/${DEB_HOST_MULTIARCH}/qt6/mkspecs/modules/qt_lib_webenginequick.pri
 usr/lib/${DEB_HOST_MULTIARCH}/qt6/mkspecs/modules/qt_lib_webenginequickdelegatesqml.pri

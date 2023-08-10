@@ -9,19 +9,18 @@ constexpr char SecureDnsConfig::kModeOff[];
 constexpr char SecureDnsConfig::kModeAutomatic[];
 constexpr char SecureDnsConfig::kModeSecure[];
 
-SecureDnsConfig::SecureDnsConfig(
-    net::SecureDnsMode mode,
-    std::vector<net::DnsOverHttpsServerConfig> servers,
-    ManagementMode management_mode)
+SecureDnsConfig::SecureDnsConfig(net::SecureDnsMode mode,
+                                 net::DnsOverHttpsConfig doh_servers,
+                                 ManagementMode management_mode)
     : mode_(mode),
-      servers_(std::move(servers)),
+      doh_servers_(std::move(doh_servers)),
       management_mode_(management_mode) {}
 SecureDnsConfig::SecureDnsConfig(SecureDnsConfig&& other) = default;
 SecureDnsConfig& SecureDnsConfig::operator=(SecureDnsConfig&& other) = default;
 SecureDnsConfig::~SecureDnsConfig() = default;
 
 // static
-base::Optional<net::SecureDnsMode> SecureDnsConfig::ParseMode(
+absl::optional<net::SecureDnsMode> SecureDnsConfig::ParseMode(
     base::StringPiece name) {
   if (name == kModeSecure) {
     return net::SecureDnsMode::kSecure;
@@ -30,7 +29,7 @@ base::Optional<net::SecureDnsMode> SecureDnsConfig::ParseMode(
   } else if (name == kModeOff) {
     return net::SecureDnsMode::kOff;
   }
-  return base::nullopt;
+  return absl::nullopt;
 }
 
 // static

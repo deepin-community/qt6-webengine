@@ -13,21 +13,19 @@
 #include "core/fpdfapi/parser/cpdf_name.h"
 #include "core/fpdfapi/parser/cpdf_number.h"
 #include "core/fpdfdoc/cpdf_nametree.h"
-#include "third_party/base/stl_util.h"
+#include "third_party/base/cxx17_backports.h"
 
 namespace {
 
 // These arrays are indexed by the PDFDEST_VIEW_* constants.
 
 // Last element is a sentinel.
-const char* const g_sZoomModes[] = {"Unknown", "XYZ",  "Fit",  "FitH",
-                                    "FitV",    "FitR", "FitB", "FitBH",
-                                    "FitBV",   nullptr};
+const char* const kZoomModes[] = {"Unknown", "XYZ",  "Fit",   "FitH",  "FitV",
+                                  "FitR",    "FitB", "FitBH", "FitBV", nullptr};
 
-const uint8_t g_sZoomModeMaxParamCount[] = {0, 3, 0, 1, 1, 4, 0, 1, 1, 0};
+constexpr uint8_t kZoomModeMaxParamCount[] = {0, 3, 0, 1, 1, 4, 0, 1, 1, 0};
 
-static_assert(pdfium::size(g_sZoomModes) ==
-                  pdfium::size(g_sZoomModeMaxParamCount),
+static_assert(pdfium::size(kZoomModes) == pdfium::size(kZoomModeMaxParamCount),
               "Zoom mode count Mismatch");
 
 }  // namespace
@@ -43,9 +41,11 @@ CPDF_Dest CPDF_Dest::Create(CPDF_Document* pDoc, const CPDF_Object* pDest) {
   if (!pDest)
     return CPDF_Dest(nullptr);
 
-  if (pDest->IsString() || pDest->IsName())
-    return CPDF_Dest(CPDF_NameTree::LookupNamedDest(pDoc, pDest->GetString()));
-
+  if (pDest->IsString() || pDest->IsName()) {
+    // TODO(tsepez): make CPDF_Dest constructor take retained args.
+    return CPDF_Dest(
+        CPDF_NameTree::LookupNamedDest(pDoc, pDest->GetString()).Get());
+  }
   return CPDF_Dest(pDest->AsArray());
 }
 
@@ -75,8 +75,8 @@ int CPDF_Dest::GetZoomMode() const {
     return 0;
 
   ByteString mode = pArray->GetString();
-  for (int i = 1; g_sZoomModes[i]; ++i) {
-    if (mode == g_sZoomModes[i])
+  for (int i = 1; kZoomModes[i]; ++i) {
+    if (mode == kZoomModes[i])
       return i;
   }
 
@@ -129,15 +129,15 @@ bool CPDF_Dest::GetXYZ(bool* pHasX,
   return true;
 }
 
-unsigned long CPDF_Dest::GetNumParams() const {
+size_t CPDF_Dest::GetNumParams() const {
   if (!m_pArray || m_pArray->size() < 2)
     return 0;
 
-  unsigned long maxParamsForFitType = g_sZoomModeMaxParamCount[GetZoomMode()];
-  unsigned long numParamsInArray = m_pArray->size() - 2;
+  size_t maxParamsForFitType = kZoomModeMaxParamCount[GetZoomMode()];
+  size_t numParamsInArray = m_pArray->size() - 2;
   return std::min(maxParamsForFitType, numParamsInArray);
 }
 
-float CPDF_Dest::GetParam(int index) const {
+float CPDF_Dest::GetParam(size_t index) const {
   return m_pArray ? m_pArray->GetNumberAt(2 + index) : 0;
 }

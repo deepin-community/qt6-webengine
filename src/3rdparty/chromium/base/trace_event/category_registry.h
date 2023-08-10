@@ -8,10 +8,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "base/atomicops.h"
+#include <atomic>
+
 #include "base/base_export.h"
 #include "base/check_op.h"
-#include "base/stl_util.h"
 #include "base/trace_event/builtin_categories.h"
 #include "base/trace_event/common/trace_event_common.h"
 #include "base/trace_event/trace_category.h"
@@ -70,8 +70,8 @@ class BASE_EXPORT CategoryRegistry {
   // TraceCategory owned by the registry.
   static constexpr TraceCategory* GetBuiltinCategoryByName(
       const char* category_group) {
-#if defined(OS_WIN) && defined(COMPONENT_BUILD)
-    // The address cannot be evaluated at compile-time in Windows compoment
+#if BUILDFLAG(IS_WIN) && defined(COMPONENT_BUILD)
+    // The address cannot be evaluated at compile-time in Windows component
     // builds.
     return nullptr;
 #else
@@ -140,7 +140,7 @@ class BASE_EXPORT CategoryRegistry {
   static TraceCategory categories_[kMaxCategories];
 
   // Contains the number of created categories.
-  static base::subtle::AtomicWord category_index_;
+  static std::atomic<size_t> category_index_;
 };
 
 }  // namespace trace_event

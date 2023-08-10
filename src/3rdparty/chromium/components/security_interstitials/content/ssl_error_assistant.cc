@@ -6,11 +6,11 @@
 
 #include <memory>
 
-#include "base/macros.h"
 #include "build/build_config.h"
 #include "components/grit/components_resources.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/web_contents.h"
+#include "net/cert/x509_certificate.h"
 #include "third_party/protobuf/src/google/protobuf/io/zero_copy_stream_impl_lite.h"
 #include "third_party/re2/src/re2/re2.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -203,7 +203,7 @@ bool SSLErrorAssistant::IsKnownCaptivePortalCertificate(
   return MatchSSLInfoWithHashes(ssl_info, *(captive_portal_spki_hashes_.get()));
 }
 
-base::Optional<DynamicInterstitialInfo>
+absl::optional<DynamicInterstitialInfo>
 SSLErrorAssistant::MatchDynamicInterstitial(const net::SSLInfo& ssl_info,
                                             bool is_overridable) {
   // Load the dynamic interstitial data from SSL error assistant proto if it's
@@ -248,7 +248,7 @@ SSLErrorAssistant::MatchDynamicInterstitial(const net::SSLInfo& ssl_info,
     return data;
   }
 
-  return base::nullopt;
+  return absl::nullopt;
 }
 
 const std::string SSLErrorAssistant::MatchKnownMITMSoftware(

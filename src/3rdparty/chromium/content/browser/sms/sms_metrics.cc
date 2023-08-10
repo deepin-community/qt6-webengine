@@ -28,10 +28,6 @@ void RecordContinueOnSuccessTime(base::TimeDelta duration) {
                              duration);
 }
 
-void RecordDestroyedReason(blink::WebOTPServiceDestroyedReason reason) {
-  UMA_HISTOGRAM_ENUMERATION("Blink.Sms.Receive.DestroyedReason", reason);
-}
-
 void RecordSmsParsingStatus(SmsParsingStatus status, ukm::SourceId source_id) {
   ukm::builders::SMSReceiver builder(source_id);
   builder.SetSmsParsingStatus(static_cast<int>(status));
@@ -87,6 +83,11 @@ void RecordSmsUserCancelTime(base::TimeDelta duration,
   builder.SetTimeUserCancelMs(
       ukm::GetExponentialBucketMinForUserTiming(duration.InMilliseconds()));
   builder.Record(ukm_recorder);
+}
+
+void RecordWebContentsVisibilityOnReceive(bool is_visible) {
+  base::UmaHistogramBoolean("Blink.Sms.WebContentsVisibleOnReceive",
+                            is_visible);
 }
 
 }  // namespace content

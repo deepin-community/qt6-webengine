@@ -11,18 +11,18 @@
 #include <vector>
 
 #include "base/command_line.h"
-#include "base/stl_util.h"
+#include "base/containers/contains.h"
 #include "base/win/scoped_variant.h"
 #include "base/win/windows_version.h"
 #include "content/browser/accessibility/browser_accessibility_state_impl.h"
 #include "content/browser/accessibility/browser_accessibility_win.h"
 #include "content/browser/renderer_host/legacy_render_widget_host_win.h"
 #include "content/public/common/content_switches.h"
-#include "content/public/common/use_zoom_for_dsf_policy.h"
 #include "ui/accessibility/accessibility_switches.h"
 #include "ui/accessibility/ax_role_properties.h"
 #include "ui/accessibility/platform/ax_fragment_root_win.h"
 #include "ui/accessibility/platform/ax_platform_node_delegate_utils_win.h"
+#include "ui/accessibility/platform/ax_platform_node_textprovider_win.h"
 #include "ui/accessibility/platform/uia_registrar_win.h"
 #include "ui/base/win/atl_module.h"
 
@@ -121,10 +121,11 @@ void BrowserAccessibilityManagerWin::FireFocusEvent(
   FireUiaAccessibilityEvent(UIA_AutomationFocusChangedEventId, node);
 }
 
-void BrowserAccessibilityManagerWin::FireBlinkEvent(
-    ax::mojom::Event event_type,
-    BrowserAccessibility* node) {
-  BrowserAccessibilityManager::FireBlinkEvent(event_type, node);
+void BrowserAccessibilityManagerWin::FireBlinkEvent(ax::mojom::Event event_type,
+                                                    BrowserAccessibility* node,
+                                                    int action_request_id) {
+  BrowserAccessibilityManager::FireBlinkEvent(event_type, node,
+                                              action_request_id);
   switch (event_type) {
     case ax::mojom::Event::kClicked:
       if (node->GetData().IsInvocable())
@@ -138,9 +139,11 @@ void BrowserAccessibilityManagerWin::FireBlinkEvent(
     case ax::mojom::Event::kLocationChanged:
       FireWinAccessibilityEvent(IA2_EVENT_VISIBLE_DATA_CHANGED, node);
       break;
-    case ax::mojom::Event::kScrolledToAnchor:
+    case ax::mojom::Event::kScrolledToAnchor: {
       FireWinAccessibilityEvent(EVENT_SYSTEM_SCROLLINGSTART, node);
+      FireUiaActiveTextPositionChangedEvent(node);
       break;
+    }
     case ax::mojom::Event::kTextChanged:
       // TODO(crbug.com/1049261) Remove when Views are exposed in the AXTree
       // which will fire generated text-changed events.
@@ -165,6 +168,7 @@ void BrowserAccessibilityManagerWin::FireGeneratedEvent(
   if (load_complete_pending_ && can_fire_events && GetRoot()) {
     load_complete_pending_ = false;
     FireWinAccessibilityEvent(IA2_EVENT_DOCUMENT_LOAD_COMPLETE, GetRoot());
+    FireUiaAccessibilityEvent(UIA_AsyncContentLoadedEventId, GetRoot());
   }
 
   if (!can_fire_events && !load_complete_pending_ &&
@@ -234,22 +238,23 @@ void BrowserAccessibilityManagerWin::FireGeneratedEvent(
     case ui::AXEventGenerator::Event::DOCUMENT_SELECTION_CHANGED: {
       // Fire the event on the object where the focus of the selection is. This
       // is because the focus is the only endpoint that can move, and because
-      // the caret (if present) is at the focus.
-      ui::AXNodeID focus_id =
-          ax_tree()->GetUnignoredSelection().focus_object_id;
+      // the caret (if present) is at the focus. Since this is a focus-related
+      // event (and focused nodes are never ignored), we can query the focused
+      // node directly from the AXTree, and avoid calling GetUnignoredSelection.
+      ui::AXNodeID focus_id = ax_tree()->data().sel_focus_object_id;
       BrowserAccessibility* focus_object = GetFromID(focus_id);
       if (focus_object) {
         EnqueueSelectionChangedEvent(*focus_object);
         if (BrowserAccessibility* text_field =
-                focus_object->GetTextFieldAncestor()) {
+                focus_object->PlatformGetTextFieldAncestor()) {
           EnqueueSelectionChangedEvent(*text_field);
 
-          // Plain text fields (including input and textarea elements) have
+          // Atomic text fields (including input and textarea elements) have
           // descendant objects that are part of their internal implementation
           // in Blink, which are not exposed to platform APIs in the
           // accessibility tree. Firing an event on such descendants will not
           // reach the assistive software.
-          if (text_field->IsPlainTextField()) {
+          if (text_field->IsAtomicTextField()) {
             FireWinAccessibilityEvent(IA2_EVENT_TEXT_CARET_MOVED, text_field);
           } else {
             FireWinAccessibilityEvent(IA2_EVENT_TEXT_CARET_MOVED, focus_object);
@@ -258,7 +263,7 @@ void BrowserAccessibilityManagerWin::FireGeneratedEvent(
           // Fire the event on the root object, which in the absence of a text
           // field ancestor is the closest UIA text provider (other than the
           // focused object) in which the selection has changed.
-          DCHECK(node->IsPlatformDocument());
+          DCHECK(ui::IsPlatformDocument(node->GetRole()));
           EnqueueSelectionChangedEvent(*node);
 
           // "IA2_EVENT_TEXT_CARET_MOVED" should only be fired when a visible
@@ -302,10 +307,6 @@ void BrowserAccessibilityManagerWin::FireGeneratedEvent(
       if (node->IsIgnored()) {
         FireWinAccessibilityEvent(EVENT_OBJECT_HIDE, node);
         FireUiaStructureChangedEvent(StructureChangeType_ChildRemoved, node);
-        if (node->GetRole() == ax::mojom::Role::kMenu) {
-          FireWinAccessibilityEvent(EVENT_SYSTEM_MENUPOPUPEND, node);
-          FireUiaAccessibilityEvent(UIA_MenuClosedEventId, node);
-        }
       }
       HandleAriaPropertiesChangedEvent(*node);
       break;
@@ -357,9 +358,18 @@ void BrowserAccessibilityManagerWin::FireGeneratedEvent(
       break;
     case ui::AXEventGenerator::Event::LOAD_COMPLETE:
       FireWinAccessibilityEvent(IA2_EVENT_DOCUMENT_LOAD_COMPLETE, node);
+      FireUiaAccessibilityEvent(UIA_AsyncContentLoadedEventId, node);
       break;
     case ui::AXEventGenerator::Event::LAYOUT_INVALIDATED:
       FireUiaAccessibilityEvent(UIA_LayoutInvalidatedEventId, node);
+      break;
+    case ui::AXEventGenerator::Event::MENU_POPUP_END:
+      FireWinAccessibilityEvent(EVENT_SYSTEM_MENUPOPUPEND, node);
+      FireUiaAccessibilityEvent(UIA_MenuClosedEventId, node);
+      break;
+    case ui::AXEventGenerator::Event::MENU_POPUP_START:
+      FireWinAccessibilityEvent(EVENT_SYSTEM_MENUPOPUPSTART, node);
+      FireUiaAccessibilityEvent(UIA_MenuOpenedEventId, node);
       break;
     case ui::AXEventGenerator::Event::MULTILINE_STATE_CHANGED:
       HandleAriaPropertiesChangedEvent(*node);
@@ -377,7 +387,7 @@ void BrowserAccessibilityManagerWin::FireGeneratedEvent(
       }
       // Only fire name changes when the name comes from an attribute, otherwise
       // name changes are redundant with text removed/inserted events.
-      if (node->GetData().GetNameFrom() != ax::mojom::NameFrom::kContents)
+      if (node->GetNameFrom() != ax::mojom::NameFrom::kContents)
         FireWinAccessibilityEvent(EVENT_OBJECT_NAMECHANGE, node);
       break;
     case ui::AXEventGenerator::Event::OBJECT_ATTRIBUTE_CHANGED:
@@ -466,10 +476,6 @@ void BrowserAccessibilityManagerWin::FireGeneratedEvent(
     case ui::AXEventGenerator::Event::SUBTREE_CREATED:
       FireWinAccessibilityEvent(EVENT_OBJECT_SHOW, node);
       FireUiaStructureChangedEvent(StructureChangeType_ChildAdded, node);
-      if (node->GetRole() == ax::mojom::Role::kMenu) {
-        FireWinAccessibilityEvent(EVENT_SYSTEM_MENUPOPUPSTART, node);
-        FireUiaAccessibilityEvent(UIA_MenuOpenedEventId, node);
-      }
       break;
     case ui::AXEventGenerator::Event::TEXT_ATTRIBUTE_CHANGED:
       FireWinAccessibilityEvent(IA2_EVENT_TEXT_ATTRIBUTE_CHANGED, node);
@@ -488,6 +494,9 @@ void BrowserAccessibilityManagerWin::FireGeneratedEvent(
     // Currently unused events on this platform.
     case ui::AXEventGenerator::Event::ATK_TEXT_OBJECT_ATTRIBUTE_CHANGED:
     case ui::AXEventGenerator::Event::AUTO_COMPLETE_CHANGED:
+    case ui::AXEventGenerator::Event::CARET_BOUNDS_CHANGED:
+    case ui::AXEventGenerator::Event::CHECKED_STATE_DESCRIPTION_CHANGED:
+    case ui::AXEventGenerator::Event::DETAILS_CHANGED:
     case ui::AXEventGenerator::Event::DOCUMENT_TITLE_CHANGED:
     case ui::AXEventGenerator::Event::FOCUS_CHANGED:
     case ui::AXEventGenerator::Event::LIVE_REGION_NODE_CHANGED:
@@ -569,6 +578,8 @@ void BrowserAccessibilityManagerWin::FireUiaAccessibilityEvent(
     return;
   }
 
+  ui::WinAccessibilityAPIUsageScopedUIAEventsNotifier scoped_events_notifier;
+
   ::UiaRaiseAutomationEvent(ToBrowserAccessibilityWin(node)->GetCOM(),
                             uia_event);
 }
@@ -591,6 +602,8 @@ void BrowserAccessibilityManagerWin::FireUiaPropertyChangedEvent(
   // The old value is not used by the system
   VARIANT old_value = {};
   old_value.vt = VT_EMPTY;
+
+  ui::WinAccessibilityAPIUsageScopedUIAEventsNotifier scoped_events_notifier;
 
   auto* provider = ToBrowserAccessibilityWin(node)->GetCOM();
   base::win::ScopedVariant new_value;
@@ -626,6 +639,8 @@ void BrowserAccessibilityManagerWin::FireUiaStructureChangedEvent(
   if (!provider || !provider_com)
     return;
 
+  ui::WinAccessibilityAPIUsageScopedUIAEventsNotifier scoped_events_notifier;
+
   switch (change_type) {
     case StructureChangeType_ChildRemoved: {
       // 'ChildRemoved' fires on the parent and provides the runtime ID of
@@ -649,32 +664,50 @@ void BrowserAccessibilityManagerWin::FireUiaStructureChangedEvent(
   }
 }
 
+// static
+bool BrowserAccessibilityManagerWin::
+    IsUiaActiveTextPositionChangedEventSupported() {
+  return GetUiaActiveTextPositionChangedEventFunction();
+}
+
+// static
+UiaRaiseActiveTextPositionChangedEventFunction
+BrowserAccessibilityManagerWin::GetUiaActiveTextPositionChangedEventFunction() {
+  // This API is only supported from Win8.1 onwards. On older platforms (such as
+  // Windows 7), we will return nullptr for the querying result for the address
+  // of the method "UiaRaiseActiveTextPositionChangedEvent" in
+  // uiautomationcore.dll.
+  return reinterpret_cast<UiaRaiseActiveTextPositionChangedEventFunction>(
+      ::GetProcAddress(::GetModuleHandle(L"uiautomationcore.dll"),
+                       "UiaRaiseActiveTextPositionChangedEvent"));
+}
+
+void BrowserAccessibilityManagerWin::FireUiaActiveTextPositionChangedEvent(
+    BrowserAccessibility* node) {
+  if (!ShouldFireEventForNode(node))
+    return;
+
+  UiaRaiseActiveTextPositionChangedEventFunction
+      active_text_position_changed_func =
+          GetUiaActiveTextPositionChangedEventFunction();
+
+  if (!active_text_position_changed_func)
+    return;
+
+  // Create the text range contained by the target node.
+  auto* target_node = ToBrowserAccessibilityWin(node)->GetCOM();
+  Microsoft::WRL::ComPtr<ITextRangeProvider> text_range =
+      ui::AXPlatformNodeTextProviderWin::CreateDegenerateRangeAtStart(
+          target_node);
+
+  // Fire the UiaRaiseActiveTextPositionChangedEvent.
+  active_text_position_changed_func(target_node, text_range.Get());
+}
+
 bool BrowserAccessibilityManagerWin::CanFireEvents() const {
   return BrowserAccessibilityManager::CanFireEvents() &&
          GetDelegateFromRootManager() &&
          GetDelegateFromRootManager()->AccessibilityGetAcceleratedWidget();
-}
-
-gfx::Rect BrowserAccessibilityManagerWin::GetViewBoundsInScreenCoordinates()
-    const {
-  // We have to take the device scale factor into account on Windows.
-  BrowserAccessibilityDelegate* delegate = GetDelegateFromRootManager();
-  if (delegate) {
-    gfx::Rect bounds = delegate->AccessibilityGetViewBounds();
-
-    // http://www.chromium.org/developers/design-documents/blink-coordinate-spaces
-    // The bounds returned by the delegate are always in device-independent
-    // pixels (DIPs), meaning physical pixels divided by device scale factor
-    // (DSF). However, if UseZoomForDSF is enabled, then Blink does not apply
-    // DSF when going from physical to screen pixels. In that case, we need to
-    // multiply DSF back in to get to Blink's notion of "screen pixels."
-    if (IsUseZoomForDSFEnabled() && device_scale_factor() > 0.0 &&
-        device_scale_factor() != 1.0) {
-      bounds = ScaleToEnclosingRect(bounds, device_scale_factor());
-    }
-    return bounds;
-  }
-  return gfx::Rect();
 }
 
 void BrowserAccessibilityManagerWin::OnSubtreeWillBeDeleted(ui::AXTree* tree,
@@ -684,16 +717,6 @@ void BrowserAccessibilityManagerWin::OnSubtreeWillBeDeleted(ui::AXTree* tree,
   if (obj) {
     FireWinAccessibilityEvent(EVENT_OBJECT_HIDE, obj);
     FireUiaStructureChangedEvent(StructureChangeType_ChildRemoved, obj);
-  }
-}
-
-void BrowserAccessibilityManagerWin::OnNodeWillBeDeleted(ui::AXTree* tree,
-                                                         ui::AXNode* node) {
-  if (node->data().role == ax::mojom::Role::kMenu) {
-    BrowserAccessibility* obj = GetFromAXNode(node);
-    DCHECK(obj);
-    FireWinAccessibilityEvent(EVENT_SYSTEM_MENUPOPUPEND, obj);
-    FireUiaAccessibilityEvent(UIA_MenuClosedEventId, obj);
   }
 }
 
@@ -907,7 +930,7 @@ void BrowserAccessibilityManagerWin::BeforeAccessibilityEvents() {
   for (const auto& targeted_event : event_generator()) {
     if (targeted_event.event_params.event ==
         ui::AXEventGenerator::Event::IGNORED_CHANGED) {
-      BrowserAccessibility* event_target = GetFromAXNode(targeted_event.node);
+      BrowserAccessibility* event_target = GetFromID(targeted_event.node_id);
       if (!event_target)
         continue;
 

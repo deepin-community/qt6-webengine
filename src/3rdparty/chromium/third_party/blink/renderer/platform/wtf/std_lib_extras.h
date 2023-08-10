@@ -28,10 +28,10 @@
 
 #include <cstddef>
 
-#include "base/macros.h"
+#include "base/check.h"
+#include "base/dcheck_is_on.h"
 #include "base/numerics/safe_conversions.h"
 #include "build/build_config.h"
-#include "third_party/blink/renderer/platform/wtf/assertions.h"
 #include "third_party/blink/renderer/platform/wtf/leak_annotations.h"
 #include "third_party/blink/renderer/platform/wtf/sanitizers.h"
 #include "third_party/blink/renderer/platform/wtf/type_traits.h"
@@ -94,11 +94,13 @@ class StaticSingleton final {
     LEAK_SANITIZER_IGNORE_OBJECT(instance_.Get());
   }
 
-  Type& Get(bool allow_cross_thread_use) {
+  StaticSingleton(const StaticSingleton&) = delete;
+  StaticSingleton& operator=(const StaticSingleton&) = delete;
+
+  Type& Get([[maybe_unused]] bool allow_cross_thread_use) {
 #if DCHECK_IS_ON()
     DCHECK(IsNotRacy(allow_cross_thread_use));
 #endif
-    ALLOW_UNUSED_LOCAL(allow_cross_thread_use);
     return Wrapper<Type>::Unwrap(instance_.Get());
   }
 
@@ -145,8 +147,6 @@ class StaticSingleton final {
   bool safely_initialized_;
   base::PlatformThreadId thread_;
 #endif
-
-  DISALLOW_COPY_AND_ASSIGN(StaticSingleton);
 };
 
 }  // namespace WTF

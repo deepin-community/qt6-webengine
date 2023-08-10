@@ -7,7 +7,7 @@
 #include "base/check.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/ref_counted_memory.h"
-#include "base/stl_util.h"
+#include "base/time/time.h"
 #include "components/favicon/core/favicon_database.h"
 
 using base::Time;
@@ -23,7 +23,7 @@ const HistoryAndBookmarkRow::ColumnID kInterestingColumns[] = {
 }  // namespace
 
 FaviconSQLHandler::FaviconSQLHandler(favicon::FaviconDatabase* favicon_db)
-    : SQLHandler(kInterestingColumns, base::size(kInterestingColumns)),
+    : SQLHandler(kInterestingColumns, std::size(kInterestingColumns)),
       favicon_db_(favicon_db) {}
 
 FaviconSQLHandler::~FaviconSQLHandler() {

@@ -6,7 +6,7 @@
 
 #include "base/bind.h"
 #include "base/logging.h"
-#include "base/single_thread_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "media/base/bind_to_current_loop.h"
 #include "third_party/blink/public/web/web_local_frame.h"
@@ -115,10 +115,6 @@ bool MediaPermissionDispatcher::IsEncryptedMediaEnabled() {
   return render_frame_->GetRendererPreferences().enable_encrypted_media;
 }
 
-void MediaPermissionDispatcher::NotifyUnsupportedPlatform() {
-  GetCdmInfobarService()->NotifyUnsupportedPlatform();
-}
-
 uint32_t MediaPermissionDispatcher::RegisterCallback(
     PermissionStatusCB permission_status_cb) {
   DCHECK(task_runner_->RunsTasksInCurrentSequence());
@@ -140,16 +136,6 @@ MediaPermissionDispatcher::GetPermissionService() {
   }
 
   return permission_service_.get();
-}
-
-media::mojom::CdmInfobarService*
-MediaPermissionDispatcher::GetCdmInfobarService() {
-  if (!cdm_infobar_service_) {
-    render_frame_->GetBrowserInterfaceBroker()->GetInterface(
-        cdm_infobar_service_.BindNewPipeAndPassReceiver());
-  }
-
-  return cdm_infobar_service_.get();
 }
 
 void MediaPermissionDispatcher::OnPermissionStatus(

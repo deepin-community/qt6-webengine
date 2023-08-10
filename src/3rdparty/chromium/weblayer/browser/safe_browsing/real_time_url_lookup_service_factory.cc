@@ -6,9 +6,9 @@
 
 #include "base/bind.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
+#include "components/safe_browsing/core/browser/realtime/url_lookup_service.h"
 #include "components/safe_browsing/core/browser/safe_browsing_token_fetcher.h"
 #include "components/safe_browsing/core/common/utils.h"
-#include "components/safe_browsing/core/realtime/url_lookup_service.h"
 #include "content/public/browser/browser_context.h"
 #include "services/network/public/cpp/cross_thread_pending_shared_url_loader_factory.h"
 #include "weblayer/browser/browser_context_impl.h"
@@ -17,6 +17,7 @@
 #include "weblayer/browser/profile_impl.h"
 #include "weblayer/browser/safe_browsing/safe_browsing_service.h"
 #include "weblayer/browser/safe_browsing/safe_browsing_token_fetcher_impl.h"
+#include "weblayer/browser/safe_browsing/weblayer_user_population_helper.h"
 #include "weblayer/browser/verdict_cache_manager_factory.h"
 
 namespace weblayer {
@@ -52,8 +53,7 @@ KeyedService* RealTimeUrlLookupServiceFactory::BuildServiceInstanceFor(
   return new safe_browsing::RealTimeUrlLookupService(
       network::SharedURLLoaderFactory::Create(std::move(url_loader_factory)),
       VerdictCacheManagerFactory::GetForBrowserContext(context),
-      // History sync is never enabled in WebLayer.
-      base::BindRepeating([]() { return false; }),
+      base::BindRepeating(&GetUserPopulationForBrowserContext, context),
       static_cast<BrowserContextImpl*>(context)->pref_service(),
       std::make_unique<SafeBrowsingTokenFetcherImpl>(base::BindRepeating(
           &ProfileImpl::access_token_fetch_delegate,
@@ -63,10 +63,12 @@ KeyedService* RealTimeUrlLookupServiceFactory::BuildServiceInstanceFor(
       base::BindRepeating(&RealTimeUrlLookupServiceFactory::
                               access_token_fetches_enabled_for_testing,
                           base::Unretained(this)),
-      safe_browsing::GetProfileManagementStatus(nullptr),
-      false /* is_under_advanced_protection */,
       static_cast<BrowserContextImpl*>(context)->IsOffTheRecord(),
-      FeatureListCreator::GetInstance()->variations_service());
+      FeatureListCreator::GetInstance()->variations_service(),
+      // Referrer chain provider is currently not available on WebLayer. Once it
+      // is implemented, inject it to enable referrer chain in real time
+      // requests.
+      /*referrer_chain_provider=*/nullptr);
 }
 
 }  // namespace weblayer

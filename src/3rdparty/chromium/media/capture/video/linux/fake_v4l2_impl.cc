@@ -12,12 +12,14 @@
 
 #include "base/bind.h"
 #include "base/bits.h"
-#include "base/stl_util.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/threading/thread.h"
+#include "base/time/time.h"
 #include "media/base/video_frame.h"
 
+#ifndef KERNEL_VERSION
 #define KERNEL_VERSION(a, b, c) (((a) << 16) + ((b) << 8) + (c))
+#endif
 
 namespace media {
 
@@ -27,6 +29,8 @@ static const int kErrorReturnValue = -1;
 static const uint32_t kMaxBufferCount = 5;
 static const int kDefaultWidth = 640;
 static const int kDefaultHeight = 480;
+static const unsigned int kMaxWidth = 3840;
+static const unsigned int kMaxHeight = 2160;
 
 // 20 fps.
 static const int kDefaultFrameInternvalNumerator = 50;
@@ -34,7 +38,7 @@ static const int kDefaultFrameInternvalDenominator = 1000;
 
 __u32 RoundUpToMultipleOfPageSize(__u32 size) {
   CHECK(base::bits::IsPowerOfTwo(getpagesize()));
-  return base::bits::Align(size, getpagesize());
+  return base::bits::AlignUp(size, getpagesize());
 }
 
 struct FakeV4L2Buffer {
@@ -99,7 +103,7 @@ class FakeV4L2Impl::OpenedDevice {
       }
     }
     return wait_for_outgoing_queue_event_.TimedWait(
-        base::TimeDelta::FromMilliseconds(timeout_in_milliseconds));
+        base::Milliseconds(timeout_in_milliseconds));
   }
 
   int enum_fmt(v4l2_fmtdesc* fmtdesc) {
@@ -160,8 +164,11 @@ class FakeV4L2Impl::OpenedDevice {
   }
 
   int s_fmt(v4l2_format* format) {
-    if (format->type != V4L2_BUF_TYPE_VIDEO_CAPTURE)
+    if (format->type != V4L2_BUF_TYPE_VIDEO_CAPTURE ||
+        format->fmt.pix.width > kMaxWidth ||
+        format->fmt.pix.height > kMaxHeight) {
       return EINVAL;
+    }
     v4l2_pix_format& pix_format = format->fmt.pix;
     // We only support YUV420 output for now. Tell this to the client by
     // overwriting whatever format it requested.
@@ -338,7 +345,7 @@ class FakeV4L2Impl::OpenedDevice {
       // Sleep for a bit.
       // We ignore the requested frame rate here, and just sleep for a fixed
       // duration.
-      base::PlatformThread::Sleep(base::TimeDelta::FromMilliseconds(100));
+      base::PlatformThread::Sleep(base::Milliseconds(100));
     }
   }
 
@@ -425,7 +432,7 @@ int FakeV4L2Impl::ioctl(int fd, int request, void* argp) {
     return EBADF;
   auto* opened_device = device_iter->second.get();
 
-  switch (request) {
+  switch (static_cast<uint32_t>(request)) {
     case VIDIOC_ENUM_FMT:
       return opened_device->enum_fmt(reinterpret_cast<v4l2_fmtdesc*>(argp));
     case VIDIOC_QUERYCAP:

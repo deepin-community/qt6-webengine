@@ -7,12 +7,13 @@
 #ifndef FXBARCODE_ONED_BC_ONEDEAN8WRITER_H_
 #define FXBARCODE_ONED_BC_ONEDEAN8WRITER_H_
 
+#include <stdint.h>
+
 #include "core/fxcrt/fx_string.h"
-#include "core/fxcrt/fx_system.h"
 #include "fxbarcode/BC_Library.h"
 #include "fxbarcode/oned/BC_OnedEANWriter.h"
 
-class CFX_DIBitmap;
+class CFX_Matrix;
 class CFX_RenderDevice;
 
 class CBC_OnedEAN8Writer final : public CBC_OneDimEANWriter {
@@ -22,7 +23,7 @@ class CBC_OnedEAN8Writer final : public CBC_OneDimEANWriter {
 
   // CBC_OneDimEANWriter:
   uint8_t* EncodeWithHint(const ByteString& contents,
-                          BCFORMAT format,
+                          BC_TYPE format,
                           int32_t& outWidth,
                           int32_t& outHeight,
                           int32_t hints) override;
@@ -30,13 +31,13 @@ class CBC_OnedEAN8Writer final : public CBC_OneDimEANWriter {
   bool CheckContentValidity(WideStringView contents) override;
   WideString FilterContents(WideStringView contents) override;
   void SetDataLength(int32_t length) override;
-  bool SetTextLocation(BC_TEXT_LOC location) override;
+  void SetTextLocation(BC_TEXT_LOC location) override;
   int32_t CalcChecksum(const ByteString& contents) override;
 
  private:
   bool ShowChars(WideStringView contents,
                  CFX_RenderDevice* device,
-                 const CFX_Matrix* matrix,
+                 const CFX_Matrix& matrix,
                  int32_t barWidth,
                  int32_t multiple) override;
 

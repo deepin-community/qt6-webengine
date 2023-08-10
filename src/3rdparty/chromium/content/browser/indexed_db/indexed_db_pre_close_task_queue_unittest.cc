@@ -5,13 +5,12 @@
 #include "content/browser/indexed_db/indexed_db_pre_close_task_queue.h"
 
 #include <memory>
+#include <string>
 #include <utility>
 
 #include "base/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
-#include "base/strings/string16.h"
-#include "base/strings/utf_string_conversions.h"
 #include "base/test/task_environment.h"
 #include "base/time/time.h"
 #include "base/timer/mock_timer.h"
@@ -28,8 +27,8 @@ using PreCloseTask = IndexedDBPreCloseTaskQueue::PreCloseTask;
 using StopReason = IndexedDBPreCloseTaskQueue::StopReason;
 
 namespace {
-constexpr base::TimeDelta kTestMaxRunTime = base::TimeDelta::FromSeconds(30);
-const base::string16 kDBName = base::ASCIIToUTF16("TestDBName");
+constexpr base::TimeDelta kTestMaxRunTime = base::Seconds(30);
+const std::u16string kDBName = u"TestDBName";
 constexpr int64_t kDBId = 1;
 constexpr int64_t kDBVersion = 2;
 constexpr int64_t kDBMaxObjectStoreId = 29;

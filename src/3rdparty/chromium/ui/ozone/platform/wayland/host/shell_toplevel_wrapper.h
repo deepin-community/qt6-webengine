@@ -5,8 +5,10 @@
 #ifndef UI_OZONE_PLATFORM_WAYLAND_HOST_SHELL_TOPLEVEL_WRAPPER_H_
 #define UI_OZONE_PLATFORM_WAYLAND_HOST_SHELL_TOPLEVEL_WRAPPER_H_
 
-#include "base/strings/string16.h"
+#include <string>
+
 #include "ui/ozone/platform/wayland/common/wayland_object.h"
+#include "ui/platform_window/extensions/wayland_extension.h"
 
 namespace gfx {
 class Rect;
@@ -24,11 +26,13 @@ class WaylandConnection;
 class ShellToplevelWrapper {
  public:
   enum class DecorationMode {
+    // Initial mode that the surface has till the first configure event.
+    kNone,
     // Client-side decoration for a window.
     // In this case, the client is responsible for drawing decorations
     // for a window (e.g. caption bar, close button). This is suitable for
     // windows using custom frame.
-    kClientSide = 1,
+    kClientSide,
     // Server-side decoration for a window.
     // In this case, the ash window manager is responsible for drawing
     // decorations. This is suitable for windows using native frame.
@@ -64,13 +68,21 @@ class ShellToplevelWrapper {
                              uint32_t hittest) = 0;
 
   // Sets a title of a native window.
-  virtual void SetTitle(const base::string16& title) = 0;
+  virtual void SetTitle(const std::u16string& title) = 0;
 
   // Sends acknowledge configure event back to wayland.
   virtual void AckConfigure(uint32_t serial) = 0;
 
-  // Sets a desired window geometry once wayland requests client to do so.
+  // Tells if the surface has been AckConfigured at least once.
+  virtual bool IsConfigured() = 0;
+
+  // Sets a desired window geometry in surface local coordinates that specifies
+  // the content area of the surface.
   virtual void SetWindowGeometry(const gfx::Rect& bounds) = 0;
+
+  // Requests a desired window position and size in global screen coordinates.
+  // The compositor may or may not filfill the request.
+  virtual void RequestWindowBounds(const gfx::Rect& bounds) = 0;
 
   // Sets the minimum size for the top level.
   virtual void SetMinSize(int32_t width, int32_t height) = 0;
@@ -88,6 +100,14 @@ class ShellToplevelWrapper {
   // wayland compositor to update the decoration mode for a surface associated
   // with this top level window.
   virtual void SetDecoration(DecorationMode decoration) = 0;
+
+  // Request that the server set the orientation lock to the provided lock type.
+  // This is only accepted if the requesting window is running in immersive
+  // fullscreen mode and in a tablet configuration.
+  virtual void Lock(WaylandOrientationLockType lock_type) = 0;
+
+  // Request that the server remove the applied orientation lock.
+  virtual void Unlock() = 0;
 };
 
 // Look for |value| in |wl_array| in C++ style.

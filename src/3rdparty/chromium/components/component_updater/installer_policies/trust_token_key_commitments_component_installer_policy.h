@@ -6,6 +6,7 @@
 #define COMPONENTS_COMPONENT_UPDATER_INSTALLER_POLICIES_TRUST_TOKEN_KEY_COMMITMENTS_COMPONENT_INSTALLER_POLICY_H_
 
 #include <stdint.h>
+
 #include <memory>
 #include <string>
 #include <utility>
@@ -13,15 +14,21 @@
 
 #include "base/callback.h"
 #include "base/files/file_path.h"
-#include "base/macros.h"
+#include "base/gtest_prod_util.h"
 #include "base/values.h"
 #include "components/component_updater/component_installer.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace base {
 class FilePath;
 }  // namespace base
 
 namespace component_updater {
+
+// This file name must be in sync with the server-side configuration, or updates
+// will fail.
+const base::FilePath::CharType kTrustTokenKeyCommitmentsFileName[] =
+    FILE_PATH_LITERAL("keys.json");
 
 // TrustTokenKeyCommitmentsComponentInstallerPolicy defines an installer
 // responsible for receiving updated Trust Tokens
@@ -41,6 +48,20 @@ class TrustTokenKeyCommitmentsComponentInstallerPolicy
   TrustTokenKeyCommitmentsComponentInstallerPolicy& operator=(
       const TrustTokenKeyCommitmentsComponentInstallerPolicy&) = delete;
 
+  // Returns the component's SHA2 hash as raw bytes.
+  static void GetPublicKeyHash(std::vector<uint8_t>* hash);
+
+  // Loads trust tokens from string using the given `load_keys_from_disk` call.
+  //
+  // static to allow sharing with the Android `ComponentLoaderPolicy`.
+  //
+  // `load_keys_from_disk` a callback that read trust tokens from file and
+  // return them as an optional string. `on_commitments_ready` loads trust
+  // tokens in network service.
+  static void LoadTrustTokensFromString(
+      base::OnceCallback<absl::optional<std::string>()> load_keys_from_disk,
+      base::OnceCallback<void(const std::string&)> on_commitments_ready);
+
  protected:
   void GetHash(std::vector<uint8_t>* hash) const override;
 
@@ -54,14 +75,14 @@ class TrustTokenKeyCommitmentsComponentInstallerPolicy
   bool SupportsGroupPolicyEnabledComponentUpdates() const override;
   bool RequiresNetworkEncryption() const override;
   update_client::CrxInstaller::Result OnCustomInstall(
-      const base::DictionaryValue& manifest,
+      const base::Value& manifest,
       const base::FilePath& install_dir) override;
   void OnCustomUninstall() override;
-  bool VerifyInstallation(const base::DictionaryValue& manifest,
+  bool VerifyInstallation(const base::Value& manifest,
                           const base::FilePath& install_dir) const override;
   void ComponentReady(const base::Version& version,
                       const base::FilePath& install_dir,
-                      std::unique_ptr<base::DictionaryValue> manifest) override;
+                      base::Value manifest) override;
   base::FilePath GetRelativeInstallDir() const override;
   std::string GetName() const override;
   update_client::InstallerAttributes GetInstallerAttributes() const override;

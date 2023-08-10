@@ -9,13 +9,13 @@
 #include <string>
 #include <vector>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
-#include "base/strings/string16.h"
 #include "components/site_engagement/content/site_engagement_observer.h"
 #include "components/webapps/browser/installable/installable_logging.h"
 #include "components/webapps/browser/installable/installable_params.h"
+#include "components/webapps/browser/pwa_install_path_tracker.h"
 #include "content/public/browser/media_player_id.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "mojo/public/cpp/bindings/receiver.h"
@@ -23,9 +23,9 @@
 #include "third_party/blink/public/common/manifest/manifest.h"
 #include "third_party/blink/public/mojom/app_banner/app_banner.mojom.h"
 #include "third_party/blink/public/mojom/manifest/display_mode.mojom-forward.h"
+#include "third_party/blink/public/mojom/manifest/manifest.mojom-forward.h"
+#include "third_party/skia/include/core/SkBitmap.h"
 #include "url/gurl.h"
-
-class SkBitmap;
 
 namespace content {
 class RenderFrameHost;
@@ -105,14 +105,17 @@ class AppBannerManager : public content::WebContentsObserver,
   enum class InstallableWebAppCheckResult {
     kUnknown,
     kNo,
-    kNoAlreadyInstalled,
-    kByUserRequest,
-    kPromotable,
+    kNo_AlreadyInstalled,
+    kYes_ByUserRequest,
+    kYes_Promotable,
   };
 
   // Retrieves the platform specific instance of AppBannerManager from
   // |web_contents|.
   static AppBannerManager* FromWebContents(content::WebContents* web_contents);
+
+  AppBannerManager(const AppBannerManager&) = delete;
+  AppBannerManager& operator=(const AppBannerManager&) = delete;
 
   // Returns the current time.
   static base::Time GetCurrentTime();
@@ -129,13 +132,8 @@ class AppBannerManager : public content::WebContentsObserver,
 
   // Returns the app name if the current page is installable, otherwise returns
   // the empty string.
-  static base::string16 GetInstallableWebAppName(
+  static std::u16string GetInstallableWebAppName(
       content::WebContents* web_contents);
-
-  // Returns whether the page that would currently be installed by the
-  // "Install PWA" or "Create Shortcut" actions would replace an installed app
-  // with an External install source. Returns false if unknown.
-  virtual bool IsExternallyInstalledWebApp();
 
   // Returns whether installability checks satisfy promotion requirements
   // (e.g. having a service worker fetch event) or have passed previously within
@@ -188,13 +186,21 @@ class AppBannerManager : public content::WebContentsObserver,
   InstallableWebAppCheckResult GetInstallableWebAppCheckResultForTesting();
 
   // Return the name of the app for this page.
-  virtual base::string16 GetAppName() const;
+  virtual std::u16string GetAppName() const;
 
   // Simple accessors:
-  const blink::Manifest& manifest() { return manifest_; }
-  const SkBitmap& primary_icon() { return primary_icon_; }
-  bool has_maskable_primary_icon() { return has_maskable_primary_icon_; }
+  const blink::mojom::Manifest& manifest() const;
+  const SkBitmap& primary_icon() const { return primary_icon_; }
+  bool has_maskable_primary_icon() const { return has_maskable_primary_icon_; }
   const GURL& validated_url() { return validated_url_; }
+
+  // Tracks the route taken to an install of a PWA (whether the bottom sheet
+  // was shown or the infobar/install) and what triggered it (install source).
+  // Only used on Android.
+  void TrackInstallPath(bool bottom_sheet, WebappInstallSource install_source);
+
+  // Tracks that the IPH has been shown. Only used on Android.
+  void TrackIphWasShown();
 
  protected:
   explicit AppBannerManager(content::WebContents* web_contents);
@@ -234,7 +240,7 @@ class AppBannerManager : public content::WebContentsObserver,
   // current device and the platform delivers apps considered replacements for
   // web apps.
   virtual bool IsSupportedNonWebAppPlatform(
-      const base::string16& platform) const = 0;
+      const std::u16string& platform) const = 0;
 
   // Returns whether |related_app| is already installed and considered a
   // replacement for the manifest's web app.
@@ -260,7 +266,7 @@ class AppBannerManager : public content::WebContentsObserver,
 
   // Callback invoked by the InstallableManager once it has fetched the page's
   // manifest.
-  virtual void OnDidGetManifest(const InstallableData& result);
+  virtual void OnDidGetManifest(const InstallableData& data);
 
   // Returns an InstallableParams object that requests all checks
   // necessary for a web app banner.
@@ -277,8 +283,7 @@ class AppBannerManager : public content::WebContentsObserver,
 
   // Callback invoked by the InstallableManager once it has finished checking
   // all other installable properties.
-  virtual void OnDidPerformInstallableWebAppCheck(
-      const InstallableData& result);
+  virtual void OnDidPerformInstallableWebAppCheck(const InstallableData& data);
 
   // Records that a banner was shown.
   void RecordDidShowBanner();
@@ -319,9 +324,8 @@ class AppBannerManager : public content::WebContentsObserver,
                      const GURL& validated_url) override;
   void DidActivatePortal(content::WebContents* predecessor_contents,
                          base::TimeTicks activation_time) override;
-  void DidUpdateWebManifestURL(
-      content::RenderFrameHost* target_frame,
-      const base::Optional<GURL>& manifest_url) override;
+  void DidUpdateWebManifestURL(content::RenderFrameHost* target_frame,
+                               const GURL& manifest_url) override;
   void MediaStartedPlaying(const MediaPlayerInfo& media_info,
                            const content::MediaPlayerId& id) override;
   void MediaStoppedPlaying(
@@ -343,15 +347,13 @@ class AppBannerManager : public content::WebContentsObserver,
   bool IsRunning() const;
 
   void SetInstallableWebAppCheckResult(InstallableWebAppCheckResult result);
+  void RecheckInstallabilityForLoadedPage(const GURL& url, bool uninstalled);
 
   // The URL for which the banner check is being conducted.
   GURL validated_url_;
 
   // The URL of the manifest.
   GURL manifest_url_;
-
-  // The manifest object.
-  blink::Manifest manifest_;
 
   // The URL of the primary icon.
   GURL primary_icon_url_;
@@ -360,10 +362,10 @@ class AppBannerManager : public content::WebContentsObserver,
   SkBitmap primary_icon_;
 
   // Whether or not the primary icon is maskable.
-  bool has_maskable_primary_icon_;
+  bool has_maskable_primary_icon_ = false;
 
   // The current banner pipeline state for this page load.
-  State state_;
+  State state_ = State::INACTIVE;
 
  private:
   friend class AppBannerManagerTest;
@@ -398,7 +400,11 @@ class AppBannerManager : public content::WebContentsObserver,
   InstallableStatusCode TerminationCode() const;
 
   // Fetches the data required to display a banner for the current page.
-  InstallableManager* manager_;
+  raw_ptr<InstallableManager> manager_;
+
+  // The manifest object. This is never null, it will instead be an empty
+  // manifest so callers don't have to worry about null checks.
+  blink::mojom::ManifestPtr manifest_;
 
   // We do not want to trigger a banner when the manager is attached to
   // a WebContents that is playing video. Banners triggering on a site in the
@@ -410,12 +416,13 @@ class AppBannerManager : public content::WebContentsObserver,
 
   // If a banner is requested before the page has finished loading, defer
   // triggering the pipeline until the load is complete.
-  bool has_sufficient_engagement_;
-  bool load_finished_;
+  bool has_sufficient_engagement_ = false;
+  bool load_finished_ = false;
 
   std::unique_ptr<StatusReporter> status_reporter_;
-  bool install_animation_pending_;
-  InstallableWebAppCheckResult installable_web_app_check_result_;
+  bool install_animation_pending_ = false;
+  InstallableWebAppCheckResult installable_web_app_check_result_ =
+      InstallableWebAppCheckResult::kUnknown;
 
   // The scope of the most recent installability check that passes promotability
   // requirements, otherwise invalid.
@@ -424,9 +431,11 @@ class AppBannerManager : public content::WebContentsObserver,
   // due to being already installed, otherwise invalid.
   GURL last_already_installed_web_app_scope_;
 
-  base::ObserverList<Observer, true> observer_list_;
+  // Keeps track of the path the user took through the UI, before deciding to
+  // install.
+  PwaInstallPathTracker install_path_tracker_;
 
-  DISALLOW_COPY_AND_ASSIGN(AppBannerManager);
+  base::ObserverList<Observer, true> observer_list_;
 };
 
 }  // namespace webapps

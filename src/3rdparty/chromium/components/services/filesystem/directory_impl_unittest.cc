@@ -8,11 +8,11 @@
 #include <map>
 #include <string>
 
-#include "base/macros.h"
-#include "base/stl_util.h"
 #include "base/test/task_environment.h"
 #include "components/services/filesystem/directory_test_helper.h"
 #include "components/services/filesystem/public/mojom/directory.mojom.h"
+#include "components/services/filesystem/public/mojom/file.mojom.h"
+#include "components/services/filesystem/public/mojom/types.mojom.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -24,6 +24,9 @@ class DirectoryImplTest : public testing::Test {
  public:
   DirectoryImplTest() = default;
 
+  DirectoryImplTest(const DirectoryImplTest&) = delete;
+  DirectoryImplTest& operator=(const DirectoryImplTest&) = delete;
+
   mojo::Remote<mojom::Directory> CreateTempDir() {
     return test_helper_.CreateTempDir();
   }
@@ -31,8 +34,6 @@ class DirectoryImplTest : public testing::Test {
  private:
   base::test::TaskEnvironment task_environment_;
   DirectoryTestHelper test_helper_;
-
-  DISALLOW_COPY_AND_ASSIGN(DirectoryImplTest);
 };
 
 constexpr char kData[] = "one two three";
@@ -49,7 +50,7 @@ TEST_F(DirectoryImplTest, Read) {
       {"my_file1", mojom::kFlagRead | mojom::kFlagWrite | mojom::kFlagCreate},
       {"my_file2", mojom::kFlagWrite | mojom::kFlagCreate},
       {"my_file3", mojom::kFlagAppend | mojom::kFlagCreate}};
-  for (size_t i = 0; i < base::size(files_to_create); i++) {
+  for (size_t i = 0; i < std::size(files_to_create); i++) {
     error = base::File::Error::FILE_ERROR_FAILED;
     bool handled =
         directory->OpenFile(files_to_create[i].name, mojo::NullReceiver(),
@@ -66,7 +67,7 @@ TEST_F(DirectoryImplTest, Read) {
   EXPECT_EQ(base::File::Error::FILE_OK, error);
 
   error = base::File::Error::FILE_ERROR_FAILED;
-  base::Optional<std::vector<mojom::DirectoryEntryPtr>> directory_contents;
+  absl::optional<std::vector<mojom::DirectoryEntryPtr>> directory_contents;
   handled = directory->Read(&error, &directory_contents);
   ASSERT_TRUE(handled);
   EXPECT_EQ(base::File::Error::FILE_OK, error);

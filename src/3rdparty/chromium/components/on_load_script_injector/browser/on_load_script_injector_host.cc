@@ -12,6 +12,7 @@
 #include "content/public/browser/render_frame_host.h"
 #include "mojo/public/cpp/bindings/associated_remote.h"
 #include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
+#include "url/gurl.h"
 
 namespace on_load_script_injector {
 
@@ -45,9 +46,9 @@ void OnLoadScriptInjectorHost<ScriptId>::AddScript(
     before_load_scripts_order_.push_back(id);
 
   // Convert script to UTF-16.
-  base::string16 script_utf16 = base::UTF8ToUTF16(script);
+  std::u16string script_utf16 = base::UTF8ToUTF16(script);
   size_t script_utf16_size =
-      (base::CheckedNumeric<size_t>(script_utf16.size()) * sizeof(base::char16))
+      (base::CheckedNumeric<size_t>(script_utf16.size()) * sizeof(char16_t))
           .ValueOrDie();
   base::WritableSharedMemoryRegion script_shared_memory =
       base::WritableSharedMemoryRegion::Create(script_utf16_size);
@@ -112,14 +113,12 @@ template <typename ScriptId>
 bool OnLoadScriptInjectorHost<ScriptId>::IsUrlMatchedByOriginList(
     const GURL& url,
     const std::vector<url::Origin>& allowed_origins) {
-  url::Origin url_origin = url::Origin::Create(url);
-
   for (const url::Origin& allowed_origin : allowed_origins) {
     if (allowed_origin == kMatchAllOrigins)
       return true;
 
     DCHECK(!allowed_origin.opaque());
-    if (url_origin.IsSameOriginWith(allowed_origin))
+    if (allowed_origin.IsSameOriginWith(url))
       return true;
   }
 

@@ -39,7 +39,7 @@ WebPreferences::WebPreferences()
       minimum_font_size(0),
       minimum_logical_font_size(6),
       default_encoding("ISO-8859-1"),
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
       context_menu_on_mouse_up(true),
 #else
       context_menu_on_mouse_up(false),
@@ -58,10 +58,8 @@ WebPreferences::WebPreferences()
       xslt_enabled(true),
       dns_prefetching_enabled(true),
       data_saver_enabled(false),
-      data_saver_holdback_web_api_enabled(false),
       local_storage_enabled(false),
       databases_enabled(false),
-      application_cache_enabled(false),
       tabs_to_links(true),
       disable_ipc_flooding_protection(false),
       hyperlink_auditing_enabled(true),
@@ -71,9 +69,6 @@ WebPreferences::WebPreferences()
       webgl1_enabled(true),
       webgl2_enabled(true),
       pepper_3d_enabled(false),
-      flash_3d_enabled(true),
-      flash_stage3d_enabled(false),
-      flash_stage3d_baseline_enabled(false),
       privileged_webgl_extensions_enabled(false),
       webgl_errors_to_console_enabled(true),
       hide_scrollbars(false),
@@ -106,46 +101,45 @@ WebPreferences::WebPreferences()
       dont_send_key_events_to_javascript(false),
       sync_xhr_in_documents_enabled(true),
       number_of_cpu_cores(1),
-#if defined(OS_MAC)
+#if BUILDFLAG(IS_MAC)
       editing_behavior(mojom::EditingBehavior::kEditingMacBehavior),
-#elif defined(OS_WIN)
+#elif BUILDFLAG(IS_WIN)
       editing_behavior(mojom::EditingBehavior::kEditingWindowsBehavior),
-#elif defined(OS_ANDROID)
+#elif BUILDFLAG(IS_ANDROID)
       editing_behavior(mojom::EditingBehavior::kEditingAndroidBehavior),
-#elif BUILDFLAG(IS_CHROMEOS_ASH)
-      editing_behavior(
-          base::FeatureList::IsEnabled(blink::features::kCrOSAutoSelect)
-              ? mojom::EditingBehavior::kEditingChromeOSBehavior
-              : mojom::EditingBehavior::kEditingUnixBehavior),
-#elif defined(OS_POSIX)
+#elif BUILDFLAG(IS_CHROMEOS)
+      editing_behavior(mojom::EditingBehavior::kEditingChromeOSBehavior),
+#elif BUILDFLAG(IS_POSIX)
       editing_behavior(mojom::EditingBehavior::kEditingUnixBehavior),
 #else
       editing_behavior(mojom::EditingBehavior::kEditingMacBehavior),
 #endif
       supports_multiple_windows(true),
       viewport_enabled(false),
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
       viewport_meta_enabled(true),
       shrinks_viewport_contents_to_fit(true),
       viewport_style(mojom::ViewportStyle::kMobile),
       always_show_context_menu_on_touch(false),
       smooth_scroll_for_find_enabled(true),
+      main_frame_resizes_are_orientation_changes(true),
 #else
       viewport_meta_enabled(false),
       shrinks_viewport_contents_to_fit(false),
       viewport_style(mojom::ViewportStyle::kDefault),
       always_show_context_menu_on_touch(true),
       smooth_scroll_for_find_enabled(false),
-#endif
       main_frame_resizes_are_orientation_changes(false),
+#endif
       initialize_at_minimum_page_scale(true),
-#if defined(OS_MAC)
+#if BUILDFLAG(IS_MAC)
       smart_insert_delete_enabled(true),
 #else
       smart_insert_delete_enabled(false),
 #endif
       spatial_navigation_enabled(false),
       navigate_on_drag_drop(true),
+      fake_no_alloc_direct_call_for_testing_enabled(false),
       v8_cache_options(blink::mojom::V8CacheOptions::kDefault),
       record_whole_document(false),
       cookie_enabled(true),
@@ -156,13 +150,13 @@ WebPreferences::WebPreferences()
       text_tracks_enabled(false),
       text_track_margin_percentage(0.0f),
       immersive_mode_enabled(false),
-#if defined(OS_ANDROID) || defined(OS_MAC)
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_MAC)
       double_tap_to_zoom_enabled(true),
 #else
       double_tap_to_zoom_enabled(false),
 #endif
       fullscreen_supported(true),
-#if !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
       text_autosizing_enabled(false),
 #else
       text_autosizing_enabled(true),
@@ -187,13 +181,12 @@ WebPreferences::WebPreferences()
       embedded_media_experience_enabled(false),
       css_hex_alpha_color_enabled(true),
       scroll_top_left_interop_enabled(true),
-      disable_features_depending_on_viz(false),
       disable_accelerated_small_canvases(false),
-#endif  // defined(OS_ANDROID)
-#if defined(OS_ANDROID)
+#endif  // BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
       default_minimum_page_scale_factor(0.25f),
       default_maximum_page_scale_factor(5.f),
-#elif defined(OS_MAC)
+#elif BUILDFLAG(IS_MAC)
       default_minimum_page_scale_factor(1.f),
       default_maximum_page_scale_factor(3.f),
 #else
@@ -215,20 +208,12 @@ WebPreferences::WebPreferences()
       allow_mixed_content_upgrades(true),
       always_show_focus(false),
       touch_drag_drop_enabled(IsTouchDragDropEnabled()) {
-  standard_font_family_map[web_pref::kCommonScript] =
-      base::ASCIIToUTF16("Times New Roman");
-  fixed_font_family_map[web_pref::kCommonScript] =
-      base::ASCIIToUTF16("Courier New");
-  serif_font_family_map[web_pref::kCommonScript] =
-      base::ASCIIToUTF16("Times New Roman");
-  sans_serif_font_family_map[web_pref::kCommonScript] =
-      base::ASCIIToUTF16("Arial");
-  cursive_font_family_map[web_pref::kCommonScript] =
-      base::ASCIIToUTF16("Script");
-  fantasy_font_family_map[web_pref::kCommonScript] =
-      base::ASCIIToUTF16("Impact");
-  pictograph_font_family_map[web_pref::kCommonScript] =
-      base::ASCIIToUTF16("Times New Roman");
+  standard_font_family_map[web_pref::kCommonScript] = u"Times New Roman";
+  fixed_font_family_map[web_pref::kCommonScript] = u"Courier New";
+  serif_font_family_map[web_pref::kCommonScript] = u"Times New Roman";
+  sans_serif_font_family_map[web_pref::kCommonScript] = u"Arial";
+  cursive_font_family_map[web_pref::kCommonScript] = u"Script";
+  fantasy_font_family_map[web_pref::kCommonScript] = u"Impact";
 }
 
 WebPreferences::WebPreferences(const WebPreferences& other) = default;

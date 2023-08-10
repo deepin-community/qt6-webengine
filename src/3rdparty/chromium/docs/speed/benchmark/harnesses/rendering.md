@@ -36,7 +36,7 @@ Rendering metrics are [written in Javascript](https://cs.chromium.org/chromium/s
 
 ## How to run rendering benchmarks on local devices
 
-First, set up your device by following the instructions [here](https://chromium.googlesource.com/chromium/src/+/master/docs/speed/benchmark/telemetry_device_setup.md). You can then run telemetry benchmarks locally using:
+First, set up your device by following the instructions [here](https://chromium.googlesource.com/chromium/src/+/main/docs/speed/benchmark/telemetry_device_setup.md). You can then run telemetry benchmarks locally using:
 
 `./tools/perf/run_benchmark <benchmark_name> --browser=<browser>`
 
@@ -56,16 +56,16 @@ Other useful options for the command are:
 
 ## How to run rendering benchmarks on try bots
 
-For more consistent results and to identify whether your change has resulted in a rendering regression, you can run the rendering benchmarks using a [perf try job](https://chromium.googlesource.com/chromium/src/+/master/docs/speed/perf_trybots.md). In order to do this, you need to first upload a CL, which allows results to be generated with and without your patch.
+For more consistent results and to identify whether your change has resulted in a rendering regression, you can run the rendering benchmarks using a [perf try job](https://chromium.googlesource.com/chromium/src/+/main/docs/speed/perf_trybots.md). In order to do this, you need to first upload a CL, which allows results to be generated with and without your patch.
 
 ## How to handle regressions
 
-If your changes have resulted in a regression in a metric that is monitored by [perf alerts](https://chromeperf.appspot.com/alerts?sortby=end_revision&sortdirection=down), you will be assigned to a bug. This will contain information about the specific metric and how much it was regressed, as well as a Pinpoint link that will help you investigate further. For instance, you will be able to obtain traces from the try bot runs. This [link](https://chromium.googlesource.com/chromium/src/+/master/docs/speed/addressing_performance_regressions.md) contains detailed steps on how to deal with regressions. Rendering metrics use trace events logged under the benchmark and toplevel trace categories.
+If your changes have resulted in a regression in a metric that is monitored by [perf alerts](https://chromeperf.appspot.com/alerts?sortby=end_revision&sortdirection=down), you will be assigned to a bug. This will contain information about the specific metric and how much it was regressed, as well as a Pinpoint link that will help you investigate further. For instance, you will be able to obtain traces from the try bot runs. This [link](https://chromium.googlesource.com/chromium/src/+/main/docs/speed/addressing_performance_regressions.md) contains detailed steps on how to deal with regressions. Rendering metrics use trace events logged under the benchmark and toplevel trace categories.
 
 If you already have a trace and want to debug the metric computation part, you can just run the metric:
 `tracing/bin/run_metric <path-to-trace-file> renderingMetric`
 
-If you are specifically investigating a regression related to janks, [this document](https://chromium.googlesource.com/chromium/src/+/master/docs/speed/debug-janks.md) may be useful.
+If you are specifically investigating a regression related to janks, [this document](https://chromium.googlesource.com/chromium/src/+/main/docs/speed/debug-janks.md) may be useful.
 
 ## How to add more pages
 
@@ -86,9 +86,8 @@ Children classes should specify these attributes:
 
 All pages in the rendering benchmark need to use [RenderingSharedState](https://cs.chromium.org/chromium/src/tools/perf/page_sets/rendering/rendering_shared_state.py?dr&g=0) as the shared_page_state_class, since this has to be consistent across pages in a page set. Individual pages can also specify `extra_browser_args`, in order to set specific flags.
 
-After adding the page, record it and upload it to cloud storage using:
-
-`./tools/perf/record_wpr rendering_desktop --browser=system --story-tag-filter=<tag name> --upload`
+After adding the page, record it and upload it to cloud storage using
+[these instructions](https://source.chromium.org/chromium/chromium/src/+/main:tools/perf/recording_benchmarks.md).
 
 This will modify the [data/rendering_desktop.json](https://cs.chromium.org/chromium/src/tools/perf/page_sets/data/rendering_desktop.json?type=cs&q=rendering_deskt&g=0&l=1) or [data/rendering_mobile.json](https://cs.chromium.org/chromium/src/tools/perf/page_sets/data/rendering_mobile.json?type=cs&g=0) files and generate .sha1 files, which should be included in the CL.
 

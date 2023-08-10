@@ -3,7 +3,6 @@
 // found in the LICENSE file.
 
 #include "services/network/origin_policy/origin_policy_manager.h"
-#include "base/optional.h"
 #include "base/test/gtest_util.h"
 #include "base/test/task_environment.h"
 #include "mojo/public/cpp/bindings/remote.h"
@@ -14,6 +13,7 @@
 #include "services/network/public/cpp/origin_policy.h"
 #include "services/network/test/fake_test_cert_verifier_params_factory.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/origin.h"
 
 // Unit tests for OriginPolicyManager.
@@ -46,9 +46,12 @@ class OriginPolicyManagerTest : public testing::Test {
     manager_ = std::make_unique<OriginPolicyManager>(network_context_.get());
   }
 
+  OriginPolicyManagerTest(const OriginPolicyManagerTest&) = delete;
+  OriginPolicyManagerTest& operator=(const OriginPolicyManagerTest&) = delete;
+
   void RetrieveOriginPolicyAndStoreResult(
       const url::Origin& origin,
-      const base::Optional<std::string>& header) {
+      const absl::optional<std::string>& header) {
     manager_->RetrieveOriginPolicy(
         origin,
         net::IsolationInfo::Create(net::IsolationInfo::RequestType::kOther,
@@ -75,8 +78,6 @@ class OriginPolicyManagerTest : public testing::Test {
   mojo::Remote<mojom::NetworkContext> network_context_remote_;
   std::unique_ptr<OriginPolicyManager> manager_;
   std::unique_ptr<OriginPolicy> result_;
-
-  DISALLOW_COPY_AND_ASSIGN(OriginPolicyManagerTest);
 };
 
 TEST_F(OriginPolicyManagerTest, AddReceiver) {

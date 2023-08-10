@@ -7,35 +7,32 @@
 
 #include <cstring>
 
-#include "base/allocator/partition_allocator/partition_cookie.h"
 #include "base/allocator/partition_allocator/partition_ref_count.h"
 #include "base/allocator/partition_allocator/random.h"
-#include "base/partition_alloc_buildflags.h"
 #include "build/build_config.h"
 
-#if defined(OS_WIN)
-#include <windows.h>
+// Prefetch *x into memory.
+#if defined(__clang__) || defined(COMPILER_GCC)
+#define PA_PREFETCH(x) __builtin_prefetch(x)
+#else
+#define PA_PREFETCH(x)
 #endif
 
-#define PARTITION_EXTRAS_REQUIRED \
-  (DCHECK_IS_ON() || BUILDFLAG(USE_BACKUP_REF_PTR))
+namespace partition_alloc::internal {
 
-namespace base {
-
-namespace internal {
 // This is a `memset` that resists being optimized away. Adapted from
 // boringssl/src/crypto/mem.c. (Copying and pasting is bad, but //base can't
 // depend on //third_party, and this is small enough.)
-ALWAYS_INLINE void SecureZero(void* p, size_t size) {
-#if defined(OS_WIN)
-  SecureZeroMemory(p, size);
-#else
-  memset(p, 0, size);
+ALWAYS_INLINE void SecureMemset(void* ptr, uint8_t value, size_t size) {
+  memset(ptr, value, size);
 
+#if defined(__clang__) || defined(COMPILER_GCC)
   // As best as we can tell, this is sufficient to break any optimisations that
   // might try to eliminate "superfluous" memsets. If there's an easy way to
   // detect memset_s, it would be better to use that.
-  __asm__ __volatile__("" : : "r"(p) : "memory");
+  __asm__ __volatile__("" : : "r"(ptr) : "memory");
+#else
+  _ReadBarrier();
 #endif
 }
 
@@ -47,16 +44,25 @@ ALWAYS_INLINE bool RandomPeriod() {
   static thread_local uint8_t counter = 0;
   if (UNLIKELY(counter == 0)) {
     // It's OK to truncate this value.
-    counter = static_cast<uint8_t>(base::RandomValue());
+    counter = static_cast<uint8_t>(::partition_alloc::internal::RandomValue());
   }
   // If `counter` is 0, this will wrap. That is intentional and OK.
   counter--;
   return counter == 0;
 }
-#endif
+#endif  // !DCHECK_IS_ON()
 
-}  // namespace internal
+}  // namespace partition_alloc::internal
 
-}  // namespace base
+namespace base::internal {
+
+// TODO(https://crbug.com/1288247): Remove these 'using' declarations once
+// the migration to the new namespaces gets done.
+using ::partition_alloc::internal::SecureMemset;
+#if !DCHECK_IS_ON()
+using ::partition_alloc::internal::RandomPeriod;
+#endif  // !DCHECK_IS_ON()
+
+}  // namespace base::internal
 
 #endif  // BASE_ALLOCATOR_PARTITION_ALLOCATOR_PARTITION_ALLOC_INL_H_

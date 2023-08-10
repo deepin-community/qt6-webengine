@@ -8,10 +8,11 @@
 #include <utility>
 
 #include "base/check_op.h"
+#include "base/containers/contains.h"
+#include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/notreached.h"
 #include "base/numerics/safe_conversions.h"
-#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "components/url_pattern_index/url_pattern_index.h"
@@ -43,6 +44,9 @@ constexpr bool IsSubset(unsigned sub, unsigned super) {
 // Helper class to parse the url filter of a Declarative Net Request API rule.
 class UrlFilterParser {
  public:
+  UrlFilterParser(const UrlFilterParser&) = delete;
+  UrlFilterParser& operator=(const UrlFilterParser&) = delete;
+
   // This sets the |url_pattern_type|, |anchor_left|, |anchor_right| and
   // |url_pattern| fields on the |indexed_rule_|.
   static void Parse(std::unique_ptr<std::string> url_filter,
@@ -123,9 +127,7 @@ class UrlFilterParser {
   const std::string url_filter_;
   const size_t url_filter_len_;
   size_t index_;
-  IndexedRule* indexed_rule_;  // Must outlive this instance.
-
-  DISALLOW_COPY_AND_ASSIGN(UrlFilterParser);
+  raw_ptr<IndexedRule> indexed_rule_;  // Must outlive this instance.
 };
 
 bool IsCaseSensitive(const dnr_api::Rule& parsed_rule) {
@@ -195,11 +197,79 @@ flat_rule::ElementType GetElementType(dnr_api::ResourceType resource_type) {
       return flat_rule::ElementType_MEDIA;
     case dnr_api::RESOURCE_TYPE_WEBSOCKET:
       return flat_rule::ElementType_WEBSOCKET;
+    case dnr_api::RESOURCE_TYPE_WEBTRANSPORT:
+      return flat_rule::ElementType_WEBTRANSPORT;
+    case dnr_api::RESOURCE_TYPE_WEBBUNDLE:
+      return flat_rule::ElementType_WEBBUNDLE;
     case dnr_api::RESOURCE_TYPE_OTHER:
       return flat_rule::ElementType_OTHER;
   }
   NOTREACHED();
   return flat_rule::ElementType_NONE;
+}
+
+flat_rule::RequestMethod GetRequestMethod(
+    dnr_api::RequestMethod request_method) {
+  switch (request_method) {
+    case dnr_api::REQUEST_METHOD_NONE:
+      NOTREACHED();
+      return flat_rule::RequestMethod_NONE;
+    case dnr_api::REQUEST_METHOD_CONNECT:
+      return flat_rule::RequestMethod_CONNECT;
+    case dnr_api::REQUEST_METHOD_DELETE:
+      return flat_rule::RequestMethod_DELETE;
+    case dnr_api::REQUEST_METHOD_GET:
+      return flat_rule::RequestMethod_GET;
+    case dnr_api::REQUEST_METHOD_HEAD:
+      return flat_rule::RequestMethod_HEAD;
+    case dnr_api::REQUEST_METHOD_OPTIONS:
+      return flat_rule::RequestMethod_OPTIONS;
+    case dnr_api::REQUEST_METHOD_PATCH:
+      return flat_rule::RequestMethod_PATCH;
+    case dnr_api::REQUEST_METHOD_POST:
+      return flat_rule::RequestMethod_POST;
+    case dnr_api::REQUEST_METHOD_PUT:
+      return flat_rule::RequestMethod_PUT;
+  }
+  NOTREACHED();
+  return flat_rule::RequestMethod_NONE;
+}
+
+// Returns a bitmask of flat_rule::RequestMethod corresponding to passed
+// `request_methods`.
+uint16_t GetRequestMethodsMask(
+    const std::vector<dnr_api::RequestMethod>* request_methods) {
+  uint16_t mask = flat_rule::RequestMethod_NONE;
+  if (!request_methods)
+    return mask;
+
+  for (const auto request_method : *request_methods)
+    mask |= GetRequestMethod(request_method);
+  return mask;
+}
+
+// Computes the bitmask of flat_rule::RequestMethod taking into consideration
+// the included and excluded request methods for `rule`.
+ParseResult ComputeRequestMethods(const dnr_api::Rule& rule,
+                                  uint16_t* request_methods_mask) {
+  uint16_t include_request_method_mask =
+      GetRequestMethodsMask(rule.condition.request_methods.get());
+  uint16_t exclude_request_method_mask =
+      GetRequestMethodsMask(rule.condition.excluded_request_methods.get());
+
+  if (include_request_method_mask & exclude_request_method_mask)
+    return ParseResult::ERROR_REQUEST_METHOD_DUPLICATED;
+
+  if (include_request_method_mask != flat_rule::RequestMethod_NONE)
+    *request_methods_mask = include_request_method_mask;
+  else if (exclude_request_method_mask != flat_rule::RequestMethod_NONE) {
+    *request_methods_mask =
+        flat_rule::RequestMethod_ANY & ~exclude_request_method_mask;
+  } else {
+    *request_methods_mask = flat_rule::RequestMethod_ANY;
+  }
+
+  return ParseResult::SUCCESS;
 }
 
 // Returns a bitmask of flat_rule::ElementType corresponding to passed
@@ -292,7 +362,7 @@ bool IsValidTransformScheme(const std::unique_ptr<std::string>& scheme) {
   if (!scheme)
     return true;
 
-  for (size_t i = 0; i < base::size(kAllowedTransformSchemes); ++i) {
+  for (size_t i = 0; i < std::size(kAllowedTransformSchemes); ++i) {
     if (*scheme == kAllowedTransformSchemes[i])
       return true;
   }
@@ -358,7 +428,8 @@ ParseResult ParseRedirect(dnr_api::Redirect redirect,
     GURL redirect_url = base_url.Resolve(*redirect.extension_path);
 
     // Sanity check that Resolve works as expected.
-    DCHECK_EQ(base_url.GetOrigin(), redirect_url.GetOrigin());
+    DCHECK_EQ(base_url.DeprecatedGetOriginAsURL(),
+              redirect_url.DeprecatedGetOriginAsURL());
 
     if (!redirect_url.is_valid())
       return ParseResult::ERROR_INVALID_EXTENSION_PATH;
@@ -443,6 +514,15 @@ ParseResult ValidateHeaders(
   return ParseResult::SUCCESS;
 }
 
+void ParseTabIds(const std::vector<int>* input_tab_ids,
+                 base::flat_set<int>& output_tab_ids) {
+  if (!input_tab_ids)
+    return;
+
+  output_tab_ids =
+      base::flat_set<int>(input_tab_ids->begin(), input_tab_ids->end());
+}
+
 }  // namespace
 
 IndexedRule::IndexedRule() = default;
@@ -453,6 +533,7 @@ IndexedRule& IndexedRule::operator=(IndexedRule&& other) = default;
 // static
 ParseResult IndexedRule::CreateIndexedRule(dnr_api::Rule parsed_rule,
                                            const GURL& base_url,
+                                           RulesetID ruleset_id,
                                            IndexedRule* indexed_rule) {
   DCHECK(indexed_rule);
 
@@ -480,9 +561,33 @@ ParseResult IndexedRule::CreateIndexedRule(dnr_api::Rule parsed_rule,
   if (parsed_rule.condition.domains && parsed_rule.condition.domains->empty())
     return ParseResult::ERROR_EMPTY_DOMAINS_LIST;
 
+  if (parsed_rule.condition.initiator_domains &&
+      parsed_rule.condition.initiator_domains->empty()) {
+    return ParseResult::ERROR_EMPTY_INITIATOR_DOMAINS_LIST;
+  }
+
+  if (parsed_rule.condition.request_domains &&
+      parsed_rule.condition.request_domains->empty()) {
+    return ParseResult::ERROR_EMPTY_REQUEST_DOMAINS_LIST;
+  }
+
   if (parsed_rule.condition.resource_types &&
       parsed_rule.condition.resource_types->empty()) {
     return ParseResult::ERROR_EMPTY_RESOURCE_TYPES_LIST;
+  }
+
+  if (parsed_rule.condition.request_methods &&
+      parsed_rule.condition.request_methods->empty()) {
+    return ParseResult::ERROR_EMPTY_REQUEST_METHODS_LIST;
+  }
+
+  if (parsed_rule.condition.tab_ids && parsed_rule.condition.tab_ids->empty())
+    return ParseResult::ERROR_EMPTY_TAB_IDS_LIST;
+
+  bool is_session_scoped_ruleset = ruleset_id == kSessionRulesetID;
+  if (!is_session_scoped_ruleset && (parsed_rule.condition.tab_ids ||
+                                     parsed_rule.condition.excluded_tab_ids)) {
+    return ParseResult::ERROR_TAB_IDS_ON_NON_SESSION_RULE;
   }
 
   if (parsed_rule.condition.url_filter && parsed_rule.condition.regex_filter)
@@ -543,19 +648,88 @@ ParseResult IndexedRule::CreateIndexedRule(dnr_api::Rule parsed_rule,
 
   {
     ParseResult result =
+        ComputeRequestMethods(parsed_rule, &indexed_rule->request_methods);
+    if (result != ParseResult::SUCCESS)
+      return result;
+  }
+
+  {
+    ParseResult result =
         ComputeElementTypes(parsed_rule, &indexed_rule->element_types);
     if (result != ParseResult::SUCCESS)
       return result;
   }
 
-  if (!CanonicalizeDomains(std::move(parsed_rule.condition.domains),
-                           &indexed_rule->domains)) {
+  if (parsed_rule.condition.domains &&
+      parsed_rule.condition.initiator_domains) {
+    return ParseResult::ERROR_DOMAINS_AND_INITIATOR_DOMAINS_BOTH_SPECIFIED;
+  }
+
+  if (parsed_rule.condition.excluded_domains &&
+      parsed_rule.condition.excluded_initiator_domains) {
+    return ParseResult::
+        ERROR_EXCLUDED_DOMAINS_AND_EXCLUDED_INITIATOR_DOMAINS_BOTH_SPECIFIED;
+  }
+
+  // Note: The `domains` and `excluded_domains` rule conditions are deprecated.
+  //       If they are specified, they are mapped to the `initiator_domains` and
+  //       `excluded_initiator_domains` conditions on the indexed rule.
+
+  if (parsed_rule.condition.domains &&
+      !CanonicalizeDomains(std::move(parsed_rule.condition.domains),
+                           &indexed_rule->initiator_domains)) {
     return ParseResult::ERROR_NON_ASCII_DOMAIN;
   }
 
-  if (!CanonicalizeDomains(std::move(parsed_rule.condition.excluded_domains),
-                           &indexed_rule->excluded_domains)) {
+  if (parsed_rule.condition.initiator_domains &&
+      !CanonicalizeDomains(std::move(parsed_rule.condition.initiator_domains),
+                           &indexed_rule->initiator_domains)) {
+    return ParseResult::ERROR_NON_ASCII_INITIATOR_DOMAIN;
+  }
+
+  if (parsed_rule.condition.excluded_domains &&
+      !CanonicalizeDomains(std::move(parsed_rule.condition.excluded_domains),
+                           &indexed_rule->excluded_initiator_domains)) {
     return ParseResult::ERROR_NON_ASCII_EXCLUDED_DOMAIN;
+  }
+
+  if (parsed_rule.condition.excluded_initiator_domains &&
+      !CanonicalizeDomains(
+          std::move(parsed_rule.condition.excluded_initiator_domains),
+          &indexed_rule->excluded_initiator_domains)) {
+    return ParseResult::ERROR_NON_ASCII_EXCLUDED_INITIATOR_DOMAIN;
+  }
+
+  if (!CanonicalizeDomains(std::move(parsed_rule.condition.request_domains),
+                           &indexed_rule->request_domains)) {
+    return ParseResult::ERROR_NON_ASCII_REQUEST_DOMAIN;
+  }
+
+  if (!CanonicalizeDomains(
+          std::move(parsed_rule.condition.excluded_request_domains),
+          &indexed_rule->excluded_request_domains)) {
+    return ParseResult::ERROR_NON_ASCII_EXCLUDED_REQUEST_DOMAIN;
+  }
+
+  {
+    ParseTabIds(parsed_rule.condition.tab_ids.get(), indexed_rule->tab_ids);
+    ParseTabIds(parsed_rule.condition.excluded_tab_ids.get(),
+                indexed_rule->excluded_tab_ids);
+    auto common_tab_id_it =
+        std::find_if(indexed_rule->tab_ids.begin(), indexed_rule->tab_ids.end(),
+                     [indexed_rule](int included_tab_id) {
+                       return base::Contains(indexed_rule->excluded_tab_ids,
+                                             included_tab_id);
+                     });
+    if (common_tab_id_it != indexed_rule->tab_ids.end())
+      return ParseResult::ERROR_TAB_ID_DUPLICATED;
+
+    // When both `tab_ids` and `excluded_tab_ids` are populated, only the
+    // included tab IDs are relevant.
+    if (!indexed_rule->tab_ids.empty() &&
+        !indexed_rule->excluded_tab_ids.empty()) {
+      indexed_rule->excluded_tab_ids.clear();
+    }
   }
 
   if (is_regex_rule) {

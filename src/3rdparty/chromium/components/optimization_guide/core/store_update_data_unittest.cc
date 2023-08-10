@@ -5,9 +5,7 @@
 #include "components/optimization_guide/core/store_update_data.h"
 
 #include <string>
-#include <vector>
 
-#include "base/macros.h"
 #include "base/time/time.h"
 #include "base/version.h"
 #include "components/optimization_guide/core/optimization_guide_features.h"
@@ -106,8 +104,7 @@ TEST(StoreUpdateDataTest,
     proto::StoreEntry store_entry = entry.second;
     if (store_entry.entry_type() == proto::FETCHED_HINT) {
       base::Time expected_expiry_time =
-          base::Time::Now() +
-          base::TimeDelta::FromSeconds(max_cache_duration_secs);
+          base::Time::Now() + base::Seconds(max_cache_duration_secs);
       EXPECT_EQ(expected_expiry_time.ToDeltaSinceWindowsEpoch().InSeconds(),
                 store_entry.expiry_time_secs());
       break;
@@ -121,15 +118,15 @@ TEST(StoreUpdateDataTest, BuildPredictionModelUpdateData) {
 
   proto::ModelInfo* model_info = prediction_model.mutable_model_info();
   model_info->set_version(1);
-  model_info->add_supported_model_features(
-      proto::CLIENT_MODEL_FEATURE_EFFECTIVE_CONNECTION_TYPE);
   model_info->set_optimization_target(
       proto::OPTIMIZATION_TARGET_PAINFUL_PAGE_LOAD);
-  model_info->add_supported_model_types(
-      proto::ModelType::MODEL_TYPE_DECISION_TREE);
+  model_info->add_supported_model_engine_versions(
+      proto::ModelEngineVersion::MODEL_ENGINE_VERSION_DECISION_TREE);
+  model_info->set_keep_beyond_valid_duration(false);
 
-  base::Time expected_expiry_time =
-      base::Time::Now() + features::StoredModelsInactiveDuration();
+  model_info->mutable_valid_duration()->set_seconds(3);
+
+  base::Time expected_expiry_time = base::Time::Now() + base::Seconds(3);
   std::unique_ptr<StoreUpdateData> prediction_model_update =
       StoreUpdateData::CreatePredictionModelStoreUpdateData(
           expected_expiry_time);
@@ -148,37 +145,12 @@ TEST(StoreUpdateDataTest, BuildPredictionModelUpdateData) {
       found_prediction_model_entry = true;
       EXPECT_EQ(expected_expiry_time.ToDeltaSinceWindowsEpoch().InSeconds(),
                 store_entry.expiry_time_secs());
+      EXPECT_EQ(store_entry.keep_beyond_valid_duration(),
+                model_info->keep_beyond_valid_duration());
       break;
     }
   }
   EXPECT_TRUE(found_prediction_model_entry);
-}
-
-TEST(StoreUpdateDataTest, BuildHostModelFeaturesUpdateData) {
-  // Verify creating a Prediction Model update data.
-  base::Time host_model_features_update_time = base::Time::Now();
-
-  proto::HostModelFeatures host_model_features;
-  host_model_features.set_host("foo.com");
-  proto::ModelFeature* model_feature = host_model_features.add_model_features();
-  model_feature->set_feature_name("host_feat1");
-  model_feature->set_double_value(2.0);
-
-  std::unique_ptr<StoreUpdateData> host_model_features_update =
-      StoreUpdateData::CreateHostModelFeaturesStoreUpdateData(
-          host_model_features_update_time,
-          host_model_features_update_time +
-              optimization_guide::features::
-                  StoredHostModelFeaturesFreshnessDuration());
-  host_model_features_update->CopyHostModelFeaturesIntoUpdateData(
-      std::move(host_model_features));
-  EXPECT_FALSE(host_model_features_update->component_version().has_value());
-  EXPECT_TRUE(host_model_features_update->update_time().has_value());
-  EXPECT_EQ(host_model_features_update_time,
-            *host_model_features_update->update_time());
-  // Verify there are 2 store entries, 1 for the metadata entry and 1 for the
-  // added host model features entry.
-  EXPECT_EQ(2ul, host_model_features_update->TakeUpdateEntries()->size());
 }
 
 }  // namespace

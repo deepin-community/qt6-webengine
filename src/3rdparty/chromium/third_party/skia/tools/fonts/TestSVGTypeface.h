@@ -15,6 +15,7 @@
 #include "include/core/SkRect.h"
 #include "include/core/SkRefCnt.h"
 #include "include/core/SkScalar.h"
+#include "include/core/SkSpan.h"
 #include "include/core/SkStream.h"
 #include "include/core/SkString.h"
 #include "include/core/SkTypeface.h"
@@ -23,7 +24,6 @@
 #include "include/private/SkMutex.h"
 #include "include/private/SkTArray.h"
 #include "include/private/SkTHash.h"
-#include "src/core/SkSpan.h"
 
 #include <memory>
 
@@ -39,6 +39,8 @@ class SkWStream;
 struct SkAdvancedTypefaceMetrics;
 struct SkScalerContextEffects;
 struct SkScalerContextRec;
+
+#ifdef SK_ENABLE_SVG
 
 struct SkSVGTestTypefaceGlyphData {
     const char* fSvgResourcePath;
@@ -106,6 +108,8 @@ protected:
     bool onGetPostScriptName(SkString*) const override;
     SkTypeface::LocalizedStrings* onCreateFamilyNameIterator() const override;
 
+    bool onGlyphMaskNeedsCurrentColor() const override { return false; }
+
     int onGetVariationDesignPosition(SkFontArguments::VariationPosition::Coordinate coordinates[],
                                      int coordinateCount) const override {
         return 0;
@@ -157,4 +161,6 @@ private:
     friend class SkTestSVGScalerContext;
 };
 
-#endif
+#endif // SK_ENABLE_SVG
+
+#endif // TestSVGTypeface_DEFINED

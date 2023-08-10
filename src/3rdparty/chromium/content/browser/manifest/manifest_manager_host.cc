@@ -8,19 +8,16 @@
 
 #include "base/bind.h"
 #include "content/browser/renderer_host/render_frame_host_impl.h"
-#include "content/browser/web_contents/web_contents_impl.h"
+#include "content/public/common/content_client.h"
 #include "services/service_manager/public/cpp/interface_provider.h"
 #include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
-#include "third_party/blink/public/common/manifest/manifest.h"
+#include "third_party/blink/public/mojom/manifest/manifest.mojom.h"
+#include "url/gurl.h"
 
 namespace content {
 
-ManifestManagerHost::ManifestManagerHost(RenderFrameHost* render_frame_host)
-    : manifest_manager_frame_(
-          static_cast<RenderFrameHostImpl*>(render_frame_host)) {
-  // Check that |manifest_manager_frame_| is a main frame.
-  DCHECK(!manifest_manager_frame_->GetParent());
-}
+ManifestManagerHost::ManifestManagerHost(Page& page)
+    : PageUserData<ManifestManagerHost>(page) {}
 
 ManifestManagerHost::~ManifestManagerHost() {
   DispatchPendingCallbacks();
@@ -31,11 +28,21 @@ void ManifestManagerHost::BindObserver(
         receiver) {
   manifest_url_change_observer_receiver_.Bind(std::move(receiver));
   manifest_url_change_observer_receiver_.SetFilter(
-      manifest_manager_frame_->CreateMessageFilterForAssociatedReceiver(
-          blink::mojom::ManifestUrlChangeObserver::Name_));
+      static_cast<RenderFrameHostImpl&>(page().GetMainDocument())
+          .CreateMessageFilterForAssociatedReceiver(
+              blink::mojom::ManifestUrlChangeObserver::Name_));
 }
 
 void ManifestManagerHost::GetManifest(GetManifestCallback callback) {
+  // Do not call into MaybeOverrideManifest in a non primary page since
+  // it checks the url from PreRedirectionURLObserver that works only in
+  // a primary page.
+  // TODO(crbug.com/1296125): Maybe cancel prerendering if it hits this.
+  if (!page().IsPrimary()) {
+    std::move(callback).Run(GURL(), blink::mojom::Manifest::New());
+    return;
+  }
+
   auto& manifest_manager = GetManifestManager();
   int request_id = callbacks_.Add(
       std::make_unique<GetManifestCallback>(std::move(callback)));
@@ -51,7 +58,7 @@ void ManifestManagerHost::RequestManifestDebugInfo(
 
 blink::mojom::ManifestManager& ManifestManagerHost::GetManifestManager() {
   if (!manifest_manager_) {
-    manifest_manager_frame_->GetRemoteInterfaces()->GetInterface(
+    page().GetMainDocument().GetRemoteInterfaces()->GetInterface(
         manifest_manager_.BindNewPipeAndPassReceiver());
     manifest_manager_.set_disconnect_handler(base::BindOnce(
         &ManifestManagerHost::OnConnectionError, base::Unretained(this)));
@@ -66,35 +73,29 @@ void ManifestManagerHost::DispatchPendingCallbacks() {
   }
   callbacks_.Clear();
   for (auto& callback : callbacks)
-    std::move(callback).Run(GURL(), blink::Manifest());
+    std::move(callback).Run(GURL(), blink::mojom::Manifest::New());
 }
 
 void ManifestManagerHost::OnConnectionError() {
   DispatchPendingCallbacks();
-  if (GetForCurrentDocument(manifest_manager_frame_)) {
-    DeleteForCurrentDocument(manifest_manager_frame_);
-  }
+  if (GetForPage(page()))
+    DeleteForPage(page());
 }
 
 void ManifestManagerHost::OnRequestManifestResponse(
     int request_id,
     const GURL& url,
-    const blink::Manifest& manifest) {
+    blink::mojom::ManifestPtr manifest) {
+  GetContentClient()->browser()->MaybeOverrideManifest(
+      &page().GetMainDocument(), manifest);
   auto callback = std::move(*callbacks_.Lookup(request_id));
   callbacks_.Remove(request_id);
-  std::move(callback).Run(url, manifest);
+  std::move(callback).Run(url, std::move(manifest));
 }
 
-void ManifestManagerHost::ManifestUrlChanged(
-    const base::Optional<GURL>& manifest_url) {
-  if (!manifest_manager_frame_->IsCurrent())
-    return;
-
-  WebContents* web_contents =
-      WebContents::FromRenderFrameHost(manifest_manager_frame_);
-  static_cast<WebContentsImpl*>(web_contents)
-      ->NotifyManifestUrlChanged(manifest_manager_frame_, manifest_url);
+void ManifestManagerHost::ManifestUrlChanged(const GURL& manifest_url) {
+  static_cast<PageImpl&>(page()).UpdateManifestUrl(manifest_url);
 }
 
-RENDER_DOCUMENT_HOST_USER_DATA_KEY_IMPL(ManifestManagerHost)
+PAGE_USER_DATA_KEY_IMPL(ManifestManagerHost);
 }  // namespace content

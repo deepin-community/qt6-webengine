@@ -5,6 +5,7 @@
 #include "media/capture/video/shared_memory_buffer_tracker.h"
 
 #include "base/check.h"
+#include "base/memory/raw_ptr.h"
 #include "base/notreached.h"
 #include "media/base/video_frame.h"
 #include "mojo/public/cpp/system/platform_handle.h"
@@ -28,7 +29,7 @@ class SharedMemoryBufferTrackerHandle : public media::VideoCaptureBufferHandle {
 
  private:
   const size_t mapped_size_;
-  uint8_t* data_;
+  raw_ptr<uint8_t> data_;
 };
 
 size_t CalculateRequiredBufferSize(
@@ -45,8 +46,10 @@ size_t CalculateRequiredBufferSize(
     }
     return result;
   } else {
-    return media::VideoCaptureFormat(dimensions, 0.0f, format)
-        .ImageAllocationSize();
+    const auto& frame_format =
+        media::VideoCaptureFormat(dimensions, 0.0f, format);
+    return media::VideoFrame::AllocationSize(frame_format.pixel_format,
+                                             frame_format.frame_size);
   }
 }
 

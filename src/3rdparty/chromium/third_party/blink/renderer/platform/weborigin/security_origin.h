@@ -33,7 +33,7 @@
 #include <memory>
 
 #include "base/gtest_prod_util.h"
-#include "base/macros.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
@@ -49,6 +49,7 @@ namespace blink {
 
 class KURL;
 struct SecurityOriginHash;
+class SecurityOriginTest;
 
 // An identifier which defines the source of content (e.g. a document) and
 // restricts what other objects it is permitted to access (based on their
@@ -107,6 +108,9 @@ class PLATFORM_EXPORT SecurityOrigin : public RefCounted<SecurityOrigin> {
   url::Origin ToUrlOrigin() const;
   bool IsBroken() const;
 
+  SecurityOrigin(const SecurityOrigin&) = delete;
+  SecurityOrigin& operator=(const SecurityOrigin&) = delete;
+
   // Some URL schemes use nested URLs for their security context. For example,
   // filesystem URLs look like the following:
   //
@@ -143,15 +147,6 @@ class PLATFORM_EXPORT SecurityOrigin : public RefCounted<SecurityOrigin> {
   // scheme (e.g. "http" => 80).
   uint16_t Port() const { return port_; }
 
-  // Returns true if a given URL is secure, based either directly on its
-  // own protocol, or, when relevant, on the protocol of its "inner URL"
-  // Protocols like blob: and filesystem: fall into this latter category.
-  // This method is a stricter alternative to "potentially trustworthy url":
-  // https://w3c.github.io/webappsec-secure-contexts/#potentially-trustworthy-url
-  // TODO(crbug.com/1153336): Deprecated, to be removed. Please use
-  // network::IsUrlPotentiallyTrustworthy() instead.
-  static bool IsSecure(const KURL&);
-
   // Returns true if this SecurityOrigin can script objects in the given
   // SecurityOrigin. This check is similar to `IsSameOriginDomainWith()`, but
   // additionally takes "universal access" flag into account, as well as the
@@ -169,7 +164,14 @@ class PLATFORM_EXPORT SecurityOrigin : public RefCounted<SecurityOrigin> {
     AccessResultDomainDetail unused_detail;
     return CanAccess(other, unused_detail);
   }
+  bool CanAccess(const scoped_refptr<SecurityOrigin>& other) const {
+    return CanAccess(other.get());
+  }
   bool CanAccess(const SecurityOrigin* other, AccessResultDomainDetail&) const;
+  bool CanAccess(const scoped_refptr<SecurityOrigin>& other,
+                 AccessResultDomainDetail& detail) const {
+    return CanAccess(other.get(), detail);
+  }
 
   // Returns true if this SecurityOrigin can read content retrieved from
   // the given URL.
@@ -243,6 +245,7 @@ class PLATFORM_EXPORT SecurityOrigin : public RefCounted<SecurityOrigin> {
   bool CanAccessLocks() const { return !IsOpaque(); }
   bool CanAccessSessionStorage() const { return !IsOpaque(); }
   bool CanAccessStorageFoundation() const { return !IsOpaque(); }
+  bool CanAccessStorageBuckets() const { return !IsOpaque(); }
 
   // The local SecurityOrigin is the most privileged SecurityOrigin.
   // The local SecurityOrigin can script any document, navigate to local
@@ -326,6 +329,18 @@ class PLATFORM_EXPORT SecurityOrigin : public RefCounted<SecurityOrigin> {
   bool IsSameOriginDomainWith(const SecurityOrigin*,
                               AccessResultDomainDetail&) const;
 
+  // This method implements HTML's "same site" check, which is true if the two
+  // origins are schemelessly same site, and either are both opaque or are both
+  // tuple origins with the same scheme.
+  //
+  // Note: Use of "same site" should be avoided when possible, in favor of "same
+  // origin" checks. A "same origin" check is generally more appropriate for
+  // security decisions, as registrable domains cannot be relied upon to provide
+  // a hard security boundary.
+  //
+  // https://html.spec.whatwg.org/#same-site
+  bool IsSameSiteWith(const SecurityOrigin* other) const;
+
   static const KURL& UrlWithUniqueOpaqueOrigin();
 
   // Transfer origin privileges from another security origin.
@@ -374,8 +389,10 @@ class PLATFORM_EXPORT SecurityOrigin : public RefCounted<SecurityOrigin> {
   bool SerializesAsNull() const;
 
  private:
-  friend struct mojo::UrlOriginAdapter;
-  friend struct blink::SecurityOriginHash;
+  // Various serialisation and test routines that need direct nonce access.
+  friend mojo::UrlOriginAdapter;
+  friend SecurityOriginHash;
+  friend SecurityOriginTest;
 
   // For calling GetNonceForSerialization().
   friend class BlobURLOpaqueOriginNonceMap;
@@ -389,6 +406,14 @@ class PLATFORM_EXPORT SecurityOrigin : public RefCounted<SecurityOrigin> {
   // Create an opaque SecurityOrigin.
   SecurityOrigin(const url::Origin::Nonce& nonce,
                  const SecurityOrigin* precursor_origin);
+
+  // Creates an opaque SecurityOrigin with a new unique nonce. Similar to the
+  // above, but preferred when there is no pre-existing nonce to copy, as
+  // copying a nonce requires forcing eager initialisation of that nonce.
+  enum class NewUniqueOpaque {
+    kWithLazyInitNonce,
+  };
+  SecurityOrigin(NewUniqueOpaque, const SecurityOrigin* precursor_origin);
 
   // Create a tuple SecurityOrigin, with parameters via KURL
   explicit SecurityOrigin(const KURL& url);
@@ -412,13 +437,13 @@ class PLATFORM_EXPORT SecurityOrigin : public RefCounted<SecurityOrigin> {
   // Get the nonce associated with this origin, if it is opaque. This should be
   // used only when trying to send an Origin across an IPC pipe or comparing
   // blob URL's opaque origins in the thread-safe way.
-  base::Optional<base::UnguessableToken> GetNonceForSerialization() const;
+  const base::UnguessableToken* GetNonceForSerialization() const;
 
   const String protocol_ = g_empty_string;
   const String host_ = g_empty_string;
   String domain_ = g_empty_string;
   uint16_t port_ = 0;
-  const base::Optional<url::Origin::Nonce> nonce_if_opaque_;
+  const absl::optional<url::Origin::Nonce> nonce_if_opaque_;
   bool universal_access_ = false;
   bool domain_was_set_in_dom_ = false;
   bool can_load_local_resources_ = false;
@@ -435,8 +460,6 @@ class PLATFORM_EXPORT SecurityOrigin : public RefCounted<SecurityOrigin> {
   const scoped_refptr<const SecurityOrigin> precursor_origin_;
 
   KURL full_url_;
-
-  DISALLOW_COPY_AND_ASSIGN(SecurityOrigin);
 };
 
 }  // namespace blink

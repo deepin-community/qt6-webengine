@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.Coverage = void 0;
+exports.CSSCoverage = exports.JSCoverage = exports.Coverage = void 0;
 const assert_js_1 = require("./assert.js");
 const helper_js_1 = require("./helper.js");
 const ExecutionContext_js_1 = require("./ExecutionContext.js");
@@ -61,8 +61,8 @@ class Coverage {
         this._cssCoverage = new CSSCoverage(client);
     }
     /**
-     * @param options - defaults to
-     * `{ resetOnNavigation : true, reportAnonymousScripts : false }`
+     * @param options - Set of configurable options for coverage defaults to
+     * `resetOnNavigation : true, reportAnonymousScripts : false`
      * @returns Promise that resolves when coverage is started.
      *
      * @remarks
@@ -86,7 +86,8 @@ class Coverage {
         return await this._jsCoverage.stop();
     }
     /**
-     * @param options - defaults to `{ resetOnNavigation : true }`
+     * @param options - Set of configurable options for coverage, defaults to
+     * `resetOnNavigation : true`
      * @returns Promise that resolves when coverage is started.
      */
     async startCSSCoverage(options = {}) {
@@ -104,6 +105,9 @@ class Coverage {
     }
 }
 exports.Coverage = Coverage;
+/**
+ * @public
+ */
 class JSCoverage {
     constructor(client) {
         this._enabled = false;
@@ -112,13 +116,15 @@ class JSCoverage {
         this._eventListeners = [];
         this._resetOnNavigation = false;
         this._reportAnonymousScripts = false;
+        this._includeRawScriptCoverage = false;
         this._client = client;
     }
     async start(options = {}) {
-        assert_js_1.assert(!this._enabled, 'JSCoverage is already enabled');
-        const { resetOnNavigation = true, reportAnonymousScripts = false, } = options;
+        (0, assert_js_1.assert)(!this._enabled, 'JSCoverage is already enabled');
+        const { resetOnNavigation = true, reportAnonymousScripts = false, includeRawScriptCoverage = false, } = options;
         this._resetOnNavigation = resetOnNavigation;
         this._reportAnonymousScripts = reportAnonymousScripts;
+        this._includeRawScriptCoverage = includeRawScriptCoverage;
         this._enabled = true;
         this._scriptURLs.clear();
         this._scriptSources.clear();
@@ -129,7 +135,7 @@ class JSCoverage {
         await Promise.all([
             this._client.send('Profiler.enable'),
             this._client.send('Profiler.startPreciseCoverage', {
-                callCount: false,
+                callCount: this._includeRawScriptCoverage,
                 detailed: true,
             }),
             this._client.send('Debugger.enable'),
@@ -158,11 +164,11 @@ class JSCoverage {
         }
         catch (error) {
             // This might happen if the page has already navigated away.
-            helper_js_1.debugError(error);
+            (0, helper_js_1.debugError)(error);
         }
     }
     async stop() {
-        assert_js_1.assert(this._enabled, 'JSCoverage is not enabled');
+        (0, assert_js_1.assert)(this._enabled, 'JSCoverage is not enabled');
         this._enabled = false;
         const result = await Promise.all([
             this._client.send('Profiler.takePreciseCoverage'),
@@ -184,11 +190,20 @@ class JSCoverage {
             for (const func of entry.functions)
                 flattenRanges.push(...func.ranges);
             const ranges = convertToDisjointRanges(flattenRanges);
-            coverage.push({ url, ranges, text });
+            if (!this._includeRawScriptCoverage) {
+                coverage.push({ url, ranges, text });
+            }
+            else {
+                coverage.push({ url, ranges, text, rawScriptCoverage: entry });
+            }
         }
         return coverage;
     }
 }
+exports.JSCoverage = JSCoverage;
+/**
+ * @public
+ */
 class CSSCoverage {
     constructor(client) {
         this._enabled = false;
@@ -200,7 +215,7 @@ class CSSCoverage {
         this._client = client;
     }
     async start(options = {}) {
-        assert_js_1.assert(!this._enabled, 'CSSCoverage is already enabled');
+        (0, assert_js_1.assert)(!this._enabled, 'CSSCoverage is already enabled');
         const { resetOnNavigation = true } = options;
         this._resetOnNavigation = resetOnNavigation;
         this._enabled = true;
@@ -236,11 +251,11 @@ class CSSCoverage {
         }
         catch (error) {
             // This might happen if the page has already navigated away.
-            helper_js_1.debugError(error);
+            (0, helper_js_1.debugError)(error);
         }
     }
     async stop() {
-        assert_js_1.assert(this._enabled, 'CSSCoverage is not enabled');
+        (0, assert_js_1.assert)(this._enabled, 'CSSCoverage is not enabled');
         this._enabled = false;
         const ruleTrackingResponse = await this._client.send('CSS.stopRuleUsageTracking');
         await Promise.all([
@@ -272,6 +287,7 @@ class CSSCoverage {
         return coverage;
     }
 }
+exports.CSSCoverage = CSSCoverage;
 function convertToDisjointRanges(nestedRanges) {
     const points = [];
     for (const range of nestedRanges) {

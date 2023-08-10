@@ -7,9 +7,10 @@
 #include "base/bind.h"
 #include "base/check_op.h"
 #include "base/notreached.h"
-#include "base/single_thread_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "media/base/channel_layout.h"
 #include "media/base/demuxer_stream.h"
+#include "media/base/sample_format.h"
 #include "media/filters/decrypting_demuxer_stream.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
@@ -50,11 +51,18 @@ class NullDemuxerStream : public media::DemuxerStream {
     return true;
   }
 
+  void set_low_delay(bool low_delay) { low_delay_ = low_delay; }
+  media::StreamLiveness liveness() const override {
+    return low_delay_ ? media::StreamLiveness::kLive
+                      : media::StreamLiveness::kUnknown;
+  }
+
  private:
   static const media::DemuxerStream::Type stream_type = StreamType;
 
   media::AudioDecoderConfig audio_decoder_config_;
   media::VideoDecoderConfig video_decoder_config_;
+  bool low_delay_ = false;
 };
 
 template <>
@@ -90,9 +98,11 @@ DecoderSelector<StreamType>::~DecoderSelector() = default;
 template <media::DemuxerStream::Type StreamType>
 void DecoderSelector<StreamType>::SelectDecoder(
     const DecoderConfig& config,
+    bool low_delay,
     SelectDecoderCB select_decoder_cb) {
   // |impl_| will internally use this the |config| from our NullDemuxerStream.
   demuxer_stream_->Configure(config);
+  demuxer_stream_->set_low_delay(low_delay);
 
   // media::DecoderSelector will call back with a null decoder if selection is
   // in progress when it is destructed.
@@ -107,7 +117,8 @@ std::unique_ptr<WebCodecsAudioDecoderSelector::StreamTraits>
 DecoderSelector<media::DemuxerStream::AUDIO>::CreateStreamTraits() {
   // TODO(chcunningham): Consider plumbing real hw channel layout.
   return std::make_unique<DecoderSelector::StreamTraits>(
-      &null_media_log_, media::CHANNEL_LAYOUT_NONE);
+      &null_media_log_, media::CHANNEL_LAYOUT_NONE,
+      media::kUnknownSampleFormat);
 }
 
 template <>

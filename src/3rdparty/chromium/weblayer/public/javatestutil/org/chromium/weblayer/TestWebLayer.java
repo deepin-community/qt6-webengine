@@ -181,4 +181,40 @@ public final class TestWebLayer {
         mITestWebLayer.addContentCaptureConsumer(
                 browser.getIBrowser(), ObjectWrapper.wrap(runnable), ObjectWrapper.wrap(callbacks));
     }
+
+    public void notifyOfAutofillEvents(Browser browser, Runnable onNewEvent,
+            ArrayList<Integer> eventsObserved) throws RemoteException {
+        mITestWebLayer.notifyOfAutofillEvents(browser.getIBrowser(), ObjectWrapper.wrap(onNewEvent),
+                ObjectWrapper.wrap(eventsObserved));
+    }
+
+    public void activateBackgroundFetchNotification(int id) throws RemoteException {
+        mITestWebLayer.activateBackgroundFetchNotification(id);
+    }
+
+    public void expediteDownloadService() throws RemoteException {
+        mITestWebLayer.expediteDownloadService();
+    }
+
+    public void setMockWebAuthnEnabled(boolean enabled) throws RemoteException {
+        mITestWebLayer.setMockWebAuthnEnabled(enabled);
+    }
+
+    public void fireOnAccessTokenIdentifiedAsInvalid(
+            Profile profile, Set<String> scopes, String token) throws RemoteException {
+        mITestWebLayer.fireOnAccessTokenIdentifiedAsInvalid(
+                profile.getIProfile(), ObjectWrapper.wrap(scopes), ObjectWrapper.wrap(token));
+    }
+
+    public void grantLocationPermission(String url) throws RemoteException {
+        mITestWebLayer.grantLocationPermission(url);
+    }
+
+    public void setTextScaling(Profile profile, float value) throws RemoteException {
+        mITestWebLayer.setTextScaling(profile.getIProfile(), value);
+    }
+
+    public boolean getForceEnableZoom(Profile profile) throws RemoteException {
+        return mITestWebLayer.getForceEnableZoom(profile.getIProfile());
+    }
 }

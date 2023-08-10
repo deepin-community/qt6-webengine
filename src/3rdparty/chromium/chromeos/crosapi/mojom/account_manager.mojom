@@ -2,7 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// Next MinVersion: 10
+
 module crosapi.mojom;
+
+import "mojo/public/mojom/base/time.mojom";
 
 // Types of accounts which can be stored in Account Manager.
 // This must be kept in sync with
@@ -76,10 +80,17 @@ struct GoogleServiceAuthError {
   InvalidGaiaCredentialsReason invalid_gaia_credentials_reason@3;
 };
 
+// See components/account_manager_core/account_addition_options.h
+[Stable]
+struct AccountAdditionOptions {
+  bool is_available_in_arc@0;
+  bool show_arc_availability_picker@1;
+};
+
 [Stable]
 struct AccountAdditionResult {
   // The result of account addition request.
-  // Next value: 5.
+  // Next value: 6.
   [Stable, Extensible]
   enum Status {
     kSuccess = 0,
@@ -87,6 +98,7 @@ struct AccountAdditionResult {
     kCancelledByUser = 2,
     kNetworkError = 3,
     kUnexpectedResponse = 4,
+    [MinVersion = 9] kBlockedByPolicy = 5,
   };
 
   Status status@0;
@@ -94,6 +106,27 @@ struct AccountAdditionResult {
   Account? account@1;
   // The error is set only if `status` is set to `kNetworkError`.
   GoogleServiceAuthError? error@2;
+};
+
+// Next ordinal value: 3
+[Stable]
+struct AccessTokenInfo {
+  // OAuth2 access token.
+  string access_token@0;
+
+  // Expiration time of `access_token`. This value has a built-in safety margin
+  // so it can be used as-is.
+  mojo_base.mojom.Time expiration_time@1;
+
+  // Contains extra information regarding the user's currently registered
+  // services.
+  string id_token@2;
+};
+
+[Stable]
+union AccessTokenResult {
+  AccessTokenInfo access_token_info;
+  GoogleServiceAuthError error;
 };
 
 // Interface for observers of Chrome OS Account Manager.
@@ -125,8 +158,8 @@ interface AccountManagerObserver {
 // ARC++ uses components/arc/mojom/auth.mojom to talk to the Chrome OS Account
 // Manager.
 //
-// Next version: 5
-// Next method id: 6
+// Next version: 9
+// Next method id: 9
 [Stable, Uuid="85b9a674-9d8e-497f-98d5-22c8dca6f2b8"]
 interface AccountManager {
   // Returns |true| if Chrome OS Account Manager has been fully initialized, and
@@ -151,7 +184,9 @@ interface AccountManager {
   // Launches account addition dialog and returns `result` with the added
   // account.
   [MinVersion = 3]
-  ShowAddAccountDialog@3() => (AccountAdditionResult result);
+  ShowAddAccountDialog@3(
+    [MinVersion=8] AccountAdditionOptions? add_account_options) =>
+    (AccountAdditionResult result);
 
   // Launches account reauthentication dialog for provided `email`.
   [MinVersion = 3]
@@ -160,4 +195,35 @@ interface AccountManager {
   // Launches OS Settings > Accounts.
   [MinVersion = 4]
   ShowManageAccountsSettings@5();
+
+  // Returns a persistent error state for `account`. If `account` doesn't have
+  // a persistent error or AccountManager doesn't have such an account -
+  // `GoogleServiceAuthError` with `kNone` state will be returned.
+  [MinVersion = 5]
+  GetPersistentErrorForAccount@6(AccountKey account) =>
+      (GoogleServiceAuthError error);
+
+  // Returns a remote to an interface to fetch an access token for
+  // `account_key`, to be used by `oauth_consumer_name` OAuth2 client.
+  // `account_key` must be a Gaia account. If `account_key` is invalid or not
+  // known to Chrome OS Account Manager, fetching an access token via
+  // `AccessTokenFetcher` will result in an error (`kUserNotSignedUp`). If the
+  // account's refresh token is no longer valid, it will result in
+  // `kInvalidGaiaCredentials` error. See `GoogleServiceAuthError` for all error
+  // types.
+  [MinVersion = 6]
+  CreateAccessTokenFetcher@7(AccountKey account_key,
+      string oauth_consumer_name) =>
+          (pending_remote<AccessTokenFetcher> access_token_fetcher);
+};
+
+// Interface for fetching OAuth2 access tokens.
+[Stable, Uuid="71476f25-fb77-414f-848e-3e5368a9ee35"]
+interface AccessTokenFetcher {
+  // Starts the request for fetching an access token with the provided `scopes`.
+  // If `scopes` is empty, `access_token` will have the same scope as the
+  // underlying refresh token - login scope.
+  // Don't call this method multiple times - create a new `AccessTokenFetcher`
+  // instead.
+  Start@0(array<string> scopes) => (AccessTokenResult result);
 };

@@ -10,11 +10,11 @@ namespace blink {
 namespace scheduler {
 
 TEST(WebSchedulerTrackedFeatureTest, StringToFeature) {
-  ASSERT_EQ(WebSchedulerTrackedFeature::kWebFileSystem,
-            StringToFeature("WebFileSystem"));
+  ASSERT_EQ(WebSchedulerTrackedFeature::kWebSocket,
+            StringToFeature("WebSocket"));
   ASSERT_EQ(WebSchedulerTrackedFeature::kDocumentLoaded,
             StringToFeature("DocumentLoaded"));
-  ASSERT_EQ(base::nullopt, StringToFeature("FeatureThatNeverExists"));
+  ASSERT_EQ(absl::nullopt, StringToFeature("FeatureThatNeverExists"));
 }
 
 }  // namespace scheduler

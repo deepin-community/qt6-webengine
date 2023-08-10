@@ -5,42 +5,52 @@
 #include "third_party/blink/renderer/modules/permissions/permission_status.h"
 
 #include "mojo/public/cpp/bindings/remote.h"
+#include "third_party/blink/public/mojom/frame/lifecycle.mojom-shared.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
 #include "third_party/blink/renderer/modules/event_target_modules_names.h"
 #include "third_party/blink/renderer/modules/permissions/permission_utils.h"
+#include "third_party/blink/renderer/modules/permissions/permissions.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 
 namespace blink {
 
 // static
-PermissionStatus* PermissionStatus::Take(ScriptPromiseResolver* resolver,
-                                         MojoPermissionStatus status,
-                                         MojoPermissionDescriptor descriptor) {
-  return PermissionStatus::CreateAndListen(resolver->GetExecutionContext(),
+PermissionStatus* PermissionStatus::Take(
+    Permissions& associated_permissions_object,
+    ScriptPromiseResolver* resolver,
+    MojoPermissionStatus status,
+    MojoPermissionDescriptor descriptor) {
+  return PermissionStatus::CreateAndListen(associated_permissions_object,
+                                           resolver->GetExecutionContext(),
                                            status, std::move(descriptor));
 }
 
 PermissionStatus* PermissionStatus::CreateAndListen(
+    Permissions& associated_permissions_object,
     ExecutionContext* execution_context,
     MojoPermissionStatus status,
     MojoPermissionDescriptor descriptor) {
   PermissionStatus* permission_status = MakeGarbageCollected<PermissionStatus>(
-      execution_context, status, std::move(descriptor));
+      associated_permissions_object, execution_context, status,
+      std::move(descriptor));
   permission_status->UpdateStateIfNeeded();
   permission_status->StartListening();
   return permission_status;
 }
 
-PermissionStatus::PermissionStatus(ExecutionContext* execution_context,
+PermissionStatus::PermissionStatus(Permissions& associated_permissions_object,
+                                   ExecutionContext* execution_context,
                                    MojoPermissionStatus status,
                                    MojoPermissionDescriptor descriptor)
     : ExecutionContextLifecycleStateObserver(execution_context),
       status_(status),
       descriptor_(std::move(descriptor)),
-      receiver_(this, execution_context) {}
+      receiver_(this, execution_context) {
+  associated_permissions_object.PermissionStatusObjectCreated();
+}
 
 PermissionStatus::~PermissionStatus() = default;
 
@@ -66,6 +76,10 @@ void PermissionStatus::ContextLifecycleStateChanged(
 
 String PermissionStatus::state() const {
   return PermissionStatusToString(status_);
+}
+
+String PermissionStatus::name() const {
+  return PermissionNameToString(descriptor_->name);
 }
 
 void PermissionStatus::StartListening() {

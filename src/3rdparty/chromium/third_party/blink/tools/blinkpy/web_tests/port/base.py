@@ -36,10 +36,13 @@ import collections
 import json
 import logging
 import optparse
+import os
 import re
 import sys
 import tempfile
+from collections import defaultdict
 
+import six
 from six.moves import zip_longest
 
 from blinkpy.common import exit_codes
@@ -60,6 +63,8 @@ from blinkpy.web_tests.port.factory import PortFactory
 from blinkpy.web_tests.servers import apache_http
 from blinkpy.web_tests.servers import pywebsocket
 from blinkpy.web_tests.servers import wptserve
+from blinkpy.web_tests.skia_gold import blink_skia_gold_properties as sgp
+from blinkpy.web_tests.skia_gold import blink_skia_gold_session_manager as sgsm
 
 _log = logging.getLogger(__name__)
 
@@ -132,23 +137,30 @@ class Port(object):
 
     CONTENT_SHELL_NAME = 'content_shell'
 
+    # Update the first line in third_party/blink/web_tests/TestExpectations and
+    # the documentation in docs/testing/web_test_expectations.md when this list
+    # changes.
     ALL_SYSTEMS = (
         ('mac10.12', 'x86'),
         ('mac10.13', 'x86'),
         ('mac10.14', 'x86'),
         ('mac10.15', 'x86'),
-        ('mac11.0', 'x86'),
-        ('mac-arm11.0', 'arm64'),
+        ('mac11', 'x86'),
+        ('mac11-arm64', 'arm64'),
+        ('mac12', 'x86_64'),
+        ('mac12-arm64', 'arm64'),
         ('win7', 'x86'),
-        ('win10', 'x86'),
+        ('win10.20h2', 'x86'),
         ('trusty', 'x86_64'),
         ('fuchsia', 'x86_64'),
     )
 
     CONFIGURATION_SPECIFIER_MACROS = {
-        'mac': ['mac10.12', 'mac10.13', 'mac10.14', 'mac10.15', 'mac11.0',
-                'mac-arm11.0'],
-        'win': ['win7', 'win10'],
+        'mac': [
+            'mac10.12', 'mac10.13', 'mac10.14', 'mac10.15', 'mac11',
+            'mac11-arm64', 'mac12', 'mac12-arm64'
+        ],
+        'win': ['win7', 'win10.20h2'],
         'linux': ['trusty'],
         'fuchsia': ['fuchsia'],
     }
@@ -244,9 +256,21 @@ class Port(object):
                                     self.default_configuration())
         if not hasattr(options, 'target') or not options.target:
             self.set_option_default('target', self._options.configuration)
+        if not hasattr(options, 'no_virtual_tests'):
+            self.set_option_default('no_virtual_tests', False)
         self._test_configuration = None
         self._results_directory = None
         self._virtual_test_suites = None
+        self._used_expectation_files = None
+
+        self._skia_gold_temp_dir = None
+        self._skia_gold_session_manager = None
+        self._skia_gold_properties = None
+
+    def __del__(self):
+        if self._skia_gold_temp_dir:
+            self._filesystem.rmtree(self._skia_gold_temp_dir,
+                                    ignore_errors=True)
 
     def __str__(self):
         return 'Port{name=%s, version=%s, architecture=%s, test_configuration=%s}' % (
@@ -262,7 +286,7 @@ class Port(object):
         ])
 
     @memoized
-    def _flag_specific_config_name(self):
+    def flag_specific_config_name(self):
         """Returns the name of the flag-specific configuration which best matches
            self._specified_additional_driver_flags(), or the first specified flag
            with leading '-'s stripped if no match in the configuration is found.
@@ -313,7 +337,7 @@ class Port(object):
             if name in configs:
                 raise ValueError('{} contains duplicated name {}.'.format(
                     config_file, name))
-            if args in configs.itervalues():
+            if args in configs.values():
                 raise ValueError(
                     '{}: name "{}" has the same args as another entry.'.format(
                         config_file, name))
@@ -350,6 +374,8 @@ class Port(object):
                 '--run-web-tests',
                 '--ignore-certificate-errors-spki-list=' + WPT_FINGERPRINT +
                 ',' + SXG_FINGERPRINT + ',' + SXG_WPT_FINGERPRINT,
+                # Required for WebTransport tests.
+                '--origin-to-force-quic-on=web-platform.test:11000',
                 '--user-data-dir'
             ]
             if self.get_option('nocheck_sys_deps', False):
@@ -360,8 +386,10 @@ class Port(object):
         # increases test run time by 2-5X, but provides more consistent results
         # [less state leaks between tests].
         if (self.get_option('reset_shell_between_tests')
-                or self.get_option('repeat_each') > 1
-                or self.get_option('iterations') > 1):
+                or (self.get_option('repeat_each')
+                    and self.get_option('repeat_each') > 1)
+                or (self.get_option('iterations')
+                    and self.get_option('iterations') > 1)):
             flags += ['--reset-shell-between-tests']
         return flags
 
@@ -384,6 +412,31 @@ class Port(object):
             return 2 * timeout_ms
         return timeout_ms
 
+    def skia_gold_temp_dir(self):
+        return self._skia_gold_temp_dir
+
+    def skia_gold_properties(self):
+        if not self._skia_gold_properties:
+            self._skia_gold_properties = sgp.BlinkSkiaGoldProperties(
+                self._options)
+        return self._skia_gold_properties
+
+    def skia_gold_session_manager(self):
+        if not self._skia_gold_session_manager:
+            self._skia_gold_temp_dir = self._filesystem.mkdtemp()
+            self._skia_gold_session_manager = sgsm.BlinkSkiaGoldSessionManager(
+                str(self._skia_gold_temp_dir), self.skia_gold_properties())
+        return self._skia_gold_session_manager
+
+    def skia_gold_json_keys(self):
+        return {
+            'configuration': self._options.configuration.lower(),
+            'version': self._version,
+            'port': self.port_name,
+            'architecture': self._architecture,
+            'ignore': '1',
+        }
+
     @memoized
     def _build_has_dcheck_always_on(self):
         args_gn_file = self._build_path('args.gn')
@@ -399,7 +452,7 @@ class Port(object):
         """Returns the amount of time in seconds to wait before killing the process in driver.stop()."""
         # We want to wait for at least 3 seconds, but if we are really slow, we
         # want to be slow on cleanup as well (for things like ASAN, Valgrind, etc.)
-        return (3.0 * float(self.get_option('time_out_ms', '0')) /
+        return (3.0 * float(self.get_option('timeout_ms', '0')) /
                 self._default_timeout_ms())
 
     def default_batch_size(self):
@@ -418,7 +471,7 @@ class Port(object):
 
     def default_max_locked_shards(self):
         """Returns the number of "locked" shards to run in parallel (like the http tests)."""
-        max_locked_shards = int(self.default_child_processes()) / 4
+        max_locked_shards = int(self.default_child_processes()) // 4
         if not max_locked_shards:
             return 1
         return max_locked_shards
@@ -437,7 +490,8 @@ class Port(object):
     def baseline_search_path(self):
         return (self.get_option('additional_platform_directory', []) +
                 self._flag_specific_baseline_search_path() +
-                self._compare_baseline() + self.default_baseline_search_path())
+                self._compare_baseline() +
+                list(self.default_baseline_search_path()))
 
     def default_baseline_search_path(self):
         """Returns a list of absolute paths to directories to search under for baselines.
@@ -523,6 +577,7 @@ class Port(object):
                     return False
                 return True
             except OSError as e:
+                _log.error('while trying to run: ' + httpd_path)
                 _log.error('httpd launch error: ' + repr(e))
         _log.error('No httpd found. Cannot run http tests.')
         return False
@@ -843,7 +898,23 @@ class Port(object):
         if not self._filesystem.exists(baseline_path):
             return None
         text = self._filesystem.read_binary_file(baseline_path)
-        return text.replace('\r\n', '\n')
+        return text.replace(b'\r\n', b'\n')
+
+    def expected_subtest_failure(self, test_name):
+        baseline = self.expected_text(test_name)
+        if baseline:
+            baseline = baseline.decode('utf8', 'replace')
+            if re.search(r"^(FAIL|NOTRUN|TIMEOUT)", baseline, re.MULTILINE):
+                return True
+        return False
+
+    def expected_harness_error(self, test_name):
+        baseline = self.expected_text(test_name)
+        if baseline:
+            baseline = baseline.decode('utf8', 'replace')
+            if re.search(r"^Harness Error\.", baseline, re.MULTILINE):
+                return True
+        return False
 
     def reference_files(self, test_name):
         """Returns a list of expectation (== or !=) and filename pairs"""
@@ -888,21 +959,42 @@ class Port(object):
         tests = self.real_tests(paths)
 
         if paths:
-            tests.extend(self._virtual_tests_matching_paths(paths))
+            if not self._options.no_virtual_tests:
+                tests.extend(self._virtual_tests_matching_paths(paths))
             if (any(wpt_path in path for wpt_path in self.WPT_DIRS
                     for path in paths)
                     # TODO(robertma): Remove this special case when external/wpt is moved to wpt.
                     or any('external' in path for path in paths)):
                 tests.extend(self._wpt_test_urls_matching_paths(paths))
         else:
-            tests.extend(self._all_virtual_tests())
             # '/' is used instead of filesystem.sep as the WPT manifest always
             # uses '/' for paths (it is not OS dependent).
-            tests.extend([
+            wpt_tests = [
                 wpt_path + '/' + test for wpt_path in self.WPT_DIRS
                 for test in self.wpt_manifest(wpt_path).all_urls()
-            ])
+            ]
+            tests_by_dir = defaultdict(list)
+            for test in tests + wpt_tests:
+                dirname = os.path.dirname(test) + '/'
+                tests_by_dir[dirname].append(test)
+
+            if not self._options.no_virtual_tests:
+                tests.extend(self._all_virtual_tests(tests_by_dir))
+            tests.extend(wpt_tests)
         return tests
+
+    def real_tests_from_dict(self, paths, tests_by_dir):
+        """Find all real tests in paths, using results saved in dict."""
+        files = []
+        for path in paths:
+            if self._has_supported_extension_for_all(path):
+                files.append(path)
+                continue
+            path = path + '/' if path[-1] != '/' else path
+            for key, value in tests_by_dir.items():
+                if key.startswith(path):
+                    files.extend(value)
+        return files
 
     def real_tests(self, paths):
         """Find all real tests in paths except WPT."""
@@ -946,6 +1038,14 @@ class Port(object):
         '.pdf',
     ])
 
+    def _has_supported_extension_for_all(self, filename):
+        extension = self._filesystem.splitext(filename)[1]
+        if 'inspector-protocol' in filename and extension == '.js':
+            return True
+        if 'devtools' in filename and extension == '.js':
+            return True
+        return extension in self.supported_file_extensions
+
     def _has_supported_extension(self, filename):
         """Returns True if filename is one of the file extensions we want to run a test on."""
         extension = self._filesystem.splitext(filename)[1]
@@ -977,7 +1077,7 @@ class Port(object):
         manifest_path = self._filesystem.join(self.web_tests_dir(), path,
                                               MANIFEST_NAME)
         if not self._filesystem.exists(manifest_path) or self.get_option(
-                'manifest_update', True):
+                'manifest_update', False):
             _log.debug('Generating MANIFEST.json for %s...', path)
             WPTManifest.ensure_manifest(self, path)
         return WPTManifest(self.host, manifest_path)
@@ -1159,11 +1259,13 @@ class Port(object):
         """Checks whether the given test is skipped for this port.
 
         Returns True if the test is skipped because the port runs smoke tests
-        only or because the test is marked as Skip in NeverFixTest (otherwise
+        only or because the test is marked as Skip in NeverFixTest or because
+        it is a virtual test not intended to run on this platform (otherwise
         the test is only marked as Skip indicating a temporary skip).
         """
         return self.skipped_due_to_smoke_tests(
-            test) or self.skipped_in_never_fix_tests(test)
+            test) or self.skipped_in_never_fix_tests(
+            test) or self.virtual_test_skipped_due_to_platform_config(test)
 
     @memoized
     def _tests_from_file(self, filename):
@@ -1215,6 +1317,17 @@ class Port(object):
     def path_to_never_fix_tests_file(self):
         return self._filesystem.join(self.web_tests_dir(), 'NeverFixTests')
 
+    def virtual_test_skipped_due_to_platform_config(self, test):
+        """Checks if the virtual test is skipped based on the platform config.
+
+        Returns True if the virtual test is not intend to run on this port, due
+        to the platform config in VirtualTestSuites; returns False otherwise.
+        """
+        suite = self._lookup_virtual_suite(test)
+        if suite is not None:
+            return self.operating_system() not in suite.platforms
+        return False
+
     def name(self):
         """Returns a name that uniquely identifies this particular type of port.
 
@@ -1243,11 +1356,16 @@ class Port(object):
 
         This exists because Windows has inconsistent behavior between the bots
         and local developer machines, such that determining which python3 name
-        to use is non-trivial. See https://crbug.com/155616.
+        to use is non-trivial. See https://crbug.com/1155616.
 
         Once blinkpy runs under python3, this can be removed in favour of
         callers using sys.executable.
         """
+        if six.PY3:
+            # Prefer sys.executable when the current script runs under python3.
+            # The current script might be running with vpython3 and in that case
+            # using the same executable will share the same virtualenv.
+            return sys.executable
         return 'python3'
 
     def get_option(self, name, default_value=None):
@@ -1332,7 +1450,8 @@ class Port(object):
         return self.results_directory()
 
     def inspector_build_directory(self):
-        return self._build_path('resources', 'inspector')
+        return self._build_path('gen', 'third_party', 'devtools-frontend',
+                                'src', 'front_end')
 
     def generated_sources_directory(self):
         return self._build_path('gen')
@@ -1395,7 +1514,6 @@ class Port(object):
             ]
             clean_env['DISPLAY'] = self.host.environ.get('DISPLAY', ':1')
         if self.host.platform.is_mac():
-            clean_env['DYLD_LIBRARY_PATH'] = self._build_path()
             variables_to_copy += [
                 'HOME',
             ]
@@ -1411,6 +1529,13 @@ class Port(object):
         for string_variable in self.get_option('additional_env_var', []):
             [name, value] = string_variable.split('=', 1)
             clean_env[name] = value
+
+        if self.host.platform.is_linux():
+            path_to_libs = self._filesystem.join(self.apache_server_root(), 'lib')
+            if clean_env.get('LD_LIBRARY_PATH'):
+                clean_env['LD_LIBRARY_PATH'] = path_to_libs + ':' + clean_env['LD_LIBRARY_PATH']
+            else:
+                clean_env['LD_LIBRARY_PATH'] = path_to_libs
 
         return clean_env
 
@@ -1589,14 +1714,12 @@ class Port(object):
         return test_configurations
 
     def _flag_specific_expectations_path(self):
-        config_name = self._flag_specific_config_name()
+        config_name = self.flag_specific_config_name()
         if config_name:
-            return self._filesystem.join(self.web_tests_dir(),
-                                         self.FLAG_EXPECTATIONS_PREFIX,
-                                         config_name)
+            return self.path_to_flag_specific_expectations_file(config_name)
 
     def _flag_specific_baseline_search_path(self):
-        config_name = self._flag_specific_config_name()
+        config_name = self.flag_specific_config_name()
         if not config_name:
             return []
         flag_dir = self._filesystem.join(self.web_tests_dir(), 'flag-specific',
@@ -1624,24 +1747,29 @@ class Port(object):
         # updated to know about the ordered dict.
         expectations = collections.OrderedDict()
 
-        if not self.get_option('ignore_default_expectations', False):
-            for path in self.expectations_files():
-                if self._filesystem.exists(path):
+        default_expectations_files = set(self.default_expectations_files())
+        ignore_default = self.get_option('ignore_default_expectations', False)
+        for path in self.used_expectations_files():
+            is_default = path in default_expectations_files
+            if ignore_default and is_default:
+                continue
+            path_exists = self._filesystem.exists(path)
+            if is_default:
+                if path_exists:
                     expectations[path] = self._filesystem.read_text_file(path)
-
-        for path in self.get_option('additional_expectations', []):
-            expanded_path = self._filesystem.expanduser(path)
-            if self._filesystem.exists(expanded_path):
-                _log.debug("reading additional_expectations from path '%s'",
-                           path)
-                expectations[path] = self._filesystem.read_text_file(
-                    expanded_path)
             else:
-                # TODO(rmhasan): Fix additional expectation paths for
-                # not_site_per_process_blink_web_tests, then change this back
-                # to raising exceptions for incorrect expectation paths.
-                _log.warning(
-                    "additional_expectations path '%s' does not exist", path)
+                if path_exists:
+                    _log.debug(
+                        "reading additional_expectations from path '%s'", path)
+                    expectations[path] = self._filesystem.read_text_file(path)
+                else:
+                    # TODO(rmhasan): Fix additional expectation paths for
+                    # not_site_per_process_blink_web_tests, then change this
+                    # back to raising exceptions for incorrect expectation
+                    # paths.
+                    _log.warning(
+                        "additional_expectations path '%s' does not exist",
+                        path)
         return expectations
 
     def all_expectations_dict(self):
@@ -1693,7 +1821,7 @@ class Port(object):
         _log.warning("Unexpected ignore mode: '%s'.", ignore_mode)
         return {}
 
-    def expectations_files(self):
+    def default_expectations_files(self):
         """Returns a list of paths to expectations files that apply by default.
 
         There are other "test expectations" files that may be applied if
@@ -1706,9 +1834,22 @@ class Port(object):
             self._filesystem.join(self.web_tests_dir(), 'NeverFixTests'),
             self._filesystem.join(self.web_tests_dir(),
                                   'StaleTestExpectations'),
-            self._filesystem.join(self.web_tests_dir(), 'SlowTests'),
-            self._flag_specific_expectations_path()
+            self._filesystem.join(self.web_tests_dir(), 'SlowTests')
         ])
+
+    def used_expectations_files(self):
+        """Returns a list of paths to expectation files that are used."""
+        if self._used_expectation_files is None:
+            self._used_expectation_files = list(
+                self.default_expectations_files())
+            flag_specific = self._flag_specific_expectations_path()
+            if flag_specific:
+                self._used_expectation_files.append(flag_specific)
+            for path in self.get_option('additional_expectations', []):
+                expanded_path = self._filesystem.expanduser(path)
+                abs_path = self._filesystem.abspath(expanded_path)
+                self._used_expectation_files.append(abs_path)
+        return self._used_expectation_files
 
     def extra_expectations_files(self):
         """Returns a list of paths to test expectations not loaded by default.
@@ -1729,6 +1870,11 @@ class Port(object):
     def path_to_webdriver_expectations_file(self):
         return self._filesystem.join(self.web_tests_dir(),
                                      'WebDriverExpectations')
+
+    def path_to_flag_specific_expectations_file(self, flag_specific):
+        return self._filesystem.join(self.web_tests_dir(),
+                                     self.FLAG_EXPECTATIONS_PREFIX,
+                                     flag_specific)
 
     def repository_path(self):
         """Returns the repository path for the chromium code base."""
@@ -1778,7 +1924,8 @@ class Port(object):
                                      config_file_name)
 
     def _apache_version(self):
-        config = self._executive.run_command([self.path_to_apache(), '-v'])
+        env = self.setup_environ_for_server()
+        config = self._executive.run_command([self.path_to_apache(), '-v'], env=env)
         # Log version including patch level.
         _log.debug(
             'Found apache version %s',
@@ -1789,15 +1936,10 @@ class Port(object):
                       r'\1', config)
 
     def _apache_config_file_name_for_platform(self):
-        if self.host.platform.is_linux():
-            distribution = self.host.platform.linux_distribution()
-
-            custom_configurations = ['arch', 'debian', 'fedora', 'redhat']
-            if distribution in custom_configurations:
-                return '%s-httpd-%s.conf' % (distribution,
-                                             self._apache_version())
-
-        return 'apache2-httpd-' + self._apache_version() + '.conf'
+        # Keep the logic to use apache version even though we only have
+        # configuration file for 2.4 now, in case we will have newer version in
+        # future.
+        return 'apache2-httpd-' + self._apache_version() + '-php7.conf'
 
     def _path_to_driver(self, target=None):
         """Returns the full path to the test driver."""
@@ -1824,11 +1966,9 @@ class Port(object):
     def output_contains_sanitizer_messages(self, output):
         if not output:
             return None
-        if 'AddressSanitizer' in output:
-            return 'AddressSanitizer'
-        if 'MemorySanitizer' in output:
-            return 'MemorySanitizer'
-        return None
+        if (b'AddressSanitizer' in output) or (b'MemorySanitizer' in output):
+            return True
+        return False
 
     def _get_crash_log(self, name, pid, stdout, stderr, newer_than):
         if self.output_contains_sanitizer_messages(stderr):
@@ -1860,20 +2000,21 @@ class Port(object):
 
         # We require stdout and stderr to be bytestrings, not character strings.
         if stdout:
-            assert isinstance(stdout, basestring)
             stdout_lines = stdout.decode('utf8', 'replace').splitlines()
         else:
             stdout_lines = [u'<empty>']
+
         if stderr:
-            assert isinstance(stderr, basestring)
             stderr_lines = stderr.decode('utf8', 'replace').splitlines()
         else:
             stderr_lines = [u'<empty>']
 
-        return (stderr, 'crash log for %s (pid %s):\n%s\n%s\n' %
-                (name_str, pid_str, '\n'.join(
-                    ('STDOUT: ' + l) for l in stdout_lines), '\n'.join(
-                        ('STDERR: ' + l) for l in stderr_lines)),
+        return (stderr,
+                ('crash log for %s (pid %s):\n%s\n%s\n' %
+                 (name_str, pid_str, '\n'.join(
+                     ('STDOUT: ' + l) for l in stdout_lines), '\n'.join(
+                         ('STDERR: ' + l)
+                         for l in stderr_lines))).encode('utf8', 'replace'),
                 self._get_crash_site(stderr_lines))
 
     def _get_crash_site(self, stderr_lines):
@@ -1923,30 +2064,13 @@ class Port(object):
                     path_to_virtual_test_suites, error))
         return self._virtual_test_suites
 
-    def _all_virtual_tests(self):
+    def _all_virtual_tests(self, tests_by_dir):
         tests = []
 
-        # The set of paths to find tests for each virtual test suite.
-        suite_paths = []
-        # For each path, a map functor that converts the test path to be under
-        # the virtual test suite.
-        suite_prefixes = []
         for suite in self.virtual_test_suites():
-            for b in suite.bases:
-                suite_paths.append(b)
-                suite_prefixes.append(suite.full_prefix)
-
-            # TODO(crbug.com/982208): If we can pass in the set of paths and
-            # maps then this could be more efficient.
             if suite.bases:
-                tests.extend(
-                    map(lambda x: suite.full_prefix + x,
-                        self.real_tests(suite.bases)))
-
-        if suite_paths:
-            tests.extend(
-                self._wpt_test_urls_matching_paths(suite_paths,
-                                                   suite_prefixes))
+                tests.extend(map(lambda x: suite.full_prefix + x,
+                             self.real_tests_from_dict(suite.bases, tests_by_dir)))
         return tests
 
     def _get_bases_for_suite_with_paths(self, suite, paths):
@@ -2038,9 +2162,6 @@ class Port(object):
         # slow.
         wpts = [(wpt_path, self.wpt_manifest(wpt_path))
                 for wpt_path in self.WPT_DIRS]
-
-        _log.debug("Finding WPT tests that match %d path prefixes",
-                   len(filter_paths))
 
         tests = []
         # This walks through the set of paths where we should look for tests.
@@ -2260,16 +2381,19 @@ class Port(object):
 
 
 class VirtualTestSuite(object):
-    def __init__(self, prefix=None, bases=None, args=None):
+    def __init__(self, prefix=None, platforms=None, bases=None, args=None):
         assert VALID_FILE_NAME_REGEX.match(prefix), \
             "Virtual test suite prefix '{}' contains invalid characters".format(prefix)
+        assert isinstance(platforms, list)
         assert isinstance(bases, list)
         assert args
         assert isinstance(args, list)
         self.full_prefix = 'virtual/' + prefix + '/'
+        self.platforms = [x.lower() for x in platforms]
         self.bases = bases
         self.args = args
 
     def __repr__(self):
-        return "VirtualTestSuite('%s', %s, %s)" % (self.full_prefix,
-                                                   self.bases, self.args)
+        return "VirtualTestSuite('%s', %s, %s, %s)" % (self.full_prefix,
+                                                       self.platforms,
+                                                       self.bases, self.args)

@@ -4,8 +4,8 @@
 
 #include "third_party/blink/renderer/platform/loader/fetch/url_loader/worker_main_script_loader.h"
 
+#include "services/network/public/mojom/early_hints.mojom.h"
 #include "services/network/public/mojom/url_response_head.mojom.h"
-#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/loader/referrer_utils.h"
 #include "third_party/blink/public/mojom/loader/code_cache.mojom-shared.h"
 #include "third_party/blink/public/platform/resource_load_info_notifier_wrapper.h"
@@ -15,15 +15,14 @@
 #include "third_party/blink/public/platform/web_url_response.h"
 #include "third_party/blink/renderer/platform/loader/cors/cors.h"
 #include "third_party/blink/renderer/platform/loader/fetch/cached_metadata.h"
-#include "third_party/blink/renderer/platform/loader/fetch/cached_metadata_handler.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_context.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_initiator_type_names.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_parameters.h"
-#include "third_party/blink/renderer/platform/loader/fetch/resource_load_info.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_load_timing.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_request.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_timing_info.h"
 #include "third_party/blink/renderer/platform/loader/fetch/script_cached_metadata_handler.h"
+#include "third_party/blink/renderer/platform/loader/fetch/url_loader/cached_metadata_handler.h"
 #include "third_party/blink/renderer/platform/loader/fetch/url_loader/worker_main_script_loader_client.h"
 
 namespace blink {
@@ -41,6 +40,7 @@ void WorkerMainScriptLoader::Start(
     WorkerMainScriptLoaderClient* client) {
   DCHECK(resource_load_observer);
   DCHECK(client);
+  request_id_ = worker_main_script_load_params->request_id;
   initial_request_ = fetch_params.GetResourceRequest();
   resource_loader_options_ = fetch_params.Options();
   initial_request_url_ = fetch_params.GetResourceRequest().Url();
@@ -48,23 +48,14 @@ void WorkerMainScriptLoader::Start(
   resource_load_observer_ = resource_load_observer;
   fetch_context_ = fetch_context;
   client_ = client;
-
   resource_load_info_notifier_wrapper_ =
       fetch_context->CreateResourceLoadInfoNotifierWrapper();
 
   // TODO(crbug.com/929370): Support CSP check to post violation reports for
   // worker top-level scripts, if off-the-main-thread fetch is enabled.
 
-  ResourceRequest resource_request(initial_request_);
-  resource_load_observer_->WillSendRequest(
-      initial_request_.InspectorId(), resource_request,
-      /*redirect_response=*/ResourceResponse(), ResourceType::kScript,
-      resource_loader_options_.initiator_info,
-      RenderBlockingBehavior::kNonBlocking);
-
   resource_load_info_notifier_wrapper_->NotifyResourceLoadInitiated(
-      /*request_id=*/-1, initial_request_url_,
-      initial_request_.HttpMethod().Latin1(),
+      request_id_, initial_request_url_, initial_request_.HttpMethod().Latin1(),
       WebStringToGURL(WebString(initial_request_.ReferrerString())),
       initial_request_.GetRequestDestination(), net::HIGHEST);
 
@@ -77,11 +68,12 @@ void WorkerMainScriptLoader::Start(
   auto response_head = std::move(worker_main_script_load_params->response_head);
   WebURLLoader::PopulateURLResponse(
       WebURL(last_request_url_), *response_head, &response,
-      response_head->ssl_info.has_value(), /*request_id=*/-1);
+      response_head->ssl_info.has_value(), request_id_);
   resource_response_ = response.ToResourceResponse();
   resource_load_info_notifier_wrapper_->NotifyResourceResponseReceived(
-      std::move(response_head), PreviewsTypes::kPreviewsUnspecified);
+      std::move(response_head));
 
+  ResourceRequest resource_request(initial_request_);
   resource_load_observer_->DidReceiveResponse(
       initial_request_.InspectorId(), resource_request, resource_response_,
       /*resource=*/nullptr,
@@ -92,7 +84,7 @@ void WorkerMainScriptLoader::Start(
     client_->OnFailedLoadingWorkerMainScript();
     resource_load_observer_->DidFailLoading(
         initial_request_.Url(), initial_request_.InspectorId(),
-        ResourceError(net::ERR_FAILED, last_request_url_, base::nullopt),
+        ResourceError(net::ERR_FAILED, last_request_url_, absl::nullopt),
         resource_response_.EncodedDataLength(),
         ResourceLoadObserver::IsInternalRequest(
             resource_loader_options_.initiator_info.name ==
@@ -129,8 +121,15 @@ void WorkerMainScriptLoader::Cancel() {
   url_loader_remote_.reset();
 }
 
+void WorkerMainScriptLoader::OnReceiveEarlyHints(
+    network::mojom::EarlyHintsPtr early_hints) {
+  // This has already happened in the browser process.
+  NOTREACHED();
+}
+
 void WorkerMainScriptLoader::OnReceiveResponse(
-    network::mojom::URLResponseHeadPtr response_head) {
+    network::mojom::URLResponseHeadPtr response_head,
+    mojo::ScopedDataPipeConsumerHandle handle) {
   // This has already happened in the browser process.
   NOTREACHED();
 }
@@ -282,7 +281,7 @@ void WorkerMainScriptLoader::NotifyCompletionIfAppropriate() {
     client->OnFailedLoadingWorkerMainScript();
     resource_load_observer_->DidFailLoading(
         last_request_url_, initial_request_.InspectorId(),
-        ResourceError(status_.error_code, last_request_url_, base::nullopt),
+        ResourceError(status_.error_code, last_request_url_, absl::nullopt),
         resource_response_.EncodedDataLength(),
         ResourceLoadObserver::IsInternalRequest(
             ResourceLoadObserver::IsInternalRequest(
@@ -321,11 +320,7 @@ void WorkerMainScriptLoader::HandleRedirections(
     WebURLResponse response;
     WebURLLoader::PopulateURLResponse(
         WebURL(last_request_url_), *redirect_response, &response,
-        redirect_response->ssl_info.has_value(), /*request_id=*/-1);
-    resource_load_observer_->WillSendRequest(
-        new_request->InspectorId(), *new_request, response.ToResourceResponse(),
-        ResourceType::kScript, resource_loader_options_.initiator_info,
-        RenderBlockingBehavior::kNonBlocking);
+        redirect_response->ssl_info.has_value(), request_id_);
     resource_load_info_notifier_wrapper_->NotifyResourceRedirectReceived(
         redirect_info, std::move(redirect_response));
   }

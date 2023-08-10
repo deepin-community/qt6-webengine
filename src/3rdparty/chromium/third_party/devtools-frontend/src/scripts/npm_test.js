@@ -43,7 +43,6 @@ function main() {
 }
 main();
 
-
 function getChromiumSrcPath(isThirdParty) {
   if (isThirdParty)
   // Assume we're in `chromium/src/third_party/devtools-frontend/src`.
@@ -92,7 +91,7 @@ function runTests(buildDirectoryPath, useDebugDevtools) {
 
   if (IS_DEBUG_ENABLED) {
     testArgs.push('--additional-driver-flag=--remote-debugging-port=9222');
-    testArgs.push('--time-out-ms=6000000');
+    testArgs.push('--timeout-ms=6000000');
     console.log('\n=============================================');
     const unitTest = testArgs.find(arg => arg.includes('http/tests/devtools/unit/'));
     if (unitTest) {

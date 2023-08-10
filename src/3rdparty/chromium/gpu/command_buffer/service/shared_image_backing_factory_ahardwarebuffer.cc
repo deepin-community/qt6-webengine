@@ -17,6 +17,7 @@
 #include "base/android/scoped_hardware_buffer_handle.h"
 #include "base/containers/flat_set.h"
 #include "base/logging.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/posix/eintr_wrapper.h"
 #include "components/viz/common/resources/resource_format_utils.h"
@@ -40,6 +41,7 @@
 #include "gpu/vulkan/vulkan_image.h"
 #include "third_party/skia/include/core/SkPromiseImageTexture.h"
 #include "ui/gfx/android/android_surface_control_compat.h"
+#include "ui/gfx/buffer_format_util.h"
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gl/gl_context.h"
@@ -57,15 +59,7 @@ class OverlayImage final : public gl::GLImage {
   explicit OverlayImage(AHardwareBuffer* buffer)
       : handle_(base::android::ScopedHardwareBufferHandle::Create(buffer)) {}
 
-  void SetBeginFence(base::ScopedFD fence_fd) {
-    DCHECK(!end_read_fence_.is_valid());
-    DCHECK(!begin_read_fence_.is_valid());
-    begin_read_fence_ = std::move(fence_fd);
-  }
-
   base::ScopedFD TakeEndFence() {
-    DCHECK(!begin_read_fence_.is_valid());
-
     previous_end_read_fence_ =
         base::ScopedFD(HANDLE_EINTR(dup(end_read_fence_.get())));
     return std::move(end_read_fence_);
@@ -76,7 +70,7 @@ class OverlayImage final : public gl::GLImage {
   GetAHardwareBuffer() override {
     return std::make_unique<ScopedHardwareBufferFenceSyncImpl>(
         this, base::android::ScopedHardwareBufferHandle::Create(handle_.get()),
-        std::move(begin_read_fence_), std::move(previous_end_read_fence_));
+        std::move(previous_end_read_fence_));
   }
 
  protected:
@@ -89,17 +83,15 @@ class OverlayImage final : public gl::GLImage {
     ScopedHardwareBufferFenceSyncImpl(
         scoped_refptr<OverlayImage> image,
         base::android::ScopedHardwareBufferHandle handle,
-        base::ScopedFD fence_fd,
         base::ScopedFD available_fence_fd)
         : ScopedHardwareBufferFenceSync(std::move(handle),
-                                        std::move(fence_fd),
+                                        base::ScopedFD(),
                                         std::move(available_fence_fd),
                                         false /* is_video */),
           image_(std::move(image)) {}
     ~ScopedHardwareBufferFenceSyncImpl() override = default;
 
     void SetReadFence(base::ScopedFD fence_fd, bool has_context) override {
-      DCHECK(!image_->begin_read_fence_.is_valid());
       DCHECK(!image_->end_read_fence_.is_valid());
       DCHECK(!image_->previous_end_read_fence_.is_valid());
 
@@ -111,9 +103,6 @@ class OverlayImage final : public gl::GLImage {
   };
 
   base::android::ScopedHardwareBufferHandle handle_;
-
-  // The fence for overlay controller to wait on before scanning out.
-  base::ScopedFD begin_read_fence_;
 
   // The fence for overlay controller to set to indicate scanning out
   // completion. The image content should not be modified before passing this
@@ -144,6 +133,9 @@ class SharedImageBackingAHB : public SharedImageBackingAndroid {
                         bool is_thread_safe,
                         base::ScopedFD initial_upload_fd);
 
+  SharedImageBackingAHB(const SharedImageBackingAHB&) = delete;
+  SharedImageBackingAHB& operator=(const SharedImageBackingAHB&) = delete;
+
   ~SharedImageBackingAHB() override;
 
   void Update(std::unique_ptr<gfx::GpuFence> in_fence) override;
@@ -154,7 +146,7 @@ class SharedImageBackingAHB : public SharedImageBackingAndroid {
   gfx::Rect ClearedRect() const override;
   void SetClearedRect(const gfx::Rect& cleared_rect) override;
   base::android::ScopedHardwareBufferHandle GetAhbHandle() const;
-  gl::GLImage* BeginOverlayAccess();
+  gl::GLImage* BeginOverlayAccess(gfx::GpuFenceHandle&);
   void EndOverlayAccess();
 
  protected:
@@ -180,10 +172,8 @@ class SharedImageBackingAHB : public SharedImageBackingAndroid {
 
   // Not guarded by |lock_| as we do not use legacy_texture_ in threadsafe
   // mode.
-  gles2::Texture* legacy_texture_ = nullptr;
+  raw_ptr<gles2::Texture> legacy_texture_ = nullptr;
   scoped_refptr<OverlayImage> overlay_image_ GUARDED_BY(lock_);
-
-  DISALLOW_COPY_AND_ASSIGN(SharedImageBackingAHB);
 };
 
 // Vk backed Skia representation of SharedImageBackingAHB.
@@ -227,13 +217,13 @@ class SharedImageRepresentationOverlayAHB
     return static_cast<SharedImageBackingAHB*>(backing());
   }
 
-  void NotifyOverlayPromotion(bool promotion,
-                              const gfx::Rect& bounds) override {
-    NOTREACHED();
-  }
-
   bool BeginReadAccess(std::vector<gfx::GpuFence>* acquire_fences) override {
-    gl_image_ = ahb_backing()->BeginOverlayAccess();
+    gfx::GpuFenceHandle fence_handle;
+    gl_image_ = ahb_backing()->BeginOverlayAccess(fence_handle);
+
+    if (!fence_handle.is_null())
+      acquire_fences->emplace_back(std::move(fence_handle));
+
     return !!gl_image_;
   }
 
@@ -247,7 +237,7 @@ class SharedImageRepresentationOverlayAHB
 
   gl::GLImage* GetGLImage() override { return gl_image_; }
 
-  gl::GLImage* gl_image_ = nullptr;
+  raw_ptr<gl::GLImage> gl_image_ = nullptr;
 };
 
 SharedImageBackingAHB::SharedImageBackingAHB(
@@ -398,8 +388,14 @@ SharedImageBackingAHB::ProduceSkia(
   // Check whether we are in Vulkan mode OR GL mode and accordingly create
   // Skia representation.
   if (context_state->GrContextIsVulkan()) {
+    uint32_t queue_family = VK_QUEUE_FAMILY_EXTERNAL;
+    if (usage() & SHARED_IMAGE_USAGE_SCANOUT) {
+      // Any Android API that consume or produce buffers (e.g SurfaceControl)
+      // requires a foreign queue.
+      queue_family = VK_QUEUE_FAMILY_FOREIGN_EXT;
+    }
     auto vulkan_image = CreateVkImageFromAhbHandle(
-        GetAhbHandle(), context_state.get(), size(), format());
+        GetAhbHandle(), context_state.get(), size(), format(), queue_family);
 
     if (!vulkan_image)
       return nullptr;
@@ -430,7 +426,8 @@ SharedImageBackingAHB::ProduceOverlay(SharedImageManager* manager,
                                                                tracker);
 }
 
-gl::GLImage* SharedImageBackingAHB::BeginOverlayAccess() {
+gl::GLImage* SharedImageBackingAHB::BeginOverlayAccess(
+    gfx::GpuFenceHandle& begin_read_fence) {
   AutoLock auto_lock(this);
 
   DCHECK(!is_overlay_accessing_);
@@ -448,8 +445,10 @@ gl::GLImage* SharedImageBackingAHB::BeginOverlayAccess() {
   }
 
   if (write_sync_fd_.is_valid()) {
-    base::ScopedFD fence_fd(HANDLE_EINTR(dup(write_sync_fd_.get())));
-    overlay_image_->SetBeginFence(std::move(fence_fd));
+    gfx::GpuFenceHandle fence_handle;
+    fence_handle.owned_fd =
+        base::ScopedFD(HANDLE_EINTR(dup(write_sync_fd_.get())));
+    begin_read_fence = std::move(fence_handle);
   }
 
   is_overlay_accessing_ = true;
@@ -584,7 +583,8 @@ bool SharedImageBackingFactoryAHB::ValidateUsage(
   if (size.width() < 1 || size.height() < 1 ||
       size.width() > max_gl_texture_size_ ||
       size.height() > max_gl_texture_size_) {
-    LOG(ERROR) << "CreateSharedImage: invalid size";
+    LOG(ERROR) << "CreateSharedImage: invalid size=" << size.ToString()
+               << " max_gl_texture_size=" << max_gl_texture_size_;
     return false;
   }
 
@@ -731,6 +731,30 @@ bool SharedImageBackingFactoryAHB::CanImportGpuMemoryBuffer(
   return memory_buffer_type == gfx::ANDROID_HARDWARE_BUFFER;
 }
 
+bool SharedImageBackingFactoryAHB::IsSupported(
+    uint32_t usage,
+    viz::ResourceFormat format,
+    bool thread_safe,
+    gfx::GpuMemoryBufferType gmb_type,
+    GrContextType gr_context_type,
+    bool* allow_legacy_mailbox,
+    bool is_pixel_used) {
+  if (gmb_type != gfx::EMPTY_BUFFER && !CanImportGpuMemoryBuffer(gmb_type)) {
+    return false;
+  }
+  // TODO(crbug.com/969114): Not all shared image factory implementations
+  // support concurrent read/write usage.
+  if (usage & SHARED_IMAGE_USAGE_CONCURRENT_READ_WRITE) {
+    return false;
+  }
+  if (!IsFormatSupported(format)) {
+    return false;
+  }
+
+  *allow_legacy_mailbox = false;
+  return true;
+}
+
 bool SharedImageBackingFactoryAHB::IsFormatSupported(
     viz::ResourceFormat format) {
   DCHECK_GE(format, 0);
@@ -748,6 +772,7 @@ SharedImageBackingFactoryAHB::CreateSharedImage(
     int client_id,
     gfx::GpuMemoryBufferHandle handle,
     gfx::BufferFormat buffer_format,
+    gfx::BufferPlane plane,
     SurfaceHandle surface_handle,
     const gfx::Size& size,
     const gfx::ColorSpace& color_space,
@@ -757,6 +782,10 @@ SharedImageBackingFactoryAHB::CreateSharedImage(
   // TODO(vasilyt): support SHARED_MEMORY_BUFFER?
   if (handle.type != gfx::ANDROID_HARDWARE_BUFFER) {
     NOTIMPLEMENTED();
+    return nullptr;
+  }
+  if (plane != gfx::BufferPlane::DEFAULT) {
+    LOG(ERROR) << "Invalid plane " << gfx::BufferPlaneToString(plane);
     return nullptr;
   }
 

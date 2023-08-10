@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # Copyright 2014 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
@@ -54,6 +54,15 @@ def FetchValues(file_list, is_official_build=None):
 
   for file_name in file_list:
     FetchValuesFromFile(values, file_name)
+
+  script_dirname = os.path.dirname(os.path.realpath(__file__))
+  lastchange_filename = os.path.join(script_dirname, "LASTCHANGE")
+  lastchange_values = {}
+  FetchValuesFromFile(lastchange_values, lastchange_filename)
+
+  for placeholder_key, placeholder_value in values.items():
+    values[placeholder_key] = SubstTemplate(placeholder_value,
+                                            lastchange_values)
 
   return values
 

@@ -6,7 +6,6 @@
 
 #include "base/types/strong_alias.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/blink/renderer/bindings/core/v8/readable_stream_default_reader_or_readable_stream_byob_reader.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_function.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
@@ -27,7 +26,7 @@
 #include "third_party/blink/renderer/core/streams/writable_stream_transferring_optimizer.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/v8_throw_exception.h"
-#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 #include "v8/include/v8.h"
 
@@ -162,8 +161,8 @@ TEST(TransferableStreamsTest, SmokeTest) {
       MakeGarbageCollected<MessageChannel>(scope.GetExecutionContext());
   auto* script_state = scope.GetScriptState();
   auto* writable = CreateCrossRealmTransformWritable(
-      script_state, channel->port1(), /*optimizer=*/nullptr,
-      ASSERT_NO_EXCEPTION);
+      script_state, channel->port1(), AllowPerChunkTransferring(false),
+      /*optimizer=*/nullptr, ASSERT_NO_EXCEPTION);
   ASSERT_TRUE(writable);
   auto* readable = CreateCrossRealmTransformReadable(
       script_state, channel->port2(), /*optimizer=*/nullptr,
@@ -177,27 +176,18 @@ TEST(TransferableStreamsTest, SmokeTest) {
   writer->write(script_state, ScriptValue::CreateNull(scope.GetIsolate()),
                 ASSERT_NO_EXCEPTION);
 
-  class ExpectNullResponse : public ScriptFunction {
+  class ExpectNullResponse : public ScriptFunction::Callable {
    public:
-    static v8::Local<v8::Function> Create(ScriptState* script_state,
-                                          bool* got_response) {
-      auto* self =
-          MakeGarbageCollected<ExpectNullResponse>(script_state, got_response);
-      return self->BindToV8Function();
-    }
+    explicit ExpectNullResponse(bool* got_response)
+        : got_response_(got_response) {}
 
-    ExpectNullResponse(ScriptState* script_state, bool* got_response)
-        : ScriptFunction(script_state), got_response_(got_response) {}
-
-   private:
-    ScriptValue Call(ScriptValue value) override {
+    ScriptValue Call(ScriptState* script_state, ScriptValue value) override {
       *got_response_ = true;
       if (!value.IsObject()) {
         ADD_FAILURE() << "iterator must be an object";
         return ScriptValue();
       }
       bool done = false;
-      auto* script_state = GetScriptState();
       auto chunk_maybe =
           V8UnpackIteratorResult(script_state,
                                  value.V8Value()
@@ -219,18 +209,11 @@ TEST(TransferableStreamsTest, SmokeTest) {
 
   // TODO(ricea): This is copy-and-pasted from transform_stream_test.cc. Put it
   // in a shared location.
-  class ExpectNotReached : public ScriptFunction {
+  class ExpectNotReached : public ScriptFunction::Callable {
    public:
-    static v8::Local<v8::Function> Create(ScriptState* script_state) {
-      auto* self = MakeGarbageCollected<ExpectNotReached>(script_state);
-      return self->BindToV8Function();
-    }
+    ExpectNotReached() = default;
 
-    explicit ExpectNotReached(ScriptState* script_state)
-        : ScriptFunction(script_state) {}
-
-   private:
-    ScriptValue Call(ScriptValue) override {
+    ScriptValue Call(ScriptState*, ScriptValue) override {
       ADD_FAILURE() << "ExpectNotReached was reached";
       return ScriptValue();
     }
@@ -238,8 +221,13 @@ TEST(TransferableStreamsTest, SmokeTest) {
 
   bool got_response = false;
   reader->read(script_state, ASSERT_NO_EXCEPTION)
-      .Then(ExpectNullResponse::Create(script_state, &got_response),
-            ExpectNotReached::Create(script_state));
+      .Then(MakeGarbageCollected<ScriptFunction>(
+                script_state,
+                MakeGarbageCollected<ExpectNullResponse>(&got_response))
+                ->V8Function(),
+            MakeGarbageCollected<ScriptFunction>(
+                script_state, MakeGarbageCollected<ExpectNotReached>())
+                ->V8Function());
 
   // Need to run the event loop to pass messages through the MessagePort.
   test::RunPendingTasks();

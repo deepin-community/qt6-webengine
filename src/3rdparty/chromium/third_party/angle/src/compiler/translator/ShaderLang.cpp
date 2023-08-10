@@ -13,6 +13,7 @@
 
 #include "compiler/translator/Compiler.h"
 #include "compiler/translator/InitializeDll.h"
+#include "compiler/translator/glslang_wrapper.h"
 #include "compiler/translator/length_limits.h"
 #ifdef ANGLE_ENABLE_HLSL
 #    include "compiler/translator/TranslatorHLSL.h"
@@ -27,6 +28,17 @@ namespace
 {
 
 bool isInitialized = false;
+
+// glslang can only be initialized/finalized once per process. Otherwise, the following EGL commands
+// will call GlslangFinalize() without ever being able to GlslangInitialize() again, leading to
+// crashes since GlslangFinalize() cleans up glslang for the entire process.
+//   dpy1 = eglGetPlatformDisplay()   |
+//   eglInitialize(dpy1)              | GlslangInitialize()
+//   dpy2 = eglGetPlatformDisplay()   |
+//   eglInitialize(dpy2)              | GlslangInitialize()
+//   eglTerminate(dpy2)               | GlslangFinalize()
+//   eglInitialize(dpy1)              | Display::isInitialized() == true, no GlslangInitialize()
+int initializeGlslangRefCount = 0;
 
 //
 // This is the platform independent interface between an OGL driver
@@ -179,47 +191,49 @@ void InitBuiltInResources(ShBuiltInResources *resources)
     resources->MaxDrawBuffers               = 1;
 
     // Extensions.
-    resources->OES_standard_derivatives                    = 0;
-    resources->OES_EGL_image_external                      = 0;
-    resources->OES_EGL_image_external_essl3                = 0;
-    resources->NV_EGL_stream_consumer_external             = 0;
-    resources->ARB_texture_rectangle                       = 0;
-    resources->EXT_blend_func_extended                     = 0;
-    resources->EXT_draw_buffers                            = 0;
-    resources->EXT_frag_depth                              = 0;
-    resources->EXT_shader_texture_lod                      = 0;
-    resources->WEBGL_debug_shader_precision                = 0;
-    resources->EXT_shader_framebuffer_fetch                = 0;
-    resources->EXT_shader_framebuffer_fetch_non_coherent   = 0;
-    resources->NV_shader_framebuffer_fetch                 = 0;
-    resources->ARM_shader_framebuffer_fetch                = 0;
-    resources->OVR_multiview                               = 0;
-    resources->OVR_multiview2                              = 0;
-    resources->EXT_YUV_target                              = 0;
-    resources->EXT_geometry_shader                         = 0;
-    resources->EXT_gpu_shader5                             = 0;
-    resources->OES_shader_io_blocks                        = 0;
-    resources->EXT_shader_io_blocks                        = 0;
-    resources->EXT_shader_non_constant_global_initializers = 0;
-    resources->NV_shader_noperspective_interpolation       = 0;
-    resources->OES_texture_storage_multisample_2d_array    = 0;
-    resources->OES_texture_3D                              = 0;
-    resources->ANGLE_texture_multisample                   = 0;
-    resources->ANGLE_multi_draw                            = 0;
-    resources->ANGLE_base_vertex_base_instance             = 0;
-    resources->WEBGL_video_texture                         = 0;
-    resources->APPLE_clip_distance                         = 0;
-    resources->OES_texture_cube_map_array                  = 0;
-    resources->EXT_texture_cube_map_array                  = 0;
-    resources->EXT_shadow_samplers                         = 0;
-    resources->OES_shader_multisample_interpolation        = 0;
-    resources->NV_draw_buffers                             = 0;
-    resources->OES_shader_image_atomic                     = 0;
-    resources->EXT_tessellation_shader                     = 0;
-    resources->OES_texture_buffer                          = 0;
-    resources->EXT_texture_buffer                          = 0;
-    resources->OES_sample_variables                        = 0;
-    resources->EXT_clip_cull_distance                      = 0;
+    resources->OES_standard_derivatives                       = 0;
+    resources->OES_EGL_image_external                         = 0;
+    resources->OES_EGL_image_external_essl3                   = 0;
+    resources->NV_EGL_stream_consumer_external                = 0;
+    resources->ARB_texture_rectangle                          = 0;
+    resources->EXT_blend_func_extended                        = 0;
+    resources->EXT_draw_buffers                               = 0;
+    resources->EXT_frag_depth                                 = 0;
+    resources->EXT_shader_texture_lod                         = 0;
+    resources->EXT_shader_framebuffer_fetch                   = 0;
+    resources->EXT_shader_framebuffer_fetch_non_coherent      = 0;
+    resources->NV_shader_framebuffer_fetch                    = 0;
+    resources->ARM_shader_framebuffer_fetch                   = 0;
+    resources->OVR_multiview                                  = 0;
+    resources->OVR_multiview2                                 = 0;
+    resources->EXT_YUV_target                                 = 0;
+    resources->EXT_geometry_shader                            = 0;
+    resources->OES_geometry_shader                            = 0;
+    resources->EXT_gpu_shader5                                = 0;
+    resources->OES_shader_io_blocks                           = 0;
+    resources->EXT_shader_io_blocks                           = 0;
+    resources->EXT_shader_non_constant_global_initializers    = 0;
+    resources->NV_shader_noperspective_interpolation          = 0;
+    resources->OES_texture_storage_multisample_2d_array       = 0;
+    resources->OES_texture_3D                                 = 0;
+    resources->ANGLE_texture_multisample                      = 0;
+    resources->ANGLE_multi_draw                               = 0;
+    resources->ANGLE_base_vertex_base_instance                = 0;
+    resources->ANGLE_base_vertex_base_instance_shader_builtin = 0;
+    resources->WEBGL_video_texture                            = 0;
+    resources->APPLE_clip_distance                            = 0;
+    resources->OES_texture_cube_map_array                     = 0;
+    resources->EXT_texture_cube_map_array                     = 0;
+    resources->EXT_shadow_samplers                            = 0;
+    resources->OES_shader_multisample_interpolation           = 0;
+    resources->NV_draw_buffers                                = 0;
+    resources->OES_shader_image_atomic                        = 0;
+    resources->EXT_tessellation_shader                        = 0;
+    resources->OES_texture_buffer                             = 0;
+    resources->EXT_texture_buffer                             = 0;
+    resources->OES_sample_variables                           = 0;
+    resources->EXT_clip_cull_distance                         = 0;
+    resources->KHR_blend_equation_advanced                    = 0;
 
     resources->MaxClipDistances                = 8;
     resources->MaxCullDistances                = 8;
@@ -241,8 +255,6 @@ void InitBuiltInResources(ShBuiltInResources *resources)
 
     // Disable name hashing by default.
     resources->HashFunction = nullptr;
-
-    resources->ArrayIndexClampingStrategy = SH_CLAMP_WITH_CLAMP_INTRINSIC;
 
     resources->MaxExpressionComplexity = 256;
     resources->MaxCallStackDepth       = 256;
@@ -440,6 +452,18 @@ const std::string &GetObjectCode(const ShHandle handle)
 
     TInfoSink &infoSink = compiler->getInfoSink();
     return infoSink.obj.str();
+}
+
+//
+// Return any object binary code.
+//
+const BinaryBlob &GetObjectBinaryBlob(const ShHandle handle)
+{
+    TCompiler *compiler = GetCompilerFromHandle(handle);
+    ASSERT(compiler);
+
+    TInfoSink &infoSink = compiler->getInfoSink();
+    return infoSink.obj.getBinary();
 }
 
 const std::map<std::string, std::string> *GetNameHashingMap(const ShHandle handle)
@@ -902,6 +926,34 @@ unsigned int GetShaderSharedMemorySize(const ShHandle handle)
     return sharedMemorySize;
 }
 
+uint32_t GetAdvancedBlendEquations(const ShHandle handle)
+{
+    TCompiler *compiler = GetCompilerFromHandle(handle);
+    ASSERT(compiler);
+
+    return compiler->getAdvancedBlendEquations().bits();
+}
+
+void InitializeGlslang()
+{
+    if (initializeGlslangRefCount == 0)
+    {
+        GlslangInitialize();
+    }
+    ++initializeGlslangRefCount;
+    ASSERT(initializeGlslangRefCount < std::numeric_limits<int>::max());
+}
+
+void FinalizeGlslang()
+{
+    --initializeGlslangRefCount;
+    ASSERT(initializeGlslangRefCount >= 0);
+    if (initializeGlslangRefCount == 0)
+    {
+        GlslangFinalize();
+    }
+}
+
 // Can't prefix with just _ because then we might introduce a double underscore, which is not safe
 // in GLSL (ESSL 3.00.6 section 3.8: All identifiers containing a double underscore are reserved for
 // use by the underlying implementation). u is short for user-defined.
@@ -927,6 +979,7 @@ const char kAtomicCountersBlockName[] = "ANGLEAtomicCounters";
 const char kLineRasterEmulationPosition[] = "ANGLEPosition";
 
 const char kXfbEmulationGetOffsetsFunctionName[] = "ANGLEGetXfbOffsets";
+const char kXfbEmulationCaptureFunctionName[]    = "ANGLECaptureXfb";
 const char kXfbEmulationBufferBlockName[]        = "ANGLEXfbBuffer";
 const char kXfbEmulationBufferName[]             = "ANGLEXfb";
 const char kXfbEmulationBufferFieldName[]        = "xfbOut";
@@ -938,4 +991,52 @@ const char kInputAttachmentName[] = "ANGLEInputAttachment";
 
 }  // namespace vk
 
+const char *BlockLayoutTypeToString(BlockLayoutType type)
+{
+    switch (type)
+    {
+        case BlockLayoutType::BLOCKLAYOUT_STD140:
+            return "std140";
+        case BlockLayoutType::BLOCKLAYOUT_STD430:
+            return "std430";
+        case BlockLayoutType::BLOCKLAYOUT_PACKED:
+            return "packed";
+        case BlockLayoutType::BLOCKLAYOUT_SHARED:
+            return "shared";
+        default:
+            return "invalid";
+    }
+}
+
+const char *BlockTypeToString(BlockType type)
+{
+    switch (type)
+    {
+        case BlockType::BLOCK_BUFFER:
+            return "buffer";
+        case BlockType::BLOCK_UNIFORM:
+            return "uniform";
+        default:
+            return "invalid";
+    }
+}
+
+const char *InterpolationTypeToString(InterpolationType type)
+{
+    switch (type)
+    {
+        case InterpolationType::INTERPOLATION_SMOOTH:
+            return "smooth";
+        case InterpolationType::INTERPOLATION_CENTROID:
+            return "centroid";
+        case InterpolationType::INTERPOLATION_SAMPLE:
+            return "sample";
+        case InterpolationType::INTERPOLATION_FLAT:
+            return "flat";
+        case InterpolationType::INTERPOLATION_NOPERSPECTIVE:
+            return "noperspective";
+        default:
+            return "invalid";
+    }
+}
 }  // namespace sh

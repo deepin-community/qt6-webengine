@@ -33,8 +33,8 @@
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
+#include "third_party/blink/renderer/core/frame/web_feature.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
-#include "third_party/blink/renderer/core/probe/async_task_id.h"
 #include "third_party/blink/renderer/core/probe/core_probes.h"
 #include "third_party/blink/renderer/modules/webdatabase/change_version_data.h"
 #include "third_party/blink/renderer/modules/webdatabase/change_version_wrapper.h"
@@ -52,7 +52,7 @@
 #include "third_party/blink/renderer/modules/webdatabase/sqlite/sqlite_transaction.h"
 #include "third_party/blink/renderer/modules/webdatabase/storage_log.h"
 #include "third_party/blink/renderer/modules/webdatabase/web_database_host.h"
-#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/scheduler/public/frame_scheduler.h"
 #include "third_party/blink/renderer/platform/scheduler/public/post_cross_thread_task.h"
 #include "third_party/blink/renderer/platform/scheduler/public/scheduling_policy.h"
@@ -107,12 +107,17 @@ class DatabaseVersionCache {
       EXCLUSIVE_LOCKS_REQUIRED(mutex_) {
     mutex_.AssertAcquired();
     String string_id = origin + "/" + name;
-    DCHECK(string_id.IsSafeToSendToAnotherThread());
-    DatabaseGuid guid = origin_name_to_guid_.at(string_id);
-    if (!guid) {
+
+    DatabaseGuid guid;
+    auto origin_name_to_guid_it = origin_name_to_guid_.find(string_id);
+    if (origin_name_to_guid_it == origin_name_to_guid_.end()) {
       guid = next_guid_++;
       origin_name_to_guid_.Set(string_id, guid);
+    } else {
+      guid = origin_name_to_guid_it->value;
+      DCHECK(guid);
     }
+
     count_.insert(guid);
     return guid;
   }
@@ -130,7 +135,14 @@ class DatabaseVersionCache {
   // The null string is returned only if the cached version has not been set.
   String GetVersion(DatabaseGuid guid) const EXCLUSIVE_LOCKS_REQUIRED(mutex_) {
     mutex_.AssertAcquired();
-    return guid_to_version_.at(guid).IsolatedCopy();
+
+    String version;
+    auto guid_to_version_it = guid_to_version_.find(guid);
+    if (guid_to_version_it != guid_to_version_.end()) {
+      version = guid_to_version_it->value;
+      DCHECK(version);
+    }
+    return version.IsolatedCopy();
   }
 
   // Updates the cached version of a database.
@@ -223,19 +235,18 @@ static bool SetTextValueInDatabase(SQLiteDatabase& db,
 Database::Database(DatabaseContext* database_context,
                    const String& name,
                    const String& expected_version,
-                   const String& display_name,
-                   uint32_t estimated_size)
+                   const String& display_name)
     : database_context_(database_context),
       name_(name.IsolatedCopy()),
       expected_version_(expected_version.IsolatedCopy()),
       display_name_(display_name.IsolatedCopy()),
-      estimated_size_(estimated_size),
       guid_(0),
       opened_(false),
       new_(false),
       database_authorizer_(kInfoTableName),
       transaction_in_progress_(false),
       is_transaction_queue_enabled_(true),
+      did_try_to_count_transaction_(false),
       feature_handle_for_scheduler_(
           database_context->GetExecutionContext()
               ->GetScheduler()
@@ -302,15 +313,14 @@ bool Database::OpenAndVerifyVersion(bool set_version_in_new_database,
     if (success && IsNew()) {
       STORAGE_DVLOG(1)
           << "Scheduling DatabaseCreationCallbackTask for database " << this;
-      auto task_id = std::make_unique<probe::AsyncTaskId>();
-      probe::AsyncTaskScheduled(GetExecutionContext(), "openDatabase",
-                                task_id.get());
+      auto async_task_context = std::make_unique<probe::AsyncTaskContext>();
+      async_task_context->Schedule(GetExecutionContext(), "openDatabase");
       GetExecutionContext()
           ->GetTaskRunner(TaskType::kDatabaseAccess)
-          ->PostTask(
-              FROM_HERE,
-              WTF::Bind(&Database::RunCreationCallback, WrapPersistent(this),
-                        WrapPersistent(creation_callback), std::move(task_id)));
+          ->PostTask(FROM_HERE, WTF::Bind(&Database::RunCreationCallback,
+                                          WrapPersistent(this),
+                                          WrapPersistent(creation_callback),
+                                          std::move(async_task_context)));
     }
   }
 
@@ -319,8 +329,8 @@ bool Database::OpenAndVerifyVersion(bool set_version_in_new_database,
 
 void Database::RunCreationCallback(
     V8DatabaseCallback* creation_callback,
-    std::unique_ptr<probe::AsyncTaskId> task_id) {
-  probe::AsyncTask async_task(GetExecutionContext(), task_id.get());
+    std::unique_ptr<probe::AsyncTaskContext> async_task_context) {
+  probe::AsyncTask async_task(GetExecutionContext(), async_task_context.get());
   creation_callback->InvokeAndReportException(nullptr, this);
 }
 
@@ -623,10 +633,6 @@ String Database::DisplayName() const {
   return display_name_.IsolatedCopy();
 }
 
-uint32_t Database::EstimatedSize() const {
-  return estimated_size_;
-}
-
 String Database::FileName() const {
   // Return a deep copy for ref counting thread safety
   return filename_.IsolatedCopy();
@@ -827,6 +833,12 @@ void Database::RunTransaction(
     return;
 
   DCHECK(GetExecutionContext()->IsContextThread());
+
+  if (!did_try_to_count_transaction_) {
+    GetExecutionContext()->CountUse(WebFeature::kReadOrWriteWebDatabase);
+    did_try_to_count_transaction_ = true;
+  }
+
 // FIXME: Rather than passing errorCallback to SQLTransaction and then
 // sometimes firing it ourselves, this code should probably be pushed down
 // into Database so that we only create the SQLTransaction if we're

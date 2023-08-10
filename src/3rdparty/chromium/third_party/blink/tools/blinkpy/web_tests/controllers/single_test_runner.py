@@ -37,6 +37,8 @@ from blinkpy.web_tests.models import testharness_results
 
 _log = logging.getLogger(__name__)
 
+SKIA_GOLD_CORPUS = 'blink-web-tests'
+
 
 def run_single_test(port, options, results_directory, worker_name, driver,
                     test_input):
@@ -96,6 +98,8 @@ class SingleTestRunner(object):
         image_hash = None
         if self._should_fetch_expected_checksum():
             image_hash = self._port.expected_checksum(self._test_name)
+            if image_hash:
+                image_hash = image_hash.decode("ascii", "replace")
 
         args = self._port.args_for_test(self._test_name)
         test_name = self._port.name_for_test(self._test_name)
@@ -133,7 +137,7 @@ class SingleTestRunner(object):
         return test_result
 
     def _run_compare_test(self):
-        """Runs the signle test and returns test result."""
+        """Runs the single test and returns test result."""
         driver_output = self._driver.run_test(self._driver_input())
         expected_driver_output = self._expected_driver_output()
         failures = self._compare_output(expected_driver_output, driver_output)
@@ -178,6 +182,12 @@ class SingleTestRunner(object):
             pid=driver_output.pid,
             crash_site=driver_output.crash_site)
 
+    def _convert_to_str(self, data):
+        if data:
+            return data.decode('utf8', 'replace')
+        else:
+            return ''
+
     def _update_or_add_new_baselines(self, driver_output, failures):
         """Updates or adds new baselines for the test if necessary."""
         if (test_failures.has_failure_type(test_failures.FailureTimeout,
@@ -196,7 +206,7 @@ class SingleTestRunner(object):
         #    Note that the created baseline might be redundant, but users can
         #    optimize them later with optimize-baselines.
         if self._is_all_pass_testharness_text_not_needing_baseline(
-                driver_output.text):
+                self._convert_to_str(driver_output.text)):
             driver_output.text = None
         self._save_baseline_data(
             driver_output.text, '.txt',
@@ -407,13 +417,14 @@ class SingleTestRunner(object):
 
         if driver_output.text:
             if self._is_all_pass_testharness_text_not_needing_baseline(
-                    driver_output.text):
+                    self._convert_to_str(driver_output.text)):
                 if self._report_extra_baseline(
                         driver_output, '.txt',
                         'is a all-pass testharness test'):
                     # TODO(wangxianzhu): Make this a failure.
                     pass
-            elif testharness_results.is_testharness_output(driver_output.text):
+            elif testharness_results.is_testharness_output(
+                    self._convert_to_str(driver_output.text)):
                 # We only need -expected.txt for a testharness test when we
                 # expect it to fail or produce additional console output (when
                 # -expected.txt is optional), so don't report missing
@@ -470,10 +481,11 @@ class SingleTestRunner(object):
         if expected_driver_output.text:
             # Will compare text if there is expected text.
             return False, []
-        if not testharness_results.is_testharness_output(driver_output.text):
+        if not testharness_results.is_testharness_output(
+                self._convert_to_str(driver_output.text)):
             return False, []
         if not testharness_results.is_testharness_output_passing(
-                driver_output.text):
+                self._convert_to_str(driver_output.text)):
             return True, [
                 test_failures.FailureTestHarnessAssertion(
                     driver_output, expected_driver_output)
@@ -487,10 +499,12 @@ class SingleTestRunner(object):
         return text and '{\n  "layers": [' in text
 
     def _compare_text(self, expected_driver_output, driver_output):
-        expected_text = expected_driver_output.text
-        actual_text = driver_output.text
-        if not expected_text or not actual_text:
+
+        if not expected_driver_output.text or not driver_output.text:
             return []
+
+        expected_text = expected_driver_output.text.decode('utf8', 'replace')
+        actual_text = driver_output.text.decode('utf8', 'replace')
 
         normalized_actual_text = self._get_normalized_output_text(actual_text)
         # Assuming expected_text is already normalized.
@@ -507,7 +521,7 @@ class SingleTestRunner(object):
 
         def remove_ng_text(results):
             processed = re.sub(
-                r'LayoutNG(BlockFlow|ListItem|TableCell|FlexibleBox)',
+                r'LayoutNG(BlockFlow|ListItem|TableCell|FlexibleBox|View)',
                 r'Layout\1', results)
             # LayoutTableCaption doesn't override LayoutBlockFlow::GetName, so
             # render tree dumps have "LayoutBlockFlow" for captions.
@@ -517,7 +531,7 @@ class SingleTestRunner(object):
 
         def is_ng_name_mismatch(expected, actual):
             if not re.search(
-                    "LayoutNG(BlockFlow|ListItem|TableCaption|TableCell|FlexibleBox)",
+                    "LayoutNG(BlockFlow|ListItem|TableCaption|TableCell|FlexibleBox|View)",
                     actual):
                 return False
             if (not self._is_render_tree(actual)
@@ -597,6 +611,31 @@ class SingleTestRunner(object):
         if not driver_output.image or not driver_output.image_hash:
             return []
 
+        # Do a dry run upload to Skia Gold, ignoring any of its output, for
+        # data collection to see if we can switch to using Gold for web tests
+        # in the future.
+        try:
+            gold_keys = self._port.skia_gold_json_keys()
+            gold_session = (
+                self._port.skia_gold_session_manager().GetSkiaGoldSession(
+                    gold_keys, corpus=SKIA_GOLD_CORPUS))
+            gold_properties = self._port.skia_gold_properties()
+            use_luci = not gold_properties.local_pixel_tests
+            img_path = self._filesystem.join(
+                str(self._port.skia_gold_temp_dir()),
+                '%s.png' % self._test_name.replace(self._filesystem.sep, '_'))
+            self._filesystem.write_binary_file(img_path, driver_output.image)
+            status, error = gold_session.RunComparison(name=self._test_name,
+                                                       png_file=img_path,
+                                                       use_luci=use_luci)
+            _log.debug('Ran Skia Gold dry run, got status %s and error %s',
+                       status, error)
+        except Exception as e:
+            _log.warning(
+                'Got exception while dry running Skia Gold. This can be '
+                'safely ignored unless you are actively working with Gold: %s',
+                e)
+
         if driver_output.image_hash != expected_driver_output.image_hash:
             diff, err_str = self._port.diff_image(expected_driver_output.image,
                                                   driver_output.image)
@@ -606,7 +645,9 @@ class SingleTestRunner(object):
 
             if err_str:
                 _log.error('  %s : %s', self._test_name, err_str)
-                driver_output.error = (driver_output.error or '') + err_str
+                driver_output.error = (driver_output.error
+                                       or b'') + err_str.encode(
+                                           'utf8', 'replace')
 
             if diff or err_str:
                 return [
@@ -633,7 +674,6 @@ class SingleTestRunner(object):
         # failures if needed.
         compare_text_failures = self._compare_output(expected_text_output,
                                                      test_output)
-
         # If the test crashed, or timed out,  or a leak was detected, there's no point
         # in running the reference at all. This can save a lot of execution time if we
         # have a lot of crashes or timeouts.
@@ -657,7 +697,6 @@ class SingleTestRunner(object):
         reference_test_names = []
         reftest_failures = []
         args = self._port.args_for_test(self._test_name)
-
         # sort self._reference_files to put mismatch tests first
         for expectation, reference_filename in sorted(self._reference_files):
             reference_test_name = self._port.relative_test_filename(
@@ -749,7 +788,8 @@ class SingleTestRunner(object):
             if err_str:
                 _log.error(err_str)
                 actual_driver_output.error = (actual_driver_output.error
-                                              or '') + err_str
+                                              or b'') + err_str.encode(
+                                                  'utf8', 'replace')
 
             if diff or err_str:
                 failures.append(

@@ -55,36 +55,6 @@ OSStatus CreatePolicy(const CSSM_OID* policy_oid,
 
 }  // namespace
 
-bool IsValidSecCertificate(SecCertificateRef cert_handle) {
-  const CSSM_X509_NAME* sanity_check = NULL;
-  OSStatus status = SecCertificateGetSubject(cert_handle, &sanity_check);
-  return status == noErr && sanity_check;
-}
-
-base::ScopedCFTypeRef<SecCertificateRef> CreateSecCertificateFromBytes(
-    const uint8_t* data,
-    size_t length) {
-  CSSM_DATA cert_data;
-  cert_data.Data = const_cast<uint8_t*>(data);
-  cert_data.Length = length;
-
-  base::ScopedCFTypeRef<SecCertificateRef> cert_handle;
-  OSStatus status = SecCertificateCreateFromData(&cert_data, CSSM_CERT_X_509v3,
-                                                 CSSM_CERT_ENCODING_DER,
-                                                 cert_handle.InitializeInto());
-  if (status != noErr)
-    return base::ScopedCFTypeRef<SecCertificateRef>();
-  if (!IsValidSecCertificate(cert_handle.get()))
-    return base::ScopedCFTypeRef<SecCertificateRef>();
-  return cert_handle;
-}
-
-base::ScopedCFTypeRef<SecCertificateRef>
-CreateSecCertificateFromX509Certificate(const X509Certificate* cert) {
-  return CreateSecCertificateFromBytes(CRYPTO_BUFFER_data(cert->cert_buffer()),
-                                       CRYPTO_BUFFER_len(cert->cert_buffer()));
-}
-
 scoped_refptr<X509Certificate> CreateX509CertificateFromSecCertificate(
     base::ScopedCFTypeRef<SecCertificateRef> sec_cert,
     const std::vector<base::ScopedCFTypeRef<SecCertificateRef>>& sec_chain) {
@@ -100,7 +70,7 @@ scoped_refptr<X509Certificate> CreateX509CertificateFromSecCertificate(
     return nullptr;
   bssl::UniquePtr<CRYPTO_BUFFER> cert_handle(
       X509Certificate::CreateCertBufferFromBytes(
-          reinterpret_cast<const char*>(der_data.Data), der_data.Length));
+          base::make_span(der_data.Data, der_data.Length)));
   if (!cert_handle)
     return nullptr;
   std::vector<bssl::UniquePtr<CRYPTO_BUFFER>> intermediates;
@@ -111,7 +81,7 @@ scoped_refptr<X509Certificate> CreateX509CertificateFromSecCertificate(
     }
     bssl::UniquePtr<CRYPTO_BUFFER> intermediate_cert_handle(
         X509Certificate::CreateCertBufferFromBytes(
-            reinterpret_cast<const char*>(der_data.Data), der_data.Length));
+            base::make_span(der_data.Data, der_data.Length)));
     if (!intermediate_cert_handle)
       return nullptr;
     intermediates.push_back(std::move(intermediate_cert_handle));

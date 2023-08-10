@@ -26,4 +26,23 @@ bool CrossOriginEmbedderPolicy::operator==(
          report_only_reporting_endpoint == other.report_only_reporting_endpoint;
 }
 
+bool CompatibleWithCrossOriginIsolated(const CrossOriginEmbedderPolicy& coep) {
+  return CompatibleWithCrossOriginIsolated(coep.value);
+}
+
+// [spec]:
+// https://html.spec.whatwg.org/C/#compatible-with-cross-origin-isolation An
+// embedder policy value is compatible with cross-origin isolation if it is
+// "credentialless" or "require-corp".
+bool CompatibleWithCrossOriginIsolated(
+    mojom::CrossOriginEmbedderPolicyValue value) {
+  switch (value) {
+    case mojom::CrossOriginEmbedderPolicyValue::kNone:
+      return false;
+    case mojom::CrossOriginEmbedderPolicyValue::kCredentialless:
+    case mojom::CrossOriginEmbedderPolicyValue::kRequireCorp:
+      return true;
+  }
+}
+
 }  // namespace network

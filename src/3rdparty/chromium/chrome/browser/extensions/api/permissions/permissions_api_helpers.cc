@@ -6,6 +6,8 @@
 
 #include <stddef.h>
 
+#include <memory>
+
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/values.h"
@@ -17,6 +19,7 @@
 #include "extensions/common/permissions/permissions_info.h"
 #include "extensions/common/permissions/usb_device_permission.h"
 #include "extensions/common/url_pattern_set.h"
+#include "extensions/common/user_script.h"
 
 namespace extensions {
 
@@ -55,7 +58,8 @@ std::unique_ptr<APIPermission> UnpackPermissionWithArguments(
   // Explicitly check the permissions that accept arguments until
   // https://crbug.com/162042 is fixed.
   const APIPermissionInfo* usb_device_permission_info =
-      PermissionsInfo::GetInstance()->GetByID(APIPermission::kUsbDevice);
+      PermissionsInfo::GetInstance()->GetByID(
+          mojom::APIPermissionID::kUsbDevice);
   if (permission_name == usb_device_permission_info->name()) {
     permission =
         std::make_unique<UsbDevicePermission>(usb_device_permission_info);
@@ -233,7 +237,7 @@ UnpackPermissionSetResult::~UnpackPermissionSetResult() = default;
 std::unique_ptr<Permissions> PackPermissionSet(const PermissionSet& set) {
   std::unique_ptr<Permissions> permissions(new Permissions());
 
-  permissions->permissions.reset(new std::vector<std::string>());
+  permissions->permissions = std::make_unique<std::vector<std::string>>();
   for (const APIPermission* api : set.apis()) {
     std::unique_ptr<base::Value> value(api->ToValue());
     if (!value) {
@@ -249,7 +253,7 @@ std::unique_ptr<Permissions> PackPermissionSet(const PermissionSet& set) {
   // TODO(rpaquay): We currently don't expose manifest permissions
   // to apps/extensions via the permissions API.
 
-  permissions->origins.reset(new std::vector<std::string>());
+  permissions->origins = std::make_unique<std::vector<std::string>>();
   for (const URLPattern& pattern : set.effective_hosts())
     permissions->origins->push_back(pattern.GetAsString());
 

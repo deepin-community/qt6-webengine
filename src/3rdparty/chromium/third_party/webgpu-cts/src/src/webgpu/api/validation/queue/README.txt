@@ -1,5 +1,5 @@
 Tests for validation that occurs inside queued operations
-(submit, writeBuffer, writeTexture, copyImageBitmapToTexture).
+(submit, writeBuffer, writeTexture, copyExternalImageToTexture).
 
 BufferMapStatesToTest = {
   mapped -> unmapped,
@@ -10,4 +10,4 @@ BufferMapStatesToTest = {
   created mapped-at-creation,
 }
 
-Note writeTexture is tested in copyBetweenLinearDataAndTexture.
+Note writeTexture is tested in image_copy.

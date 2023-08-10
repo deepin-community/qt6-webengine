@@ -13,6 +13,7 @@
 #include "content/public/common/content_switches.h"
 
 #include "content/public/android/content_jni_headers/SmsProviderGms_jni.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
 #include "ui/android/window_android.h"
 
@@ -55,7 +56,17 @@ SmsProviderGms::~SmsProviderGms() {
   Java_SmsProviderGms_destroy(env, j_sms_provider_);
 }
 
-void SmsProviderGms::Retrieve(RenderFrameHost* render_frame_host) {
+void SmsProviderGms::Retrieve(RenderFrameHost* render_frame_host,
+                              SmsFetchType fetch_type) {
+  // This function cannot get called during prerendering because
+  // SmsFetcherImpl::Subscribe calls this, and that is deferred during
+  // prerendering by MojoBinderPolicyApplier. This DCHECK proves we don't have
+  // to worry about prerendering when using WebContents::FromRenderFrameHost()
+  // below (see function comments for WebContents::FromRenderFrameHost() for
+  // more details).
+  DCHECK(!render_frame_host ||
+         (render_frame_host->GetLifecycleState() !=
+          RenderFrameHost::LifecycleState::kPrerendering));
   WebContents* web_contents =
       WebContents::FromRenderFrameHost(render_frame_host);
   base::android::ScopedJavaLocalRef<jobject> j_window = nullptr;
@@ -65,7 +76,8 @@ void SmsProviderGms::Retrieve(RenderFrameHost* render_frame_host) {
   }
 
   JNIEnv* env = AttachCurrentThread();
-  Java_SmsProviderGms_listen(env, j_sms_provider_, j_window);
+  Java_SmsProviderGms_listen(env, j_sms_provider_, j_window,
+                             fetch_type == SmsFetchType::kLocal);
 }
 
 void SmsProviderGms::OnReceive(JNIEnv* env, jstring message, jint backend) {
@@ -79,15 +91,15 @@ void SmsProviderGms::OnReceive(JNIEnv* env, jstring message, jint backend) {
 }
 
 void SmsProviderGms::OnTimeout(JNIEnv* env) {
-  NotifyFailure(SmsFetcher::FailureType::kPromptTimeout);
+  NotifyFailure(SmsFetchFailureType::kPromptTimeout);
 }
 
 void SmsProviderGms::OnCancel(JNIEnv* env) {
-  NotifyFailure(SmsFetcher::FailureType::kPromptCancelled);
+  NotifyFailure(SmsFetchFailureType::kPromptCancelled);
 }
 
 void SmsProviderGms::OnNotAvailable(JNIEnv* env) {
-  NotifyFailure(SmsFetcher::FailureType::kBackendNotAvailable);
+  NotifyFailure(SmsFetchFailureType::kBackendNotAvailable);
 }
 
 void SmsProviderGms::SetClientAndWindowForTesting(

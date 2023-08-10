@@ -5,6 +5,7 @@
 #include "ui/gfx/animation/keyframe/animation_curve.h"
 
 #include "base/check.h"
+#include "ui/gfx/geometry/transform_operations.h"
 
 namespace gfx {
 
@@ -44,5 +45,6 @@ DEFINE_ANIMATION_CURVE(Transform, TRANSFORM)
 DEFINE_ANIMATION_CURVE(Float, FLOAT)
 DEFINE_ANIMATION_CURVE(Size, SIZE)
 DEFINE_ANIMATION_CURVE(Color, COLOR)
+DEFINE_ANIMATION_CURVE(Rect, RECT)
 
 }  // namespace gfx

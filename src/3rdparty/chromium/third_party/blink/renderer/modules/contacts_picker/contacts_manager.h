@@ -12,7 +12,6 @@
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/frame/navigator.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
-#include "third_party/blink/renderer/platform/heap/thread_state.h"
 #include "third_party/blink/renderer/platform/mojo/heap_mojo_remote.h"
 #include "third_party/blink/renderer/platform/mojo/heap_mojo_wrapper_mode.h"
 #include "third_party/blink/renderer/platform/supplementable.h"
@@ -52,14 +51,12 @@ class ContactsManager final : public ScriptWrappable,
 
   void OnContactsSelected(
       ScriptPromiseResolver* resolver,
-      base::Optional<Vector<mojom::blink::ContactInfoPtr>> contacts);
+      absl::optional<Vector<mojom::blink::ContactInfoPtr>> contacts);
 
   const Vector<String>& GetProperties(ScriptState* script_state);
 
   // Created lazily.
-  HeapMojoRemote<mojom::blink::ContactsManager,
-                 HeapMojoWrapperMode::kWithoutContextObserver>
-      contacts_manager_;
+  HeapMojoRemote<mojom::blink::ContactsManager> contacts_manager_;
   bool contact_picker_in_use_ = false;
   Vector<String> properties_;
 };

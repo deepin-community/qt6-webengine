@@ -381,7 +381,6 @@ virtual void ShaderSource(GLuint shader,
                           const GLchar* const* str,
                           const GLint* length) = 0;
 virtual void ShallowFinishCHROMIUM() = 0;
-virtual void ShallowFlushCHROMIUM() = 0;
 virtual void OrderingBarrierCHROMIUM() = 0;
 virtual void MultiDrawArraysWEBGL(GLenum mode,
                                   const GLint* firsts,
@@ -838,12 +837,6 @@ virtual void DiscardFramebufferEXT(GLenum target,
                                    GLsizei count,
                                    const GLenum* attachments) = 0;
 virtual void LoseContextCHROMIUM(GLenum current, GLenum other) = 0;
-virtual void UnpremultiplyAndDitherCopyCHROMIUM(GLuint source_id,
-                                                GLuint dest_id,
-                                                GLint x,
-                                                GLint y,
-                                                GLsizei width,
-                                                GLsizei height) = 0;
 virtual void DrawBuffersEXT(GLsizei count, const GLenum* bufs) = 0;
 virtual void DiscardBackbufferCHROMIUM() = 0;
 virtual void ScheduleOverlayPlaneCHROMIUM(GLint plane_z_order,

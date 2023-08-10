@@ -19,7 +19,7 @@
 namespace ui {
 namespace {
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 const base::FilePath::CharType kDefaultEglSoname[] =
     FILE_PATH_LITERAL("libEGL.dll");
 const base::FilePath::CharType kDefaultGlesSoname[] =
@@ -29,12 +29,12 @@ const base::FilePath::CharType kAngleEglSoname[] =
 const base::FilePath::CharType kAngleGlesSoname[] =
     FILE_PATH_LITERAL("libGLESv2.dll");
 #else
-#if defined(OS_FUCHSIA)
+#if BUILDFLAG(IS_FUCHSIA)
 const base::FilePath::CharType kDefaultEglSoname[] =
     FILE_PATH_LITERAL("libEGL.so");
 const base::FilePath::CharType kDefaultGlesSoname[] =
     FILE_PATH_LITERAL("libGLESv2.so");
-#else  // !defined(OS_FUCHSIA)
+#else  // BUILDFLAG(IS_FUCHSIA)
 const base::FilePath::CharType kDefaultEglSoname[] =
     FILE_PATH_LITERAL("libEGL.so.1");
 const base::FilePath::CharType kDefaultGlesSoname[] =
@@ -44,26 +44,7 @@ const base::FilePath::CharType kAngleEglSoname[] =
     FILE_PATH_LITERAL("libEGL.so");
 const base::FilePath::CharType kAngleGlesSoname[] =
     FILE_PATH_LITERAL("libGLESv2.so");
-#endif  // !defined(OS_WIN)
-
-#if BUILDFLAG(ENABLE_SWIFTSHADER)
-#if defined(OS_WIN)
-const base::FilePath::CharType kGLESv2SwiftShaderLibraryName[] =
-    FILE_PATH_LITERAL("libGLESv2.dll");
-const base::FilePath::CharType kEGLSwiftShaderLibraryName[] =
-    FILE_PATH_LITERAL("libEGL.dll");
-#elif defined(OS_FUCHSIA)
-const base::FilePath::CharType kGLESv2SwiftShaderLibraryName[] =
-    FILE_PATH_LITERAL("libswiftshader_libGLESv2.so");
-const base::FilePath::CharType kEGLSwiftShaderLibraryName[] =
-    FILE_PATH_LITERAL("libswiftshader_libEGL.so");
-#else   // !defined(OS_WIN) && !defined(OS_FUCHSIA)
-const base::FilePath::CharType kGLESv2SwiftShaderLibraryName[] =
-    FILE_PATH_LITERAL("libGLESv2.so");
-const base::FilePath::CharType kEGLSwiftShaderLibraryName[] =
-    FILE_PATH_LITERAL("libEGL.so");
-#endif  // !defined(OS_WIN) && !defined(OS_FUCHSIA)
-#endif  // BUILDFLAG(ENABLE_SWIFTSHADER)
+#endif  // BUILDFLAG(IS_WIN)
 
 bool LoadEGLGLES2Bindings(const base::FilePath& egl_library_path,
                           const base::FilePath& gles_library_path) {
@@ -119,7 +100,7 @@ bool LoadEGLGLES2Bindings(const base::FilePath& egl_library_path,
          /*overwrite=*/0);
   setenv(kTraceLibglesv2, gles_library_path.BaseName().value().c_str(),
          /*overwrite=*/0);
-#if defined(OS_CHROMEOS)
+#if BUILDFLAG(IS_CHROMEOS)
   setenv(kTraceFile, "/tmp/gltrace.dat", /*overwrite=*/0);
 #else
   if (!getenv(kTraceFile)) {
@@ -136,6 +117,8 @@ bool LoadEGLGLES2Bindings(const base::FilePath& egl_library_path,
       FILE_PATH_LITERAL("egltrace.so");
   base::NativeLibrary trace_library =
       base::LoadNativeLibrary(base::FilePath(kDefaultTraceSoname), &error);
+  if (!trace_library)
+    LOG(ERROR) << error.ToString();
   gl::AddGLNativeLibrary(trace_library);
 #endif
 
@@ -147,27 +130,20 @@ bool LoadEGLGLES2Bindings(const base::FilePath& egl_library_path,
 
 }  // namespace
 
-bool LoadDefaultEGLGLES2Bindings(gl::GLImplementation implementation) {
+bool LoadDefaultEGLGLES2Bindings(
+    const gl::GLImplementationParts& implementation) {
   base::FilePath glesv2_path;
   base::FilePath egl_path;
 
-  if (implementation == gl::kGLImplementationSwiftShaderGL) {
-#if BUILDFLAG(ENABLE_SWIFTSHADER)
+  if (implementation.gl == gl::kGLImplementationEGLANGLE) {
     base::FilePath module_path;
-#if !defined(OS_FUCHSIA)
+#if !BUILDFLAG(IS_FUCHSIA)
     if (!base::PathService::Get(base::DIR_MODULE, &module_path))
       return false;
-    module_path = module_path.Append(FILE_PATH_LITERAL("swiftshader/"));
 #endif
 
-    glesv2_path = module_path.Append(kGLESv2SwiftShaderLibraryName);
-    egl_path = module_path.Append(kEGLSwiftShaderLibraryName);
-#else
-    return false;
-#endif
-  } else if (implementation == gl::kGLImplementationEGLANGLE) {
-    glesv2_path = base::FilePath(kAngleGlesSoname);
-    egl_path = base::FilePath(kAngleEglSoname);
+    glesv2_path = module_path.Append(kAngleGlesSoname);
+    egl_path = module_path.Append(kAngleEglSoname);
   } else {
     glesv2_path = base::FilePath(kDefaultGlesSoname);
     egl_path = base::FilePath(kDefaultEglSoname);

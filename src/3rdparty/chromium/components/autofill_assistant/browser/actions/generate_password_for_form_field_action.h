@@ -8,7 +8,6 @@
 #include <memory>
 #include <string>
 #include <utility>
-#include <vector>
 #include "base/callback.h"
 #include "base/memory/weak_ptr.h"
 #include "components/autofill_assistant/browser/actions/action.h"
@@ -50,7 +49,7 @@ class GeneratePasswordForFormFieldAction : public Action {
                                         const std::string& generated_password,
                                         const autofill::FormData& form_data,
                                         UserData* user_data,
-                                        UserData::FieldChange* field_change);
+                                        UserDataFieldChange* field_change);
 
   Selector selector_;
   ProcessActionCallback callback_;

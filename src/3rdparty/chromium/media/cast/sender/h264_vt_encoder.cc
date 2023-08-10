@@ -7,6 +7,7 @@
 #include <stddef.h>
 
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/big_endian.h"
@@ -15,8 +16,8 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/power_monitor/power_monitor.h"
-#include "base/stl_util.h"
 #include "base/synchronization/lock.h"
+#include "base/time/time.h"
 #include "build/build_config.h"
 #include "media/base/mac/video_frame_mac.h"
 #include "media/cast/common/rtp_time.h"
@@ -44,7 +45,7 @@ struct InProgressH264VTFrameEncode {
 
 }  // namespace
 
-class H264VideoToolboxEncoder::VideoFrameFactoryImpl
+class H264VideoToolboxEncoder::VideoFrameFactoryImpl final
     : public base::RefCountedThreadSafe<VideoFrameFactoryImpl>,
       public VideoFrameFactory {
  public:
@@ -55,9 +56,12 @@ class H264VideoToolboxEncoder::VideoFrameFactoryImpl
                         const scoped_refptr<CastEnvironment>& cast_environment)
       : encoder_(encoder), cast_environment_(cast_environment) {}
 
+  VideoFrameFactoryImpl(const VideoFrameFactoryImpl&) = delete;
+  VideoFrameFactoryImpl& operator=(const VideoFrameFactoryImpl&) = delete;
+
   scoped_refptr<VideoFrame> MaybeCreateFrame(
       const gfx::Size& frame_size,
-      base::TimeDelta timestamp) final {
+      base::TimeDelta timestamp) override {
     if (frame_size.IsEmpty()) {
       DVLOG(1) << "Rejecting empty video frame.";
       return nullptr;
@@ -107,7 +111,7 @@ class H264VideoToolboxEncoder::VideoFrameFactoryImpl
 
  private:
   friend class base::RefCountedThreadSafe<VideoFrameFactoryImpl>;
-  ~VideoFrameFactoryImpl() final {}
+  ~VideoFrameFactoryImpl() override {}
 
   base::Lock lock_;
   base::ScopedCFTypeRef<CVPixelBufferPoolRef> pool_;
@@ -117,11 +121,9 @@ class H264VideoToolboxEncoder::VideoFrameFactoryImpl
   // message the encoder when the frame size changes.
   const base::WeakPtr<H264VideoToolboxEncoder> encoder_;
   const scoped_refptr<CastEnvironment> cast_environment_;
-
-  DISALLOW_COPY_AND_ASSIGN(VideoFrameFactoryImpl);
 };
 
-class H264VideoToolboxEncoder::VideoFrameFactoryImpl::Proxy
+class H264VideoToolboxEncoder::VideoFrameFactoryImpl::Proxy final
     : public VideoFrameFactory {
  public:
   explicit Proxy(
@@ -130,18 +132,19 @@ class H264VideoToolboxEncoder::VideoFrameFactoryImpl::Proxy
     DCHECK(video_frame_factory_);
   }
 
+  Proxy(const Proxy&) = delete;
+  Proxy& operator=(const Proxy&) = delete;
+
   scoped_refptr<VideoFrame> MaybeCreateFrame(
       const gfx::Size& frame_size,
-      base::TimeDelta timestamp) final {
+      base::TimeDelta timestamp) override {
     return video_frame_factory_->MaybeCreateFrame(frame_size, timestamp);
   }
 
  private:
-  ~Proxy() final {}
+  ~Proxy() override {}
 
   const scoped_refptr<VideoFrameFactoryImpl> video_frame_factory_;
-
-  DISALLOW_COPY_AND_ASSIGN(Proxy);
 };
 
 // static
@@ -181,7 +184,7 @@ H264VideoToolboxEncoder::H264VideoToolboxEncoder(
             weak_factory_.GetWeakPtr(), cast_environment_));
 
     // Register for power state changes.
-    base::PowerMonitor::AddObserver(this);
+    base::PowerMonitor::AddPowerSuspendObserver(this);
     VLOG(1) << "Registered for power state changes.";
   }
 }
@@ -191,7 +194,7 @@ H264VideoToolboxEncoder::~H264VideoToolboxEncoder() {
 
   // Unregister the power observer. It is valid to remove an observer that was
   // not added.
-  base::PowerMonitor::RemoveObserver(this);
+  base::PowerMonitor::RemovePowerSuspendObserver(this);
 }
 
 void H264VideoToolboxEncoder::ResetCompressionSession() {
@@ -212,7 +215,7 @@ void H264VideoToolboxEncoder::ResetCompressionSession() {
   // On OS X, allow the hardware encoder. Don't require it, it does not support
   // all configurations (some of which are used for testing).
   base::ScopedCFTypeRef<CFDictionaryRef> encoder_spec;
-#if !defined(OS_IOS)
+#if !BUILDFLAG(IS_IOS)
   encoder_spec = video_toolbox::DictionaryWithKeyValue(
       kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder,
       kCFBooleanTrue);
@@ -231,14 +234,14 @@ void H264VideoToolboxEncoder::ResetCompressionSession() {
   CFTypeRef buffer_attributes_keys[] = {kCVPixelBufferPixelFormatTypeKey,
                                         kCVBufferPropagatedAttachmentsKey};
   CFTypeRef buffer_attributes_values[] = {
-      video_toolbox::ArrayWithIntegers(format, base::size(format)).release(),
+      video_toolbox::ArrayWithIntegers(format, std::size(format)).release(),
       video_toolbox::DictionaryWithKeysAndValues(
-          attachments_keys, attachments_values, base::size(attachments_keys))
+          attachments_keys, attachments_values, std::size(attachments_keys))
           .release()};
   const base::ScopedCFTypeRef<CFDictionaryRef> buffer_attributes =
       video_toolbox::DictionaryWithKeysAndValues(
           buffer_attributes_keys, buffer_attributes_values,
-          base::size(buffer_attributes_keys));
+          std::size(buffer_attributes_keys));
   for (auto* v : buffer_attributes_values)
     CFRelease(v);
 
@@ -548,15 +551,12 @@ void H264VideoToolboxEncoder::CompressionCallback(void* encoder_opaque,
                                                   &encoded_frame->data);
   }
 
-  // TODO(miu): Compute and populate the |encoder_utilization| and
-  // |lossy_utilization| performance metrics in |encoded_frame|.
-
   encoded_frame->encode_completion_time =
       encoder->cast_environment_->Clock()->NowTicks();
   encoder->cast_environment_->GetTaskRunner(CastEnvironment::MAIN)
       ->PostTask(FROM_HERE,
                  base::BindOnce(std::move(request->frame_encoded_callback),
-                                base::Passed(&encoded_frame)));
+                                std::move(encoded_frame)));
 }
 
 }  // namespace cast

@@ -11,9 +11,6 @@
 #include <vector>
 
 #include "base/callback.h"
-#include "base/macros.h"
-#include "base/optional.h"
-#include "base/strings/string16.h"
 #include "base/strings/string_piece_forward.h"
 #include "chrome/browser/ui/passwords/settings/password_manager_presenter.h"
 #include "chrome/browser/ui/passwords/settings/password_ui_view.h"
@@ -23,6 +20,7 @@
 #include "components/password_manager/core/browser/ui/export_progress_status.h"
 #include "components/password_manager/core/browser/ui/insecure_credentials_manager.h"
 #include "extensions/browser/extension_function.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace content {
 class WebContents;
@@ -31,18 +29,18 @@ class WebContents;
 namespace extensions {
 
 // Delegate used by the chrome.passwordsPrivate API to facilitate working with
-// saved passwords and password exceptions (reading, changing, removing,
+// saved passwords and password exceptions (reading, adding, changing, removing,
 // import/export) and to notify listeners when these values have changed.
 class PasswordsPrivateDelegate : public KeyedService {
  public:
   using PlaintextPasswordCallback =
-      base::OnceCallback<void(base::Optional<base::string16>)>;
+      base::OnceCallback<void(absl::optional<std::u16string>)>;
 
   using StartPasswordCheckCallback =
       base::OnceCallback<void(password_manager::BulkLeakCheckService::State)>;
 
   using PlaintextInsecurePasswordCallback = base::OnceCallback<void(
-      base::Optional<api::passwords_private::InsecureCredential>)>;
+      absl::optional<api::passwords_private::InsecureCredential>)>;
 
   ~PasswordsPrivateDelegate() override = default;
 
@@ -57,13 +55,39 @@ class PasswordsPrivateDelegate : public KeyedService {
       base::OnceCallback<void(const ExceptionEntries&)>;
   virtual void GetPasswordExceptionsList(ExceptionEntriesCallback callback) = 0;
 
+  // Checks whether the given |url| meets the requirements to save a password
+  // for it (e.g. valid, has proper scheme etc.) and returns the corresponding
+  // UrlCollection on success and absl::nullopt otherwise.
+  virtual absl::optional<api::passwords_private::UrlCollection>
+  GetUrlCollection(const std::string& url) = 0;
+
+  // Returns whether the account store is a default location for saving
+  // passwords. False means the device store is a default one. Must be called
+  // when the current user has already opted-in for account storage.
+  virtual bool IsAccountStoreDefault(content::WebContents* web_contents) = 0;
+
+  // Adds the |username| and |password| corresponding to the |url| to the
+  // specified store and returns true if the operation succeeded. Fails and
+  // returns false if the data is invalid or an entry with such origin and
+  // username already exists. Updates the default store to the used one on
+  // success if the user has opted-in for account storage.
+  // |url|: The url of the password entry, must be a valid http(s) ip/web
+  //        address as is or after adding http(s) scheme.
+  // |username|: The username to save, can be empty.
+  // |password|: The password to save, must not be empty.
+  // |use_account_store|: True for account store, false for device store.
+  virtual bool AddPassword(const std::string& url,
+                           const std::u16string& username,
+                           const std::u16string& password,
+                           bool use_account_store,
+                           content::WebContents* web_contents) = 0;
+
   // Changes the username and password corresponding to |ids|.
   // |ids|: The ids for the password entries being updated.
-  // |new_username|: The new username.
-  // |new_password|: The new password.
-  virtual bool ChangeSavedPassword(const std::vector<int>& ids,
-                                   const base::string16& new_username,
-                                   const base::string16& new_password) = 0;
+  // |params|: The struct which holds the new username, password and note.
+  virtual bool ChangeSavedPassword(
+      const std::vector<int>& ids,
+      const api::passwords_private::ChangeSavedPasswordParams& params) = 0;
 
   // Removes the saved password entries corresponding to the |ids| generated for
   // each entry of the password list. Any invalid id will be ignored.
@@ -81,7 +105,7 @@ class PasswordsPrivateDelegate : public KeyedService {
   // |id| the id created when going over the list of saved passwords.
   // |reason| The reason why the plaintext password is requested.
   // |callback| The callback that gets invoked with the saved password if it
-  // could be obtained successfully, or base::nullopt otherwise.
+  // could be obtained successfully, or absl::nullopt otherwise.
   // |web_contents| The web content object used as the UI; will be used to show
   //     an OS-level authentication dialog if necessary.
   virtual void RequestPlaintextPassword(
@@ -155,6 +179,16 @@ class PasswordsPrivateDelegate : public KeyedService {
   // Attempts to remove |credential| from the password store. Returns whether
   // the remove succeeded.
   virtual bool RemoveInsecureCredential(
+      const api::passwords_private::InsecureCredential& credential) = 0;
+
+  // Attempts to mute |credential| from the password store. Returns whether
+  // the mute succeeded.
+  virtual bool MuteInsecureCredential(
+      const api::passwords_private::InsecureCredential& credential) = 0;
+
+  // Attempts to unmute |credential| from the password store. Returns whether
+  // the unmute succeeded.
+  virtual bool UnmuteInsecureCredential(
       const api::passwords_private::InsecureCredential& credential) = 0;
 
   // Requests to start a check for insecure passwords. Invokes |callback|

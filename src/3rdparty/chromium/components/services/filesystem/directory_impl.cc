@@ -47,8 +47,8 @@ void DirectoryImpl::Read(ReadCallback callback) {
 
   std::move(callback).Run(base::File::Error::FILE_OK,
                           entries.empty()
-                              ? base::nullopt
-                              : base::make_optional(std::move(entries)));
+                              ? absl::nullopt
+                              : absl::make_optional(std::move(entries)));
 }
 
 // TODO(erg): Consider adding an implementation of Stat()/Touch() to the
@@ -139,7 +139,6 @@ void DirectoryImpl::OpenDirectory(
       return;
     }
 
-    base::File::Error error;
     if (!base::CreateDirectoryAndGetError(path, &error)) {
       std::move(callback).Run(error);
       return;
@@ -260,7 +259,7 @@ void DirectoryImpl::IsWritable(const std::string& raw_path,
 void DirectoryImpl::Flush(FlushCallback callback) {
 // On Windows no need to sync directories. Their metadata will be updated when
 // files are created, without an explicit sync.
-#if !defined(OS_WIN)
+#if !BUILDFLAG(IS_WIN)
   base::File file(directory_path_,
                   base::File::FLAG_OPEN | base::File::FLAG_READ);
   if (!file.IsValid()) {

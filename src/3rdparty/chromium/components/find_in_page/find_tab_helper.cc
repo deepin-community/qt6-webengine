@@ -5,8 +5,8 @@
 #include "components/find_in_page/find_tab_helper.h"
 
 #include <utility>
-#include <vector>
 
+#include "base/observer_list.h"
 #include "base/strings/string_util.h"
 #include "build/build_config.h"
 #include "components/find_in_page/find_result_observer.h"
@@ -25,7 +25,7 @@ namespace find_in_page {
 int FindTabHelper::find_request_id_counter_ = -1;
 
 FindTabHelper::FindTabHelper(WebContents* web_contents)
-    : web_contents_(web_contents),
+    : content::WebContentsUserData<FindTabHelper>(*web_contents),
       current_find_request_id_(find_request_id_counter_++),
       current_find_session_id_(current_find_request_id_) {}
 
@@ -42,13 +42,13 @@ void FindTabHelper::RemoveObserver(FindResultObserver* observer) {
   observers_.RemoveObserver(observer);
 }
 
-void FindTabHelper::StartFinding(base::string16 search_string,
+void FindTabHelper::StartFinding(std::u16string search_string,
                                  bool forward_direction,
                                  bool case_sensitive,
                                  bool find_match,
                                  bool run_synchronously_for_testing) {
   // Remove the carriage return character, which generally isn't in web content.
-  const base::char16 kInvalidChars[] = {'\r', 0};
+  const char16_t kInvalidChars[] = u"\r";
   base::RemoveChars(search_string, kInvalidChars, &search_string);
 
   // Keep track of what the last search was across the tabs.
@@ -58,7 +58,7 @@ void FindTabHelper::StartFinding(base::string16 search_string,
   if (search_string.empty()) {
     StopFinding(find_in_page::SelectionAction::kClear);
     for (auto& observer : observers_)
-      observer.OnFindEmptyText(web_contents_);
+      observer.OnFindEmptyText(&GetWebContents());
     return;
   }
 
@@ -87,7 +87,8 @@ void FindTabHelper::StartFinding(base::string16 search_string,
   options->new_session = new_session;
   options->find_match = find_match;
   options->run_synchronously_for_testing = run_synchronously_for_testing;
-  web_contents_->Find(current_find_request_id_, find_text_, std::move(options));
+  GetWebContents().Find(current_find_request_id_, find_text_,
+                        std::move(options));
 }
 
 void FindTabHelper::StopFinding(SelectionAction selection_action) {
@@ -95,7 +96,7 @@ void FindTabHelper::StopFinding(SelectionAction selection_action) {
     // kClearSelection means the find string has been cleared by the user, but
     // the UI has not been dismissed. In that case we want to clear the
     // previously remembered search (http://crbug.com/42639).
-    previous_find_text_ = base::string16();
+    previous_find_text_ = std::u16string();
   } else {
     find_ui_active_ = false;
     if (!find_text_.empty())
@@ -122,33 +123,33 @@ void FindTabHelper::StopFinding(SelectionAction selection_action) {
       NOTREACHED();
       action = content::STOP_FIND_ACTION_KEEP_SELECTION;
   }
-  web_contents_->StopFinding(action);
+  GetWebContents().StopFinding(action);
 }
 
 void FindTabHelper::ActivateFindInPageResultForAccessibility() {
-  web_contents_->GetMainFrame()->ActivateFindInPageResultForAccessibility(
+  GetWebContents().GetMainFrame()->ActivateFindInPageResultForAccessibility(
       current_find_request_id_);
 }
 
-base::string16 FindTabHelper::GetInitialSearchText() {
+std::u16string FindTabHelper::GetInitialSearchText() {
   // Try the last thing we searched for in this tab.
   if (!previous_find_text_.empty())
     return previous_find_text_;
 
   // Then defer to the delegate.
-  return delegate_ ? delegate_->GetSearchPrepopulateText() : base::string16();
+  return delegate_ ? delegate_->GetSearchPrepopulateText() : std::u16string();
 }
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 void FindTabHelper::ActivateNearestFindResult(float x, float y) {
   if (!find_op_aborted_ && !find_text_.empty()) {
-    web_contents_->ActivateNearestFindResult(x, y);
+    GetWebContents().ActivateNearestFindResult(x, y);
   }
 }
 
 void FindTabHelper::RequestFindMatchRects(int current_version) {
   if (!find_op_aborted_ && !find_text_.empty())
-    web_contents_->RequestFindMatchRects(current_version);
+    GetWebContents().RequestFindMatchRects(current_version);
 }
 #endif
 
@@ -178,10 +179,10 @@ void FindTabHelper::HandleFindReply(int request_id,
         FindNotificationDetails(request_id, number_of_matches, selection,
                                 active_match_ordinal, final_update);
     for (auto& observer : observers_)
-      observer.OnFindResultAvailable(web_contents_);
+      observer.OnFindResultAvailable(&GetWebContents());
   }
 }
 
-WEB_CONTENTS_USER_DATA_KEY_IMPL(FindTabHelper)
+WEB_CONTENTS_USER_DATA_KEY_IMPL(FindTabHelper);
 
 }  // namespace find_in_page

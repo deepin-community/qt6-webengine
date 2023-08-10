@@ -12,8 +12,7 @@
 
 #include "base/check.h"
 #include "base/compiler_specific.h"
-#include "base/macros.h"
-#include "base/strings/string16.h"
+#include "base/memory/raw_ptr.h"
 #include "base/win/registry.h"
 #include "components/autofill/core/browser/crypto/rc4_decryptor.h"
 #include "components/autofill/core/browser/data_model/autofill_profile.h"
@@ -186,7 +185,7 @@ bool ImportSingleProfile(const std::string& app_locale,
       ImportSingleFormGroup(key, reg_to_field, app_locale, profile, &phone);
 
   // Now re-construct the phones if needed.
-  base::string16 constructed_number;
+  std::u16string constructed_number;
   if (phone.ParseNumber(*profile, app_locale, &constructed_number)) {
     has_non_empty_fields = true;
     profile->SetRawInfo(PHONE_HOME_WHOLE_NUMBER, constructed_number);
@@ -228,7 +227,7 @@ class AutofillImporter : public PersonalDataManagerObserver {
  private:
   ~AutofillImporter() override { personal_data_manager_->RemoveObserver(this); }
 
-  PersonalDataManager* personal_data_manager_;
+  raw_ptr<PersonalDataManager> personal_data_manager_;
   std::vector<AutofillProfile> profiles_;
   std::vector<CreditCard> credit_cards_;
 };
@@ -286,7 +285,7 @@ bool ImportCurrentUserProfiles(const std::string& app_locale,
       credit_card.set_origin(kIEToolbarImportOrigin);
       if (ImportSingleFormGroup(key, reg_to_field, app_locale, &credit_card,
                                 nullptr)) {
-        base::string16 cc_number = credit_card.GetRawInfo(CREDIT_CARD_NUMBER);
+        std::u16string cc_number = credit_card.GetRawInfo(CREDIT_CARD_NUMBER);
         if (!cc_number.empty())
           credit_cards->push_back(credit_card);
       }

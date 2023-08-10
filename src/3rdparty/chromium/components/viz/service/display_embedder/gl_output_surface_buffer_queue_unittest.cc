@@ -4,6 +4,10 @@
 
 #include "components/viz/service/display_embedder/gl_output_surface_buffer_queue.h"
 
+#include <utility>
+#include <vector>
+
+#include "base/memory/raw_ptr.h"
 #include "components/viz/service/display/output_surface_client.h"
 #include "components/viz/service/display/output_surface_frame.h"
 #include "components/viz/service/display_embedder/buffer_queue.h"
@@ -33,6 +37,47 @@ using testing::SetArgPointee;
 using testing::StrictMock;
 
 namespace viz {
+namespace {
+
+class TestVizProcessContextProvider : public VizProcessContextProvider {
+ public:
+  TestVizProcessContextProvider(std::unique_ptr<TestContextSupport> support,
+                                std::unique_ptr<TestGLES2Interface> gl)
+      : support_(std::move(support)), context_gl_(std::move(gl)) {}
+  TestVizProcessContextProvider(const TestVizProcessContextProvider&) = delete;
+  TestVizProcessContextProvider& operator=(
+      const TestVizProcessContextProvider&) = delete;
+
+  // ContextProvider implementation.
+  gpu::gles2::GLES2Interface* ContextGL() override { return context_gl_.get(); }
+  gpu::ContextSupport* ContextSupport() override { return support_.get(); }
+  const gpu::Capabilities& ContextCapabilities() const override {
+    return gpu_capabilities_;
+  }
+
+  const gpu::GpuFeatureInfo& GetGpuFeatureInfo() const override {
+    return gpu_feature_info_;
+  }
+
+  void SetUpdateVSyncParametersCallback(
+      UpdateVSyncParametersCallback callback) override {}
+  void SetGpuVSyncCallback(GpuVSyncCallback callback) override {}
+  void SetGpuVSyncEnabled(bool enabled) override {}
+  bool UseRGB565PixelFormat() const override { return false; }
+  uint32_t GetCopyTextureInternalFormat() override { return 0u; }
+  base::ScopedClosureRunner GetCacheBackBufferCb() override {
+    return base::ScopedClosureRunner(base::DoNothing());
+  }
+
+ protected:
+  ~TestVizProcessContextProvider() override = default;
+
+ private:
+  std::unique_ptr<TestContextSupport> support_;
+  std::unique_ptr<TestGLES2Interface> context_gl_;
+  gpu::Capabilities gpu_capabilities_;
+  gpu::GpuFeatureInfo gpu_feature_info_;
+};
 
 class MockGLES2Interface : public TestGLES2Interface {
  public:
@@ -52,15 +97,14 @@ class MockGLES2Interface : public TestGLES2Interface {
 
 class MockBufferQueue : public BufferQueue {
  public:
-  MockBufferQueue()
-      : BufferQueue(/*sii_=*/nullptr,
-                    gpu::kNullSurfaceHandle) {}
+  MockBufferQueue() : BufferQueue(/*sii_=*/nullptr, gpu::kNullSurfaceHandle) {}
   ~MockBufferQueue() override = default;
 
-  MOCK_METHOD1(GetCurrentBuffer, gpu::Mailbox(gpu::SyncToken*));
+  MOCK_METHOD2(GetCurrentBuffer,
+               gpu::Mailbox(gpu::SyncToken*, gfx::GpuFenceHandle*));
   MOCK_CONST_METHOD0(CurrentBufferDamage, gfx::Rect());
   MOCK_METHOD1(SwapBuffers, void(const gfx::Rect&));
-  MOCK_METHOD0(PageFlipComplete, void());
+  MOCK_METHOD1(PageFlipComplete, void(gfx::GpuFenceHandle));
   MOCK_METHOD0(FreeAllSurfaces, void());
   MOCK_METHOD3(Reshape,
                bool(const gfx::Size&,
@@ -73,6 +117,8 @@ class MockBufferQueue : public BufferQueue {
     DoSetSyncTokenProvider();
   }
 };
+
+}  // namespace
 
 class GLOutputSurfaceBufferQueueTest : public ::testing::Test,
                                        public OutputSurfaceClient {
@@ -99,7 +145,8 @@ class GLOutputSurfaceBufferQueueTest : public ::testing::Test,
   }
 
   // OutputSurfaceClient implementation.
-  void DidReceiveSwapBuffersAck(const gfx::SwapTimings& timings) override {}
+  void DidReceiveSwapBuffersAck(const gfx::SwapTimings& timings,
+                                gfx::GpuFenceHandle release_fence) override {}
   void SetNeedsRedrawRect(const gfx::Rect& damage_rect) override {}
   void DidReceiveTextureInUseResponses(
       const gpu::TextureInUseResponses& responses) override {}
@@ -113,8 +160,8 @@ class GLOutputSurfaceBufferQueueTest : public ::testing::Test,
 
  protected:
   std::unique_ptr<OutputSurface> surface_;
-  StrictMock<MockGLES2Interface>* gles2_interface_;
-  StrictMock<MockBufferQueue>* buffer_queue_;
+  raw_ptr<StrictMock<MockGLES2Interface>> gles2_interface_;
+  raw_ptr<StrictMock<MockBufferQueue>> buffer_queue_;
 };
 
 MATCHER_P(SyncTokenEqualTo, expected_sync_token, "") {
@@ -144,7 +191,7 @@ TEST_F(GLOutputSurfaceBufferQueueTest, BindFramebufferAndSwap) {
     // the GL framebuffer, requesting a new buffer, waiting on the corresponding
     // sync token, and beginning read/write access to the shared image.
     EXPECT_CALL(*gles2_interface_, BindFramebuffer(_, Ne(0u)));
-    EXPECT_CALL(*buffer_queue_, GetCurrentBuffer(NotNull()))
+    EXPECT_CALL(*buffer_queue_, GetCurrentBuffer(NotNull(), NotNull()))
         .WillOnce(DoAll(SetArgPointee<0>(fake_sync_token),
                         Return(fake_shared_image)));
     EXPECT_CALL(*gles2_interface_,
@@ -194,7 +241,7 @@ TEST_F(GLOutputSurfaceBufferQueueTest, EmptySwap) {
     // framebuffer, requesting a new buffer, waiting on the corresponding sync
     // token, and beginning read/write access to the shared image.
     EXPECT_CALL(*gles2_interface_, BindFramebuffer(_, Ne(0u)));
-    EXPECT_CALL(*buffer_queue_, GetCurrentBuffer(NotNull()))
+    EXPECT_CALL(*buffer_queue_, GetCurrentBuffer(NotNull(), NotNull()))
         .WillOnce(DoAll(SetArgPointee<0>(fake_sync_token),
                         Return(fake_shared_image)));
     EXPECT_CALL(*gles2_interface_,
@@ -257,7 +304,7 @@ TEST_F(GLOutputSurfaceBufferQueueTest, HandleSwapNAK) {
     // token, beginning read/write access to the shared image, and creating a
     // stencil buffer.
     EXPECT_CALL(*gles2_interface_, BindFramebuffer(_, Ne(0u)));
-    EXPECT_CALL(*buffer_queue_, GetCurrentBuffer(NotNull()))
+    EXPECT_CALL(*buffer_queue_, GetCurrentBuffer(NotNull(), NotNull()))
         .WillOnce(DoAll(SetArgPointee<0>(fake_sync_token),
                         Return(fake_shared_image)));
 
@@ -292,7 +339,7 @@ TEST_F(GLOutputSurfaceBufferQueueTest, HandleSwapNAK) {
                 DeleteRenderbuffers(1u, Pointee(Eq(kFakeStencilBuffer))));
     EXPECT_CALL(*gles2_interface_,
                 DeleteTextures(1u, Pointee(Eq(kFakeTexture))));
-    EXPECT_CALL(*buffer_queue_, PageFlipComplete());
+    EXPECT_CALL(*buffer_queue_, PageFlipComplete(_));
   }
 
   surface_->Reshape(kBufferSize, /*device_scale_factor=*/1.0,
@@ -305,7 +352,8 @@ TEST_F(GLOutputSurfaceBufferQueueTest, HandleSwapNAK) {
   gfx::SwapResponse swap_response{};
   swap_response.result = gfx::SwapResult::SWAP_NAK_RECREATE_BUFFERS;
   (static_cast<GLOutputSurfaceBufferQueue*>(surface_.get()))
-      ->DidReceiveSwapBuffersAck(swap_response);
+      ->DidReceiveSwapBuffersAck(swap_response,
+                                 /*release_fence=*/gfx::GpuFenceHandle());
 }
 
 }  // namespace viz

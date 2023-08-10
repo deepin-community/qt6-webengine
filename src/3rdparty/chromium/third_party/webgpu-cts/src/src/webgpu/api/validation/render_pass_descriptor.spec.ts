@@ -6,6 +6,11 @@ TODO: review for completeness
 `;
 
 import { makeTestGroup } from '../../../common/framework/test_group.js';
+import {
+  kDepthStencilFormats,
+  kRenderableColorTextureFormats,
+  kTextureFormatInfo,
+} from '../../capability_info.js';
 
 import { ValidationTest } from './validation_test.js';
 
@@ -28,11 +33,11 @@ class F extends ValidationTest {
       arrayLayerCount = 1,
       mipLevelCount = 1,
       sampleCount = 1,
-      usage = GPUTextureUsage.OUTPUT_ATTACHMENT,
+      usage = GPUTextureUsage.RENDER_ATTACHMENT,
     } = options;
 
     return this.device.createTexture({
-      size: { width, height, depth: arrayLayerCount },
+      size: { width, height, depthOrArrayLayers: arrayLayerCount },
       format,
       mipLevelCount,
       sampleCount,
@@ -43,26 +48,30 @@ class F extends ValidationTest {
   getColorAttachment(
     texture: GPUTexture,
     textureViewDescriptor?: GPUTextureViewDescriptor
-  ): GPURenderPassColorAttachmentDescriptor {
-    const attachment = texture.createView(textureViewDescriptor);
+  ): GPURenderPassColorAttachment {
+    const view = texture.createView(textureViewDescriptor);
 
     return {
-      attachment,
-      loadValue: { r: 1.0, g: 0.0, b: 0.0, a: 1.0 },
+      view,
+      clearValue: { r: 1.0, g: 0.0, b: 0.0, a: 1.0 },
+      loadOp: 'clear',
+      storeOp: 'store',
     };
   }
 
   getDepthStencilAttachment(
     texture: GPUTexture,
     textureViewDescriptor?: GPUTextureViewDescriptor
-  ): GPURenderPassDepthStencilAttachmentDescriptor {
-    const attachment = texture.createView(textureViewDescriptor);
+  ): GPURenderPassDepthStencilAttachment {
+    const view = texture.createView(textureViewDescriptor);
 
     return {
-      attachment,
-      depthLoadValue: 1.0,
+      view,
+      depthClearValue: 1.0,
+      depthLoadOp: 'clear',
       depthStoreOp: 'store',
-      stencilLoadValue: 0,
+      stencilClearValue: 0,
+      stencilLoadOp: 'clear',
       stencilStoreOp: 'store',
     };
   }
@@ -70,7 +79,7 @@ class F extends ValidationTest {
   async tryRenderPass(success: boolean, descriptor: GPURenderPassDescriptor): Promise<void> {
     const commandEncoder = this.device.createCommandEncoder();
     const renderPass = commandEncoder.beginRenderPass(descriptor);
-    renderPass.endPass();
+    renderPass.end();
 
     this.expectValidationError(() => {
       commandEncoder.finish();
@@ -100,9 +109,9 @@ g.test('a_render_pass_with_only_one_depth_attachment_is_ok').fn(t => {
 });
 
 g.test('OOB_color_attachment_indices_are_handled')
-  .params([
-    { colorAttachmentsCount: 4, _success: true }, // Control case
-    { colorAttachmentsCount: 5, _success: false }, // Out of bounds
+  .paramsSimple([
+    { colorAttachmentsCount: 8, _success: true }, // Control case
+    { colorAttachmentsCount: 9, _success: false }, // Out of bounds
   ])
   .fn(async t => {
     const { colorAttachmentsCount, _success } = t.params;
@@ -192,7 +201,7 @@ g.test('attachments_must_match_whether_they_are_used_for_color_or_depth_stencil'
 });
 
 g.test('check_layer_count_for_color_or_depth_stencil')
-  .params([
+  .paramsSimple([
     { arrayLayerCount: 5, baseArrayLayer: 0, _success: false }, // using 2D array texture view with arrayLayerCount > 1 is not allowed
     { arrayLayerCount: 1, baseArrayLayer: 0, _success: true }, // using 2D array texture view that covers the first layer of the texture is OK
     { arrayLayerCount: 1, baseArrayLayer: 9, _success: true }, // using 2D array texture view that covers the last layer is OK for depth stencil
@@ -261,7 +270,7 @@ g.test('check_layer_count_for_color_or_depth_stencil')
   });
 
 g.test('check_mip_level_count_for_color_or_depth_stencil')
-  .params([
+  .paramsSimple([
     { mipLevelCount: 2, baseMipLevel: 0, _success: false }, // using 2D texture view with mipLevelCount > 1 is not allowed
     { mipLevelCount: 1, baseMipLevel: 0, _success: true }, // using 2D texture view that covers the first level of the texture is OK
     { mipLevelCount: 1, baseMipLevel: 3, _success: true }, // using 2D texture view that covers the last level of the texture is OK
@@ -337,9 +346,11 @@ g.test('it_is_invalid_to_set_resolve_target_if_color_attachment_is_non_multisamp
     const descriptor: GPURenderPassDescriptor = {
       colorAttachments: [
         {
-          attachment: colorTexture.createView(),
+          view: colorTexture.createView(),
           resolveTarget: resolveTargetTexture.createView(),
-          loadValue: { r: 1.0, g: 0.0, b: 0.0, a: 1.0 },
+          clearValue: { r: 1.0, g: 0.0, b: 0.0, a: 1.0 },
+          loadOp: 'clear',
+          storeOp: 'store',
         },
       ],
     };
@@ -392,7 +403,7 @@ g.test('it_is_invalid_to_use_a_resolve_target_with_array_layer_count_greater_tha
     const resolveTargetTexture = t.createTexture({ arrayLayerCount: 2 });
 
     const colorAttachment = t.getColorAttachment(multisampledColorTexture);
-    colorAttachment.resolveTarget = resolveTargetTexture.createView();
+    colorAttachment.resolveTarget = resolveTargetTexture.createView({ dimension: '2d-array' });
 
     const descriptor: GPURenderPassDescriptor = {
       colorAttachments: [colorAttachment],
@@ -418,7 +429,7 @@ g.test('it_is_invalid_to_use_a_resolve_target_with_mipmap_level_count_greater_th
   }
 );
 
-g.test('it_is_invalid_to_use_a_resolve_target_whose_usage_is_not_output_attachment').fn(async t => {
+g.test('it_is_invalid_to_use_a_resolve_target_whose_usage_is_not_RENDER_ATTACHMENT').fn(async t => {
   const multisampledColorTexture = t.createTexture({ sampleCount: 4 });
   const resolveTargetTexture = t.createTexture({
     usage: GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST,
@@ -577,3 +588,90 @@ g.test('check_depth_stencil_attachment_sample_counts_mismatch').fn(async t => {
     t.tryRenderPass(true, descriptor);
   }
 });
+
+g.test('depth_stencil_attachment')
+  .desc(
+    `
+  Test GPURenderPassDepthStencilAttachment Usage:
+  - depthReadOnly and stencilReadOnly must match if the format is a combined depth-stencil format.
+  - depthLoadOp and depthStoreOp must be provided iff the format has a depth aspect and depthReadOnly is not true.
+  - stencilLoadOp and stencilStoreOp must be provided iff the format has a stencil aspect and stencilReadOnly is not true.
+  `
+  )
+  .paramsSubcasesOnly(u =>
+    u //
+      .combine('format', kDepthStencilFormats)
+      .combine('depthReadOnly', [false, true])
+      .combine('stencilReadOnly', [false, true])
+      .combine('setDepthLoadStoreOp', [false, true])
+      .combine('setStencilLoadStoreOp', [false, true])
+  )
+  .fn(async t => {
+    const {
+      format,
+      depthReadOnly,
+      stencilReadOnly,
+      setDepthLoadStoreOp,
+      setStencilLoadStoreOp,
+    } = t.params;
+    await t.selectDeviceForTextureFormatOrSkipTestCase(format);
+
+    let isValid = true;
+    const info = kTextureFormatInfo[format];
+    if (info.depth && info.stencil) {
+      isValid &&= depthReadOnly === stencilReadOnly;
+    }
+
+    if (info.depth && !depthReadOnly) {
+      isValid &&= setDepthLoadStoreOp;
+    } else {
+      isValid &&= !setDepthLoadStoreOp;
+    }
+
+    if (info.stencil && !stencilReadOnly) {
+      isValid &&= setStencilLoadStoreOp;
+    } else {
+      isValid &&= !setStencilLoadStoreOp;
+    }
+
+    const depthStencilAttachment: GPURenderPassDepthStencilAttachment = {
+      view: t.createTexture({ format }).createView(),
+      depthReadOnly,
+      stencilReadOnly,
+    };
+
+    if (setDepthLoadStoreOp) {
+      depthStencilAttachment.depthLoadOp = 'clear';
+      depthStencilAttachment.depthStoreOp = 'store';
+    }
+    if (setStencilLoadStoreOp) {
+      depthStencilAttachment.stencilLoadOp = 'clear';
+      depthStencilAttachment.stencilStoreOp = 'store';
+    }
+
+    const descriptor = {
+      colorAttachments: [t.getColorAttachment(t.createTexture())],
+      depthStencilAttachment,
+    };
+
+    t.tryRenderPass(isValid, descriptor);
+  });
+
+g.test('multisample_render_target_formats_support_resolve')
+  .params(u =>
+    u
+      .combine('format', kRenderableColorTextureFormats)
+      .filter(t => kTextureFormatInfo[t.format].multisample)
+  )
+  .fn(async t => {
+    const { format } = t.params;
+    const multisampledColorTexture = t.createTexture({ format, sampleCount: 4 });
+    const resolveTarget = t.createTexture({ format });
+
+    const colorAttachment = t.getColorAttachment(multisampledColorTexture);
+    colorAttachment.resolveTarget = resolveTarget.createView();
+
+    t.tryRenderPass(kTextureFormatInfo[format].resolve, {
+      colorAttachments: [colorAttachment],
+    });
+  });

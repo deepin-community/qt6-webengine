@@ -7,14 +7,12 @@
 #include <memory>
 
 #include "base/check.h"
+#include "base/files/file_error_or.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/run_loop.h"
-#include "base/stl_util.h"
-#include "base/task/post_task.h"
 #include "base/task/thread_pool.h"
 #include "base/test/task_environment.h"
-#include "components/services/storage/public/cpp/filesystem/file_error_or.h"
 #include "components/services/storage/public/cpp/filesystem/filesystem_impl.h"
 #include "components/services/storage/public/mojom/filesystem/directory.mojom.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
@@ -22,6 +20,9 @@
 #include "mojo/public/cpp/bindings/self_owned_receiver.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+template <typename ValueType>
+using FileErrorOr = base::FileErrorOr<ValueType>;
 
 namespace storage {
 
@@ -64,15 +65,15 @@ class FilesystemProxyTest : public testing::TestWithParam<bool> {
     CHECK(base::CreateDirectory(root.Append(kDir1).Append(kDir1Dir1)));
     CHECK(base::CreateDirectory(root.Append(kDir2)));
     CHECK(base::WriteFile(root.Append(kFile1), kFile1Contents,
-                          base::size(kFile1Contents) - 1));
+                          std::size(kFile1Contents) - 1));
     CHECK(base::WriteFile(root.Append(kFile2), kFile2Contents,
-                          base::size(kFile2Contents) - 1));
+                          std::size(kFile2Contents) - 1));
     CHECK(base::WriteFile(root.Append(kDir1).Append(kDir1File1),
                           kDir1File1Contents,
-                          base::size(kDir1File1Contents) - 1));
+                          std::size(kDir1File1Contents) - 1));
     CHECK(base::WriteFile(root.Append(kDir1).Append(kDir1File2),
                           kDir1File2Contents,
-                          base::size(kDir1File2Contents) - 1));
+                          std::size(kDir1File2Contents) - 1));
 
     if (UseRestrictedFilesystem()) {
       // Run a remote FilesystemImpl on a background thread to exercise
@@ -270,7 +271,13 @@ TEST_P(FilesystemProxyTest, OpenFileReadOnly) {
   EXPECT_EQ(kFile1Contents, ReadFileContents(&file.value()));
 }
 
-TEST_P(FilesystemProxyTest, OpenFileWriteOnly) {
+#if BUILDFLAG(IS_FUCHSIA)
+// TODO(crbug.com/1314081): Re-enable when OpenFileWriteOnly works on Fuchsia.
+#define MAYBE_OpenFileWriteOnly DISABLED_OpenFileWriteOnly
+#else
+#define MAYBE_OpenFileWriteOnly OpenFileWriteOnly
+#endif
+TEST_P(FilesystemProxyTest, MAYBE_OpenFileWriteOnly) {
   FileErrorOr<base::File> file = proxy().OpenFile(
       kFile2, base::File::FLAG_CREATE_ALWAYS | base::File::FLAG_WRITE);
   ASSERT_FALSE(file.is_error());
@@ -288,7 +295,13 @@ TEST_P(FilesystemProxyTest, OpenFileWriteOnly) {
   EXPECT_EQ(kData, ReadFileContentsAtPath(kFile2));
 }
 
-TEST_P(FilesystemProxyTest, OpenFileAppendOnly) {
+#if BUILDFLAG(IS_FUCHSIA)
+// TODO(crbug.com/1314079): Re-enable when OpenFileAppendOnly works on Fuchsia.
+#define MAYBE_OpenFileAppendOnly DISABLED_OpenFileAppendOnly
+#else
+#define MAYBE_OpenFileAppendOnly OpenFileAppendOnly
+#endif
+TEST_P(FilesystemProxyTest, MAYBE_OpenFileAppendOnly) {
   const base::FilePath kFile3{FILE_PATH_LITERAL("file3")};
   FileErrorOr<base::File> file = proxy().OpenFile(
       kFile3, base::File::FLAG_CREATE | base::File::FLAG_APPEND);
@@ -314,7 +327,13 @@ TEST_P(FilesystemProxyTest, OpenFileAppendOnly) {
   EXPECT_EQ(kData + kMoreData, ReadFileContentsAtPath(kFile3));
 }
 
-TEST_P(FilesystemProxyTest, DeleteFile) {
+#if BUILDFLAG(IS_FUCHSIA)
+// TODO(crbug.com/1314076): Re-enable when DeleteFile works on Fuchsia.
+#define MAYBE_DeleteFile DISABLED_DeleteFile
+#else
+#define MAYBE_DeleteFile DeleteFile
+#endif
+TEST_P(FilesystemProxyTest, MAYBE_DeleteFile) {
   FileErrorOr<base::File> file =
       proxy().OpenFile(kFile1, base::File::FLAG_OPEN | base ::File::FLAG_READ);
   ASSERT_FALSE(file.is_error());
@@ -342,7 +361,15 @@ TEST_P(FilesystemProxyTest, CreateAndRemoveDirectory) {
   EXPECT_TRUE(proxy().DeleteFile(kNewDirectoryName));
 }
 
-TEST_P(FilesystemProxyTest, DeleteFileFailsOnSubDirectory) {
+#if BUILDFLAG(IS_FUCHSIA)
+// TODO(crbug.com/1314076): Re-enable when DeleteFileFailsOnSubDirectory works
+// on Fuchsia.
+#define MAYBE_DeleteFileFailsOnSubDirectory \
+  DISABLED_DeleteFileFailsOnSubDirectory
+#else
+#define MAYBE_DeleteFileFailsOnSubDirectory DeleteFileFailsOnSubDirectory
+#endif
+TEST_P(FilesystemProxyTest, MAYBE_DeleteFileFailsOnSubDirectory) {
   // kDir1 has a subdirectory kDir1Dir1, which DeleteFile can't remove.
   EXPECT_TRUE(proxy().PathExists(kDir1));
   EXPECT_FALSE(proxy().DeleteFile(kDir1));
@@ -359,26 +386,26 @@ TEST_P(FilesystemProxyTest, DeletePathRecursively) {
 TEST_P(FilesystemProxyTest, GetMaximumPathComponentLength) {
   // This has different values on different platforms, so merely smoke test
   // this to make sure it returns a reasonable valid value.
-  base::Optional<int> max = proxy().GetMaximumPathComponentLength(kDir1);
+  absl::optional<int> max = proxy().GetMaximumPathComponentLength(kDir1);
   ASSERT_TRUE(max.has_value());
   EXPECT_GT(*max, 50);
 }
 
 TEST_P(FilesystemProxyTest, GetFileInfo) {
-  base::Optional<base::File::Info> file1_info = proxy().GetFileInfo(kFile1);
+  absl::optional<base::File::Info> file1_info = proxy().GetFileInfo(kFile1);
   ASSERT_TRUE(file1_info.has_value());
   EXPECT_FALSE(file1_info->is_directory);
-  EXPECT_EQ(static_cast<int>(base::size(kFile1Contents) - 1), file1_info->size);
+  EXPECT_EQ(static_cast<int>(std::size(kFile1Contents) - 1), file1_info->size);
 
-  base::Optional<base::File::Info> dir1_info = proxy().GetFileInfo(kDir1);
+  absl::optional<base::File::Info> dir1_info = proxy().GetFileInfo(kDir1);
   ASSERT_TRUE(dir1_info.has_value());
   EXPECT_TRUE(dir1_info->is_directory);
 
-  base::Optional<base::File::Info> dir1_file1_info =
+  absl::optional<base::File::Info> dir1_file1_info =
       proxy().GetFileInfo(kDir1.Append(kDir1File1));
   ASSERT_TRUE(dir1_file1_info.has_value());
   EXPECT_FALSE(dir1_file1_info->is_directory);
-  EXPECT_EQ(static_cast<int>(base::size(kDir1File1Contents) - 1),
+  EXPECT_EQ(static_cast<int>(std::size(kDir1File1Contents) - 1),
             dir1_file1_info->size);
 
   const base::FilePath kBadFilename{FILE_PATH_LITERAL("bad_file")};
@@ -442,7 +469,7 @@ TEST_P(FilesystemProxyTest, LockFile) {
 TEST_P(FilesystemProxyTest, ComputeDirectorySize) {
   // The file size does not include the null terminator, so subtract 1 per file.
   int64_t expected_size =
-      base::size(kDir1File1Contents) + base::size(kDir1File2Contents) - 2;
+      std::size(kDir1File1Contents) + std::size(kDir1File2Contents) - 2;
   EXPECT_EQ(proxy().ComputeDirectorySize(kDir1), expected_size);
 }
 

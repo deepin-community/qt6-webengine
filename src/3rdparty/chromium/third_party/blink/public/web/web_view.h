@@ -31,22 +31,24 @@
 #ifndef THIRD_PARTY_BLINK_PUBLIC_WEB_WEB_VIEW_H_
 #define THIRD_PARTY_BLINK_PUBLIC_WEB_WEB_VIEW_H_
 
-#include "base/time/time.h"
-#include "third_party/blink/public/common/page/drag_operation.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "third_party/blink/public/common/dom_storage/session_storage_namespace_id.h"
 #include "third_party/blink/public/common/renderer_preferences/renderer_preferences.h"
 #include "third_party/blink/public/common/web_preferences/web_preferences.h"
-#include "third_party/blink/public/mojom/input/focus_type.mojom-shared.h"
+#include "third_party/blink/public/mojom/fenced_frame/fenced_frame.mojom-shared.h"
+#include "third_party/blink/public/mojom/frame/frame.mojom-shared.h"
 #include "third_party/blink/public/mojom/page/page.mojom-shared.h"
 #include "third_party/blink/public/mojom/page/page_visibility_state.mojom-shared.h"
 #include "third_party/blink/public/mojom/renderer_preference_watcher.mojom-shared.h"
-#include "third_party/blink/public/mojom/widget/screen_orientation.mojom-shared.h"
 #include "third_party/blink/public/platform/cross_variant_mojo_util.h"
 #include "third_party/blink/public/platform/scheduler/web_agent_group_scheduler.h"
-#include "third_party/blink/public/platform/web_string.h"
-#include "third_party/blink/public/platform/web_url.h"
-#include "third_party/blink/public/web/web_settings.h"
+#include "third_party/blink/public/platform/web_common.h"
 #include "third_party/skia/include/core/SkColor.h"
-#include "ui/gfx/geometry/size.h"
+#include "ui/display/mojom/screen_orientation.mojom-shared.h"
+
+namespace base {
+class TimeDelta;
+}
 
 namespace cc {
 class PaintCanvas;
@@ -57,6 +59,7 @@ class ColorSpace;
 class Point;
 class PointF;
 class Rect;
+class Size;
 class SizeF;
 }
 
@@ -96,7 +99,10 @@ class WebView {
   //
   // clients may be null, but should both be null or not together.
   // |is_hidden| defines the initial visibility of the page.
+  // |is_prerendering| defines whether the page is being prerendered by the
+  // Prerender2 feature (see content/browser/prerender/README.md).
   // [is_inside_portal] defines whether the page is inside_portal.
+  // [is_fenced_frame] defines whether the page is for a fenced frame.
   // |compositing_enabled| dictates whether accelerated compositing should be
   // enabled for the page. It must be false if no clients are provided, or if a
   // LayerTreeView will not be set for the WebWidget.
@@ -104,16 +110,32 @@ class WebView {
   // their output.
   // |page_handle| is only set for views that are part of a WebContents' frame
   // tree.
+  // |widgets_never_composited| is an indication that all WebWidgets associated
+  // with this WebView will never be user-visible and thus never need to produce
+  // pixels for display. This is separate from page visibility, as background
+  // pages can be marked visible in blink even though they are not user-visible.
+  // Page visibility controls blink behaviour for javascript, timers, and such
+  // to inform blink it is in the foreground or background. Whereas this bit
+  // refers to user-visibility and whether the tab needs to produce pixels to
+  // put on the screen at some point or not.
+  // |page_base_background_color| initial base background color used by the main
+  // frame. Set on create to avoid races. Passing in nullopt indicates the
+  // default base background color should be used.
   // TODO(yuzus): Remove |is_hidden| and start using |PageVisibilityState|.
   BLINK_EXPORT static WebView* Create(
       WebViewClient*,
       bool is_hidden,
+      bool is_prerendering,
       bool is_inside_portal,
+      absl::optional<blink::mojom::FencedFrameMode> fenced_frame_mode,
       bool compositing_enabled,
+      bool widgets_never_composited,
       WebView* opener,
       CrossVariantMojoAssociatedReceiver<mojom::PageBroadcastInterfaceBase>
           page_handle,
-      scheduler::WebAgentGroupScheduler& agent_group_scheduler);
+      scheduler::WebAgentGroupScheduler& agent_group_scheduler,
+      const SessionStorageNamespaceId& session_storage_namespace_id,
+      absl::optional<SkColor> page_base_background_color);
 
   // Destroys the WebView.
   virtual void Close() = 0;
@@ -128,12 +150,20 @@ class WebView {
   virtual void DidDetachLocalMainFrame() = 0;
 
   // Called to inform WebViewImpl that a remote main frame has been attached.
-  virtual void DidAttachRemoteMainFrame() = 0;
+  // Associated channels should be passed and bound.
+  virtual void DidAttachRemoteMainFrame(
+      CrossVariantMojoAssociatedRemote<mojom::RemoteMainFrameHostInterfaceBase>
+          main_frame_host,
+      CrossVariantMojoAssociatedReceiver<mojom::RemoteMainFrameInterfaceBase>
+          main_frame) = 0;
 
   // Called to inform WebViewImpl that a remote main frame has been detached.
   virtual void DidDetachRemoteMainFrame() = 0;
 
   virtual void SetNoStatePrefetchClient(WebNoStatePrefetchClient*) = 0;
+
+  // Returns the session storage namespace id associated with this WebView.
+  virtual const SessionStorageNamespaceId& GetSessionStorageNamespaceId() = 0;
 
   // Options -------------------------------------------------------------
 
@@ -165,6 +195,7 @@ class WebView {
   // Frames --------------------------------------------------------------
 
   virtual WebFrame* MainFrame() = 0;
+  virtual const WebFrame* MainFrame() const = 0;
 
   // Focus ---------------------------------------------------------------
 
@@ -248,11 +279,6 @@ class WebView {
   // Indicates that view's preferred size changes will be sent to the browser.
   virtual void EnablePreferredSizeChangedMode() = 0;
 
-  // Sets the ratio as computed by computePageScaleConstraints.
-  // TODO(oshima): Remove this once the device scale factor implementation is
-  // fully migrated to use zooming mechanism.
-  virtual void SetDeviceScaleFactor(float) = 0;
-
   // Sets the additional zoom factor used for device scale factor. This is used
   // to scale the content by the device scale factor, without affecting zoom
   // level.
@@ -262,7 +288,7 @@ class WebView {
 
   // Override the screen orientation override.
   virtual void SetScreenOrientationOverrideForTesting(
-      base::Optional<blink::mojom::ScreenOrientation> orientation) = 0;
+      absl::optional<display::mojom::ScreenOrientation> orientation) = 0;
 
   // Enable/Disable synchronous resize mode that is used for web tests.
   virtual void UseSynchronousResizeModeForTesting(bool enable) = 0;
@@ -332,13 +358,7 @@ class WebView {
 
   // Custom colors -------------------------------------------------------
 
-  // Sets the default background color when the page has not loaded enough to
-  // know a background colour. This can be overridden by the methods below as
-  // well.
-  virtual void SetBaseBackgroundColor(SkColor) {}
-
-  virtual void SetBaseBackgroundColorOverride(SkColor) {}
-  virtual void ClearBaseBackgroundColorOverride() {}
+  virtual void SetBaseBackgroundColorOverrideForInspector(absl::optional<SkColor>) {}
 
   virtual void SetDeviceColorSpaceForTesting(
       const gfx::ColorSpace& color_space) = 0;
@@ -415,7 +435,7 @@ class WebView {
 
   virtual void SetRendererPreferences(
       const RendererPreferences& preferences) = 0;
-  virtual const RendererPreferences& GetRendererPreferences() = 0;
+  virtual const RendererPreferences& GetRendererPreferences() const = 0;
 
   // Web preferences ---------------------------------------------------
 
@@ -432,7 +452,25 @@ class WebView {
   // completed.
   virtual WebFrameWidget* MainFrameWidget() = 0;
 
-  // Portals --------------------------------------------------------------
+  // History list ---------------------------------------------------------
+  virtual void SetHistoryListFromNavigation(
+      int32_t history_offset,
+      absl::optional<int32_t> history_length) = 0;
+  virtual void IncreaseHistoryListFromNavigation() = 0;
+
+  // Session history -----------------------------------------------------
+  // Returns the number of history items before/after the current
+  // history item.
+  virtual int32_t HistoryBackListCount() const = 0;
+  virtual int32_t HistoryForwardListCount() const = 0;
+
+  // Returns whether this WebView represents a fenced frame root or not.
+  virtual bool IsFencedFrameRoot() const = 0;
+
+  // Misc -------------------------------------------------------------
+
+  // Returns the number of live WebView instances in this process.
+  BLINK_EXPORT static size_t GetWebViewCount();
 
  protected:
   ~WebView() = default;
@@ -440,4 +478,4 @@ class WebView {
 
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_PUBLIC_WEB_WEB_VIEW_H_

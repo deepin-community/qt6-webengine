@@ -15,18 +15,20 @@ class MockMessageDispatcherBridge : public MessageDispatcherBridge {
   MockMessageDispatcherBridge();
   ~MockMessageDispatcherBridge() override;
 
-  MOCK_METHOD(void,
+  MOCK_METHOD(bool,
               EnqueueMessage,
               (MessageWrapper * message,
                content::WebContents* web_contents,
-               MessageScopeType scopeType),
+               MessageScopeType scope_type,
+               MessagePriority priority),
               (override));
   MOCK_METHOD(void,
               DismissMessage,
               (MessageWrapper * message,
-               content::WebContents* web_contents,
                DismissReason dismiss_reason),
               (override));
+  int MapToJavaDrawableId(int resource_id) override;
+  void SetMessagesEnabledForEmbedder(bool messages_enabled_for_embedder);
 };
 
 }  // namespace messages

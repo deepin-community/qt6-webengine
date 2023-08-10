@@ -7,9 +7,9 @@
 #include <stddef.h>
 
 #include <memory>
+#include <string>
 
 #include "base/logging.h"
-#include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
@@ -42,7 +42,7 @@ AppIsolationHandler::AppIsolationHandler() {
 AppIsolationHandler::~AppIsolationHandler() {
 }
 
-bool AppIsolationHandler::Parse(Extension* extension, base::string16* error) {
+bool AppIsolationHandler::Parse(Extension* extension, std::u16string* error) {
   // Platform apps always get isolated storage.
   if (extension->is_platform_app()) {
     extension->SetManifestData(keys::kIsolation,
@@ -53,23 +53,23 @@ bool AppIsolationHandler::Parse(Extension* extension, base::string16* error) {
   // Other apps only get it if it is requested _and_ experimental APIs are
   // enabled.
   if (!extension->is_app() ||
-      !PermissionsParser::HasAPIPermission(extension,
-                                           APIPermission::kExperimental)) {
+      !PermissionsParser::HasAPIPermission(
+          extension, mojom::APIPermissionID::kExperimental)) {
     return true;
   }
 
   // We should only be parsing if the extension has the key in the manifest,
   // or is a platform app (which we already handled).
-  DCHECK(extension->manifest()->HasPath(keys::kIsolation));
+  DCHECK(extension->manifest()->FindPath(keys::kIsolation));
 
   const base::Value* isolation_list = nullptr;
   if (!extension->manifest()->GetList(keys::kIsolation, &isolation_list)) {
-    *error = base::ASCIIToUTF16(manifest_errors::kInvalidIsolation);
+    *error = manifest_errors::kInvalidIsolation;
     return false;
   }
 
   bool has_isolated_storage = false;
-  base::Value::ConstListView list_view = isolation_list->GetList();
+  base::Value::ConstListView list_view = isolation_list->GetListDeprecated();
   for (size_t i = 0; i < list_view.size(); ++i) {
     if (!list_view[i].is_string()) {
       *error = ErrorUtils::FormatErrorMessageUTF16(

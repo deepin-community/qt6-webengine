@@ -22,10 +22,12 @@
 #include "libavutil/channel_layout.h"
 #include "libavutil/float_dsp.h"
 #include "libavutil/internal.h"
+#include "libavutil/mem_internal.h"
 
 #define BITSTREAM_READER_LE
 #include "avcodec.h"
 #include "celp_filters.h"
+#include "codec_internal.h"
 #include "get_bits.h"
 #include "internal.h"
 #include "lpc.h"
@@ -66,8 +68,8 @@ static av_cold int ra288_decode_init(AVCodecContext *avctx)
     RA288Context *ractx = avctx->priv_data;
     AVFloatDSPContext *fdsp;
 
-    avctx->channels       = 1;
-    avctx->channel_layout = AV_CH_LAYOUT_MONO;
+    av_channel_layout_uninit(&avctx->ch_layout);
+    avctx->ch_layout      = (AVChannelLayout)AV_CHANNEL_LAYOUT_MONO;
     avctx->sample_fmt     = AV_SAMPLE_FMT_FLT;
 
     if (avctx->block_align != 38) {
@@ -236,13 +238,14 @@ static int ra288_decode_frame(AVCodecContext * avctx, void *data,
     return avctx->block_align;
 }
 
-AVCodec ff_ra_288_decoder = {
-    .name           = "real_288",
-    .long_name      = NULL_IF_CONFIG_SMALL("RealAudio 2.0 (28.8K)"),
-    .type           = AVMEDIA_TYPE_AUDIO,
-    .id             = AV_CODEC_ID_RA_288,
+const FFCodec ff_ra_288_decoder = {
+    .p.name         = "real_288",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("RealAudio 2.0 (28.8K)"),
+    .p.type         = AVMEDIA_TYPE_AUDIO,
+    .p.id           = AV_CODEC_ID_RA_288,
     .priv_data_size = sizeof(RA288Context),
     .init           = ra288_decode_init,
     .decode         = ra288_decode_frame,
-    .capabilities   = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_CHANNEL_CONF,
+    .p.capabilities = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_CHANNEL_CONF,
+    .caps_internal  = FF_CODEC_CAP_INIT_THREADSAFE,
 };

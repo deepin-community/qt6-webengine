@@ -4,44 +4,50 @@
 
 #include "base/files/file_path_watcher.h"
 
-#if defined(OS_WIN)
-#include <windows.h>
-#include <aclapi.h>
-#elif defined(OS_POSIX)
-#include <sys/stat.h>
-#endif
-
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/callback_helpers.h"
-#include "base/compiler_specific.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/run_loop.h"
-#include "base/single_thread_task_runner.h"
-#include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/synchronization/waitable_event.h"
+#include "base/task/single_thread_task_runner.h"
+#include "base/test/bind.h"
 #include "base/test/task_environment.h"
 #include "base/test/test_file_util.h"
 #include "base/test/test_timeouts.h"
+#include "base/threading/thread.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-#if defined(OS_ANDROID)
-#include "base/android/path_utils.h"
-#endif  // defined(OS_ANDROID)
+#if BUILDFLAG(IS_WIN)
+#include <windows.h>
+#include <aclapi.h>
+#elif BUILDFLAG(IS_POSIX)
+#include <sys/stat.h>
+#endif
 
-#if defined(OS_POSIX)
+#if BUILDFLAG(IS_ANDROID)
+#include "base/android/path_utils.h"
+#endif  // BUILDFLAG(IS_ANDROID)
+
+#if BUILDFLAG(IS_POSIX)
 #include "base/files/file_descriptor_watcher_posix.h"
-#endif  // defined(OS_POSIX)
+#endif  // BUILDFLAG(IS_POSIX)
+
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_FUCHSIA)
+#include "base/files/file_path_watcher_inotify.h"
+#include "base/format_macros.h"
+#endif
 
 namespace base {
 
@@ -150,7 +156,7 @@ class TestDelegate : public TestDelegateBase {
 class FilePathWatcherTest : public testing::Test {
  public:
   FilePathWatcherTest()
-#if defined(OS_POSIX)
+#if BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
       : task_environment_(test::TaskEnvironment::MainThreadType::IO)
 #endif
   {
@@ -162,7 +168,7 @@ class FilePathWatcherTest : public testing::Test {
 
  protected:
   void SetUp() override {
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
     // Watching files is only permitted when all parent directories are
     // accessible, which is not the case for the default temp directory
     // on Android which is under /data/data.  Use /sdcard instead.
@@ -170,9 +176,9 @@ class FilePathWatcherTest : public testing::Test {
     FilePath parent_dir;
     ASSERT_TRUE(android::GetExternalStorageDirectory(&parent_dir));
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDirUnderPath(parent_dir));
-#else   // defined(OS_ANDROID)
+#else   // BUILDFLAG(IS_ANDROID)
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
-#endif  // defined(OS_ANDROID)
+#endif  // BUILDFLAG(IS_ANDROID)
     collector_ = new NotificationCollector();
   }
 
@@ -186,16 +192,16 @@ class FilePathWatcherTest : public testing::Test {
     return temp_dir_.GetPath().AppendASCII("FilePathWatcherTest.lnk");
   }
 
-  bool SetupWatch(const FilePath& target,
-                  FilePathWatcher* watcher,
-                  TestDelegateBase* delegate,
-                  FilePathWatcher::Type watch_type) WARN_UNUSED_RESULT;
+  [[nodiscard]] bool SetupWatch(const FilePath& target,
+                                FilePathWatcher* watcher,
+                                TestDelegateBase* delegate,
+                                FilePathWatcher::Type watch_type);
 
-  bool WaitForEvents() WARN_UNUSED_RESULT {
+  [[nodiscard]] bool WaitForEvents() {
     return WaitForEventsWithTimeout(TestTimeouts::action_timeout());
   }
 
-  bool WaitForEventsWithTimeout(TimeDelta timeout) WARN_UNUSED_RESULT {
+  [[nodiscard]] bool WaitForEventsWithTimeout(TimeDelta timeout) {
     RunLoop run_loop;
     collector_->Reset(run_loop.QuitClosure());
 
@@ -249,7 +255,13 @@ TEST_F(FilePathWatcherTest, ModifiedFile) {
 }
 
 // Verify that moving the file into place is caught.
-TEST_F(FilePathWatcherTest, MovedFile) {
+#if BUILDFLAG(IS_FUCHSIA)
+// TODO(crbug.com/851641): Re-enable for Fuchsia when inotify is fixed.
+#define MAYBE_MovedFile DISABLED_MovedFile
+#else
+#define MAYBE_MovedFile MovedFile
+#endif
+TEST_F(FilePathWatcherTest, MAYBE_MovedFile) {
   FilePath source_file(temp_dir_.GetPath().AppendASCII("source"));
   ASSERT_TRUE(WriteFile(source_file, "content"));
 
@@ -263,7 +275,13 @@ TEST_F(FilePathWatcherTest, MovedFile) {
   ASSERT_TRUE(WaitForEvents());
 }
 
-TEST_F(FilePathWatcherTest, DeletedFile) {
+#if BUILDFLAG(IS_FUCHSIA)
+// TODO(crbug.com/851641): Re-enable for Fuchsia when inotify is fixed.
+#define MAYBE_DeletedFile DISABLED_DeletedFile
+#else
+#define MAYBE_DeletedFile DeletedFile
+#endif
+TEST_F(FilePathWatcherTest, MAYBE_DeletedFile) {
   ASSERT_TRUE(WriteFile(test_file(), "content"));
 
   FilePathWatcher watcher;
@@ -324,7 +342,13 @@ TEST_F(FilePathWatcherTest, DestroyWithPendingNotification) {
   ASSERT_TRUE(WriteFile(test_file(), "content"));
 }
 
-TEST_F(FilePathWatcherTest, MultipleWatchersSingleFile) {
+#if BUILDFLAG(IS_FUCHSIA)
+// TODO(crbug.com/851641): Re-enable for Fuchsia when inotify is fixed.
+#define MAYBE_MultipleWatchersSingleFile DISABLED_MultipleWatchersSingleFile
+#else
+#define MAYBE_MultipleWatchersSingleFile MultipleWatchersSingleFile
+#endif
+TEST_F(FilePathWatcherTest, MAYBE_MultipleWatchersSingleFile) {
   FilePathWatcher watcher1, watcher2;
   std::unique_ptr<TestDelegate> delegate1(new TestDelegate(collector()));
   std::unique_ptr<TestDelegate> delegate2(new TestDelegate(collector()));
@@ -339,7 +363,13 @@ TEST_F(FilePathWatcherTest, MultipleWatchersSingleFile) {
 
 // Verify that watching a file whose parent directory doesn't exist yet works if
 // the directory and file are created eventually.
-TEST_F(FilePathWatcherTest, NonExistentDirectory) {
+#if BUILDFLAG(IS_FUCHSIA)
+// TODO(crbug.com/851641): Re-enable for Fuchsia when inotify is fixed.
+#define MAYBE_NonExistentDirectory DISABLED_NonExistentDirectory
+#else
+#define MAYBE_NonExistentDirectory NonExistentDirectory
+#endif
+TEST_F(FilePathWatcherTest, MAYBE_NonExistentDirectory) {
   FilePathWatcher watcher;
   FilePath dir(temp_dir_.GetPath().AppendASCII("dir"));
   FilePath file(dir.AppendASCII("file"));
@@ -365,7 +395,13 @@ TEST_F(FilePathWatcherTest, NonExistentDirectory) {
 
 // Exercises watch reconfiguration for the case that directories on the path
 // are rapidly created.
-TEST_F(FilePathWatcherTest, DirectoryChain) {
+#if BUILDFLAG(IS_FUCHSIA)
+// TODO(crbug.com/851641): Re-enable for Fuchsia when inotify is fixed.
+#define MAYBE_DirectoryChain DISABLED_DirectoryChain
+#else
+#define MAYBE_DirectoryChain DirectoryChain
+#endif
+TEST_F(FilePathWatcherTest, MAYBE_DirectoryChain) {
   FilePath path(temp_dir_.GetPath());
   std::vector<std::string> dir_names;
   for (int i = 0; i < 20; i++) {
@@ -396,7 +432,13 @@ TEST_F(FilePathWatcherTest, DirectoryChain) {
   ASSERT_TRUE(WaitForEvents());
 }
 
-TEST_F(FilePathWatcherTest, DisappearingDirectory) {
+#if BUILDFLAG(IS_FUCHSIA)
+// TODO(crbug.com/851641): Re-enable for Fuchsia when inotify is fixed.
+#define MAYBE_DisappearingDirectory DISABLED_DisappearingDirectory
+#else
+#define MAYBE_DisappearingDirectory DisappearingDirectory
+#endif
+TEST_F(FilePathWatcherTest, MAYBE_DisappearingDirectory) {
   FilePathWatcher watcher;
   FilePath dir(temp_dir_.GetPath().AppendASCII("dir"));
   FilePath file(dir.AppendASCII("file"));
@@ -411,7 +453,13 @@ TEST_F(FilePathWatcherTest, DisappearingDirectory) {
 }
 
 // Tests that a file that is deleted and reappears is tracked correctly.
-TEST_F(FilePathWatcherTest, DeleteAndRecreate) {
+#if BUILDFLAG(IS_FUCHSIA)
+// TODO(crbug.com/851641): Re-enable for Fuchsia when inotify is fixed.
+#define MAYBE_DeleteAndRecreate DISABLED_DeleteAndRecreate
+#else
+#define MAYBE_DeleteAndRecreate DeleteAndRecreate
+#endif
+TEST_F(FilePathWatcherTest, MAYBE_DeleteAndRecreate) {
   ASSERT_TRUE(WriteFile(test_file(), "content"));
   FilePathWatcher watcher;
   std::unique_ptr<TestDelegate> delegate(new TestDelegate(collector()));
@@ -427,7 +475,13 @@ TEST_F(FilePathWatcherTest, DeleteAndRecreate) {
   ASSERT_TRUE(WaitForEvents());
 }
 
-TEST_F(FilePathWatcherTest, WatchDirectory) {
+#if BUILDFLAG(IS_FUCHSIA)
+// TODO(crbug.com/851641): Re-enable for Fuchsia when inotify is fixed.
+#define MAYBE_WatchDirectory DISABLED_WatchDirectory
+#else
+#define MAYBE_WatchDirectory WatchDirectory
+#endif
+TEST_F(FilePathWatcherTest, MAYBE_WatchDirectory) {
   FilePathWatcher watcher;
   FilePath dir(temp_dir_.GetPath().AppendASCII("dir"));
   FilePath file1(dir.AppendASCII("file1"));
@@ -444,12 +498,12 @@ TEST_F(FilePathWatcherTest, WatchDirectory) {
   VLOG(1) << "Waiting for file1 creation";
   ASSERT_TRUE(WaitForEvents());
 
-#if !defined(OS_APPLE)
+#if !BUILDFLAG(IS_APPLE)
   // Mac implementation does not detect files modified in a directory.
   ASSERT_TRUE(WriteFile(file1, "content v2"));
   VLOG(1) << "Waiting for file1 modification";
   ASSERT_TRUE(WaitForEvents());
-#endif  // !OS_APPLE
+#endif  // !BUILDFLAG(IS_APPLE)
 
   ASSERT_TRUE(base::DeleteFile(file1));
   VLOG(1) << "Waiting for file1 deletion";
@@ -460,7 +514,13 @@ TEST_F(FilePathWatcherTest, WatchDirectory) {
   ASSERT_TRUE(WaitForEvents());
 }
 
-TEST_F(FilePathWatcherTest, MoveParent) {
+#if BUILDFLAG(IS_FUCHSIA)
+// TODO(crbug.com/851641): Re-enable for Fuchsia when inotify is fixed.
+#define MAYBE_MoveParent DISABLED_MoveParent
+#else
+#define MAYBE_MoveParent MoveParent
+#endif
+TEST_F(FilePathWatcherTest, MAYBE_MoveParent) {
   FilePathWatcher file_watcher;
   FilePathWatcher subdir_watcher;
   FilePath dir(temp_dir_.GetPath().AppendASCII("dir"));
@@ -486,7 +546,13 @@ TEST_F(FilePathWatcherTest, MoveParent) {
   ASSERT_TRUE(WaitForEvents());
 }
 
-TEST_F(FilePathWatcherTest, RecursiveWatch) {
+#if BUILDFLAG(IS_FUCHSIA)
+// TODO(crbug.com/851641): Re-enable for Fuchsia when inotify is fixed.
+#define MAYBE_RecursiveWatch DISABLED_RecursiveWatch
+#else
+#define MAYBE_RecursiveWatch RecursiveWatch
+#endif
+TEST_F(FilePathWatcherTest, MAYBE_RecursiveWatch) {
   FilePathWatcher watcher;
   FilePath dir(temp_dir_.GetPath().AppendASCII("dir"));
   std::unique_ptr<TestDelegate> delegate(new TestDelegate(collector()));
@@ -514,13 +580,13 @@ TEST_F(FilePathWatcherTest, RecursiveWatch) {
 
 // Mac and Win don't generate events for Touch.
 // Android TouchFile returns false.
-#if !(defined(OS_APPLE) || defined(OS_WIN) || defined(OS_ANDROID))
+#if !(BUILDFLAG(IS_APPLE) || BUILDFLAG(IS_WIN) || BUILDFLAG(IS_ANDROID))
   // Touch "$dir".
   Time access_time;
   ASSERT_TRUE(Time::FromString("Wed, 16 Nov 1994, 00:00:00", &access_time));
   ASSERT_TRUE(base::TouchFile(dir, access_time, access_time));
   ASSERT_TRUE(WaitForEvents());
-#endif  // !(defined(OS_APPLE) || defined(OS_WIN) || defined(OS_ANDROID))
+#endif  // !(BUILDFLAG(IS_APPLE) || BUILDFLAG(IS_WIN) || BUILDFLAG(IS_ANDROID))
 
   // Create "$dir/subdir/subdir_file1".
   FilePath subdir_file1(subdir.AppendASCII("subdir_file1"));
@@ -546,7 +612,7 @@ TEST_F(FilePathWatcherTest, RecursiveWatch) {
 // would be preferable and allow testing file attributes and symlinks.
 // TODO(pauljensen): Re-enable when crbug.com/475568 is fixed and SetUp() places
 // the |temp_dir_| in /data.
-#if !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
   // Modify "$dir/subdir/subdir_child_dir/child_dir_file1" attributes.
   ASSERT_TRUE(base::MakeFileUnreadable(child_dir_file1));
   ASSERT_TRUE(WaitForEvents());
@@ -561,7 +627,7 @@ TEST_F(FilePathWatcherTest, RecursiveWatch) {
   ASSERT_TRUE(WaitForEvents());
 }
 
-#if defined(OS_POSIX) && !defined(OS_ANDROID)
+#if BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_ANDROID)
 // Apps cannot create symlinks on Android in /sdcard as /sdcard uses the
 // "fuse" file system, while /data uses "ext4".  Running these tests in /data
 // would be preferable and allow testing file attributes and symlinks.
@@ -607,9 +673,15 @@ TEST_F(FilePathWatcherTest, RecursiveWithSymLink) {
   ASSERT_TRUE(WriteFile(target2_file, "content"));
   ASSERT_TRUE(WaitForEvents());
 }
-#endif  // defined(OS_POSIX) && !defined(OS_ANDROID)
+#endif  // BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_ANDROID)
 
-TEST_F(FilePathWatcherTest, MoveChild) {
+#if BUILDFLAG(IS_FUCHSIA)
+// TODO(crbug.com/851641): Re-enable for Fuchsia when inotify is fixed.
+#define MAYBE_MoveChild DISABLED_MoveChild
+#else
+#define MAYBE_MoveChild MoveChild
+#endif
+TEST_F(FilePathWatcherTest, MAYBE_MoveChild) {
   FilePathWatcher file_watcher;
   FilePathWatcher subdir_watcher;
   FilePath source_dir(temp_dir_.GetPath().AppendASCII("source"));
@@ -636,15 +708,19 @@ TEST_F(FilePathWatcherTest, MoveChild) {
 }
 
 // Verify that changing attributes on a file is caught
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_FUCHSIA)
+// TODO(crbug.com/851641): Re-enable for Fuchsia when inotify is fixed.
+
 // Apps cannot change file attributes on Android in /sdcard as /sdcard uses the
 // "fuse" file system, while /data uses "ext4".  Running these tests in /data
 // would be preferable and allow testing file attributes and symlinks.
 // TODO(pauljensen): Re-enable when crbug.com/475568 is fixed and SetUp() places
 // the |temp_dir_| in /data.
-#define FileAttributesChanged DISABLED_FileAttributesChanged
-#endif  // defined(OS_ANDROID
-TEST_F(FilePathWatcherTest, FileAttributesChanged) {
+#define MAYBE_FileAttributesChanged DISABLED_FileAttributesChanged
+#else
+#define MAYBE_FileAttributesChanged FileAttributesChanged
+#endif  // BUILDFLAG(IS_ANDROID)
+TEST_F(FilePathWatcherTest, MAYBE_FileAttributesChanged) {
   ASSERT_TRUE(WriteFile(test_file(), "content"));
   FilePathWatcher watcher;
   std::unique_ptr<TestDelegate> delegate(new TestDelegate(collector()));
@@ -656,7 +732,7 @@ TEST_F(FilePathWatcherTest, FileAttributesChanged) {
   ASSERT_TRUE(WaitForEvents());
 }
 
-#if defined(OS_LINUX) || defined(OS_CHROMEOS)
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
 
 // Verify that creating a symlink is caught.
 TEST_F(FilePathWatcherTest, CreateLink) {
@@ -822,7 +898,209 @@ TEST_F(FilePathWatcherTest, LinkedDirectoryPart3) {
   ASSERT_TRUE(WaitForEvents());
 }
 
-#endif  // defined(OS_LINUX) || defined(OS_CHROMEOS)
+// Regression tests that FilePathWatcherImpl does not leave its reference in
+// `g_inotify_reader` due to a race in recursive watch.
+// See https://crbug.com/990004.
+TEST_F(FilePathWatcherTest, RacyRecursiveWatch) {
+  if (!FilePathWatcher::RecursiveWatchAvailable())
+    GTEST_SKIP();
+
+  FilePath dir(temp_dir_.GetPath().AppendASCII("dir"));
+
+  // Create and delete many subdirs. 20 is an arbitrary number big enough
+  // to have more chances to make FilePathWatcherImpl leak watchers.
+  std::vector<FilePath> subdirs;
+  for (int i = 0; i < 20; ++i)
+    subdirs.emplace_back(dir.AppendASCII(base::StringPrintf("subdir_%d", i)));
+
+  Thread subdir_updater("SubDir Updater");
+  ASSERT_TRUE(subdir_updater.Start());
+
+  auto subdir_update_task = base::BindLambdaForTesting([&]() {
+    for (const auto& subdir : subdirs) {
+      // First update event to trigger watch callback.
+      ASSERT_TRUE(CreateDirectory(subdir));
+
+      // Second update event. The notification sent for this event will race
+      // with the upcoming deletion of the directory below. This test is about
+      // verifying that the impl handles this.
+      FilePath subdir_file(subdir.AppendASCII("subdir_file"));
+      ASSERT_TRUE(WriteFile(subdir_file, "content"));
+
+      // Racy subdir delete to trigger watcher leak.
+      ASSERT_TRUE(DeletePathRecursively(subdir));
+    }
+  });
+
+  // Try the racy subdir update 100 times.
+  for (int i = 0; i < 100; ++i) {
+    RunLoop run_loop;
+    auto watcher = std::make_unique<FilePathWatcher>();
+
+    // Keep watch callback in `watcher_callback` so that "watcher.reset()"
+    // inside does not release the callback and the lambda capture with it.
+    // Otherwise, accessing `run_loop` as part of the lamda capture would be
+    // use-after-free under asan.
+    auto watcher_callback =
+        base::BindLambdaForTesting([&](const FilePath& path, bool error) {
+          // Release watchers in callback so that the leaked watchers of
+          // the subdir stays. Otherwise, when the subdir is deleted,
+          // its delete event would clean up leaked watchers in
+          // `g_inotify_reader`.
+          watcher.reset();
+
+          run_loop.Quit();
+        });
+
+    bool setup_result = watcher->Watch(dir, FilePathWatcher::Type::kRecursive,
+                                       watcher_callback);
+    ASSERT_TRUE(setup_result);
+
+    subdir_updater.task_runner()->PostTask(FROM_HERE, subdir_update_task);
+
+    // Wait for the watch callback.
+    run_loop.Run();
+
+    // `watcher` should have been released.
+    ASSERT_FALSE(watcher);
+
+    // There should be no outstanding watchers.
+    ASSERT_FALSE(FilePathWatcher::HasWatchesForTest());
+  }
+}
+
+// Verify that "Watch()" returns false and callback is not invoked when limit is
+// hit during setup.
+TEST_F(FilePathWatcherTest, InotifyLimitInWatch) {
+  auto watcher = std::make_unique<FilePathWatcher>();
+
+  // "test_file()" is like "/tmp/__unique_path__/FilePathWatcherTest" and has 4
+  // dir components ("/" + 3 named parts). "Watch()" creates inotify watches
+  // for each dir component of the given dir. It would fail with limit set to 1.
+  ScopedMaxNumberOfInotifyWatchesOverrideForTest max_inotify_watches(1);
+  ASSERT_FALSE(watcher->Watch(
+      test_file(), FilePathWatcher::Type::kNonRecursive,
+      base::BindLambdaForTesting(
+          [&](const FilePath& path, bool error) { ADD_FAILURE(); })));
+
+  // Triggers update but callback should not be invoked.
+  ASSERT_TRUE(WriteFile(test_file(), "content"));
+
+  // Ensures that the callback did not happen.
+  base::RunLoop().RunUntilIdle();
+}
+
+// Verify that "error=true" callback happens when limit is hit during update.
+TEST_F(FilePathWatcherTest, InotifyLimitInUpdate) {
+  enum kTestType {
+    // Destroy watcher in "error=true" callback.
+    // No crash/deadlock when releasing watcher in the callback.
+    kDestroyWatcher,
+
+    // Do not destroy watcher in "error=true" callback.
+    kDoNothing,
+  };
+
+  for (auto callback_type : {kDestroyWatcher, kDoNothing}) {
+    SCOPED_TRACE(testing::Message() << "type=" << callback_type);
+
+    base::RunLoop run_loop;
+    auto watcher = std::make_unique<FilePathWatcher>();
+
+    bool error_callback_called = false;
+    auto watcher_callback =
+        base::BindLambdaForTesting([&](const FilePath& path, bool error) {
+          // No callback should happen after "error=true" one.
+          ASSERT_FALSE(error_callback_called);
+
+          if (!error)
+            return;
+
+          error_callback_called = true;
+
+          if (callback_type == kDestroyWatcher)
+            watcher.reset();
+
+          run_loop.Quit();
+        });
+    ASSERT_TRUE(watcher->Watch(
+        test_file(), FilePathWatcher::Type::kNonRecursive, watcher_callback));
+
+    ScopedMaxNumberOfInotifyWatchesOverrideForTest max_inotify_watches(1);
+
+    // Triggers update and over limit.
+    ASSERT_TRUE(WriteFile(test_file(), "content"));
+
+    run_loop.Run();
+
+    // More update but no more callback should happen.
+    ASSERT_TRUE(DeleteFile(test_file()));
+    base::RunLoop().RunUntilIdle();
+  }
+}
+
+// Similar to InotifyLimitInUpdate but test a recursive watcher.
+TEST_F(FilePathWatcherTest, InotifyLimitInUpdateRecursive) {
+  enum kTestType {
+    // Destroy watcher in "error=true" callback.
+    // No crash/deadlock when releasing watcher in the callback.
+    kDestroyWatcher,
+
+    // Do not destroy watcher in "error=true" callback.
+    kDoNothing,
+  };
+
+  FilePath dir(temp_dir_.GetPath().AppendASCII("dir"));
+
+  for (auto callback_type : {kDestroyWatcher, kDoNothing}) {
+    SCOPED_TRACE(testing::Message() << "type=" << callback_type);
+
+    base::RunLoop run_loop;
+    auto watcher = std::make_unique<FilePathWatcher>();
+
+    bool error_callback_called = false;
+    auto watcher_callback =
+        base::BindLambdaForTesting([&](const FilePath& path, bool error) {
+          // No callback should happen after "error=true" one.
+          ASSERT_FALSE(error_callback_called);
+
+          if (!error)
+            return;
+
+          error_callback_called = true;
+
+          if (callback_type == kDestroyWatcher)
+            watcher.reset();
+
+          run_loop.Quit();
+        });
+    ASSERT_TRUE(watcher->Watch(dir, FilePathWatcher::Type::kRecursive,
+                               watcher_callback));
+
+    constexpr size_t kMaxLimit = 10u;
+    ScopedMaxNumberOfInotifyWatchesOverrideForTest max_inotify_watches(
+        kMaxLimit);
+
+    // Triggers updates and over limit.
+    for (size_t i = 0; i < kMaxLimit; ++i) {
+      base::FilePath subdir =
+          dir.AppendASCII(base::StringPrintf("subdir_%" PRIuS, i));
+      ASSERT_TRUE(CreateDirectory(subdir));
+    }
+
+    run_loop.Run();
+
+    // More update but no more callback should happen.
+    for (size_t i = 0; i < kMaxLimit; ++i) {
+      base::FilePath subdir =
+          dir.AppendASCII(base::StringPrintf("subdir_%" PRIuS, i));
+      ASSERT_TRUE(DeleteFile(subdir));
+    }
+    base::RunLoop().RunUntilIdle();
+  }
+}
+
+#endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
 
 enum Permission {
   Read,
@@ -830,7 +1108,7 @@ enum Permission {
   Execute
 };
 
-#if defined(OS_APPLE)
+#if BUILDFLAG(IS_APPLE)
 bool ChangeFilePermissions(const FilePath& path, Permission perm, bool allow) {
   struct stat stat_buf;
 
@@ -859,9 +1137,9 @@ bool ChangeFilePermissions(const FilePath& path, Permission perm, bool allow) {
   }
   return chmod(path.value().c_str(), stat_buf.st_mode) == 0;
 }
-#endif  // defined(OS_APPLE)
+#endif  // BUILDFLAG(IS_APPLE)
 
-#if defined(OS_APPLE)
+#if BUILDFLAG(IS_APPLE)
 // Linux implementation of FilePathWatcher doesn't catch attribute changes.
 // http://crbug.com/78043
 // Windows implementation of FilePathWatcher catches attribute changes that
@@ -897,9 +1175,9 @@ TEST_F(FilePathWatcherTest, DirAttributesChanged) {
   ASSERT_TRUE(ChangeFilePermissions(test_dir1, Execute, true));
 }
 
-#endif  // OS_APPLE
+#endif  // BUILDFLAG(IS_APPLE)
 
-#if defined(OS_MAC)
+#if BUILDFLAG(IS_MAC)
 
 // Fail fast if trying to trivially watch a non-existent item.
 TEST_F(FilePathWatcherTest, TrivialNoDir) {
@@ -951,7 +1229,7 @@ TEST_F(FilePathWatcherTest, TrivialParentDirChange) {
 
   // There should be no notification for a change to |sub_dir2|'s parent.
   ASSERT_TRUE(Move(sub_dir1, tmp_dir.Append(FILE_PATH_LITERAL("over_here"))));
-  ASSERT_FALSE(WaitForEvents());
+  ASSERT_FALSE(WaitForEventsWithTimeout(TestTimeouts::tiny_timeout()));
 }
 
 // Do not crash when a directory is moved; https://crbug.com/1156603.
@@ -971,7 +1249,7 @@ TEST_F(FilePathWatcherTest, TrivialDirMove) {
   ASSERT_TRUE(WaitForEvents());
 }
 
-#endif  // defined(OS_MAC)
+#endif  // BUILDFLAG(IS_MAC)
 
 }  // namespace
 

@@ -15,6 +15,7 @@
 #include "third_party/blink/renderer/modules/mediastream/media_stream_constraints_util.h"
 #include "third_party/blink/renderer/modules/mediastream/media_stream_constraints_util_sets.h"
 #include "third_party/blink/renderer/platform/mediastream/media_constraints.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 
 namespace blink {
 
@@ -202,7 +203,9 @@ media::VideoCaptureParams SelectVideoCaptureParamsFromCandidates(
   media::VideoCaptureParams params;
   params.requested_format = media::VideoCaptureFormat(
       ToGfxSize(requested_resolution), static_cast<float>(requested_frame_rate),
-      media::PIXEL_FORMAT_I420);
+      RuntimeEnabledFeatures::ZeroCopyTabCaptureEnabled()
+          ? media::PIXEL_FORMAT_NV12
+          : media::PIXEL_FORMAT_I420);
   params.resolution_change_policy = SelectResolutionPolicyFromCandidates(
       candidates.resolution_set(), default_resolution_policy);
   // Content capture always uses default power-line frequency.
@@ -237,21 +240,21 @@ std::string SelectDeviceIDFromCandidates(
   return candidates.FirstElement();
 }
 
-base::Optional<bool> SelectNoiseReductionFromCandidates(
+absl::optional<bool> SelectNoiseReductionFromCandidates(
     const BoolSet& candidates,
     const MediaTrackConstraintSetPlatform& basic_constraint_set) {
   DCHECK(!candidates.IsEmpty());
   if (basic_constraint_set.goog_noise_reduction.HasIdeal() &&
       candidates.Contains(basic_constraint_set.goog_noise_reduction.Ideal())) {
-    return base::Optional<bool>(
+    return absl::optional<bool>(
         basic_constraint_set.goog_noise_reduction.Ideal());
   }
 
   if (candidates.is_universal())
-    return base::Optional<bool>();
+    return absl::optional<bool>();
 
   // A non-universal BoolSet can have at most one element.
-  return base::Optional<bool>(candidates.FirstElement());
+  return absl::optional<bool>(candidates.FirstElement());
 }
 
 bool SelectRescaleFromCandidates(
@@ -338,7 +341,7 @@ VideoCaptureSettings SelectResultFromCandidates(
           candidates, basic_constraint_set, default_height, default_width,
           default_frame_rate, default_resolution_policy);
 
-  base::Optional<bool> noise_reduction = SelectNoiseReductionFromCandidates(
+  absl::optional<bool> noise_reduction = SelectNoiseReductionFromCandidates(
       candidates.noise_reduction_set(), basic_constraint_set);
 
   bool enable_rescale = SelectRescaleFromCandidates(candidates.rescale_set(),

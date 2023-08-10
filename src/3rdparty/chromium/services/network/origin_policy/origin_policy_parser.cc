@@ -9,8 +9,8 @@
 
 #include "base/json/json_reader.h"
 #include "base/memory/ptr_util.h"
-#include "base/optional.h"
 #include "base/values.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
@@ -28,7 +28,7 @@ OriginPolicyParser::~OriginPolicyParser() = default;
 void OriginPolicyParser::DoParse(base::StringPiece policy_contents_text) {
   policy_contents_ = std::make_unique<OriginPolicyContents>();
 
-  base::Optional<base::Value> json =
+  absl::optional<base::Value> json =
       base::JSONReader::Read(policy_contents_text);
   if (!json || !json->is_dict())
     return;
@@ -51,7 +51,7 @@ bool OriginPolicyParser::ParseIds(const base::Value& json) {
   if (!raw_ids) {
     return false;
   }
-  for (const auto& id : raw_ids->GetList()) {
+  for (const auto& id : raw_ids->GetListDeprecated()) {
     if (id.is_string()) {
       const std::string& id_string = id.GetString();
       if (IsValidOriginPolicyId(id_string)) {
@@ -67,7 +67,7 @@ void OriginPolicyParser::ParseContentSecurity(
     const base::Value& content_security) {
   const base::Value* policies = content_security.FindListKey("policies");
   if (policies) {
-    for (const auto& policy : policies->GetList()) {
+    for (const auto& policy : policies->GetListDeprecated()) {
       if (policy.is_string()) {
         policy_contents_->content_security_policies.push_back(
             policy.GetString());
@@ -78,7 +78,7 @@ void OriginPolicyParser::ParseContentSecurity(
   const base::Value* policies_report_only =
       content_security.FindListKey("policies_report_only");
   if (policies_report_only) {
-    for (const auto& policy : policies_report_only->GetList()) {
+    for (const auto& policy : policies_report_only->GetListDeprecated()) {
       if (policy.is_string()) {
         policy_contents_->content_security_policies_report_only.push_back(
             policy.GetString());
@@ -91,7 +91,7 @@ void OriginPolicyParser::ParseFeatures(const base::Value& features) {
   const std::string* policy = features.FindStringKey("policy");
 
   if (policy) {
-    policy_contents_->feature_policy = *policy;
+    policy_contents_->permissions_policy = *policy;
   }
 }
 

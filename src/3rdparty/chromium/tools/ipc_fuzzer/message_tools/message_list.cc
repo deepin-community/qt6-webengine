@@ -48,7 +48,6 @@ static bool check_msgtable() {
   // include message files used inside the actual chrome browser in this list.
   exemptions.push_back(TestMsgStart);
   exemptions.push_back(WorkerMsgStart);    // Now only used by tests.
-  exemptions.push_back(ChromeUtilityPrintingMsgStart);  // BUILDFLAGS, sigh.
 
 #if !BUILDFLAG(ENABLE_NACL)
   exemptions.push_back(NaClMsgStart);
@@ -58,11 +57,11 @@ static bool check_msgtable() {
   exemptions.push_back(WebRtcLoggingMsgStart);
 #endif
 
-#if !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
   exemptions.push_back(EncryptedMediaMsgStart);
   exemptions.push_back(GinJavaBridgeMsgStart);
   exemptions.push_back(ExtensionWorkerMsgStart);
-#endif  // !defined(OS_ANDROID)
+#endif  // !BUILDFLAG(IS_ANDROID)
 
   for (size_t i = 0; i < MSGTABLE_SIZE; ++i) {
     int class_id = IPC_MESSAGE_ID_CLASS(msgtable[i].id);

@@ -16,6 +16,8 @@ const char kDefaultAutofillAssistantServerUrl[] =
 const char kScriptEndpoint[] = "/v1/supportsSite2";
 const char kActionEndpoint[] = "/v1/actions2";
 const char kTriggersEndpoint[] = "/v1/triggers";
+const char kCapabilitiesByHashEndpoint[] = "/v1/capabilitiesByHashPrefix2";
+const char kUserDataEndpoint[] = "/v1/userData";
 }  // namespace
 
 namespace autofill_assistant {
@@ -40,21 +42,33 @@ bool ServerUrlFetcher::IsProdEndpoint() const {
 }
 
 GURL ServerUrlFetcher::GetSupportsScriptEndpoint() const {
-  url::StringPieceReplacements<std::string> script_replacements;
+  GURL::Replacements script_replacements;
   script_replacements.SetPathStr(kScriptEndpoint);
   return server_url_.ReplaceComponents(script_replacements);
 }
 
 GURL ServerUrlFetcher::GetNextActionsEndpoint() const {
-  url::StringPieceReplacements<std::string> action_replacements;
+  GURL::Replacements action_replacements;
   action_replacements.SetPathStr(kActionEndpoint);
   return server_url_.ReplaceComponents(action_replacements);
 }
 
 GURL ServerUrlFetcher::GetTriggerScriptsEndpoint() const {
-  url::StringPieceReplacements<std::string> trigger_replacements;
+  GURL::Replacements trigger_replacements;
   trigger_replacements.SetPathStr(kTriggersEndpoint);
   return server_url_.ReplaceComponents(trigger_replacements);
+}
+
+GURL ServerUrlFetcher::GetCapabilitiesByHashEndpoint() const {
+  GURL::Replacements capabilities_replacements;
+  capabilities_replacements.SetPathStr(kCapabilitiesByHashEndpoint);
+  return server_url_.ReplaceComponents(capabilities_replacements);
+}
+
+GURL ServerUrlFetcher::GetUserDataEndpoint() const {
+  GURL::Replacements user_data_replacements;
+  user_data_replacements.SetPathStr(kUserDataEndpoint);
+  return server_url_.ReplaceComponents(user_data_replacements);
 }
 
 }  // namespace autofill_assistant

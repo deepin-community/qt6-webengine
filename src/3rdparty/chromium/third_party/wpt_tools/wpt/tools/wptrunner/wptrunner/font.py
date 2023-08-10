@@ -10,7 +10,7 @@ HERE = os.path.dirname(__file__)
 SYSTEM = platform.system().lower()
 
 
-class FontInstaller(object):
+class FontInstaller:
     def __init__(self, logger, font_dir=None, **fonts):
         self.logger = logger
         self.font_dir = font_dir
@@ -77,7 +77,9 @@ class FontInstaller(object):
 
         # Per https://github.com/web-platform-tests/results-collection/issues/218
         # installing Ahem on macOS is flaky, so check if it actually installed
-        fonts = check_output(['/usr/sbin/system_profiler', '-xml', 'SPFontsDataType'])
+        with open(os.devnull, 'w') as f:
+            fonts = check_output(['/usr/sbin/system_profiler', '-xml', 'SPFontsDataType'], stderr=f)
+
         try:
             # if py3
             load_plist = plistlib.loads

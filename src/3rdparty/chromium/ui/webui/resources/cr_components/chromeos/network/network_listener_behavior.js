@@ -42,4 +42,37 @@
   onVpnProvidersChanged() {},
 
   onNetworkCertificatesChanged() {},
+
+  /** @param {string} userhash */
+  onPoliciesApplied(userhash) {},
 };
+
+/** @interface */
+/* #export */ class NetworkListenerBehaviorInterface {
+  constructor() {
+    /** @private {?chromeos.networkConfig.mojom.CrosNetworkConfigObserver} */
+    this.observer_;
+  }
+
+  attached() {}
+
+  /**
+   * @param {!Array<chromeos.networkConfig.mojom.NetworkStateProperties>}
+   *     activeNetworks
+   */
+  onActiveNetworksChanged(activeNetworks) {}
+
+  /** @param {!chromeos.networkConfig.mojom.NetworkStateProperties} network */
+  onNetworkStateChanged(network) {}
+
+  onNetworkStateListChanged() {}
+
+  onDeviceStateListChanged() {}
+
+  onVpnProvidersChanged() {}
+
+  onNetworkCertificatesChanged() {}
+
+  /** @param {!string} userhash */
+  onPoliciesApplied(userhash) {}
+}

@@ -7,10 +7,12 @@
 
 #include "base/bind.h"
 #include "base/json/json_writer.h"
+#include "base/memory/ptr_util.h"
 #include "content/browser/devtools/protocol/devtools_network_resource_loader.h"
 #include "net/base/load_flags.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "services/network/public/cpp/simple_url_loader.h"
+#include "services/network/public/mojom/url_response_head.mojom.h"
 
 namespace content {
 namespace protocol {
@@ -43,13 +45,10 @@ DevToolsNetworkResourceLoader::Create(
     net::SiteForCookies site_for_cookies,
     Caching caching,
     Credentials include_credentials,
-    int32_t render_frame_id,
     CompletionCallback completion_callback) {
-  DCHECK(gurl.SchemeIsHTTPOrHTTPS());
   network::ResourceRequest resource_request;
   resource_request.url = std::move(gurl);
   resource_request.request_initiator = origin;
-  resource_request.render_frame_id = render_frame_id;
   resource_request.site_for_cookies = site_for_cookies;
   if (caching == Caching::kBypass) {
     resource_request.load_flags |= net::LOAD_BYPASS_CACHE;

@@ -10,9 +10,10 @@
 #include <memory>
 #include <string>
 
+#include "base/callback_forward.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/timer/timer.h"
-#include "pdf/ppapi_migration/callback.h"
 #include "pdf/url_loader_wrapper.h"
 #include "ui/gfx/range/range.h"
 
@@ -41,23 +42,20 @@ class URLLoaderWrapperImpl : public URLLoaderWrapper {
                  const std::string& referrer_url,
                  uint32_t position,
                  uint32_t size,
-                 ResultCallback callback) override;
+                 base::OnceCallback<void(int)> callback) override;
   void ReadResponseBody(char* buffer,
                         int buffer_size,
-                        ResultCallback callback) override;
-
-  void SetResponseHeaders(const std::string& response_headers);
+                        base::OnceCallback<void(int)> callback) override;
 
  private:
   void SetHeadersFromLoader();
-  void ParseHeaders();
-  void DidOpen(ResultCallback callback, int32_t result);
-  void DidRead(ResultCallback callback, int32_t result);
+  void ParseHeaders(const std::string& response_headers);
+  void DidOpen(base::OnceCallback<void(int)> callback, int32_t result);
+  void DidRead(base::OnceCallback<void(int)> callback, int32_t result);
 
-  void ReadResponseBodyImpl(ResultCallback callback);
+  void ReadResponseBodyImpl(base::OnceCallback<void(int)> callback);
 
   std::unique_ptr<UrlLoader> url_loader_;
-  std::string response_headers_;
 
   int content_length_ = -1;
   bool accept_ranges_bytes_ = false;
@@ -67,7 +65,7 @@ class URLLoaderWrapperImpl : public URLLoaderWrapper {
   std::string multipart_boundary_;
   gfx::Range byte_range_ = gfx::Range::InvalidRange();
   bool is_multipart_ = false;
-  char* buffer_ = nullptr;
+  raw_ptr<char> buffer_ = nullptr;
   uint32_t buffer_size_ = 0;
   bool multi_part_processed_ = false;
 

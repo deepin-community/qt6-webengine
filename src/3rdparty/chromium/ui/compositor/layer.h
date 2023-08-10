@@ -12,10 +12,8 @@
 #include <string>
 #include <vector>
 
-#include "base/compiler_specific.h"
-#include "base/containers/flat_set.h"
-#include "base/macros.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/raw_ptr.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "cc/base/region.h"
@@ -25,14 +23,10 @@
 #include "components/viz/common/resources/transferable_resource.h"
 #include "components/viz/common/surfaces/subtree_capture_id.h"
 #include "third_party/skia/include/core/SkColor.h"
-#include "ui/compositor/compositor.h"
 #include "ui/compositor/layer_animation_delegate.h"
-#include "ui/compositor/layer_delegate.h"
 #include "ui/compositor/layer_type.h"
 #include "ui/gfx/geometry/rect.h"
-#include "ui/gfx/geometry/rounded_corners_f.h"
 #include "ui/gfx/image/image_skia.h"
-#include "ui/gfx/transform.h"
 
 namespace cc {
 class Layer;
@@ -43,6 +37,12 @@ class SurfaceLayer;
 class TextureLayer;
 }
 
+namespace gfx {
+class RoundedCornersF;
+class Transform;
+class LinearGradient;
+}  // namespace gfx
+
 namespace viz {
 class CopyOutputRequest;
 struct TransferableResource;
@@ -52,6 +52,7 @@ namespace ui {
 
 class Compositor;
 class LayerAnimator;
+class LayerDelegate;
 class LayerObserver;
 class LayerOwner;
 class LayerThreadedAnimationDelegate;
@@ -72,6 +73,8 @@ class COMPOSITOR_EXPORT Layer : public LayerAnimationDelegate,
  public:
   using ShapeRects = std::vector<gfx::Rect>;
   explicit Layer(LayerType type = LAYER_TEXTURED);
+  Layer(const Layer&) = delete;
+  Layer& operator=(const Layer&) = delete;
   ~Layer() override;
 
   // Note that only solid color and surface content is copied.
@@ -119,6 +122,11 @@ class COMPOSITOR_EXPORT Layer : public LayerAnimationDelegate,
   void SetCompositor(Compositor* compositor,
                      scoped_refptr<cc::Layer> root_layer);
   void ResetCompositor();
+
+  // These should be private, but they're used by HideHelper, which needs to
+  // do part but not all of what SetCompositor/ResetCompositor do.
+  void SetCompositorForAnimatorsInTree(Compositor* compositor);
+  void ResetCompositorForAnimatorsInTree(Compositor* compositor);
 
   LayerDelegate* delegate() { return delegate_; }
   void set_delegate(LayerDelegate* delegate) { delegate_ = delegate; }
@@ -190,8 +198,6 @@ class COMPOSITOR_EXPORT Layer : public LayerAnimationDelegate,
   // The transform, relative to the parent.
   void SetTransform(const gfx::Transform& transform);
   const gfx::Transform& transform() const { return cc_layer_->transform(); }
-
-  gfx::PointF position() const { return cc_layer_->position(); }
 
   // Return the target transform if animator is running, or the current
   // transform otherwise.
@@ -320,6 +326,12 @@ class COMPOSITOR_EXPORT Layer : public LayerAnimationDelegate,
     return cc_layer_->corner_radii();
   }
 
+  // Gets/sets a gradient mask that is applied to the clip bounds on the layer
+  void SetGradientMask(const gfx::LinearGradient& linear_gradient);
+  const gfx::LinearGradient gradient_mask() const {
+    return cc_layer_->gradient_mask();
+  }
+
   // If set to true, this layer would not trigger a render surface (if possible)
   // due to having a rounded corner resulting in a better performance at the
   // cost of maybe having some blending artifacts.
@@ -330,14 +342,19 @@ class COMPOSITOR_EXPORT Layer : public LayerAnimationDelegate,
 
   // Converts a point from the coordinates of |source| to the coordinates of
   // |target|. Necessarily, |source| and |target| must inhabit the same Layer
-  // tree.
+  // tree. If `use_target_transform` is true, the target transform is used in
+  // coordinate conversions; otherwise, the current transform is used. If there
+  // is no animation ongoing, the target transform is the same as the current
+  // transform.
   static void ConvertPointToLayer(const Layer* source,
                                   const Layer* target,
+                                  bool use_target_transform,
                                   gfx::PointF* point);
 
-  // Converts a transform to be relative to the given |ancestor|. Returns
-  // whether success (that is, whether the given ancestor was really an
-  // ancestor of this layer).
+  // Calculates the relative transform. See the comment of
+  // `GetTransformRelativeToImpl()` for further details.
+  bool GetTransformRelativeTo(const Layer* ancestor,
+                              gfx::Transform* transform) const;
   bool GetTargetTransformRelativeTo(const Layer* ancestor,
                                     gfx::Transform* transform) const;
 
@@ -356,10 +373,9 @@ class COMPOSITOR_EXPORT Layer : public LayerAnimationDelegate,
 
   // Set new TransferableResource for this layer. This method only supports
   // a gpu-backed |resource|.
-  void SetTransferableResource(
-      const viz::TransferableResource& resource,
-      std::unique_ptr<viz::SingleReleaseCallback> release_callback,
-      gfx::Size texture_size_in_dip);
+  void SetTransferableResource(const viz::TransferableResource& resource,
+                               viz::ReleaseCallback release_callback,
+                               gfx::Size texture_size_in_dip);
   void SetTextureSize(gfx::Size texture_size_in_dip);
   void SetTextureFlipped(bool flipped);
   bool TextureFlipped() const;
@@ -443,8 +459,8 @@ class COMPOSITOR_EXPORT Layer : public LayerAnimationDelegate,
   // Invoked when scrolling performed by the cc::InputHandler is committed. This
   // will only occur if the Layer has set scroll container bounds.
   void SetDidScrollCallback(
-      base::RepeatingCallback<void(const gfx::ScrollOffset&,
-                                   const cc::ElementId&)> callback);
+      base::RepeatingCallback<void(const gfx::PointF&, const cc::ElementId&)>
+          callback);
 
   cc::ElementId element_id() const { return cc_layer_->element_id(); }
 
@@ -454,8 +470,8 @@ class COMPOSITOR_EXPORT Layer : public LayerAnimationDelegate,
   void SetScrollable(const gfx::Size& container_bounds);
 
   // Gets and sets the current scroll offset of the layer.
-  gfx::ScrollOffset CurrentScrollOffset() const;
-  void SetScrollOffset(const gfx::ScrollOffset& offset);
+  gfx::PointF CurrentScrollOffset() const;
+  void SetScrollOffset(const gfx::PointF& offset);
 
   // ContentLayerClient implementation.
   gfx::Rect PaintableRegion() const override;
@@ -470,7 +486,7 @@ class COMPOSITOR_EXPORT Layer : public LayerAnimationDelegate,
   bool PrepareTransferableResource(
       cc::SharedBitmapIdRegistrar* bitmap_registar,
       viz::TransferableResource* resource,
-      std::unique_ptr<viz::SingleReleaseCallback>* release_callback) override;
+      viz::ReleaseCallback* release_callback) override;
 
   float device_scale_factor() const { return device_scale_factor_; }
 
@@ -541,8 +557,16 @@ class COMPOSITOR_EXPORT Layer : public LayerAnimationDelegate,
   // StackBelow().
   void StackRelativeTo(Layer* child, Layer* other, bool above);
 
-  bool ConvertPointForAncestor(const Layer* ancestor, gfx::PointF* point) const;
+  // If `use_target_transform` is true, coordinate conversions use the target
+  // transform. The target transform is the end value of a transform animation.
+  // If `use_target_transform` is false, coordinate conversions use the current
+  // transform. If there is no animation ongoing, the target transform is the
+  // same as the current transform.
+  bool ConvertPointForAncestor(const Layer* ancestor,
+                               bool use_target_transform,
+                               gfx::PointF* point) const;
   bool ConvertPointFromAncestor(const Layer* ancestor,
+                                bool use_target_transform,
                                 gfx::PointF* point) const;
 
   // Implementation of LayerAnimatorDelegate
@@ -565,6 +589,8 @@ class COMPOSITOR_EXPORT Layer : public LayerAnimationDelegate,
   void SetRoundedCornersFromAnimation(
       const gfx::RoundedCornersF& rounded_corners,
       PropertyChangeReason reason) override;
+  void SetGradientMaskFromAnimation(const gfx::LinearGradient& gradient_mask,
+                                    PropertyChangeReason reason) override;
   void ScheduleDrawForAnimation() override;
   const gfx::Rect& GetBoundsForAnimation() const override;
   gfx::Transform GetTransformForAnimation() const override;
@@ -575,12 +601,13 @@ class COMPOSITOR_EXPORT Layer : public LayerAnimationDelegate,
   SkColor GetColorForAnimation() const override;
   gfx::Rect GetClipRectForAnimation() const override;
   gfx::RoundedCornersF GetRoundedCornersForAnimation() const override;
+  gfx::LinearGradient GetGradientMaskForAnimation() const override;
   float GetDeviceScaleFactor() const override;
-  ui::Layer* GetLayer() override;
+  Layer* GetLayer() override;
   cc::Layer* GetCcLayer() const override;
   LayerThreadedAnimationDelegate* GetThreadedAnimationDelegate() override;
   LayerAnimatorCollection* GetLayerAnimatorCollection() override;
-  base::Optional<int> GetFrameNumber() const override;
+  absl::optional<int> GetFrameNumber() const override;
   float GetRefreshRate() const override;
 
   // Creates a corresponding composited layer for |type_|.
@@ -600,10 +627,7 @@ class COMPOSITOR_EXPORT Layer : public LayerAnimationDelegate,
   // animations handled by old cc layer before the switch, |this| could be
   // released by an animation observer. Returns false when it happens and
   // callers should take cautions as well. Otherwise returns true.
-  bool SwitchToLayer(scoped_refptr<cc::Layer> new_layer) WARN_UNUSED_RESULT;
-
-  void SetCompositorForAnimatorsInTree(Compositor* compositor);
-  void ResetCompositorForAnimatorsInTree(Compositor* compositor);
+  [[nodiscard]] bool SwitchToLayer(scoped_refptr<cc::Layer> new_layer);
 
   void OnMirrorDestroyed(LayerMirror* mirror);
 
@@ -626,11 +650,20 @@ class COMPOSITOR_EXPORT Layer : public LayerAnimationDelegate,
   void SetFillsBoundsOpaquelyWithReason(bool fills_bounds_opaquely,
                                         PropertyChangeReason reason);
 
+  // Converts a transform to be relative to the given |ancestor|. If
+  // `is_target_transform` is true, the target transform is used in the
+  // coordinate conversions; otherwise, the current transform is used. Returns
+  // whether success (that is, whether the given ancestor was really an ancestor
+  // of this layer).
+  bool GetTransformRelativeToImpl(const Layer* ancestor,
+                                  bool is_target_transform,
+                                  gfx::Transform* transform) const;
+
   const LayerType type_;
 
-  Compositor* compositor_;
+  raw_ptr<Compositor> compositor_;
 
-  Layer* parent_;
+  raw_ptr<Layer> parent_;
 
   // This layer's children, in bottom-to-top stacking order.
   std::vector<Layer*> children_;
@@ -638,7 +671,7 @@ class COMPOSITOR_EXPORT Layer : public LayerAnimationDelegate,
   std::vector<std::unique_ptr<LayerMirror>> mirrors_;
 
   // The layer being reflected with its subtree by this one, if any.
-  Layer* subtree_reflected_layer_ = nullptr;
+  raw_ptr<Layer> subtree_reflected_layer_ = nullptr;
 
   // List of layers reflecting this layer and its subtree, if any.
   base::flat_set<Layer*> subtree_reflecting_layers_;
@@ -687,11 +720,11 @@ class COMPOSITOR_EXPORT Layer : public LayerAnimationDelegate,
   float layer_blur_sigma_;
 
   // The associated mask layer with this layer.
-  Layer* layer_mask_;
+  raw_ptr<Layer> layer_mask_;
   // The back link from the mask layer to it's associated masked layer.
   // We keep this reference for the case that if the mask layer gets deleted
   // while attached to the main layer before the main layer is deleted.
-  Layer* layer_mask_back_link_;
+  raw_ptr<Layer> layer_mask_back_link_;
 
   // The zoom factor to scale the layer by.  Zooming is disabled when this is
   // set to 1.
@@ -705,11 +738,11 @@ class COMPOSITOR_EXPORT Layer : public LayerAnimationDelegate,
 
   std::string name_;
 
-  LayerDelegate* delegate_;
+  raw_ptr<LayerDelegate> delegate_;
 
   base::ObserverList<LayerObserver>::Unchecked observer_list_;
 
-  LayerOwner* owner_;
+  raw_ptr<LayerOwner> owner_;
 
   scoped_refptr<LayerAnimator> animator_;
 
@@ -721,7 +754,7 @@ class COMPOSITOR_EXPORT Layer : public LayerAnimationDelegate,
   scoped_refptr<cc::TextureLayer> texture_layer_;
   scoped_refptr<cc::SolidColorLayer> solid_color_layer_;
   scoped_refptr<cc::SurfaceLayer> surface_layer_;
-  cc::Layer* cc_layer_;
+  raw_ptr<cc::Layer> cc_layer_;
 
   // A cached copy of |Compositor::device_scale_factor()|.
   float device_scale_factor_;
@@ -736,7 +769,7 @@ class COMPOSITOR_EXPORT Layer : public LayerAnimationDelegate,
 
   // The callback to release the mailbox. This is only set after
   // SetTransferableResource() is called, before we give it to the TextureLayer.
-  std::unique_ptr<viz::SingleReleaseCallback> transfer_release_callback_;
+  viz::ReleaseCallback transfer_release_callback_;
 
   // The size of the frame or texture in DIP, set when SetShowDelegatedContent
   // or SetTransferableResource() was called.
@@ -760,9 +793,12 @@ class COMPOSITOR_EXPORT Layer : public LayerAnimationDelegate,
   // layer.
   unsigned trilinear_filtering_request_;
 
-  base::WeakPtrFactory<Layer> weak_ptr_factory_{this};
+  // TODO(crbug.com/1172694): Remove once the root cause is identified.
+#if defined(ADDRESS_SANITIZER)
+  bool destroyed_ = false;
+#endif
 
-  DISALLOW_COPY_AND_ASSIGN(Layer);
+  base::WeakPtrFactory<Layer> weak_ptr_factory_{this};
 };
 
 }  // namespace ui

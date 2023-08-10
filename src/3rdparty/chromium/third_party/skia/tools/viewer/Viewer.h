@@ -12,8 +12,9 @@
 #include "include/core/SkExecutor.h"
 #include "include/core/SkFont.h"
 #include "include/gpu/GrContextOptions.h"
+#include "include/private/SkSLString.h"
 #include "src/core/SkScan.h"
-#include "src/sksl/SkSLString.h"
+#include "src/core/SkVMBlitter.h"
 #include "src/sksl/ir/SkSLProgram.h"
 #include "tools/gpu/MemoryCache.h"
 #include "tools/sk_app/Application.h"
@@ -49,6 +50,21 @@ public:
     static GrContextOptions::ShaderErrorHandler* ShaderErrorHandler();
 
     struct SkFontFields {
+        bool overridesSomething() const {
+            return fTypeface ||
+                   fSize ||
+                   fScaleX ||
+                   fSkewX ||
+                   fHinting ||
+                   fEdging ||
+                   fSubpixel ||
+                   fForceAutoHinting ||
+                   fEmbeddedBitmaps ||
+                   fLinearMetrics ||
+                   fEmbolden ||
+                   fBaselineSnap;
+        }
+
         bool fTypeface = false;
         bool fSize = false;
         SkScalar fSizeRange[2] = { 0, 20 };
@@ -64,20 +80,38 @@ public:
         bool fBaselineSnap = false;
     };
     struct SkPaintFields {
+        bool overridesSomething() const {
+            return fPathEffect ||
+                   fShader ||
+                   fMaskFilter ||
+                   fColorFilter ||
+                   fImageFilter ||
+                   fColor ||
+                   fStrokeWidth ||
+                   fMiterLimit ||
+                   fBlendMode ||
+                   fAntiAlias ||
+                   fDither ||
+                   fForceRuntimeBlend ||
+                   fCapType ||
+                   fJoinType ||
+                   fStyle;
+        }
+
         bool fPathEffect = false;
         bool fShader = false;
         bool fMaskFilter = false;
         bool fColorFilter = false;
-        bool fDrawLooper = false;
         bool fImageFilter = false;
 
         bool fColor = false;
-        bool fWidth = false;
+        bool fStrokeWidth = false;
         bool fMiterLimit = false;
         bool fBlendMode = false;
 
         bool fAntiAlias = false;
         bool fDither = false;
+        bool fForceRuntimeBlend = false;
         enum class AntiAliasState {
             Alias,
             Normal,
@@ -119,6 +153,7 @@ private:
     void setCurrentSlide(int);
     void setupCurrentSlide();
     void listNames() const;
+    void dumpShadersToResources();
 
     void updateUIState();
 
@@ -153,6 +188,7 @@ private:
     bool                   fShowImGuiDebugWindow;
     bool                   fShowSlidePicker;
     bool                   fShowImGuiTestWindow;
+    bool                   fShowHistogramWindow;
 
     bool                   fShowZoomWindow;
     bool                   fZoomWindowFixed;
@@ -200,7 +236,7 @@ private:
     PerspectiveMode        fPerspectiveMode;
     SkPoint                fPerspectivePoints[4];
 
-    SkTArray<std::function<void(void)>> fDeferredActions;
+    SkTArray<std::function<void()>> fDeferredActions;
 
     // fPaint contains override values, fPaintOverrides controls if overrides are applied.
     SkPaint fPaint;
@@ -220,14 +256,28 @@ private:
 
         sk_sp<const SkData> fKey;
         SkString            fKeyString;
+        SkString            fKeyDescription;
 
         SkFourByteTag         fShaderType;
-        SkSL::String          fShader[kGrShaderTypeCount];
+        std::string           fShader[kGrShaderTypeCount];
         SkSL::Program::Inputs fInputs[kGrShaderTypeCount];
     };
 
     sk_gpu_test::MemoryCache fPersistentCache;
     SkTArray<CachedShader>   fCachedShaders;
+
+    enum ShaderOptLevel : int {
+        kShaderOptLevel_Source,
+        kShaderOptLevel_Compile,
+        kShaderOptLevel_Optimize,
+        kShaderOptLevel_Inline,
+    };
+    ShaderOptLevel fOptLevel = kShaderOptLevel_Source;
+
+    SkVMBlitter::Key fHoveredKey;
+    skvm::Program    fHoveredProgram;
+
+    SkTHashMap<SkVMBlitter::Key, std::string> fDisassemblyCache;
 };
 
 #endif

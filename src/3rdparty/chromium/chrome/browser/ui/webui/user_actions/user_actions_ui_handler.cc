@@ -6,6 +6,7 @@
 
 #include "base/bind.h"
 #include "base/metrics/user_metrics.h"
+#include "base/time/time.h"
 #include "base/values.h"
 #include "content/public/browser/web_ui.h"
 
@@ -23,7 +24,7 @@ void UserActionsUIHandler::RegisterMessages() {
                                         base::Unretained(this)));
 }
 
-void UserActionsUIHandler::HandlePageLoaded(const base::ListValue* args) {
+void UserActionsUIHandler::HandlePageLoaded(const base::Value::List& args) {
   AllowJavascript();
 }
 
@@ -40,6 +41,6 @@ void UserActionsUIHandler::OnUserAction(const std::string& action,
   if (!IsJavascriptAllowed())
     return;
   base::Value user_action_name(action);
-  web_ui()->CallJavascriptFunctionUnsafe("userActions.observeUserAction",
-                                         user_action_name);
+
+  FireWebUIListener("user-action", user_action_name);
 }

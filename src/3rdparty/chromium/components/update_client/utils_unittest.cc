@@ -8,7 +8,6 @@
 
 #include "base/files/file_path.h"
 #include "base/path_service.h"
-#include "components/update_client/updater_state.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 
@@ -32,6 +31,11 @@ TEST(UpdateClientUtils, VerifyFileHash256) {
       MakeTestFilePath("jebgalgnebhfojomionfpkfelancnnkf.crx"),
       std::string(
           "7ab32f071cd9b5ef8e0d7913be161f532d98b3e9fa284a7cd8059c3409ce0498")));
+
+  EXPECT_TRUE(VerifyFileHash256(
+      MakeTestFilePath("empty_file"),
+      std::string(
+          "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")));
 
   EXPECT_FALSE(VerifyFileHash256(
       MakeTestFilePath("jebgalgnebhfojomionfpkfelancnnkf.crx"),

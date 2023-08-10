@@ -13,7 +13,6 @@
 #include "base/containers/span.h"
 #include "base/lazy_instance.h"
 #include "base/rand_util.h"
-#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_split.h"
@@ -164,8 +163,10 @@ static const MimeInfo kPrimaryMappings[] = {
     {"image/avif", "avif"},
     {"image/gif", "gif"},
     {"image/jpeg", "jpeg,jpg"},
+    {"image/jxl", "jxl"},
     {"image/png", "png"},
     {"image/apng", "png"},
+    {"image/svg+xml", "svg,svgz"},
     {"image/webp", "webp"},
     {"multipart/related", "mht,mhtml"},
     {"text/css", "css"},
@@ -174,6 +175,12 @@ static const MimeInfo kPrimaryMappings[] = {
     {"text/xml", "xml"},
     {"video/mp4", "mp4,m4v"},
     {"video/ogg", "ogv,ogm"},
+
+    // This is a primary mapping (overrides the platform) rather than secondary
+    // to work around an issue when Excel is installed on Windows. Excel
+    // registers csv as application/vnd.ms-excel instead of text/csv from RFC
+    // 4180. See https://crbug.com/139105.
+    {"text/csv", "csv"},
 };
 
 // See comments above for details on how this list is used.
@@ -193,6 +200,7 @@ static const MimeInfo kSecondaryMappings[] = {
     {"application/postscript", "ps,eps,ai"},
     {"application/rdf+xml", "rdf"},
     {"application/rss+xml", "rss"},
+    {"application/rtf", "rtf"},
     {"application/vnd.android.package-archive", "apk"},
     {"application/vnd.mozilla.xul+xml", "xul"},
     {"application/vnd.ms-excel", "xls"},
@@ -208,7 +216,6 @@ static const MimeInfo kSecondaryMappings[] = {
     {"audio/webm", "weba"},
     {"image/bmp", "bmp"},
     {"image/jpeg", "jfif,pjpeg,pjp"},
-    {"image/svg+xml", "svg,svgz"},
     {"image/tiff", "tiff,tif"},
     {"image/vnd.microsoft.icon", "ico"},
     {"image/x-png", "png"},
@@ -248,7 +255,7 @@ static const char* FindMimeType(const MimeInfo (&mappings)[num_mappings],
 
 static base::FilePath::StringType StringToFilePathStringType(
     const base::StringPiece& string_piece) {
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   return base::UTF8ToWide(string_piece);
 #else
   return std::string(string_piece);
@@ -452,11 +459,116 @@ bool MimeUtil::MatchesMimeType(const std::string& mime_type_pattern,
   return MatchesMimeTypeParameters(mime_type_pattern, mime_type);
 }
 
-// See http://www.iana.org/assignments/media-types/media-types.xhtml
-static const char* const kLegalTopLevelTypes[] = {
-    "application", "audio",     "example", "image", "message",
-    "model",       "multipart", "text",    "video",
-};
+bool ParseMimeType(const std::string& type_str,
+                   std::string* mime_type,
+                   base::StringPairs* params) {
+  // Trim leading and trailing whitespace from type.  We include '(' in
+  // the trailing trim set to catch media-type comments, which are not at all
+  // standard, but may occur in rare cases.
+  size_t type_val = type_str.find_first_not_of(HTTP_LWS);
+  type_val = std::min(type_val, type_str.length());
+  size_t type_end = type_str.find_first_of(HTTP_LWS ";(", type_val);
+  if (type_end == std::string::npos)
+    type_end = type_str.length();
+
+  // Reject a mime-type if it does not include a slash.
+  size_t slash_pos = type_str.find_first_of('/');
+  if (slash_pos == std::string::npos || slash_pos > type_end)
+    return false;
+  if (mime_type)
+    *mime_type = type_str.substr(type_val, type_end - type_val);
+
+  // Iterate over parameters. Can't split the string around semicolons
+  // preemptively because quoted strings may include semicolons. Mostly matches
+  // logic in https://mimesniff.spec.whatwg.org/. Main differences: Does not
+  // validate characters are HTTP token code points / HTTP quoted-string token
+  // code points, and ignores spaces after "=" in parameters.
+  if (params)
+    params->clear();
+  std::string::size_type offset = type_str.find_first_of(';', type_end);
+  while (offset < type_str.size()) {
+    DCHECK_EQ(';', type_str[offset]);
+    // Trim off the semicolon.
+    ++offset;
+
+    // Trim off any following spaces.
+    offset = type_str.find_first_not_of(HTTP_LWS, offset);
+    std::string::size_type param_name_start = offset;
+
+    // Extend parameter name until run into a semicolon or equals sign.  Per
+    // spec, trailing spaces are not removed.
+    offset = type_str.find_first_of(";=", offset);
+
+    // Nothing more to do if at end of string, or if there's no parameter
+    // value, since names without values aren't allowed.
+    if (offset == std::string::npos || type_str[offset] == ';')
+      continue;
+
+    auto param_name = base::MakeStringPiece(type_str.begin() + param_name_start,
+                                            type_str.begin() + offset);
+
+    // Now parse the value.
+    DCHECK_EQ('=', type_str[offset]);
+    // Trim off the '='.
+    offset++;
+
+    // Remove leading spaces. This violates the spec, though it matches
+    // pre-existing behavior.
+    //
+    // TODO(mmenke): Consider doing this (only?) after parsing quotes, which
+    // seems to align more with the spec - not the content-type spec, but the
+    // GET spec's way of getting an encoding, and the spec for handling
+    // boundary values as well.
+    // See https://encoding.spec.whatwg.org/#names-and-labels.
+    offset = type_str.find_first_not_of(HTTP_LWS, offset);
+
+    std::string param_value;
+    if (offset == std::string::npos || type_str[offset] == ';') {
+      // Nothing to do here - an unquoted string of only whitespace should be
+      // skipped.
+      continue;
+    } else if (type_str[offset] != '"') {
+      // If the first character is not a quotation mark, copy data directly.
+      std::string::size_type value_start = offset;
+      offset = type_str.find_first_of(';', offset);
+      std::string::size_type value_end = offset;
+
+      // Remove terminal whitespace. If ran off the end of the string, have to
+      // update |value_end| first.
+      if (value_end == std::string::npos)
+        value_end = type_str.size();
+      while (value_end > value_start &&
+             HttpUtil::IsLWS(type_str[value_end - 1])) {
+        --value_end;
+      }
+
+      param_value = type_str.substr(value_start, value_end - value_start);
+    } else {
+      // Otherwise, append data, with special handling for backslashes, until
+      // a close quote.  Do not trim whitespace for quoted-string.
+
+      // Skip open quote.
+      DCHECK_EQ('"', type_str[offset]);
+      ++offset;
+
+      while (offset < type_str.size() && type_str[offset] != '"') {
+        // Skip over backslash and append the next character, when not at
+        // the end of the string. Otherwise, copy the next character (Which may
+        // be a backslash).
+        if (type_str[offset] == '\\' && offset + 1 < type_str.size()) {
+          ++offset;
+        }
+        param_value += type_str[offset];
+        ++offset;
+      }
+
+      offset = type_str.find_first_of(';', offset);
+    }
+    if (params)
+      params->emplace_back(param_name, param_value);
+  }
+  return true;
+}
 
 bool MimeUtil::ParseMimeTypeWithoutParameter(
     const std::string& type_string,
@@ -477,6 +589,12 @@ bool MimeUtil::ParseMimeTypeWithoutParameter(
     *subtype = components[1];
   return true;
 }
+
+// See https://www.iana.org/assignments/media-types/media-types.xhtml
+static const char* const kLegalTopLevelTypes[] = {
+    "application", "audio", "example",   "font", "image",
+    "message",     "model", "multipart", "text", "video",
+};
 
 bool MimeUtil::IsValidTopLevelMimeType(const std::string& type_string) const {
   std::string lower_type = base::ToLowerASCII(type_string);
@@ -541,6 +659,7 @@ static const char* const kStandardImageTypes[] = {"image/avif",
                                                   "image/gif",
                                                   "image/ief",
                                                   "image/jpeg",
+                                                  "image/jxl",
                                                   "image/webp",
                                                   "image/pict",
                                                   "image/pipeg",
@@ -579,6 +698,11 @@ static const char* const kStandardAudioTypes[] = {
   "audio/vnd.rn-realaudio",
   "audio/vnd.wave"
 };
+// https://tools.ietf.org/html/rfc8081
+static const char* const kStandardFontTypes[] = {
+    "font/collection", "font/otf",  "font/sfnt",
+    "font/ttf",        "font/woff", "font/woff2",
+};
 static const char* const kStandardVideoTypes[] = {
   "video/avi",
   "video/divx",
@@ -602,6 +726,7 @@ struct StandardType {
 };
 static const StandardType kStandardTypes[] = {{"image/", kStandardImageTypes},
                                               {"audio/", kStandardAudioTypes},
+                                              {"font/", kStandardFontTypes},
                                               {"video/", kStandardVideoTypes},
                                               {nullptr, {}}};
 

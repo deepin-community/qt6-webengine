@@ -16,9 +16,11 @@
 #include "components/viz/common/viz_common_export.h"
 #include "gpu/command_buffer/common/mailbox_holder.h"
 #include "gpu/ipc/common/vulkan_ycbcr_info.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/gfx/buffer_types.h"
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/geometry/size.h"
+#include "ui/gfx/hdr_metadata.h"
 
 namespace viz {
 
@@ -91,8 +93,9 @@ struct VIZ_COMMON_EXPORT TransferableResource {
   // resources.
   gpu::MailboxHolder mailbox_holder;
 
-  // The color space of the pixels in the resource.
+  // The color space and associated mastering of the pixels in the resource.
   gfx::ColorSpace color_space;
+  absl::optional<gfx::HDRMetadata> hdr_metadata;
 
   // A gpu resource may be possible to use directly in an overlay if this is
   // true.
@@ -107,9 +110,9 @@ struct VIZ_COMMON_EXPORT TransferableResource {
   bool read_lock_fences_enabled = false;
 
   // YCbCr info for resources backed by YCbCr Vulkan images.
-  base::Optional<gpu::VulkanYCbCrInfo> ycbcr_info;
+  absl::optional<gpu::VulkanYCbCrInfo> ycbcr_info;
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   // Indicates whether this resource may not be overlayed on Android, since
   // it's not backed by a SurfaceView.  This may be set in combination with
   // |is_overlay_candidate|, to find out if switching the resource to a
@@ -120,6 +123,9 @@ struct VIZ_COMMON_EXPORT TransferableResource {
   // drawing a quad in the compositor.  However, for now, we use this flag to
   // refuse to promote so that the compositor will draw the quad.
   bool is_backed_by_surface_texture = false;
+#endif
+
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_WIN)
   // Indicates that this resource would like a promotion hint.
   bool wants_promotion_hint = false;
 #endif
@@ -130,11 +136,13 @@ struct VIZ_COMMON_EXPORT TransferableResource {
            mailbox_holder.mailbox == o.mailbox_holder.mailbox &&
            mailbox_holder.sync_token == o.mailbox_holder.sync_token &&
            mailbox_holder.texture_target == o.mailbox_holder.texture_target &&
-           color_space == o.color_space &&
+           color_space == o.color_space && hdr_metadata == o.hdr_metadata &&
            is_overlay_candidate == o.is_overlay_candidate &&
            filter == o.filter &&
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
            is_backed_by_surface_texture == o.is_backed_by_surface_texture &&
+           wants_promotion_hint == o.wants_promotion_hint &&
+#elif BUILDFLAG(IS_WIN)
            wants_promotion_hint == o.wants_promotion_hint &&
 #endif
            read_lock_fences_enabled == o.read_lock_fences_enabled;

@@ -1,32 +1,6 @@
-#!/usr/bin/env python
-
-#############################################################################
-##
-## Copyright (C) 2016 The Qt Company Ltd.
-## Contact: https://www.qt.io/licensing/
-##
-## This file is part of the QtWebEngine module of the Qt Toolkit.
-##
-## $QT_BEGIN_LICENSE:GPL-EXCEPT$
-## Commercial License Usage
-## Licensees holding valid commercial Qt licenses may use this file in
-## accordance with the commercial license agreement provided with the
-## Software or, alternatively, in accordance with the terms contained in
-## a written agreement between you and The Qt Company. For licensing terms
-## and conditions see https://www.qt.io/terms-conditions. For further
-## information use the contact form at https://www.qt.io/contact-us.
-##
-## GNU General Public License Usage
-## Alternatively, this file may be used under the terms of the GNU
-## General Public License version 3 as published by the Free Software
-## Foundation with exceptions as appearing in the file LICENSE.GPL3-EXCEPT
-## included in the packaging of this file. Please review the following
-## information to ensure the GNU General Public License requirements will
-## be met: https://www.gnu.org/licenses/gpl-3.0.html.
-##
-## $QT_END_LICENSE$
-##
-#############################################################################
+#!/usr/bin/env python3
+# Copyright (C) 2016 The Qt Company Ltd.
+# SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
 import glob
 import os
@@ -66,7 +40,7 @@ if not chromium_src or not os.path.isdir(chromium_src):
         ninja_src = os.path.join(qtwebengine_root, 'src/3rdparty/ninja')
         gn_src = os.path.join(qtwebengine_root, 'src/3rdparty/gn')
         args.snapshot = True
-    print 'CHROMIUM_SRC_DIR not set, using Chromium in' + chromium_src
+    print('CHROMIUM_SRC_DIR not set, using Chromium in' + chromium_src)
 
 if not args.baseline_upstream:
     # Write our chromium sources directory into git config.
@@ -79,7 +53,7 @@ def updateLastChange():
         return
     currentDir = os.getcwd()
     os.chdir(chromium_src)
-    print 'updating LASTCHANGE files'
+    print('updating LASTCHANGE files')
     subprocess.call(['python', 'build/util/lastchange.py', '-o', 'build/util/LASTCHANGE'])
     subprocess.call(['python', 'build/util/lastchange.py', '-m', 'SKIA_COMMIT_HASH', '-s', 'third_party/skia', '--header', 'skia/ext/skia_commit_hash.h'])
     subprocess.call(['python', 'build/util/lastchange.py', '-m', 'GPU_LISTS_VERSION', '--revision-id-only', '--header', 'gpu/config/gpu_lists_version.h'])
@@ -93,7 +67,7 @@ def initUpstreamSubmodules():
     chromium_ref = 'refs/tags/' + resolver.currentVersion()
     os.chdir(qtwebengine_root)
 
-    current_submodules = subprocess.check_output(['git', 'submodule'])
+    current_submodules = subprocess.check_output(['git', 'submodule']).decode()
     if not 'src/3rdparty_upstream/gn' in current_submodules:
         subprocess.call(['git', 'submodule', 'add', gn_url, 'src/3rdparty_upstream/gn'])
     if not 'src/3rdparty_upstream/ninja' in current_submodules:
@@ -123,6 +97,7 @@ def initUpstreamSubmodules():
         chromiumSubmodule.os = 'all'
         chromiumSubmodule.initialize()
         chromiumSubmodule.initSubmodules()
+        subprocess.call(['src/3rdparty_upstream/chromium/third_party/node/update_npm_deps'])
 
     # Unstage repositories so we do not accidentally commit them.
     subprocess.call(['git', 'reset', '-q', 'HEAD', 'src/3rdparty_upstream/gn'])
@@ -141,6 +116,6 @@ if args.upstream:
     initUpstreamSubmodules()
     updateLastChange()
     if not args.baseline_upstream and not use_external_chromium:
-        subprocess.call(['python', os.path.join(qtwebengine_root, 'tools', 'scripts', 'patch_upstream.py')])
+        subprocess.call(['python3', os.path.join(qtwebengine_root, 'tools', 'scripts', 'patch_upstream.py')])
 if args.snapshot:
     initSnapshot()

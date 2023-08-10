@@ -7,8 +7,7 @@
 #include <memory>
 
 #include "base/rand_util.h"
-
-#include "third_party/blink/renderer/bindings/core/v8/script_source_code.h"
+#include "third_party/blink/public/mojom/frame/user_activation_notification_type.mojom-blink.h"
 #include "third_party/blink/renderer/bindings/core/v8/source_location.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_blob.h"
@@ -27,14 +26,21 @@
 #include "third_party/blink/renderer/bindings/core/v8/v8_trusted_script.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_trusted_script_url.h"
 #include "third_party/blink/renderer/core/dom/element.h"
+#include "third_party/blink/renderer/core/events/error_event.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
 #include "third_party/blink/renderer/core/inspector/inspector_dom_debugger_agent.h"
 #include "third_party/blink/renderer/core/inspector/inspector_trace_events.h"
 #include "third_party/blink/renderer/core/inspector/v8_inspector_string.h"
 #include "third_party/blink/renderer/core/probe/core_probes.h"
+#include "third_party/blink/renderer/core/script/classic_script.h"
+#include "third_party/blink/renderer/core/trustedtypes/trusted_html.h"
+#include "third_party/blink/renderer/core/trustedtypes/trusted_script.h"
+#include "third_party/blink/renderer/core/trustedtypes/trusted_script_url.h"
 #include "third_party/blink/renderer/platform/bindings/script_forbidden_scope.h"
+#include "third_party/blink/renderer/platform/bindings/v8_dom_wrapper.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread_scheduler.h"
+#include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 
 namespace blink {
 
@@ -250,10 +256,6 @@ ThreadDebugger::descriptionForValueSubtype(v8::Local<v8::Context> context,
   return nullptr;
 }
 
-bool ThreadDebugger::formatAccessorsAsProperties(v8::Local<v8::Value> value) {
-  return V8DOMWrapper::IsWrapper(isolate_, value);
-}
-
 double ThreadDebugger::currentTimeMS() {
   return base::Time::Now().ToDoubleT() * 1000.0;
 }
@@ -347,15 +349,29 @@ void ThreadDebugger::installAdditionalCommandLineAPI(
       "function getEventListeners(node) { [Command Line API] }",
       v8::SideEffectType::kHasNoSideEffect);
 
+  CreateFunctionProperty(
+      context, object, "getAccessibleName",
+      ThreadDebugger::GetAccessibleNameCallback,
+      "function getAccessibleName(node) { [Command Line API] }",
+      v8::SideEffectType::kHasNoSideEffect);
+
+  CreateFunctionProperty(
+      context, object, "getAccessibleRole",
+      ThreadDebugger::GetAccessibleRoleCallback,
+      "function getAccessibleRole(node) { [Command Line API] }",
+      v8::SideEffectType::kHasNoSideEffect);
+
   v8::Local<v8::Value> function_value;
-  bool success =
-      V8ScriptRunner::CompileAndRunInternalScript(
-          isolate_, ScriptState::From(context),
-          ScriptSourceCode("(function(e) { console.log(e.type, e); })",
-                           ScriptSourceLocationType::kInternal, nullptr, KURL(),
-                           TextPosition()))
-          .ToLocal(&function_value) &&
-      function_value->IsFunction();
+  // `kDoNotSanitize` is used for internal scripts for keeping the existing
+  // behavior.
+  bool success = V8ScriptRunner::CompileAndRunInternalScript(
+                     isolate_, ScriptState::From(context),
+                     *ClassicScript::CreateUnspecifiedScript(
+                         "(function(e) { console.log(e.type, e); })",
+                         ScriptSourceLocationType::kInternal,
+                         SanitizeScriptErrors::kDoNotSanitize))
+                     .ToLocal(&function_value) &&
+                 function_value->IsFunction();
   DCHECK(success);
   CreateFunctionPropertyWithData(
       context, object, "monitorEvents", ThreadDebugger::MonitorEventsCallback,
@@ -464,6 +480,40 @@ void ThreadDebugger::UnmonitorEventsCallback(
 }
 
 // static
+void ThreadDebugger::GetAccessibleNameCallback(
+    const v8::FunctionCallbackInfo<v8::Value>& info) {
+  if (info.Length() < 1)
+    return;
+
+  v8::Isolate* isolate = info.GetIsolate();
+  v8::Local<v8::Value> value = info[0];
+
+  Node* node = V8Node::ToImplWithTypeCheck(isolate, value);
+  if (node && !node->GetLayoutObject())
+    return;
+  if (auto* element = DynamicTo<Element>(node)) {
+    V8SetReturnValueString(info, element->computedName(), isolate);
+  }
+}
+
+// static
+void ThreadDebugger::GetAccessibleRoleCallback(
+    const v8::FunctionCallbackInfo<v8::Value>& info) {
+  if (info.Length() < 1)
+    return;
+
+  v8::Isolate* isolate = info.GetIsolate();
+  v8::Local<v8::Value> value = info[0];
+
+  Node* node = V8Node::ToImplWithTypeCheck(isolate, value);
+  if (node && !node->GetLayoutObject())
+    return;
+  if (auto* element = DynamicTo<Element>(node)) {
+    V8SetReturnValueString(info, element->computedRole(), isolate);
+  }
+}
+
+// static
 void ThreadDebugger::GetEventListenersCallback(
     const v8::FunctionCallbackInfo<v8::Value>& callback_info) {
   if (callback_info.Length() < 1)
@@ -539,9 +589,8 @@ void ThreadDebugger::consoleTimeStamp(const v8_inspector::StringView& title) {
   ExecutionContext* ec = CurrentExecutionContext(isolate_);
   // TODO(dgozman): we can save on a copy here if TracedValue would take a
   // StringView.
-  TRACE_EVENT_INSTANT1(
-      "devtools.timeline", "TimeStamp", TRACE_EVENT_SCOPE_THREAD, "data",
-      inspector_time_stamp_event::Data(ec, ToCoreString(title)));
+  DEVTOOLS_TIMELINE_TRACE_EVENT_INSTANT(
+      "TimeStamp", inspector_time_stamp_event::Data, ec, ToCoreString(title));
   probe::ConsoleTimeStamp(ec, ToCoreString(title));
 }
 
@@ -558,7 +607,7 @@ void ThreadDebugger::startRepeatingTimer(
           &ThreadDebugger::OnTimer);
   TaskRunnerTimer<ThreadDebugger>* timer_ptr = timer.get();
   timers_.push_back(std::move(timer));
-  timer_ptr->StartRepeating(base::TimeDelta::FromSecondsD(interval), FROM_HERE);
+  timer_ptr->StartRepeating(base::Seconds(interval), FROM_HERE);
 }
 
 void ThreadDebugger::cancelTimer(void* data) {
@@ -577,6 +626,25 @@ int64_t ThreadDebugger::generateUniqueId() {
   int64_t result;
   base::RandBytes(&result, sizeof result);
   return result;
+}
+
+void ThreadDebugger::dispatchError(v8::Local<v8::Context> context,
+                                   v8::Local<v8::Message> message,
+                                   v8::Local<v8::Value> exception) {
+  ScriptState* script_state = ScriptState::From(context);
+  ExecutionContext* execution_context = ExecutionContext::From(script_state);
+
+  // Simulate an ErrorEvent, but prevent default behavior (triggering an
+  // uncaught exception reported in DevTools).
+  ErrorEvent* event = ErrorEvent::Create(
+      ToCoreStringWithNullCheck(message->Get()),
+      SourceLocation::FromMessage(script_state->GetIsolate(), message,
+                                  execution_context),
+      ScriptValue::From(script_state, exception), &script_state->World());
+  event->preventDefault();
+
+  execution_context->DispatchErrorEvent(event,
+                                        SanitizeScriptErrors::kDoNotSanitize);
 }
 
 void ThreadDebugger::OnTimer(TimerBase* timer) {

@@ -10,7 +10,10 @@
 #include <utility>
 #include <vector>
 
-#include "base/macros.h"
+#include "base/callback.h"
+#include "base/memory/raw_ptr.h"
+#include "build/build_config.h"
+#include "content/browser/bad_message.h"
 #include "content/browser/media/media_devices_util.h"
 #include "content/browser/renderer_host/media/media_devices_manager.h"
 #include "content/common/content_export.h"
@@ -29,6 +32,11 @@ class CONTENT_EXPORT MediaDevicesDispatcherHost
   MediaDevicesDispatcherHost(int render_process_id,
                              int render_frame_id,
                              MediaStreamManager* media_stream_manager);
+
+  MediaDevicesDispatcherHost(const MediaDevicesDispatcherHost&) = delete;
+  MediaDevicesDispatcherHost& operator=(const MediaDevicesDispatcherHost&) =
+      delete;
+
   ~MediaDevicesDispatcherHost() override;
 
   static void Create(
@@ -60,8 +68,16 @@ class CONTENT_EXPORT MediaDevicesDispatcherHost
       bool subscribe_audio_output,
       mojo::PendingRemote<blink::mojom::MediaDevicesListener> listener)
       override;
+  void SetCaptureHandleConfig(
+      blink::mojom::CaptureHandleConfigPtr config) override;
+#if !BUILDFLAG(IS_ANDROID)
+  void CloseFocusWindowOfOpportunity(const std::string& label) override;
+  void ProduceCropId(ProduceCropIdCallback callback) override;
+#endif
 
  private:
+  friend class MediaDevicesDispatcherHostTest;
+
   using GetVideoInputDeviceFormatsCallback =
       GetAllVideoInputDeviceFormatsCallback;
 
@@ -91,7 +107,7 @@ class CONTENT_EXPORT MediaDevicesDispatcherHost
 
   void GotAudioInputParameters(
       size_t index,
-      const base::Optional<media::AudioParameters>& parameters);
+      const absl::optional<media::AudioParameters>& parameters);
 
   void FinalizeGetAudioInputCapabilities();
 
@@ -112,12 +128,23 @@ class CONTENT_EXPORT MediaDevicesDispatcherHost
       const url::Origin& security_origin,
       const media::VideoCaptureDeviceDescriptors& device_descriptors);
 
+  void ReceivedBadMessage(int render_process_id,
+                          bad_message::BadMessageReason reason);
+
+  void SetBadMessageCallbackForTesting(
+      base::RepeatingCallback<void(int, bad_message::BadMessageReason)>
+          callback);
+
+  void SetCaptureHandleConfigCallbackForTesting(
+      base::RepeatingCallback<
+          void(int, int, blink::mojom::CaptureHandleConfigPtr)> callback);
+
   // The following const fields can be accessed on any thread.
   const int render_process_id_;
   const int render_frame_id_;
 
   // The following fields can only be accessed on the IO thread.
-  MediaStreamManager* media_stream_manager_;
+  const raw_ptr<MediaStreamManager> media_stream_manager_;
 
   struct AudioInputCapabilitiesRequest;
   // Queued requests for audio-input capabilities.
@@ -129,9 +156,13 @@ class CONTENT_EXPORT MediaDevicesDispatcherHost
 
   std::vector<uint32_t> subscription_ids_;
 
-  base::WeakPtrFactory<MediaDevicesDispatcherHost> weak_factory_{this};
+  base::RepeatingCallback<void(int, bad_message::BadMessageReason)>
+      bad_message_callback_for_testing_;
 
-  DISALLOW_COPY_AND_ASSIGN(MediaDevicesDispatcherHost);
+  base::RepeatingCallback<void(int, int, blink::mojom::CaptureHandleConfigPtr)>
+      capture_handle_config_callback_for_testing_;
+
+  base::WeakPtrFactory<MediaDevicesDispatcherHost> weak_factory_{this};
 };
 
 }  // namespace content

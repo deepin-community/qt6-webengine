@@ -89,7 +89,9 @@
            Parametric Stereo.
  */
 
+#include "libavutil/channel_layout.h"
 #include "libavutil/thread.h"
+#include "internal.h"
 
 static VLC vlc_scalefactors;
 static VLC vlc_spectral[11];
@@ -173,7 +175,7 @@ static int frame_configure_elements(AVCodecContext *avctx)
 
     /* get output buffer */
     av_frame_unref(ac->frame);
-    if (!avctx->channels)
+    if (!avctx->ch_layout.nb_channels)
         return 1;
 
     ac->frame->nb_samples = 2048;
@@ -181,7 +183,7 @@ static int frame_configure_elements(AVCodecContext *avctx)
         return ret;
 
     /* map output channel pointers to AVFrame data */
-    for (ch = 0; ch < avctx->channels; ch++) {
+    for (ch = 0; ch < avctx->ch_layout.nb_channels; ch++) {
         if (ac->output_element[ch])
             ac->output_element[ch]->ret = (INTFLOAT *)ac->frame->extended_data[ch];
     }
@@ -516,8 +518,7 @@ static int push_output_configuration(AACContext *ac) {
 static void pop_output_configuration(AACContext *ac) {
     if (ac->oc[1].status != OC_LOCKED && ac->oc[0].status != OC_NONE) {
         ac->oc[1] = ac->oc[0];
-        ac->avctx->channels = ac->oc[1].channels;
-        ac->avctx->channel_layout = ac->oc[1].channel_layout;
+        ac->avctx->ch_layout = ac->oc[1].ch_layout;
         output_configure(ac, ac->oc[1].layout_map, ac->oc[1].layout_map_tags,
                          ac->oc[1].status, 0);
     }
@@ -554,7 +555,14 @@ static int output_configure(AACContext *ac,
     }
     // Try to sniff a reasonable channel order, otherwise output the
     // channels in the order the PCE declared them.
-    if (avctx->request_channel_layout != AV_CH_LAYOUT_NATIVE)
+#if FF_API_OLD_CHANNEL_LAYOUT
+FF_DISABLE_DEPRECATION_WARNINGS
+    if (avctx->request_channel_layout == AV_CH_LAYOUT_NATIVE)
+        ac->output_channel_order = CHANNEL_ORDER_CODED;
+FF_ENABLE_DEPRECATION_WARNINGS
+#endif
+
+    if (ac->output_channel_order == CHANNEL_ORDER_DEFAULT)
         layout = sniff_channel_order(layout_map, tags);
     for (i = 0; i < tags; i++) {
         int type =     layout_map[i][0];
@@ -576,9 +584,15 @@ static int output_configure(AACContext *ac,
         }
     }
 
-    if (layout) avctx->channel_layout = layout;
-                            ac->oc[1].channel_layout = layout;
-    avctx->channels       = ac->oc[1].channels       = channels;
+    av_channel_layout_uninit(&ac->oc[1].ch_layout);
+    if (layout)
+        av_channel_layout_from_mask(&ac->oc[1].ch_layout, layout);
+    else {
+        ac->oc[1].ch_layout.order       = AV_CHANNEL_ORDER_UNSPEC;
+        ac->oc[1].ch_layout.nb_channels = channels;
+    }
+
+    av_channel_layout_copy(&avctx->ch_layout, &ac->oc[1].ch_layout);
     ac->oc[1].status = oc_type;
 
     if (get_new_frame) {
@@ -639,11 +653,14 @@ static int set_default_channel_config(AACContext *ac, AVCodecContext *avctx,
      * As actual intended 7.1(wide) streams are very rare, default to assuming a
      * 7.1 layout was intended.
      */
-    if (channel_config == 7 && avctx->strict_std_compliance < FF_COMPLIANCE_STRICT && (!ac || !ac->warned_71_wide++)) {
-        av_log(avctx, AV_LOG_INFO, "Assuming an incorrectly encoded 7.1 channel layout"
-               " instead of a spec-compliant 7.1(wide) layout, use -strict %d to decode"
-               " according to the specification instead.\n", FF_COMPLIANCE_STRICT);
+    if (channel_config == 7 && avctx->strict_std_compliance < FF_COMPLIANCE_STRICT) {
         layout_map[2][2] = AAC_CHANNEL_SIDE;
+
+        if (!ac || !ac->warned_71_wide++) {
+            av_log(avctx, AV_LOG_INFO, "Assuming an incorrectly encoded 7.1 channel layout"
+                   " instead of a spec-compliant 7.1(wide) layout, use -strict %d to decode"
+                   " according to the specification instead.\n", FF_COMPLIANCE_STRICT);
+        }
     }
 
     return 0;
@@ -1073,14 +1090,18 @@ static int decode_audio_specific_config_gb(AACContext *ac,
 {
     int i, ret;
     GetBitContext gbc = *gb;
+    MPEG4AudioConfig m4ac_bak = *m4ac;
 
-    if ((i = ff_mpeg4audio_get_config_gb(m4ac, &gbc, sync_extension, avctx)) < 0)
+    if ((i = ff_mpeg4audio_get_config_gb(m4ac, &gbc, sync_extension, avctx)) < 0) {
+        *m4ac = m4ac_bak;
         return AVERROR_INVALIDDATA;
+    }
 
     if (m4ac->sampling_index > 12) {
         av_log(avctx, AV_LOG_ERROR,
                "invalid sampling rate index %d\n",
                m4ac->sampling_index);
+        *m4ac = m4ac_bak;
         return AVERROR_INVALIDDATA;
     }
     if (m4ac->object_type == AOT_ER_AAC_LD &&
@@ -1088,6 +1109,7 @@ static int decode_audio_specific_config_gb(AACContext *ac,
         av_log(avctx, AV_LOG_ERROR,
                "invalid low delay sampling rate index %d\n",
                m4ac->sampling_index);
+        *m4ac = m4ac_bak;
         return AVERROR_INVALIDDATA;
     }
 
@@ -1235,14 +1257,13 @@ static av_cold void aac_static_table_init(void)
     AAC_RENAME(ff_kbd_window_init)(AAC_RENAME(aac_kbd_short_120), 6.0, 120);
     AAC_RENAME(ff_sine_window_init)(AAC_RENAME(sine_960), 960);
     AAC_RENAME(ff_sine_window_init)(AAC_RENAME(sine_120), 120);
+    AAC_RENAME(ff_init_ff_sine_windows)(9);
     ff_aac_float_common_init();
 #else
-    AAC_RENAME(ff_kbd_window_init)(AAC_KBD_RENAME(kbd_long_1024), 4.0, 1024);
-    AAC_RENAME(ff_kbd_window_init)(AAC_KBD_RENAME(kbd_short_128), 6.0, 128);
-    AAC_RENAME(ff_init_ff_sine_windows)(10);
-    AAC_RENAME(ff_init_ff_sine_windows)( 7);
+    AAC_RENAME(ff_kbd_window_init)(AAC_RENAME2(aac_kbd_long_1024), 4.0, 1024);
+    AAC_RENAME(ff_kbd_window_init)(AAC_RENAME2(aac_kbd_short_128), 6.0, 128);
+    init_sine_windows_fixed();
 #endif
-    AAC_RENAME(ff_init_ff_sine_windows)( 9);
 
     AAC_RENAME(ff_cbrt_tableinit)();
 }
@@ -1284,12 +1305,12 @@ static av_cold int aac_decode_init(AVCodecContext *avctx)
 
         sr = sample_rate_idx(avctx->sample_rate);
         ac->oc[1].m4ac.sampling_index = sr;
-        ac->oc[1].m4ac.channels = avctx->channels;
+        ac->oc[1].m4ac.channels = avctx->ch_layout.nb_channels;
         ac->oc[1].m4ac.sbr = -1;
         ac->oc[1].m4ac.ps = -1;
 
         for (i = 0; i < FF_ARRAY_ELEMS(ff_mpeg4audio_channels); i++)
-            if (ff_mpeg4audio_channels[i] == avctx->channels)
+            if (ff_mpeg4audio_channels[i] == avctx->ch_layout.nb_channels)
                 break;
         if (i == FF_ARRAY_ELEMS(ff_mpeg4audio_channels)) {
             i = 0;
@@ -1307,7 +1328,7 @@ static av_cold int aac_decode_init(AVCodecContext *avctx)
         }
     }
 
-    if (avctx->channels > MAX_CHANNELS) {
+    if (avctx->ch_layout.nb_channels > MAX_CHANNELS) {
         av_log(avctx, AV_LOG_ERROR, "Too many channels\n");
         return AVERROR_INVALIDDATA;
     }
@@ -2548,7 +2569,8 @@ static int decode_extension_payload(AACContext *ac, GetBitContext *gb, int cnt,
             av_log(ac->avctx, AV_LOG_ERROR, "Implicit SBR was found with a first occurrence after the first frame.\n");
             skip_bits_long(gb, 8 * cnt - 4);
             return res;
-        } else if (ac->oc[1].m4ac.ps == -1 && ac->oc[1].status < OC_LOCKED && ac->avctx->channels == 1) {
+        } else if (ac->oc[1].m4ac.ps == -1 && ac->oc[1].status < OC_LOCKED &&
+                   ac->avctx->ch_layout.nb_channels == 1) {
             ac->oc[1].m4ac.sbr = 1;
             ac->oc[1].m4ac.ps = 1;
             ac->avctx->profile = FF_PROFILE_AAC_HE_V2;
@@ -2644,10 +2666,10 @@ static void apply_tns(INTFLOAT coef_param[1024], TemporalNoiseShaping *tns,
 static void windowing_and_mdct_ltp(AACContext *ac, INTFLOAT *out,
                                    INTFLOAT *in, IndividualChannelStream *ics)
 {
-    const INTFLOAT *lwindow      = ics->use_kb_window[0] ? AAC_KBD_RENAME(kbd_long_1024) : AAC_RENAME(ff_sine_1024);
-    const INTFLOAT *swindow      = ics->use_kb_window[0] ? AAC_KBD_RENAME(kbd_short_128) : AAC_RENAME(ff_sine_128);
-    const INTFLOAT *lwindow_prev = ics->use_kb_window[1] ? AAC_KBD_RENAME(kbd_long_1024) : AAC_RENAME(ff_sine_1024);
-    const INTFLOAT *swindow_prev = ics->use_kb_window[1] ? AAC_KBD_RENAME(kbd_short_128) : AAC_RENAME(ff_sine_128);
+    const INTFLOAT *lwindow      = ics->use_kb_window[0] ? AAC_RENAME2(aac_kbd_long_1024) : AAC_RENAME2(sine_1024);
+    const INTFLOAT *swindow      = ics->use_kb_window[0] ? AAC_RENAME2(aac_kbd_short_128) : AAC_RENAME2(sine_128);
+    const INTFLOAT *lwindow_prev = ics->use_kb_window[1] ? AAC_RENAME2(aac_kbd_long_1024) : AAC_RENAME2(sine_1024);
+    const INTFLOAT *swindow_prev = ics->use_kb_window[1] ? AAC_RENAME2(aac_kbd_short_128) : AAC_RENAME2(sine_128);
 
     if (ics->window_sequence[0] != LONG_STOP_SEQUENCE) {
         ac->fdsp->vector_fmul(in, in, lwindow_prev, 1024);
@@ -2704,8 +2726,8 @@ static void update_ltp(AACContext *ac, SingleChannelElement *sce)
     IndividualChannelStream *ics = &sce->ics;
     INTFLOAT *saved     = sce->saved;
     INTFLOAT *saved_ltp = sce->coeffs;
-    const INTFLOAT *lwindow = ics->use_kb_window[0] ? AAC_KBD_RENAME(kbd_long_1024) : AAC_RENAME(ff_sine_1024);
-    const INTFLOAT *swindow = ics->use_kb_window[0] ? AAC_KBD_RENAME(kbd_short_128) : AAC_RENAME(ff_sine_128);
+    const INTFLOAT *lwindow = ics->use_kb_window[0] ? AAC_RENAME2(aac_kbd_long_1024) : AAC_RENAME2(sine_1024);
+    const INTFLOAT *swindow = ics->use_kb_window[0] ? AAC_RENAME2(aac_kbd_short_128) : AAC_RENAME2(sine_128);
     int i;
 
     if (ics->window_sequence[0] == EIGHT_SHORT_SEQUENCE) {
@@ -2743,9 +2765,9 @@ static void imdct_and_windowing(AACContext *ac, SingleChannelElement *sce)
     INTFLOAT *in    = sce->coeffs;
     INTFLOAT *out   = sce->ret;
     INTFLOAT *saved = sce->saved;
-    const INTFLOAT *swindow      = ics->use_kb_window[0] ? AAC_KBD_RENAME(kbd_short_128) : AAC_RENAME(ff_sine_128);
-    const INTFLOAT *lwindow_prev = ics->use_kb_window[1] ? AAC_KBD_RENAME(kbd_long_1024) : AAC_RENAME(ff_sine_1024);
-    const INTFLOAT *swindow_prev = ics->use_kb_window[1] ? AAC_KBD_RENAME(kbd_short_128) : AAC_RENAME(ff_sine_128);
+    const INTFLOAT *swindow      = ics->use_kb_window[0] ? AAC_RENAME2(aac_kbd_short_128) : AAC_RENAME2(sine_128);
+    const INTFLOAT *lwindow_prev = ics->use_kb_window[1] ? AAC_RENAME2(aac_kbd_long_1024) : AAC_RENAME2(sine_1024);
+    const INTFLOAT *swindow_prev = ics->use_kb_window[1] ? AAC_RENAME2(aac_kbd_short_128) : AAC_RENAME2(sine_128);
     INTFLOAT *buf  = ac->buf_mdct;
     INTFLOAT *temp = ac->temp;
     int i;
@@ -2891,10 +2913,10 @@ static void imdct_and_windowing_ld(AACContext *ac, SingleChannelElement *sce)
     if (ics->use_kb_window[1]) {
         // AAC LD uses a low overlap sine window instead of a KBD window
         memcpy(out, saved, 192 * sizeof(*out));
-        ac->fdsp->vector_fmul_window(out + 192, saved + 192, buf, AAC_RENAME(ff_sine_128), 64);
+        ac->fdsp->vector_fmul_window(out + 192, saved + 192, buf, AAC_RENAME2(sine_128), 64);
         memcpy(                     out + 320, buf + 64, 192 * sizeof(*out));
     } else {
-        ac->fdsp->vector_fmul_window(out, saved, buf, AAC_RENAME(ff_sine_512), 256);
+        ac->fdsp->vector_fmul_window(out, saved, buf, AAC_RENAME2(sine_512), 256);
     }
 
     // buffer update
@@ -2903,7 +2925,7 @@ static void imdct_and_windowing_ld(AACContext *ac, SingleChannelElement *sce)
 
 static void imdct_and_windowing_eld(AACContext *ac, SingleChannelElement *sce)
 {
-    INTFLOAT *in    = sce->coeffs;
+    UINTFLOAT *in   = sce->coeffs;
     INTFLOAT *out   = sce->ret;
     INTFLOAT *saved = sce->saved;
     INTFLOAT *buf  = ac->buf_mdct;
@@ -3214,7 +3236,8 @@ static int aac_decode_er_frame(AVCodecContext *avctx, void *data,
 }
 
 static int aac_decode_frame_int(AVCodecContext *avctx, void *data,
-                                int *got_frame_ptr, GetBitContext *gb, AVPacket *avpkt)
+                                int *got_frame_ptr, GetBitContext *gb,
+                                const AVPacket *avpkt)
 {
     AACContext *ac = avctx->priv_data;
     ChannelElement *che = NULL, *che_prev = NULL;
@@ -3255,7 +3278,7 @@ static int aac_decode_frame_int(AVCodecContext *avctx, void *data,
         if (avctx->debug & FF_DEBUG_STARTCODE)
             av_log(avctx, AV_LOG_DEBUG, "Elem type:%x id:%x\n", elem_type, elem_id);
 
-        if (!avctx->channels && elem_type != TYPE_PCE) {
+        if (!avctx->ch_layout.nb_channels && elem_type != TYPE_PCE) {
             err = AVERROR_INVALIDDATA;
             goto fail;
         }
@@ -3376,7 +3399,7 @@ static int aac_decode_frame_int(AVCodecContext *avctx, void *data,
         }
     }
 
-    if (!avctx->channels) {
+    if (!avctx->ch_layout.nb_channels) {
         *got_frame_ptr = 0;
         return 0;
     }
@@ -3410,7 +3433,8 @@ static int aac_decode_frame_int(AVCodecContext *avctx, void *data,
 
     /* for dual-mono audio (SCE + SCE) */
     is_dmono = ac->dmono_mode && sce_count == 2 &&
-               ac->oc[1].channel_layout == (AV_CH_FRONT_LEFT | AV_CH_FRONT_RIGHT);
+               !av_channel_layout_compare(&ac->oc[1].ch_layout,
+                                          &(AVChannelLayout)AV_CHANNEL_LAYOUT_STEREO);
     if (is_dmono) {
         if (ac->dmono_mode == 1)
             ((AVFrame *)data)->data[1] =((AVFrame *)data)->data[0];
@@ -3434,11 +3458,11 @@ static int aac_decode_frame(AVCodecContext *avctx, void *data,
     int buf_consumed;
     int buf_offset;
     int err;
-    int new_extradata_size;
+    size_t new_extradata_size;
     const uint8_t *new_extradata = av_packet_get_side_data(avpkt,
                                        AV_PKT_DATA_NEW_EXTRADATA,
                                        &new_extradata_size);
-    int jp_dualmono_size;
+    size_t jp_dualmono_size;
     const uint8_t *jp_dualmono   = av_packet_get_side_data(avpkt,
                                        AV_PKT_DATA_JP_DUALMONO,
                                        &jp_dualmono_size);
@@ -3543,6 +3567,14 @@ static const AVOption options[] = {
     {"main", "Select Main/Left channel", 0, AV_OPT_TYPE_CONST, {.i64= 1}, INT_MIN, INT_MAX, AACDEC_FLAGS, "dual_mono_mode"},
     {"sub" , "Select Sub/Right channel", 0, AV_OPT_TYPE_CONST, {.i64= 2}, INT_MIN, INT_MAX, AACDEC_FLAGS, "dual_mono_mode"},
     {"both", "Select both channels",     0, AV_OPT_TYPE_CONST, {.i64= 0}, INT_MIN, INT_MAX, AACDEC_FLAGS, "dual_mono_mode"},
+
+    { "channel_order", "Order in which the channels are to be exported",
+        offsetof(AACContext, output_channel_order), AV_OPT_TYPE_INT,
+        { .i64 = CHANNEL_ORDER_DEFAULT }, 0, 1, AACDEC_FLAGS, "channel_order" },
+      { "default", "normal libavcodec channel order", 0, AV_OPT_TYPE_CONST,
+        { .i64 = CHANNEL_ORDER_DEFAULT }, .flags = AACDEC_FLAGS, "channel_order" },
+      { "coded",    "order in which the channels are coded in the bitstream",
+        0, AV_OPT_TYPE_CONST, { .i64 = CHANNEL_ORDER_CODED }, .flags = AACDEC_FLAGS, "channel_order" },
 
     {NULL},
 };

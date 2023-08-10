@@ -7,6 +7,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "base/syslog_logging.h"
 #include "base/values.h"
@@ -36,7 +37,7 @@ bool SpellcheckLanguagePolicyHandler::CheckPolicySettings(
   std::vector<std::string> unknown;
   SortForcedLanguages(policies, &forced, &unknown);
 
-#if !defined(OS_MAC)
+#if !BUILDFLAG(IS_MAC)
   for (const auto& language : unknown) {
     errors->AddError(policy_name(), IDS_POLICY_SPELLCHECK_UNKNOWN_LANGUAGE,
                      language);
@@ -50,13 +51,14 @@ void SpellcheckLanguagePolicyHandler::ApplyPolicySettings(
     const policy::PolicyMap& policies,
     PrefValueMap* prefs) {
   // Ignore this policy if the SpellcheckEnabled policy disables spellcheck.
-  const base::Value* spellcheck_enabled_value =
-      policies.GetValue(policy::key::kSpellcheckEnabled);
-  if (spellcheck_enabled_value && spellcheck_enabled_value->GetBool() == false)
+  const base::Value* spellcheck_enabled_value = policies.GetValue(
+      policy::key::kSpellcheckEnabled, base::Value::Type::BOOLEAN);
+  if (spellcheck_enabled_value && !spellcheck_enabled_value->GetBool())
     return;
 
   // If this policy isn't set, don't modify spellcheck languages.
-  const base::Value* value = policies.GetValue(policy_name());
+  const base::Value* value =
+      policies.GetValue(policy_name(), base::Value::Type::LIST);
   if (!value)
     return;
 
@@ -81,15 +83,15 @@ void SpellcheckLanguagePolicyHandler::SortForcedLanguages(
     const policy::PolicyMap& policies,
     std::vector<base::Value>* const forced,
     std::vector<std::string>* const unknown) {
-  const base::Value* value = policies.GetValue(policy_name());
+  const base::Value* value =
+      policies.GetValue(policy_name(), base::Value::Type::LIST);
   if (!value)
     return;
 
   // Separate the valid languages from the unknown / unsupported languages.
-  for (const base::Value& language : value->GetList()) {
-    std::string candidate_language =
-        base::TrimWhitespaceASCII(language.GetString(), base::TRIM_ALL)
-            .as_string();
+  for (const base::Value& language : value->GetListDeprecated()) {
+    std::string candidate_language(
+        base::TrimWhitespaceASCII(language.GetString(), base::TRIM_ALL));
     std::string current_language =
         SpellcheckService::GetSupportedAcceptLanguageCode(candidate_language);
 

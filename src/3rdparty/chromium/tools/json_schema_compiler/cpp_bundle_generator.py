@@ -145,20 +145,19 @@ class CppBundleGenerator(object):
     ifdefs = []
     for platform in model_object.platforms:
       if platform == Platforms.CHROMEOS:
-        # TODO(https://crbug.com/1052397): For readability, this should become
-        # defined(OS_CHROMEOS) && BUILDFLAG(IS_CHROMEOS_ASH).
-        ifdefs.append('(defined(OS_CHROMEOS) && '
-                      '!BUILDFLAG(IS_CHROMEOS_LACROS))')
+        ifdefs.append('BUILDFLAG(IS_CHROMEOS_ASH)')
+      elif platform == Platforms.FUCHSIA:
+        ifdefs.append('BUILDFLAG(IS_FUCHSIA)')
       elif platform == Platforms.LACROS:
         # TODO(https://crbug.com/1052397): For readability, this should become
-        # defined(OS_CHROMEOS) && BUILDFLAG(IS_CHROMEOS_LACROS).
+        # BUILDFLAG(IS_CHROMEOS) && BUILDFLAG(IS_CHROMEOS_LACROS).
         ifdefs.append('BUILDFLAG(IS_CHROMEOS_LACROS)')
       elif platform == Platforms.LINUX:
-        ifdefs.append('(defined(OS_LINUX) && !defined(OS_CHROMEOS))')
+        ifdefs.append('BUILDFLAG(IS_LINUX)')
       elif platform == Platforms.MAC:
-        ifdefs.append('defined(OS_MAC)')
+        ifdefs.append('BUILDFLAG(IS_MAC)')
       elif platform == Platforms.WIN:
-        ifdefs.append('defined(OS_WIN)')
+        ifdefs.append('BUILDFLAG(IS_WIN)')
       else:
         raise ValueError("Unsupported platform ifdef: %s" % platform.name)
     return ' || '.join(ifdefs)
@@ -384,7 +383,7 @@ class _SchemasCCGenerator(object):
     c.Sblock('base::StringPiece %s::Get(base::StringPiece name) {' %
              self._bundle._GenerateBundleClass('GeneratedSchemas'))
 
-    c.Append('static const auto kSchemas = '
+    c.Append('static constexpr auto kSchemas = '
              'base::MakeFixedFlatMap<base::StringPiece, base::StringPiece>({')
     c.Sblock()
     namespaces = [self._bundle._model.namespaces[api.get('namespace')].name

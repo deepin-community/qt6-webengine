@@ -6,14 +6,15 @@
 #define COMPONENTS_PASSWORD_MANAGER_CORE_BROWSER_PASSWORD_MANAGER_UTIL_H_
 
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "base/callback.h"
-#include "base/strings/string16.h"
 #include "base/time/time.h"
+#include "components/device_reauth/biometric_authenticator.h"
 #include "components/password_manager/core/browser/password_form.h"
 #include "components/password_manager/core/browser/password_manager_client.h"
-#include "components/password_manager/core/browser/password_store.h"
+#include "components/password_manager/core/browser/password_store_interface.h"
 #include "ui/gfx/native_widget_types.h"
 
 namespace network {
@@ -28,6 +29,10 @@ class PasswordManagerDriver;
 class PasswordManagerClient;
 }  // namespace password_manager
 
+namespace autofill {
+class AutofillClient;
+}  // namespace autofill
+
 namespace syncer {
 class SyncService;
 }
@@ -36,6 +41,30 @@ class PrefService;
 
 namespace password_manager_util {
 
+// For credentials returned from PasswordStore::GetLogins, the enum specifies
+// the type of the match for the requested page. Higher value always means
+// weaker match.
+enum class GetLoginMatchType {
+  // Exact origin or Android credentials.
+  kExact,
+  // A web site affiliated with the requesting page.
+  kAffiliated,
+  // eTLD + 1 match.
+  kPSL,
+};
+
+// Checks if saving passwords is enabled. On Android, it ensures that the
+// correct pref is checked on Android, which depends on the unified password
+// manager status.
+bool IsSavingPasswordsEnabled(const PrefService* pref_service,
+                              const syncer::SyncService* sync_service);
+
+// Checks if auto sign in is enabled. On Android, it ensures that the
+// correct pref is checked on Android, which depends on the unified password
+// manager status.
+bool IsAutoSignInEnabled(const PrefService* pref_service,
+                         const syncer::SyncService* sync_service);
+
 // Update |credential| to reflect usage.
 void UpdateMetadataForUsage(password_manager::PasswordForm* credential);
 
@@ -43,10 +72,6 @@ void UpdateMetadataForUsage(password_manager::PasswordForm* credential);
 // null |sync_service| returns NOT_SYNCING.
 password_manager::SyncState GetPasswordSyncState(
     const syncer::SyncService* sync_service);
-
-// Reports whether passwords are synced with normal encryption, i.e. without a
-// custom passphrase.
-bool IsSyncingWithNormalEncryption(const syncer::SyncService* sync_service);
 
 // Removes Android username-only credentials from |android_credentials|.
 // Transforms federated credentials into non zero-click ones.
@@ -74,7 +99,8 @@ bool ShowAllSavedPasswordsContextMenuEnabled(
 // be asked to opt in to account storage, will trigger a reauth flow first and
 // generation will only happen on success.
 void UserTriggeredManualGenerationFromContextMenu(
-    password_manager::PasswordManagerClient* password_manager_client);
+    password_manager::PasswordManagerClient* password_manager_client,
+    autofill::AutofillClient* autofill_client);
 
 // This function handles the following clean-ups of credentials:
 // (1) Removing blocklisted duplicates: if two blocklisted credentials have the
@@ -90,7 +116,7 @@ void UserTriggeredManualGenerationFromContextMenu(
 // and it can also be null for some unittests.
 void RemoveUselessCredentials(
     password_manager::CredentialsCleanerRunner* cleaning_tasks_runner,
-    scoped_refptr<password_manager::PasswordStore> store,
+    scoped_refptr<password_manager::PasswordStoreInterface> store,
     PrefService* prefs,
     base::TimeDelta delay,
     base::RepeatingCallback<network::mojom::NetworkContext*()>
@@ -103,6 +129,10 @@ void RemoveUselessCredentials(
 // This assumes that the |form|'s host is a substring of the signon_realm.
 base::StringPiece GetSignonRealmWithProtocolExcluded(
     const password_manager::PasswordForm& form);
+
+// For credentials returned from PasswordStore::GetLogins, specifies the type of
+// the match for the requested page.
+GetLoginMatchType GetMatchType(const password_manager::PasswordForm& form);
 
 // Given all non-blocklisted |non_federated_matches|, finds and populates
 // |non_federated_same_scheme|, |best_matches|, and |preferred_match|
@@ -123,19 +153,22 @@ void FindBestMatches(
 // none exists. If multiple matches exist, returns the first one.
 const password_manager::PasswordForm* FindFormByUsername(
     const std::vector<const password_manager::PasswordForm*>& forms,
-    const base::string16& username_value);
+    const std::u16string& username_value);
 
 // If the user submits a form, they may have used existing credentials, new
 // credentials, or modified existing credentials that should be updated.
 // The function returns a form from |credentials| that is the best candidate to
-// use for an update. Returned value is NULL if |submitted_form| looks like a
+// use for an update. Returned value is nullptr if |submitted_form| looks like a
 // new credential for the site to be saved.
 // |submitted_form| is the form being submitted.
 // |credentials| are all the credentials relevant for the current site including
 // PSL and Android matches.
+// |username_updated_in_bubble| indicates whether a username was manually
+// updated during the save prompt bubble.
 const password_manager::PasswordForm* GetMatchForUpdating(
     const password_manager::PasswordForm& submitted_form,
-    const std::vector<const password_manager::PasswordForm*>& credentials);
+    const std::vector<const password_manager::PasswordForm*>& credentials,
+    bool username_updated_in_bubble = false);
 
 // This method creates a blocklisted form with |digests|'s scheme, signon_realm
 // and origin. This is done to avoid storing PII and to have a normalized unique
@@ -143,7 +176,31 @@ const password_manager::PasswordForm* GetMatchForUpdating(
 // components. In case this fails (e.g. for non-standard origins like Android
 // credentials), the original origin is kept.
 password_manager::PasswordForm MakeNormalizedBlocklistedForm(
-    password_manager::PasswordStore::FormDigest digest);
+    password_manager::PasswordFormDigest digest);
+
+// Helper which checks if biometric authentication is available.
+bool CanUseBiometricAuth(device_reauth::BiometricAuthenticator* authenticator,
+                         device_reauth::BiometricAuthRequester requester);
+
+// Strips any authentication data, as well as query and ref portions of URL.
+GURL StripAuthAndParams(const GURL& gurl);
+
+// Helper which checks for scheme in the |url|. If not present, adds "https://"
+// by default. For ip-addresses, scheme "http://" is used.
+GURL ConstructGURLWithScheme(const std::string& url);
+
+// Returns whether |url| has valid format and either an HTTP or HTTPS scheme.
+bool IsValidPasswordURL(const GURL& url);
+
+// TODO(crbug.com/1261752): Deduplicate GetSignonRealm implementations.
+// Returns the value of PasswordForm::signon_realm for an HTML form with the
+// origin |url|.
+std::string GetSignonRealm(const GURL& url);
+
+// Returns whether branded (Google Password Manager) name should be used
+// in the password manager UI. Branded name is always used in Chrome builds
+// and only when user |is_syncing| in Chromium builds.
+bool UsesPasswordManagerGoogleBranding(bool is_syncing);
 
 }  // namespace password_manager_util
 

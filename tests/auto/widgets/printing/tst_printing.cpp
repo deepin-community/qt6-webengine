@@ -1,39 +1,15 @@
-/****************************************************************************
-**
-** Copyright (C) 2018 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtWebEngine module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:GPL-EXCEPT$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 as published by the Free Software
-** Foundation with exceptions as appearing in the file LICENSE.GPL3-EXCEPT
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2018 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
 #include <QtWebEngineCore/private/qtwebenginecoreglobal_p.h>
+#include <QtWebEngineCore/qtwebenginecore-config.h>
 #include <QWebEngineView>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QSignalSpy>
 #include <util.h>
 
-#if defined(POPPLER_CPP)
+#if QT_CONFIG(webengine_system_poppler)
 #include <poppler-document.h>
 #include <poppler-page.h>
 #endif
@@ -44,7 +20,7 @@ class tst_Printing : public QObject
 private slots:
     void printToPdfBasic();
     void printRequest();
-#if defined(POPPLER_CPP) && defined(Q_OS_LINUX) && defined(__GLIBCXX__)
+#if QT_CONFIG(webengine_system_poppler)
     void printToPdfPoppler();
 #endif
 };
@@ -56,13 +32,13 @@ void tst_Printing::printToPdfBasic()
     QWebEngineView view;
     QSignalSpy spy(&view, &QWebEngineView::loadFinished);
     view.load(QUrl("qrc:///resources/basic_printing_page.html"));
-    QTRY_VERIFY(spy.count() == 1);
+    QTRY_VERIFY(spy.size() == 1);
 
     QSignalSpy savePdfSpy(view.page(), &QWebEnginePage::pdfPrintingFinished);
     QPageLayout layout(QPageSize(QPageSize::A4), QPageLayout::Portrait, QMarginsF(0.0, 0.0, 0.0, 0.0));
     QString path = tempDir.path() + "/print_1_success.pdf";
     view.page()->printToPdf(path, layout);
-    QTRY_VERIFY2(savePdfSpy.count() == 1, "Printing to PDF file failed without signal");
+    QTRY_VERIFY2(savePdfSpy.size() == 1, "Printing to PDF file failed without signal");
 
     QList<QVariant> successArguments = savePdfSpy.takeFirst();
     QVERIFY2(successArguments.at(0).toString() == path, "File path for first saved PDF does not match arguments");
@@ -74,7 +50,7 @@ void tst_Printing::printToPdfBasic()
     path = tempDir.path() + "/print_|2_failed.pdf";
 #endif
     view.page()->printToPdf(path, QPageLayout());
-    QTRY_VERIFY2(savePdfSpy.count() == 1, "Printing to PDF file failed without signal");
+    QTRY_VERIFY2(savePdfSpy.size() == 1, "Printing to PDF file failed without signal");
 
     QList<QVariant> failedArguments = savePdfSpy.takeFirst();
     QVERIFY2(failedArguments.at(0).toString() == path, "File path for second saved PDF does not match arguments");
@@ -82,11 +58,11 @@ void tst_Printing::printToPdfBasic()
 
     CallbackSpy<QByteArray> successfulSpy;
     view.page()->printToPdf(successfulSpy.ref(), layout);
-    QVERIFY(successfulSpy.waitForResult().length() > 0);
+    QVERIFY(successfulSpy.waitForResult().size() > 0);
 
     CallbackSpy<QByteArray> failedInvalidLayoutSpy;
     view.page()->printToPdf(failedInvalidLayoutSpy.ref(), QPageLayout());
-    QCOMPARE(failedInvalidLayoutSpy.waitForResult().length(), 0);
+    QCOMPARE(failedInvalidLayoutSpy.waitForResult().size(), 0);
 }
 
 void tst_Printing::printRequest()
@@ -100,17 +76,17 @@ void tst_Printing::printRequest()
      CallbackSpy<QByteArray> resultSpy;
 
      view.load(QUrl("qrc:///resources/basic_printing_page.html"));
-     QTRY_VERIFY(loadFinishedSpy.count() == 1);
+     QTRY_VERIFY(loadFinishedSpy.size() == 1);
      view.page()->runJavaScript("window.print()");
-     QTRY_VERIFY(printRequestedSpy.count() == 1);
-     QVERIFY(printRequestedSpy2.count() == 1);
+     QTRY_VERIFY(printRequestedSpy.size() == 1);
+     QVERIFY(printRequestedSpy2.size() == 1);
      //check if printing still works
      view.printToPdf(resultSpy.ref(), layout);
      const QByteArray data = resultSpy.waitForResult();
-     QVERIFY(data.length() > 0);
+     QVERIFY(data.size() > 0);
 }
 
-#if defined(POPPLER_CPP) && defined(Q_OS_LINUX) && defined(__GLIBCXX__)
+#if QT_CONFIG(webengine_system_poppler)
 void tst_Printing::printToPdfPoppler()
 {
     // check if generated pdf is correct by searching for a know string on the page

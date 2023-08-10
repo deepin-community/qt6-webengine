@@ -13,11 +13,13 @@
 #include <utility>
 #include <vector>
 
-#include "base/compiler_specific.h"
-#include "base/macros.h"
+#include "base/containers/flat_set.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "build/build_config.h"
+#include "ui/base/dragdrop/drag_drop_types.h"
 #include "ui/base/dragdrop/mojom/drag_drop_types.mojom-forward.h"
 #include "ui/events/event.h"
 #include "ui/events/event_constants.h"
@@ -28,13 +30,14 @@
 #include "ui/views/controls/menu/menu_delegate.h"
 #include "ui/views/widget/widget_observer.h"
 
-#if defined(OS_APPLE)
+#if BUILDFLAG(IS_MAC)
 #include "ui/views/controls/menu/menu_closure_animation_mac.h"
 #include "ui/views/controls/menu/menu_cocoa_watcher_mac.h"
 #endif
 
 namespace ui {
 class OSExchangeData;
+struct OwnedWindowAnchor;
 }
 namespace views {
 
@@ -101,7 +104,8 @@ class VIEWS_EXPORT MenuController
            const gfx::Rect& bounds,
            MenuAnchorPosition position,
            bool context_menu,
-           bool is_nested_drag);
+           bool is_nested_drag,
+           gfx::NativeView native_view_for_gestures = nullptr);
 
   bool for_drop() const { return for_drop_; }
 
@@ -187,8 +191,8 @@ class VIEWS_EXPORT MenuController
   void OnDragEntered(SubmenuView* source, const ui::DropTargetEvent& event);
   int OnDragUpdated(SubmenuView* source, const ui::DropTargetEvent& event);
   void OnDragExited(SubmenuView* source);
-  ui::mojom::DragOperation OnPerformDrop(SubmenuView* source,
-                                         const ui::DropTargetEvent& event);
+  views::View::DropCallback GetDropCallback(SubmenuView* source,
+                                            const ui::DropTargetEvent& event);
 
   // Invoked from the scroll buttons of the MenuScrollViewContainer.
   void OnDragEnteredScrollButton(SubmenuView* source, bool is_up);
@@ -223,10 +227,10 @@ class VIEWS_EXPORT MenuController
   // Only used for testing.
   static void TurnOffMenuSelectionHoldForTest();
 
-  void set_use_touchable_layout(bool use_touchable_layout) {
-    use_touchable_layout_ = use_touchable_layout;
+  void set_use_ash_system_ui_layout(bool value) {
+    use_ash_system_ui_layout_ = value;
   }
-  bool use_touchable_layout() const { return use_touchable_layout_; }
+  bool use_ash_system_ui_layout() const { return use_ash_system_ui_layout_; }
 
   // Notifies |this| that |menu_item| is being destroyed.
   void OnMenuItemDestroying(MenuItemView* menu_item);
@@ -287,11 +291,11 @@ class VIEWS_EXPORT MenuController
     ~State();
 
     // The selected menu item.
-    MenuItemView* item = nullptr;
+    raw_ptr<MenuItemView> item = nullptr;
 
     // Used to capture a hot tracked child button when a nested menu is opened
     // and to restore the hot tracked state when exiting a nested menu.
-    Button* hot_button = nullptr;
+    raw_ptr<Button> hot_button = nullptr;
 
     // If item has a submenu this indicates if the submenu is showing.
     bool submenu_open = false;
@@ -363,6 +367,9 @@ class VIEWS_EXPORT MenuController
   // Creates a MenuController. See |for_drop_| member for details on |for_drop|.
   MenuController(bool for_drop, internal::MenuControllerDelegate* delegate);
 
+  MenuController(const MenuController&) = delete;
+  MenuController& operator=(const MenuController&) = delete;
+
   ~MenuController() override;
 
   // Invokes AcceleratorPressed() on the hot tracked view if there is one.
@@ -373,6 +380,11 @@ class VIEWS_EXPORT MenuController
   void UpdateInitialLocation(const gfx::Rect& bounds,
                              MenuAnchorPosition position,
                              bool context_menu);
+
+  // Returns the anchor position adjusted for RTL languages. For example,
+  // in RTL MenuAnchorPosition::kBubbleLeft is mapped to kBubbleRight.
+  static MenuAnchorPosition AdjustAnchorPositionForRtl(
+      MenuAnchorPosition position);
 
   // Invoked when the user accepts the selected item. This is only used
   // when blocking. This schedules the loop to quit.
@@ -490,16 +502,23 @@ class VIEWS_EXPORT MenuController
   void StopCancelAllTimer();
 
   // Calculates the bounds of the menu to show. is_leading is set to match the
-  // direction the menu opened in.
+  // direction the menu opened in. Also calculates anchor that system compositor
+  // can use to position the menu.
   gfx::Rect CalculateMenuBounds(MenuItemView* item,
                                 bool prefer_leading,
-                                bool* is_leading);
+                                bool* is_leading,
+                                ui::OwnedWindowAnchor* anchor);
 
   // Calculates the bubble bounds of the menu to show. is_leading is set to
-  // match the direction the menu opened in.
+  // match the direction the menu opened in. Also calculates anchor that system
+  // compositor can use to position the menu.
+  // TODO(msisov): anchor.anchor_rect equals to returned rect at the moment as
+  // bubble menu bounds are used only by ash, as its backend uses menu bounds
+  // instead of anchor for positioning.
   gfx::Rect CalculateBubbleMenuBounds(MenuItemView* item,
                                       bool prefer_leading,
-                                      bool* is_leading);
+                                      bool* is_leading,
+                                      ui::OwnedWindowAnchor* anchor);
 
   // Returns the depth of the menu.
   static int MenuDepth(MenuItemView* item);
@@ -546,15 +565,15 @@ class VIEWS_EXPORT MenuController
   // |match_function| is used to determine which menus match.
   SelectByCharDetails FindChildForMnemonic(
       MenuItemView* parent,
-      base::char16 key,
-      bool (*match_function)(MenuItemView* menu, base::char16 mnemonic));
+      char16_t key,
+      bool (*match_function)(MenuItemView* menu, char16_t mnemonic));
 
   // Selects or accepts the appropriate menu item based on |details|.
   void AcceptOrSelect(MenuItemView* parent, const SelectByCharDetails& details);
 
   // Selects by mnemonic, and if that doesn't work tries the first character of
   // the title.
-  void SelectByChar(base::char16 key);
+  void SelectByChar(char16_t key);
 
   // For Windows and Aura we repost an event which dismisses the |source| menu.
   // The menu may also be canceled depending on the target of the event. |event|
@@ -628,6 +647,11 @@ class VIEWS_EXPORT MenuController
   void RegisterAlertedItem(MenuItemView* item);
   void UnregisterAlertedItem(MenuItemView* item);
 
+  // Sets anchor position, gravity and constraints for the |item|.
+  void SetAnchorParametersForItem(MenuItemView* item,
+                                  const gfx::Point& item_loc,
+                                  ui::OwnedWindowAnchor* anchor);
+
   // The active instance.
   static MenuController* active_instance_;
 
@@ -656,7 +680,7 @@ class VIEWS_EXPORT MenuController
   State state_;
 
   // If the user accepted the selection, this is the result.
-  MenuItemView* result_ = nullptr;
+  raw_ptr<MenuItemView> result_ = nullptr;
 
   // The event flags when the user selected the menu.
   int accept_event_flags_ = 0;
@@ -684,13 +708,17 @@ class VIEWS_EXPORT MenuController
   base::OneShotTimer cancel_all_timer_;
 
   // Drop target.
-  MenuItemView* drop_target_ = nullptr;
+  raw_ptr<MenuItemView> drop_target_ = nullptr;
   MenuDelegate::DropPosition drop_position_ =
       MenuDelegate::DropPosition::kUnknow;
 
   // Owner of child windows.
   // WARNING: this may be NULL.
-  Widget* owner_ = nullptr;
+  raw_ptr<Widget> owner_ = nullptr;
+
+  // An optional NativeView to which gestures will be forwarded to if
+  // RunType::SEND_GESTURE_EVENTS_TO_OWNER is set.
+  gfx::NativeView native_view_for_gestures_ = nullptr;
 
   // Indicates a possible drag operation.
   bool possible_drag_ = false;
@@ -727,9 +755,9 @@ class VIEWS_EXPORT MenuController
   std::unique_ptr<ViewTracker> active_mouse_view_tracker_;
 
   // Current hot tracked child button if any.
-  Button* hot_button_ = nullptr;
+  raw_ptr<Button> hot_button_ = nullptr;
 
-  internal::MenuControllerDelegate* delegate_;
+  raw_ptr<internal::MenuControllerDelegate> delegate_;
 
   // The timestamp of the event which closed the menu - or 0 otherwise.
   base::TimeTicks closing_event_time_;
@@ -745,7 +773,7 @@ class VIEWS_EXPORT MenuController
   // location. Otherwise it will be null. This is used to ignore mouse move
   // events triggered by the menu opening, to avoid selecting the menu item
   // over the mouse.
-  base::Optional<gfx::Point> menu_open_mouse_loc_;
+  absl::optional<gfx::Point> menu_open_mouse_loc_;
 
   // Controls behavior differences between a combobox and other types of menu
   // (like a context menu).
@@ -760,19 +788,19 @@ class VIEWS_EXPORT MenuController
   // Set to true if the menu item was selected by touch.
   bool item_selected_by_touch_ = false;
 
-  // Whether to use the touchable layout.
-  bool use_touchable_layout_ = false;
+  // Whether to use the ash system UI specific layout.
+  bool use_ash_system_ui_layout_ = false;
 
   // During mouse event handling, this is the RootView to forward mouse events
   // to. We need this, because if we forward one event to it (e.g., mouse
   // pressed), subsequent events (like dragging) should also go to it, even if
   // the mouse is no longer over the view.
-  MenuHostRootView* current_mouse_event_target_ = nullptr;
+  raw_ptr<MenuHostRootView> current_mouse_event_target_ = nullptr;
 
   // A mask of the EventFlags for the mouse buttons currently pressed.
   int current_mouse_pressed_state_ = 0;
 
-#if defined(OS_APPLE)
+#if BUILDFLAG(IS_MAC)
   std::unique_ptr<MenuClosureAnimationMac> menu_closure_animation_;
   std::unique_ptr<MenuCocoaWatcherMac> menu_cocoa_watcher_;
 #endif
@@ -784,8 +812,6 @@ class VIEWS_EXPORT MenuController
 
   // Currently showing alerted menu items. Updated when submenus open and close.
   base::flat_set<MenuItemView*> alerted_items_;
-
-  DISALLOW_COPY_AND_ASSIGN(MenuController);
 };
 
 }  // namespace views

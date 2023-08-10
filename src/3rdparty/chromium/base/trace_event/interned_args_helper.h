@@ -9,6 +9,7 @@
 #include "base/containers/span.h"
 #include "base/hash/hash.h"
 #include "base/location.h"
+#include "base/trace_event/trace_event.h"
 #include "third_party/perfetto/include/perfetto/tracing/track_event_interned_data_index.h"
 #include "third_party/perfetto/protos/perfetto/trace/interned_data/interned_data.pbzero.h"
 
@@ -75,6 +76,16 @@ struct BASE_EXPORT InternedSourceLocation
   static void Add(perfetto::protos::pbzero::InternedData* interned_data,
                   size_t iid,
                   const TraceSourceLocation& location);
+  using perfetto::TrackEventInternedDataIndex<
+      InternedSourceLocation,
+      perfetto::protos::pbzero::InternedData::kSourceLocationsFieldNumber,
+      TraceSourceLocation>::Get;
+  static size_t Get(perfetto::EventContext* ctx, const Location& location) {
+    return perfetto::TrackEventInternedDataIndex<
+        InternedSourceLocation,
+        perfetto::protos::pbzero::InternedData::kSourceLocationsFieldNumber,
+        TraceSourceLocation>::Get(ctx, TraceSourceLocation(location));
+  }
 };
 
 struct BASE_EXPORT InternedLogMessage

@@ -4,12 +4,15 @@
 
 #include "gpu/command_buffer/service/webgpu_decoder.h"
 
+#include <memory>
+
 #include "build/build_config.h"
 #include "gpu/command_buffer/client/client_test_helper.h"
 #include "gpu/command_buffer/common/webgpu_cmd_format.h"
 #include "gpu/command_buffer/service/context_group.h"
 #include "gpu/command_buffer/service/decoder_client.h"
 #include "gpu/command_buffer/service/gpu_tracer.h"
+#include "gpu/command_buffer/service/shared_context_state.h"
 #include "gpu/command_buffer/service/test_helper.h"
 #include "gpu/config/gpu_test_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -29,17 +32,17 @@ class WebGPUDecoderTest : public ::testing::Test {
     if (!WebGPUSupported()) {
       return;
     }
-    decoder_client_.reset(new FakeDecoderClient());
-    command_buffer_service_.reset(new FakeCommandBufferServiceBase());
+    decoder_client_ = std::make_unique<FakeDecoderClient>();
+    command_buffer_service_ = std::make_unique<FakeCommandBufferServiceBase>();
     decoder_.reset(WebGPUDecoder::Create(
         decoder_client_.get(), command_buffer_service_.get(), nullptr, nullptr,
-        &outputter_, GpuPreferences()));
-    ASSERT_EQ(decoder_->Initialize(), ContextResult::kSuccess);
+        &outputter_, GpuPreferences(), nullptr));
+    ASSERT_EQ(decoder_->Initialize(GpuFeatureInfo()), ContextResult::kSuccess);
 
     constexpr uint32_t kAdapterClientID = 0;
     cmds::RequestAdapter requestAdapterCmd;
     requestAdapterCmd.Init(
-        kAdapterClientID,
+        kAdapterClientID, false,
         static_cast<uint32_t>(webgpu::PowerPreference::kHighPerformance));
     ASSERT_EQ(error::kNoError, ExecuteCmd(requestAdapterCmd));
 

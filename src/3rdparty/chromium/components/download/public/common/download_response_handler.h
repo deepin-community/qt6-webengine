@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-#include "base/optional.h"
+#include "base/memory/raw_ptr.h"
 #include "components/download/public/common/download_create_info.h"
 #include "components/download/public/common/download_export.h"
 #include "components/download/public/common/download_source.h"
@@ -17,8 +17,10 @@
 #include "components/download/public/common/download_utils.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "net/cert/cert_status_flags.h"
+#include "services/network/public/mojom/fetch_api.mojom-shared.h"
 #include "services/network/public/mojom/url_loader.mojom.h"
 #include "services/network/public/mojom/url_response_head.mojom.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/origin.h"
 
 namespace download {
@@ -53,12 +55,19 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadResponseHandler
       const DownloadUrlParameters::RequestHeadersType& request_headers,
       const std::string& request_origin,
       DownloadSource download_source,
+      bool require_safety_checks,
       std::vector<GURL> url_chain,
       bool is_background_mode);
+
+  DownloadResponseHandler(const DownloadResponseHandler&) = delete;
+  DownloadResponseHandler& operator=(const DownloadResponseHandler&) = delete;
+
   ~DownloadResponseHandler() override;
 
   // network::mojom::URLLoaderClient
-  void OnReceiveResponse(network::mojom::URLResponseHeadPtr head) override;
+  void OnReceiveEarlyHints(network::mojom::EarlyHintsPtr early_hints) override;
+  void OnReceiveResponse(network::mojom::URLResponseHeadPtr head,
+                         mojo::ScopedDataPipeConsumerHandle body) override;
   void OnReceiveRedirect(const net::RedirectInfo& redirect_info,
                          network::mojom::URLResponseHeadPtr head) override;
   void OnUploadProgress(int64_t current_position,
@@ -77,7 +86,7 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadResponseHandler
   // Helper method that is called when response is received.
   void OnResponseStarted(mojom::DownloadStreamHandlePtr stream_handle);
 
-  Delegate* const delegate_;
+  const raw_ptr<Delegate> delegate_;
 
   std::unique_ptr<DownloadCreateInfo> create_info_;
 
@@ -98,9 +107,12 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadResponseHandler
   DownloadSource download_source_;
   net::CertStatus cert_status_;
   bool has_strong_validators_;
-  base::Optional<url::Origin> request_initiator_;
+  absl::optional<url::Origin> request_initiator_;
+  ::network::mojom::CredentialsMode credentials_mode_;
+  absl::optional<net::IsolationInfo> isolation_info_;
   bool is_partial_request_;
   bool completed_;
+  bool require_safety_checks_;
 
   // The abort reason if this class decides to block the download.
   DownloadInterruptReason abort_reason_;
@@ -110,7 +122,6 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadResponseHandler
 
   // Whether the download is running in background mode.
   bool is_background_mode_;
-  DISALLOW_COPY_AND_ASSIGN(DownloadResponseHandler);
 };
 
 }  // namespace download

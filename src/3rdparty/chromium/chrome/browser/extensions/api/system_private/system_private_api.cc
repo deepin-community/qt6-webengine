@@ -7,7 +7,6 @@
 #include <memory>
 #include <utility>
 
-#include "base/stl_util.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
@@ -20,8 +19,8 @@
 #include "google_apis/google_api_keys.h"
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "chromeos/dbus/dbus_thread_manager.h"
-#include "chromeos/dbus/update_engine_client.h"
+#include "chromeos/dbus/dbus_thread_manager.h"  // nogncheck
+#include "chromeos/dbus/update_engine/update_engine_client.h"
 #else
 #include "chrome/browser/upgrade_detector/upgrade_detector.h"
 #endif
@@ -61,7 +60,7 @@ SystemPrivateGetIncognitoModeAvailabilityFunction::Run() {
   int value = prefs->GetInteger(prefs::kIncognitoModeAvailability);
   EXTENSION_FUNCTION_VALIDATE(
       value >= 0 &&
-      value < static_cast<int>(base::size(kIncognitoModeAvailabilityStrings)));
+      value < static_cast<int>(std::size(kIncognitoModeAvailabilityStrings)));
   return RespondNow(
       OneArgument(base::Value(kIncognitoModeAvailabilityStrings[value])));
 }
@@ -126,8 +125,8 @@ ExtensionFunction::ResponseAction SystemPrivateGetUpdateStatusFunction::Run() {
 #endif
 
   std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
-  dict->SetString(kStateKey, state);
-  dict->SetDouble(kDownloadProgressKey, download_progress);
+  dict->SetStringKey(kStateKey, state);
+  dict->SetDoubleKey(kDownloadProgressKey, download_progress);
   return RespondNow(
       OneArgument(base::Value::FromUniquePtrValue(std::move(dict))));
 }

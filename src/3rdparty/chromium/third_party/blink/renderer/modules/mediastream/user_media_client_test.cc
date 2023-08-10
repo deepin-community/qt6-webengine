@@ -15,11 +15,12 @@
 #include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "media/audio/audio_device_description.h"
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/common/mediastream/media_devices.h"
-#include "third_party/blink/public/common/widget/screen_info.h"
+#include "third_party/blink/public/mojom/media/capture_handle_config.mojom-blink.h"
 #include "third_party/blink/public/mojom/mediastream/media_devices.mojom-blink.h"
 #include "third_party/blink/public/mojom/mediastream/media_stream.mojom-blink.h"
 #include "third_party/blink/public/platform/modules/mediastream/web_media_stream_source.h"
@@ -37,7 +38,7 @@
 #include "third_party/blink/renderer/modules/mediastream/mock_constraint_factory.h"
 #include "third_party/blink/renderer/modules/mediastream/mock_media_stream_video_source.h"
 #include "third_party/blink/renderer/modules/mediastream/mock_mojo_media_stream_dispatcher_host.h"
-#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/mediastream/media_stream_audio_processor_options.h"
 #include "third_party/blink/renderer/platform/mediastream/media_stream_audio_source.h"
 #include "third_party/blink/renderer/platform/mediastream/media_stream_audio_track.h"
@@ -46,6 +47,7 @@
 #include "third_party/blink/renderer/platform/mediastream/media_stream_track_platform.h"
 #include "third_party/blink/renderer/platform/testing/io_task_runner_testing_platform_support.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
+#include "ui/display/screen_info.h"
 
 using testing::_;
 using testing::Mock;
@@ -258,6 +260,20 @@ class MockMediaDevicesDispatcherHost
     NOTREACHED();
   }
 
+  void SetCaptureHandleConfig(mojom::blink::CaptureHandleConfigPtr) override {
+    NOTREACHED();
+  }
+
+#if !BUILDFLAG(IS_ANDROID)
+  void CloseFocusWindowOfOpportunity(const String& label) override {
+    NOTREACHED();
+  }
+
+  void ProduceCropId(ProduceCropIdCallback callback) override {
+    std::move(callback).Run("");
+  }
+#endif
+
   void GetAllVideoInputDeviceFormats(
       const String&,
       GetAllVideoInputDeviceFormatsCallback callback) override {
@@ -296,10 +312,10 @@ class MockMediaDevicesDispatcherHost
 };
 
 enum RequestState {
-  REQUEST_NOT_STARTED,
-  REQUEST_NOT_COMPLETE,
-  REQUEST_SUCCEEDED,
-  REQUEST_FAILED,
+  kRequestNotStarted,
+  kRequestNotComplete,
+  kRequestSucceeded,
+  kRequestFailed,
 };
 
 class UserMediaProcessorUnderTest : public UserMediaProcessor {
@@ -408,14 +424,14 @@ class UserMediaProcessorUnderTest : public UserMediaProcessor {
   void GetUserMediaRequestSucceeded(MediaStreamDescriptor* descriptor,
                                     UserMediaRequest* request_info) override {
     last_generated_descriptor_ = descriptor;
-    *state_ = REQUEST_SUCCEEDED;
+    *state_ = kRequestSucceeded;
   }
 
   void GetUserMediaRequestFailed(
       blink::mojom::blink::MediaStreamRequestResult result,
       const String& constraint_name) override {
     last_generated_descriptor_ = nullptr;
-    *state_ = REQUEST_FAILED;
+    *state_ = kRequestFailed;
     result_ = result;
     constraint_name_ = constraint_name;
   }
@@ -458,7 +474,7 @@ class UserMediaClientUnderTest : public UserMediaClient {
         state_(state) {}
 
   void RequestUserMediaForTest(UserMediaRequest* user_media_request) {
-    *state_ = REQUEST_NOT_COMPLETE;
+    *state_ = kRequestNotComplete;
     RequestUserMedia(user_media_request);
     base::RunLoop().RunUntilIdle();
   }
@@ -475,16 +491,16 @@ class UserMediaClientUnderTest : public UserMediaClient {
 
 class UserMediaChromeClient : public EmptyChromeClient {
  public:
-  UserMediaChromeClient()
-      : screen_info_({.rect = gfx::Rect(blink::kDefaultScreenCastWidth,
-                                        blink::kDefaultScreenCastHeight)}) {}
-
-  const ScreenInfo& GetScreenInfo(LocalFrame&) const override {
+  UserMediaChromeClient() {
+    screen_info_.rect = gfx::Rect(blink::kDefaultScreenCastWidth,
+                                  blink::kDefaultScreenCastHeight);
+  }
+  const display::ScreenInfo& GetScreenInfo(LocalFrame&) const override {
     return screen_info_;
   }
 
  private:
-  const ScreenInfo screen_info_;
+  display::ScreenInfo screen_info_;
 };
 
 }  // namespace
@@ -499,11 +515,9 @@ class UserMediaClientTest : public ::testing::Test {
     // Create our test object.
     auto* msd_observer = new blink::WebMediaStreamDeviceObserver(nullptr);
 
-    ChromeClient* client = MakeGarbageCollected<UserMediaChromeClient>();
-    Page::PageClients page_clients;
-    page_clients.chrome_client = client;
+    ChromeClient* chrome_client = MakeGarbageCollected<UserMediaChromeClient>();
     dummy_page_holder_ =
-        std::make_unique<DummyPageHolder>(IntSize(1, 1), &page_clients);
+        std::make_unique<DummyPageHolder>(gfx::Size(1, 1), chrome_client);
 
     user_media_processor_ = MakeGarbageCollected<UserMediaProcessorUnderTest>(
         &(dummy_page_holder_->GetFrame()), base::WrapUnique(msd_observer),
@@ -534,7 +548,7 @@ class UserMediaClientTest : public ::testing::Test {
     user_media_client_impl_->RequestUserMediaForTest();
     StartMockedVideoSource();
 
-    EXPECT_EQ(REQUEST_SUCCEEDED, request_state());
+    EXPECT_EQ(kRequestSucceeded, request_state());
 
     MediaStreamDescriptor* desc =
         user_media_processor_->last_generated_descriptor();
@@ -552,7 +566,7 @@ class UserMediaClientTest : public ::testing::Test {
         MediaConstraints(), CreateDefaultConstraints());
     user_media_client_impl_->RequestUserMediaForTest(user_media_request);
     StartMockedVideoSource();
-    EXPECT_EQ(REQUEST_SUCCEEDED, request_state());
+    EXPECT_EQ(kRequestSucceeded, request_state());
 
     MediaStreamDescriptor* descriptor =
         user_media_processor_->last_generated_descriptor();
@@ -574,7 +588,7 @@ class UserMediaClientTest : public ::testing::Test {
         constraint_factory.CreateMediaConstraints(), MediaConstraints());
     user_media_client_impl_->RequestUserMediaForTest(user_media_request);
 
-    EXPECT_EQ(REQUEST_SUCCEEDED, request_state());
+    EXPECT_EQ(kRequestSucceeded, request_state());
 
     MediaStreamDescriptor* desc =
         user_media_processor_->last_generated_descriptor();
@@ -614,7 +628,7 @@ class UserMediaClientTest : public ::testing::Test {
     user_media_client_impl_->RequestUserMediaForTest(request);
     StartMockedVideoSource();
 
-    EXPECT_EQ(REQUEST_SUCCEEDED, request_state());
+    EXPECT_EQ(kRequestSucceeded, request_state());
     EXPECT_EQ(1U, mock_dispatcher_host_.audio_devices().size());
     EXPECT_EQ(1U, mock_dispatcher_host_.video_devices().size());
     // MockMojoMediaStreamDispatcherHost appends its internal session ID to its
@@ -631,7 +645,7 @@ class UserMediaClientTest : public ::testing::Test {
       MediaStreamComponent* component,
       int width,
       int height,
-      const base::Optional<double>& frame_rate = base::Optional<double>()) {
+      const absl::optional<double>& frame_rate = absl::optional<double>()) {
     blink::MockConstraintFactory factory;
     factory.basic().width.SetExact(width);
     factory.basic().height.SetExact(height);
@@ -660,7 +674,7 @@ class UserMediaClientTest : public ::testing::Test {
   std::unique_ptr<DummyPageHolder> dummy_page_holder_;
   WeakPersistent<UserMediaProcessorUnderTest> user_media_processor_;
   Persistent<UserMediaClientUnderTest> user_media_client_impl_;
-  RequestState state_ = REQUEST_NOT_STARTED;
+  RequestState state_ = kRequestNotStarted;
 };
 
 TEST_F(UserMediaClientTest, GenerateMediaStream) {
@@ -808,7 +822,7 @@ TEST_F(UserMediaClientTest, MediaVideoSourceFailToStart) {
   user_media_client_impl_->RequestUserMediaForTest();
   FailToStartMockedVideoSource();
   base::RunLoop().RunUntilIdle();
-  EXPECT_EQ(REQUEST_FAILED, request_state());
+  EXPECT_EQ(kRequestFailed, request_state());
   EXPECT_EQ(
       blink::mojom::blink::MediaStreamRequestResult::TRACK_START_FAILURE_VIDEO,
       user_media_processor_->error_reason());
@@ -824,7 +838,7 @@ TEST_F(UserMediaClientTest, MediaAudioSourceFailToInitialize) {
   user_media_client_impl_->RequestUserMediaForTest();
   StartMockedVideoSource();
   base::RunLoop().RunUntilIdle();
-  EXPECT_EQ(REQUEST_FAILED, request_state());
+  EXPECT_EQ(kRequestFailed, request_state());
   EXPECT_EQ(
       blink::mojom::blink::MediaStreamRequestResult::TRACK_START_FAILURE_AUDIO,
       user_media_processor_->error_reason());
@@ -839,7 +853,7 @@ TEST_F(UserMediaClientTest, MediaAudioSourceFailToInitialize) {
 TEST_F(UserMediaClientTest, MediaStreamImplShutDown) {
   user_media_client_impl_->RequestUserMediaForTest();
   EXPECT_EQ(1, mock_dispatcher_host_.request_stream_counter());
-  EXPECT_EQ(REQUEST_NOT_COMPLETE, request_state());
+  EXPECT_EQ(kRequestNotComplete, request_state());
   // TearDown() nulls out |user_media_client_impl_| and forces GC to garbage
   // collect it.
 }
@@ -854,7 +868,7 @@ TEST_F(UserMediaClientTest, ReloadFrameWhileGeneratingStream) {
   EXPECT_EQ(1, mock_dispatcher_host_.request_stream_counter());
   EXPECT_EQ(0, mock_dispatcher_host_.stop_audio_device_counter());
   EXPECT_EQ(0, mock_dispatcher_host_.stop_video_device_counter());
-  EXPECT_EQ(REQUEST_NOT_COMPLETE, request_state());
+  EXPECT_EQ(kRequestNotComplete, request_state());
 }
 
 // This test what happens if a newdocument is loaded in the frame while the
@@ -865,7 +879,7 @@ TEST_F(UserMediaClientTest, ReloadFrameWhileGeneratingSources) {
   LoadNewDocumentInFrame();
   EXPECT_EQ(1, mock_dispatcher_host_.stop_audio_device_counter());
   EXPECT_EQ(1, mock_dispatcher_host_.stop_video_device_counter());
-  EXPECT_EQ(REQUEST_NOT_COMPLETE, request_state());
+  EXPECT_EQ(kRequestNotComplete, request_state());
 }
 
 // This test what happens if stop is called on a track after the frame has
@@ -1106,7 +1120,7 @@ TEST_F(UserMediaClientTest, CreateWithMandatoryInvalidAudioDeviceId) {
   UserMediaRequest* request =
       UserMediaRequest::CreateForTesting(audio_constraints, MediaConstraints());
   user_media_client_impl_->RequestUserMediaForTest(request);
-  EXPECT_EQ(REQUEST_FAILED, request_state());
+  EXPECT_EQ(kRequestFailed, request_state());
 }
 
 TEST_F(UserMediaClientTest, CreateWithMandatoryInvalidVideoDeviceId) {
@@ -1115,7 +1129,7 @@ TEST_F(UserMediaClientTest, CreateWithMandatoryInvalidVideoDeviceId) {
   UserMediaRequest* request =
       UserMediaRequest::CreateForTesting(MediaConstraints(), video_constraints);
   user_media_client_impl_->RequestUserMediaForTest(request);
-  EXPECT_EQ(REQUEST_FAILED, request_state());
+  EXPECT_EQ(kRequestFailed, request_state());
 }
 
 TEST_F(UserMediaClientTest, CreateWithMandatoryValidDeviceIds) {

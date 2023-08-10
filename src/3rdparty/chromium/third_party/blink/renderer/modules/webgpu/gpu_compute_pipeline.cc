@@ -31,8 +31,8 @@ WGPUComputePipelineDescriptor AsDawnType(
     dawn_desc.label = label->c_str();
   }
 
-  *computeStageDescriptor = AsDawnType(webgpu_desc->computeStage());
-  dawn_desc.computeStage = std::get<0>(*computeStageDescriptor);
+  *computeStageDescriptor = AsDawnType(webgpu_desc->compute());
+  dawn_desc.compute = std::get<0>(*computeStageDescriptor);
 
   return dawn_desc;
 }
@@ -52,7 +52,8 @@ GPUComputePipeline* GPUComputePipeline::Create(
   GPUComputePipeline* pipeline = MakeGarbageCollected<GPUComputePipeline>(
       device, device->GetProcs().deviceCreateComputePipeline(
                   device->GetHandle(), &dawn_desc));
-  pipeline->setLabel(webgpu_desc->label());
+  if (webgpu_desc->hasLabel())
+    pipeline->setLabel(webgpu_desc->label());
   return pipeline;
 }
 

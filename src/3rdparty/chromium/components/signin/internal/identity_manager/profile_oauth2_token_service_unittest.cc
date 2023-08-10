@@ -7,6 +7,7 @@
 #include <stddef.h>
 #include <string>
 
+#include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
 #include "base/test/task_environment.h"
 #include "base/threading/platform_thread.h"
@@ -21,6 +22,7 @@
 #include "google_apis/gaia/oauth2_access_token_manager.h"
 #include "google_apis/gaia/oauth2_access_token_manager_test_util.h"
 #include "net/http/http_status_code.h"
+#include "services/network/public/mojom/url_response_head.mojom.h"
 #include "services/network/test/test_utils.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -46,7 +48,7 @@ class RetryingTestingOAuth2AccessTokenManagerConsumer
   }
 
   int retry_counter_ = 2;
-  ProfileOAuth2TokenService* oauth2_service_;
+  raw_ptr<ProfileOAuth2TokenService> oauth2_service_;
   CoreAccountId account_id_;
   std::unique_ptr<OAuth2AccessTokenManager::Request> request_;
 };
@@ -102,7 +104,9 @@ class ProfileOAuth2TokenServiceTest : public testing::Test {
   }
 
   void TearDown() override {
-    // Makes sure that all the clean up tasks are run.
+    oauth2_service_.reset();
+    // Makes sure that all the clean up tasks are run:
+    // OAuth2AccessTokenManager::Fetcher is destroyed using DeleteSoon().
     base::RunLoop().RunUntilIdle();
   }
 
@@ -117,8 +121,9 @@ class ProfileOAuth2TokenServiceTest : public testing::Test {
       base::test::SingleThreadTaskEnvironment::MainThreadType::
           IO};  // net:: stuff needs IO
                 // message loop.
-  network::TestURLLoaderFactory* test_url_loader_factory_ = nullptr;
-  FakeProfileOAuth2TokenServiceDelegate* delegate_ptr_ = nullptr;  // Not owned.
+  raw_ptr<network::TestURLLoaderFactory> test_url_loader_factory_ = nullptr;
+  raw_ptr<FakeProfileOAuth2TokenServiceDelegate> delegate_ptr_ =
+      nullptr;  // Not owned.
   std::unique_ptr<ProfileOAuth2TokenService> oauth2_service_;
   CoreAccountId account_id_;
   TestingOAuth2AccessTokenManagerConsumer consumer_;
@@ -435,6 +440,12 @@ TEST_F(ProfileOAuth2TokenServiceTest, StartRequestForMultiloginDesktop) {
       : public TestingOAuth2AccessTokenManagerConsumer {
    public:
     MockOAuth2AccessTokenConsumer() = default;
+
+    MockOAuth2AccessTokenConsumer(const MockOAuth2AccessTokenConsumer&) =
+        delete;
+    MockOAuth2AccessTokenConsumer& operator=(
+        const MockOAuth2AccessTokenConsumer&) = delete;
+
     ~MockOAuth2AccessTokenConsumer() = default;
 
     MOCK_METHOD2(
@@ -445,8 +456,6 @@ TEST_F(ProfileOAuth2TokenServiceTest, StartRequestForMultiloginDesktop) {
     MOCK_METHOD2(OnGetTokenFailure,
                  void(const OAuth2AccessTokenManager::Request* request,
                       const GoogleServiceAuthError& error));
-
-    DISALLOW_COPY_AND_ASSIGN(MockOAuth2AccessTokenConsumer);
   };
   ProfileOAuth2TokenService token_service(
       &prefs_,
@@ -692,8 +701,8 @@ TEST_F(ProfileOAuth2TokenServiceTest, RequestParametersOrderTest) {
       OAuth2AccessTokenManager::RequestParameters("1", account_id1, set_1),
   };
 
-  for (size_t i = 0; i < base::size(params); i++) {
-    for (size_t j = 0; j < base::size(params); j++) {
+  for (size_t i = 0; i < std::size(params); i++) {
+    for (size_t j = 0; j < std::size(params); j++) {
       if (i == j) {
         EXPECT_FALSE(params[i] < params[j]) << " i=" << i << ", j=" << j;
         EXPECT_FALSE(params[j] < params[i]) << " i=" << i << ", j=" << j;
@@ -729,7 +738,7 @@ TEST_F(ProfileOAuth2TokenServiceTest, FixRequestErrorIfPossible) {
        max_reties >= 0 && consumer_.number_of_successful_tokens_ != 1;
        --max_reties) {
     base::RunLoop().RunUntilIdle();
-    base::PlatformThread::Sleep(base::TimeDelta::FromSeconds(1));
+    base::PlatformThread::Sleep(base::Seconds(1));
   }
 
   EXPECT_EQ(1, consumer_.number_of_successful_tokens_);

@@ -38,8 +38,10 @@ FieldTypeGroup GroupTypeOfServerFieldType(ServerFieldType field_type) {
 
     case PHONE_HOME_NUMBER:
     case PHONE_HOME_CITY_CODE:
+    case PHONE_HOME_CITY_CODE_WITH_TRUNK_PREFIX:
     case PHONE_HOME_COUNTRY_CODE:
     case PHONE_HOME_CITY_AND_NUMBER:
+    case PHONE_HOME_CITY_AND_NUMBER_WITHOUT_TRUNK_PREFIX:
     case PHONE_HOME_WHOLE_NUMBER:
     case PHONE_HOME_EXTENSION:
       return FieldTypeGroup::kPhoneHome;
@@ -103,6 +105,11 @@ FieldTypeGroup GroupTypeOfServerFieldType(ServerFieldType field_type) {
     case COMPANY_NAME:
       return FieldTypeGroup::kCompany;
 
+    case MERCHANT_PROMO_CODE:
+      // TODO(crbug/1190334): Create new field type group kMerchantPromoCode.
+      //                      (This involves updating many switch statements.)
+      return FieldTypeGroup::kNoGroup;
+
     case PASSWORD:
     case ACCOUNT_CREATION_PASSWORD:
     case NOT_ACCOUNT_CREATION_PASSWORD:
@@ -125,7 +132,6 @@ FieldTypeGroup GroupTypeOfServerFieldType(ServerFieldType field_type) {
     case PHONE_FAX_WHOLE_NUMBER:
     case FIELD_WITH_DEFAULT_VALUE:
     case MERCHANT_EMAIL_SIGNUP:
-    case MERCHANT_PROMO_CODE:
     case UPI_VPA:
       return FieldTypeGroup::kNoGroup;
 
@@ -135,6 +141,11 @@ FieldTypeGroup GroupTypeOfServerFieldType(ServerFieldType field_type) {
 
     case USERNAME:
       return FieldTypeGroup::kUsernameField;
+
+    case BIRTHDATE_DAY:
+    case BIRTHDATE_MONTH:
+    case BIRTHDATE_YEAR_4_DIGITS:
+      return FieldTypeGroup::kBirthdateField;
 
     case PRICE:
     case SEARCH_TERM:
@@ -216,6 +227,9 @@ FieldTypeGroup GroupTypeOfHtmlFieldType(HtmlFieldType field_type,
     case HTML_TYPE_ONE_TIME_CODE:
       return FieldTypeGroup::kNoGroup;
 
+    case HTML_TYPE_MERCHANT_PROMO_CODE:
+      return FieldTypeGroup::kNoGroup;
+
     case HTML_TYPE_UNSPECIFIED:
     case HTML_TYPE_UNRECOGNIZED:
       return FieldTypeGroup::kNoGroup;
@@ -225,16 +239,9 @@ FieldTypeGroup GroupTypeOfHtmlFieldType(HtmlFieldType field_type,
 }
 
 AutofillType::AutofillType(ServerFieldType field_type)
-    : html_type_(HTML_TYPE_UNSPECIFIED), html_mode_(HTML_MODE_NONE) {
-  if ((field_type < NO_SERVER_DATA || field_type >= MAX_VALID_FIELD_TYPE) ||
-      (field_type >= 15 && field_type <= 19) ||
-      (field_type >= 25 && field_type <= 29) ||
-      (field_type >= 44 && field_type <= 50) || field_type == 94) {
-    server_type_ = UNKNOWN_TYPE;
-  } else {
-    server_type_ = field_type;
-  }
-}
+    : server_type_(ToSafeServerFieldType(field_type, UNKNOWN_TYPE)),
+      html_type_(HTML_TYPE_UNSPECIFIED),
+      html_mode_(HTML_MODE_NONE) {}
 
 AutofillType::AutofillType(HtmlFieldType field_type, HtmlFieldMode mode)
     : server_type_(UNKNOWN_TYPE), html_type_(field_type), html_mode_(mode) {}
@@ -456,6 +463,7 @@ ServerFieldType AutofillType::GetStorableType() const {
     case HTML_TYPE_TRANSACTION_AMOUNT:
     case HTML_TYPE_TRANSACTION_CURRENCY:
     case HTML_TYPE_ONE_TIME_CODE:
+    case HTML_TYPE_MERCHANT_PROMO_CODE:
       return UNKNOWN_TYPE;
 
     case HTML_TYPE_UNRECOGNIZED:
@@ -473,12 +481,12 @@ std::string AutofillType::ToString() const {
   if (server_type_ != UNKNOWN_TYPE)
     return ServerFieldTypeToString(server_type_);
 
-  return FieldTypeToStringPiece(html_type_).as_string();
+  return std::string(FieldTypeToStringPiece(html_type_));
 }
 
 // static
 std::string AutofillType::ServerFieldTypeToString(ServerFieldType type) {
-  return FieldTypeToStringPiece(type).as_string();
+  return std::string(FieldTypeToStringPiece(type));
 }
 
 }  // namespace autofill

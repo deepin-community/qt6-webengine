@@ -18,13 +18,14 @@
 #include "extensions/browser/extension_prefs_observer.h"
 #include "extensions/browser/extensions_browser_api_provider.h"
 #include "extensions/common/extension_id.h"
-#include "extensions/common/view_type.h"
+#include "extensions/common/mojom/view_type.mojom.h"
 #include "mojo/public/cpp/bindings/binder_map.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "services/network/public/mojom/fetch_api.mojom.h"
 #include "services/network/public/mojom/url_loader.mojom-forward.h"
 #include "ui/base/page_transition_types.h"
+#include "url/gurl.h"
 
 class ExtensionFunctionRegistry;
 class PrefService;
@@ -40,6 +41,10 @@ class BrowserContext;
 class RenderFrameHost;
 class WebContents;
 }  // namespace content
+
+namespace net {
+class HttpResponseHeaders;
+}  // namespace net
 
 namespace network {
 struct ResourceRequest;
@@ -68,10 +73,10 @@ class ExtensionSystem;
 class ExtensionSystemProvider;
 class ExtensionWebContentsObserver;
 class KioskDelegate;
-class MediaRouterExtensionAccessLogger;
 class ProcessManagerDelegate;
 class ProcessMap;
 class RuntimeAPIDelegate;
+class ScopedExtensionUpdaterKeepAlive;
 class UserScriptListener;
 
 // Interface to allow the extensions module to make browser-process-specific
@@ -167,9 +172,8 @@ class ExtensionsBrowserClient {
       mojo::PendingReceiver<network::mojom::URLLoader> loader,
       const base::FilePath& resource_relative_path,
       int resource_id,
-      const std::string& content_security_policy,
-      mojo::PendingRemote<network::mojom::URLLoaderClient> client,
-      bool send_cors_header) = 0;
+      scoped_refptr<net::HttpResponseHeaders> headers,
+      mojo::PendingRemote<network::mojom::URLLoaderClient> client) = 0;
 
   // Returns true if the embedder wants to allow a chrome-extension:// resource
   // request coming from renderer A to access a resource in an extension running
@@ -287,19 +291,24 @@ class ExtensionsBrowserClient {
                               int embedder_process_id,
                               int view_instance_id) {}
 
+  // Clears the back-forward cache for all active tabs across all browser
+  // contexts.
+  virtual void ClearBackForwardCache() {}
+
   // Attaches the task manager extension tag to |web_contents|, if needed based
   // on |view_type|, so that its corresponding task shows up in the task
   // manager.
   virtual void AttachExtensionTaskManagerTag(content::WebContents* web_contents,
-                                             ViewType view_type) {}
+                                             mojom::ViewType view_type) {}
 
   // Returns a new UpdateClient.
   virtual scoped_refptr<update_client::UpdateClient> CreateUpdateClient(
       content::BrowserContext* context);
 
-  virtual std::unique_ptr<content::BluetoothChooser> CreateBluetoothChooser(
-      content::RenderFrameHost* frame,
-      const content::BluetoothChooser::EventHandler& event_handler);
+  // Returns a new ScopedExtensionUpdaterKeepAlive, or nullptr if the embedder
+  // does not support keeping the context alive while the updater is running.
+  virtual std::unique_ptr<ScopedExtensionUpdaterKeepAlive>
+  CreateUpdaterKeepAlive(content::BrowserContext* context);
 
   // Returns true if activity logging is enabled for the given |context|.
   virtual bool IsActivityLoggingEnabled(content::BrowserContext* context);
@@ -343,6 +352,10 @@ class ExtensionsBrowserClient {
 
   virtual UserScriptListener* GetUserScriptListener();
 
+  // Called when all initial script loads from extensions have been completed
+  // for the given BrowserContext.
+  virtual void SignalContentScriptsLoaded(content::BrowserContext* context);
+
   // Returns the user agent used by the content module.
   virtual std::string GetUserAgent() const;
 
@@ -357,10 +370,6 @@ class ExtensionsBrowserClient {
   virtual void SetLastSaveFilePath(content::BrowserContext* context,
                                    const base::FilePath& path);
 
-  // Retrieves the media router access logger for this session.
-  virtual const MediaRouterExtensionAccessLogger* GetMediaRouterAccessLogger()
-      const;
-
   // Returns true if the |extension_id| requires its own isolated storage
   // partition.
   virtual bool HasIsolatedStorage(const std::string& extension_id,
@@ -372,6 +381,37 @@ class ExtensionsBrowserClient {
 
   // Returns true if the given |tab_id| exists.
   virtual bool IsValidTabId(content::BrowserContext* context, int tab_id) const;
+
+  // Returns true if chrome extension telemetry service is enabled.
+  virtual bool IsExtensionTelemetryServiceEnabled(
+      content::BrowserContext* context) const;
+
+  // Returns true if remote host contacted signal feature is enabled.
+  // TODO(zackhan): This function is for measuring the impacts in finch
+  // experiments, will remove afterwards.
+  virtual bool IsExtensionTelemetryRemoteHostContactedSignalEnabled() const;
+
+  // TODO(anunoy): This is a temporary implementation of notifying the
+  // extension telemetry service of the tabs.executeScript API invocation
+  // while its usefulness is evaluated.
+  virtual void NotifyExtensionApiTabExecuteScript(
+      content::BrowserContext* context,
+      const ExtensionId& extension_id,
+      const std::string& code) const;
+
+  // TODO(zackhan): This is a temporary implementation of notifying the
+  // extension telemetry service when there are web requests initiated from
+  // chrome extensions. Its usefulness will be evaluated.
+  virtual void NotifyExtensionRemoteHostContacted(
+      content::BrowserContext* context,
+      const ExtensionId& extension_id,
+      const GURL& url) const;
+
+  // Return true if the USB device is allowed by policy.
+  virtual bool IsUsbDeviceAllowedByPolicy(content::BrowserContext* context,
+                                          const ExtensionId& extension_id,
+                                          int vendor_id,
+                                          int product_id) const;
 
  private:
   std::vector<std::unique_ptr<ExtensionsBrowserAPIProvider>> providers_;

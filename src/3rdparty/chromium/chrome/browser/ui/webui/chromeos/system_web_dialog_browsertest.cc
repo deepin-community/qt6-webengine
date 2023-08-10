@@ -5,9 +5,9 @@
 #include "chrome/browser/ui/webui/chromeos/system_web_dialog_delegate.h"
 
 #include "ash/public/cpp/test/shell_test_api.h"
-#include "chrome/browser/chromeos/login/login_manager_test.h"
-#include "chrome/browser/chromeos/login/test/login_manager_mixin.h"
-#include "chrome/browser/chromeos/login/test/oobe_base_test.h"
+#include "chrome/browser/ash/login/login_manager_test.h"
+#include "chrome/browser/ash/login/test/login_manager_mixin.h"
+#include "chrome/browser/ash/login/test/oobe_base_test.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/zoom/chrome_zoom_level_prefs.h"
@@ -32,10 +32,14 @@ class MockSystemWebDialog : public SystemWebDialogDelegate {
  public:
   explicit MockSystemWebDialog(const char* id = nullptr)
       : SystemWebDialogDelegate(GURL(chrome::kChromeUIIntenetConfigDialogURL),
-                                base::string16()) {
+                                std::u16string()) {
     if (id)
       id_ = std::string(id);
   }
+
+  MockSystemWebDialog(const MockSystemWebDialog&) = delete;
+  MockSystemWebDialog& operator=(const MockSystemWebDialog&) = delete;
+
   ~MockSystemWebDialog() override = default;
 
   const std::string& Id() override { return id_; }
@@ -43,7 +47,6 @@ class MockSystemWebDialog : public SystemWebDialogDelegate {
 
  private:
   std::string id_;
-  DISALLOW_COPY_AND_ASSIGN(MockSystemWebDialog);
 };
 
 }  // namespace
@@ -53,13 +56,14 @@ class SystemWebDialogLoginTest : public LoginManagerTest {
   SystemWebDialogLoginTest() : LoginManagerTest() {
     login_mixin_.AppendRegularUsers(1);
   }
+
+  SystemWebDialogLoginTest(const SystemWebDialogLoginTest&) = delete;
+  SystemWebDialogLoginTest& operator=(const SystemWebDialogLoginTest&) = delete;
+
   ~SystemWebDialogLoginTest() override = default;
 
  protected:
   LoginManagerMixin login_mixin_{&mixin_host_};
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(SystemWebDialogLoginTest);
 };
 
 using SystemWebDialogOobeTest = OobeBaseTest;

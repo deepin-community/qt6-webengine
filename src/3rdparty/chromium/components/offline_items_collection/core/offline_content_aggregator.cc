@@ -7,7 +7,6 @@
 #include <utility>
 
 #include "base/bind.h"
-#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "components/offline_items_collection/core/offline_content_aggregator.h"
@@ -132,7 +131,7 @@ void OfflineContentAggregator::GetItemById(const ContentId& id,
   auto it = providers_.find(id.name_space);
   if (it == providers_.end()) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::BindOnce(std::move(callback), base::nullopt));
+        FROM_HERE, base::BindOnce(std::move(callback), absl::nullopt));
     return;
   }
 
@@ -143,7 +142,7 @@ void OfflineContentAggregator::GetItemById(const ContentId& id,
 
 void OfflineContentAggregator::OnGetItemByIdDone(
     SingleItemCallback callback,
-    const base::Optional<OfflineItem>& item) {
+    const absl::optional<OfflineItem>& item) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   std::move(callback).Run(item);
 }
@@ -236,7 +235,7 @@ void OfflineContentAggregator::RenameItem(const ContentId& id,
 
 void OfflineContentAggregator::ChangeSchedule(
     const ContentId& id,
-    base::Optional<OfflineItemSchedule> schedule) {
+    absl::optional<OfflineItemSchedule> schedule) {
   auto it = providers_.find(id.name_space);
   if (it == providers_.end())
     return;
@@ -251,13 +250,28 @@ void OfflineContentAggregator::OnItemsAdded(const OfflineItemList& items) {
 
 void OfflineContentAggregator::OnItemRemoved(const ContentId& id) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  if (!pending_providers_.empty()) {
+    auto item = std::find_if(aggregated_items_.begin(), aggregated_items_.end(),
+                             [id](const OfflineItem& p) { return p.id == id; });
+    if (item != aggregated_items_.end())
+      aggregated_items_.erase(item);
+  }
   NotifyItemRemoved(id);
 }
 
 void OfflineContentAggregator::OnItemUpdated(
     const OfflineItem& item,
-    const base::Optional<UpdateDelta>& update_delta) {
+    const absl::optional<UpdateDelta>& update_delta) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  if (!pending_providers_.empty()) {
+    for (auto& offline_item : aggregated_items_) {
+      if (offline_item.id == item.id) {
+        offline_item = item;
+        break;
+      }
+    }
+  }
   NotifyItemUpdated(item, update_delta);
 }
 

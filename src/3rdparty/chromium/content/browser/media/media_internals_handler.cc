@@ -27,7 +27,7 @@ void MediaInternalsMessageHandler::RegisterMessages() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   proxy_->Attach(this);
 
-  web_ui()->RegisterMessageCallback(
+  web_ui()->RegisterDeprecatedMessageCallback(
       "getEverything",
       base::BindRepeating(&MediaInternalsMessageHandler::OnGetEverything,
                           base::Unretained(this)));
@@ -39,7 +39,7 @@ void MediaInternalsMessageHandler::OnGetEverything(
   proxy_->GetEverything();
 }
 
-void MediaInternalsMessageHandler::OnUpdate(const base::string16& update) {
+void MediaInternalsMessageHandler::OnUpdate(const std::u16string& update) {
   // Don't try to execute JavaScript in a RenderView that no longer exists nor
   // if the chrome://media-internals page hasn't finished loading.
   RenderFrameHost* host = web_ui()->GetWebContents()->GetMainFrame();

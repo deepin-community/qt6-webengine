@@ -20,7 +20,9 @@ class MockMediaStreamVideoSink : public MediaStreamVideoSink {
   ~MockMediaStreamVideoSink() override;
 
   void ConnectToTrack(const WebMediaStreamTrack& track) {
-    MediaStreamVideoSink::ConnectToTrack(track, GetDeliverFrameCB(), true);
+    MediaStreamVideoSink::ConnectToTrack(track, GetDeliverFrameCB(),
+                                         MediaStreamVideoSink::IsSecure::kYes,
+                                         uses_alpha_);
   }
 
   void ConnectEncodedToTrack(const WebMediaStreamTrack& track) {
@@ -30,7 +32,8 @@ class MockMediaStreamVideoSink : public MediaStreamVideoSink {
 
   void ConnectToTrackWithCallback(const WebMediaStreamTrack& track,
                                   const VideoCaptureDeliverFrameCB& callback) {
-    MediaStreamVideoSink::ConnectToTrack(track, callback, true);
+    MediaStreamVideoSink::ConnectToTrack(
+        track, callback, MediaStreamVideoSink::IsSecure::kYes, uses_alpha_);
   }
 
   using MediaStreamVideoSink::DisconnectEncodedFromTrack;
@@ -40,11 +43,15 @@ class MockMediaStreamVideoSink : public MediaStreamVideoSink {
   void OnEnabledChanged(bool enabled) override;
   void OnContentHintChanged(
       WebMediaStreamTrack::ContentHintType content_hint) override;
+  MOCK_METHOD(void,
+              OnVideoConstraintsChanged,
+              (absl::optional<double>, absl::optional<double>),
+              (override));
 
   // Triggered when OnVideoFrame(scoped_refptr<media::VideoFrame> frame)
   // is called.
-  MOCK_METHOD1(OnVideoFrame, void(base::TimeTicks));
-  MOCK_METHOD1(OnEncodedVideoFrame, void(base::TimeTicks));
+  MOCK_METHOD(void, OnVideoFrame, (base::TimeTicks));
+  MOCK_METHOD(void, OnEncodedVideoFrame, (base::TimeTicks));
 
   VideoCaptureDeliverFrameCB GetDeliverFrameCB();
   EncodedVideoFrameCB GetDeliverEncodedVideoFrameCB();
@@ -56,8 +63,12 @@ class MockMediaStreamVideoSink : public MediaStreamVideoSink {
 
   bool enabled() const { return enabled_; }
   WebMediaStreamSource::ReadyState state() const { return state_; }
-  base::Optional<WebMediaStreamTrack::ContentHintType> content_hint() const {
+  absl::optional<WebMediaStreamTrack::ContentHintType> content_hint() const {
     return content_hint_;
+  }
+
+  void SetUsesAlpha(MediaStreamVideoSink::UsesAlpha uses_alpha) {
+    uses_alpha_ = uses_alpha;
   }
 
  private:
@@ -68,13 +79,15 @@ class MockMediaStreamVideoSink : public MediaStreamVideoSink {
   void DeliverEncodedVideoFrame(scoped_refptr<EncodedVideoFrame> frame,
                                 base::TimeTicks estimated_capture_time);
 
+  MediaStreamVideoSink::UsesAlpha uses_alpha_ =
+      MediaStreamVideoSink::UsesAlpha::kDefault;
   int number_of_frames_;
   bool enabled_;
   media::VideoPixelFormat format_;
   WebMediaStreamSource::ReadyState state_;
   gfx::Size frame_size_;
   scoped_refptr<media::VideoFrame> last_frame_;
-  base::Optional<WebMediaStreamTrack::ContentHintType> content_hint_;
+  absl::optional<WebMediaStreamTrack::ContentHintType> content_hint_;
   base::WeakPtrFactory<MockMediaStreamVideoSink> weak_factory_{this};
 };
 

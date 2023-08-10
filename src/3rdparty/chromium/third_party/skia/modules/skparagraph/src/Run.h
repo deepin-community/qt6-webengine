@@ -7,12 +7,12 @@
 #include "include/core/SkPoint.h"
 #include "include/core/SkRect.h"
 #include "include/core/SkScalar.h"
+#include "include/core/SkSpan.h"
 #include "include/core/SkTypes.h"
 #include "include/private/SkTArray.h"
 #include "modules/skparagraph/include/DartTypes.h"
 #include "modules/skparagraph/include/TextStyle.h"
 #include "modules/skshaper/include/SkShaper.h"
-#include "src/core/SkSpan.h"
 
 #include <math.h>
 #include <algorithm>
@@ -58,6 +58,8 @@ public:
         const SkShaper::RunHandler::RunInfo& info,
         size_t firstChar,
         SkScalar heightMultiplier,
+        bool useHalfLeading,
+        SkScalar baselineShift,
         size_t index,
         SkScalar shiftX);
     Run(const Run&) = default;
@@ -84,17 +86,19 @@ public:
         return SkVector::Make(fAdvance.fX, fFontMetrics.fDescent - fFontMetrics.fAscent + fFontMetrics.fLeading);
     }
     SkVector offset() const { return fOffset; }
-    SkScalar ascent() const { return fFontMetrics.fAscent; }
-    SkScalar descent() const { return fFontMetrics.fDescent; }
+    SkScalar ascent() const { return fFontMetrics.fAscent + fBaselineShift; }
+    SkScalar descent() const { return fFontMetrics.fDescent + fBaselineShift; }
     SkScalar leading() const { return fFontMetrics.fLeading; }
-    SkScalar correctAscent() const { return fCorrectAscent; }
-    SkScalar correctDescent() const { return fCorrectDescent; }
+    SkScalar correctAscent() const { return fCorrectAscent + fBaselineShift; }
+    SkScalar correctDescent() const { return fCorrectDescent + fBaselineShift; }
     SkScalar correctLeading() const { return fCorrectLeading; }
     const SkFont& font() const { return fFont; }
     bool leftToRight() const { return fBidiLevel % 2 == 0; }
     TextDirection getTextDirection() const { return leftToRight() ? TextDirection::kLtr : TextDirection::kRtl; }
     size_t index() const { return fIndex; }
     SkScalar heightMultiplier() const { return fHeightMultiplier; }
+    bool useHalfLeading() const { return fUseHalfLeading; }
+    SkScalar baselineShift() const { return fBaselineShift; }
     PlaceholderStyle* placeholderStyle() const;
     bool isPlaceholder() const { return fPlaceholderIndex != std::numeric_limits<size_t>::max(); }
     size_t clusterIndex(size_t pos) const { return fClusterIndexes[pos]; }
@@ -118,6 +122,7 @@ public:
 
     SkScalar addSpacesAtTheEnd(SkScalar space, Cluster* cluster);
     SkScalar addSpacesEvenly(SkScalar space, Cluster* cluster);
+    SkScalar addSpacesEvenly(SkScalar space);
     void shift(const Cluster* cluster, SkScalar offset);
 
     SkScalar calculateHeight(LineMetricStyle ascentStyle, LineMetricStyle descentStyle) const {
@@ -131,13 +136,8 @@ public:
 
     void copyTo(SkTextBlobBuilder& builder, size_t pos, size_t size) const;
 
-    using ClusterTextVisitor = std::function<void(size_t glyphStart,
-                                                  size_t glyphEnd,
-                                                  size_t charStart,
-                                                  size_t charEnd,
-                                                  SkScalar width,
-                                                  SkScalar height)>;
-    void iterateThroughClustersInTextOrder(const ClusterTextVisitor& visitor);
+    template<typename Visitor>
+    void iterateThroughClustersInTextOrder(Visitor visitor);
 
     using ClusterVisitor = std::function<void(Cluster* cluster)>;
     void iterateThroughClusters(const ClusterVisitor& visitor);
@@ -153,16 +153,8 @@ public:
     SkSpan<const uint32_t> clusterIndexes() const {
         return SkSpan<const uint32_t>(fClusterIndexes.begin(), fClusterIndexes.size());
     }
-    SkSpan<const SkScalar> shifts() const { return SkSpan<const SkScalar>(fShifts.begin(), fShifts.size()); }
 
-    void commit();
-
-    SkRect getBounds(size_t pos) const { return fBounds[pos]; }
-
-    void resetShifts() {
-        for (auto& r: fShifts) { r = 0; }
-        fSpaced = false;
-    }
+    void commit() { }
 
     void resetJustificationShifts() {
         fJustificationShifts.reset();
@@ -185,24 +177,78 @@ private:
     SkVector fOffset;
     TextIndex fClusterStart;
     SkShaper::RunHandler::Range fUtf8Range;
-    SkSTArray<128, SkGlyphID, true> fGlyphs;
-    SkSTArray<128, SkPoint, true> fPositions;
-    SkSTArray<128, SkPoint, true> fJustificationShifts; // For justification (current and prev shifts)
-    SkSTArray<128, uint32_t, true> fClusterIndexes;
-    SkSTArray<128, SkRect, true> fBounds;
 
-    SkSTArray<128, SkScalar, true> fShifts;  // For formatting (letter/word spacing)
+    // These fields are not modified after shaping completes and can safely be
+    // shared among copies of the run that are held by different paragraphs.
+    struct GlyphData {
+        SkSTArray<64, SkGlyphID, true> glyphs;
+        SkSTArray<64, SkPoint, true> positions;
+        SkSTArray<64, uint32_t, true> clusterIndexes;
+    };
+    std::shared_ptr<GlyphData> fGlyphData;
+    SkSTArray<64, SkGlyphID, true>& fGlyphs;
+    SkSTArray<64, SkPoint, true>& fPositions;
+    SkSTArray<64, uint32_t, true>& fClusterIndexes;
+
+    SkSTArray<64, SkPoint, true> fJustificationShifts; // For justification (current and prev shifts)
 
     SkFontMetrics fFontMetrics;
     const SkScalar fHeightMultiplier;
+    const bool fUseHalfLeading;
+    const SkScalar fBaselineShift;
     SkScalar fCorrectAscent;
     SkScalar fCorrectDescent;
     SkScalar fCorrectLeading;
 
-    bool fSpaced;
     bool fEllipsis;
     uint8_t fBidiLevel;
 };
+
+template<typename Visitor>
+void Run::iterateThroughClustersInTextOrder(Visitor visitor) {
+    // Can't figure out how to do it with one code for both cases without 100 ifs
+    // Can't go through clusters because there are no cluster table yet
+    if (leftToRight()) {
+        size_t start = 0;
+        size_t cluster = this->clusterIndex(start);
+        for (size_t glyph = 1; glyph <= this->size(); ++glyph) {
+            auto nextCluster = this->clusterIndex(glyph);
+            if (nextCluster <= cluster) {
+                continue;
+            }
+
+            visitor(start,
+                    glyph,
+                    fClusterStart + cluster,
+                    fClusterStart + nextCluster,
+                    this->calculateWidth(start, glyph, glyph == size()),
+                    this->calculateHeight(LineMetricStyle::CSS, LineMetricStyle::CSS));
+
+            start = glyph;
+            cluster = nextCluster;
+        }
+    } else {
+        size_t glyph = this->size();
+        size_t cluster = this->fUtf8Range.begin();
+        for (int32_t start = this->size() - 1; start >= 0; --start) {
+            size_t nextCluster =
+                    start == 0 ? this->fUtf8Range.end() : this->clusterIndex(start - 1);
+            if (nextCluster <= cluster) {
+                continue;
+            }
+
+            visitor(start,
+                    glyph,
+                    fClusterStart + cluster,
+                    fClusterStart + nextCluster,
+                    this->calculateWidth(start, glyph, glyph == 0),
+                    this->calculateHeight(LineMetricStyle::CSS, LineMetricStyle::CSS));
+
+            glyph = start;
+            cluster = nextCluster;
+        }
+    }
+}
 
 class Cluster {
 public:
@@ -221,7 +267,6 @@ public:
             , fStart(0)
             , fEnd()
             , fWidth()
-            , fSpacing(0)
             , fHeight()
             , fHalfLetterSpacing(0.0) {}
 
@@ -235,6 +280,7 @@ public:
 
     Cluster(TextRange textRange) : fTextRange(textRange), fGraphemeRange(EMPTY_RANGE) { }
 
+    Cluster(const Cluster&) = default;
     ~Cluster() = default;
 
     SkScalar sizeToChar(TextIndex ch) const;
@@ -243,12 +289,16 @@ public:
     size_t roundPos(SkScalar s) const;
 
     void space(SkScalar shift, SkScalar space) {
-        fSpacing += space;
         fWidth += shift;
     }
 
-    bool isWhitespaces() const { return fIsWhiteSpaces; }
-    bool isHardBreak() const;
+    ParagraphImpl* getOwner() const { return fOwner; }
+    void setOwner(ParagraphImpl* owner) { fOwner = owner; }
+
+    bool isWhitespaceBreak() const { return fIsWhiteSpaceBreak; }
+    bool isIntraWordBreak() const { return fIsIntraWordBreak; }
+    bool isHardBreak() const { return fIsHardBreak; }
+
     bool isSoftBreak() const;
     bool isGraphemeBreak() const;
     bool canBreakLineAfter() const { return isHardBreak() || isSoftBreak(); }
@@ -266,7 +316,8 @@ public:
     RunIndex runIndex() const { return fRunIndex; }
     ParagraphImpl* owner() const { return fOwner; }
 
-    Run* run() const;
+    Run* runOrNull() const;
+    Run& run() const;
     SkFont font() const;
 
     SkScalar trimmedWidth(size_t pos) const;
@@ -293,10 +344,12 @@ private:
     size_t fStart;
     size_t fEnd;
     SkScalar fWidth;
-    SkScalar fSpacing;
     SkScalar fHeight;
     SkScalar fHalfLetterSpacing;
-    bool fIsWhiteSpaces;
+
+    bool fIsWhiteSpaceBreak;
+    bool fIsIntraWordBreak;
+    bool fIsHardBreak;
 };
 
 class InternalLineMetrics {
@@ -322,6 +375,16 @@ public:
         fForceStrut = false;
     }
 
+    InternalLineMetrics(SkScalar a, SkScalar d, SkScalar l, SkScalar ra, SkScalar rd, SkScalar rl) {
+        fAscent = a;
+        fDescent = d;
+        fLeading = l;
+        fRawAscent = ra;
+        fRawDescent = rd;
+        fRawLeading = rl;
+        fForceStrut = false;
+    }
+
     InternalLineMetrics(const SkFont& font, bool forceStrut) {
         SkFontMetrics metrics;
         font.getMetrics(&metrics);
@@ -335,7 +398,6 @@ public:
     }
 
     void add(Run* run) {
-
         if (fForceStrut) {
             return;
         }
@@ -359,11 +421,11 @@ public:
     }
 
     void clean() {
-        fAscent = 0;
-        fDescent = 0;
+        fAscent = SK_ScalarMax;
+        fDescent = SK_ScalarMin;
         fLeading = 0;
-        fRawAscent = 0;
-        fRawDescent = 0;
+        fRawAscent = SK_ScalarMax;
+        fRawDescent = SK_ScalarMin;
         fRawLeading = 0;
     }
 

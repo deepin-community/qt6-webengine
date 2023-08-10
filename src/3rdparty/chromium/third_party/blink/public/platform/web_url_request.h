@@ -33,10 +33,9 @@
 
 #include <memory>
 #include "base/memory/ref_counted.h"
-#include "base/optional.h"
 #include "base/time/time.h"
 #include "base/unguessable_token.h"
-#include "third_party/blink/public/common/loader/previews_state.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/platform/web_common.h"
 #include "ui/base/page_transition_types.h"
 
@@ -107,7 +106,7 @@ class WebURLRequest {
   BLINK_PLATFORM_EXPORT const net::SiteForCookies& SiteForCookies() const;
   BLINK_PLATFORM_EXPORT void SetSiteForCookies(const net::SiteForCookies&);
 
-  BLINK_PLATFORM_EXPORT base::Optional<WebSecurityOrigin> TopFrameOrigin()
+  BLINK_PLATFORM_EXPORT absl::optional<WebSecurityOrigin> TopFrameOrigin()
       const;
   BLINK_PLATFORM_EXPORT void SetTopFrameOrigin(const WebSecurityOrigin&);
 
@@ -152,11 +151,6 @@ class WebURLRequest {
   // has a body.
   BLINK_PLATFORM_EXPORT bool ReportUploadProgress() const;
   BLINK_PLATFORM_EXPORT void SetReportUploadProgress(bool);
-
-  // Controls whether actual headers sent and received for request are
-  // collected and reported.
-  BLINK_PLATFORM_EXPORT bool ReportRawHeaders() const;
-  BLINK_PLATFORM_EXPORT void SetReportRawHeaders(bool);
 
   BLINK_PLATFORM_EXPORT mojom::RequestContextType GetRequestContext() const;
   BLINK_PLATFORM_EXPORT void SetRequestContext(mojom::RequestContextType);
@@ -234,12 +228,6 @@ class WebURLRequest {
   BLINK_PLATFORM_EXPORT WebString GetFetchIntegrity() const;
   BLINK_PLATFORM_EXPORT void SetFetchIntegrity(const WebString&);
 
-  // The PreviewsState which determines whether to request a Preview version of
-  // the resource. The PreviewsState is a bitmask of potentially several
-  // Previews optimizations.
-  BLINK_PLATFORM_EXPORT PreviewsState GetPreviewsState() const;
-  BLINK_PLATFORM_EXPORT void SetPreviewsState(PreviewsState);
-
   // Extra data associated with the underlying resource request. Resource
   // requests can be copied. If non-null, each copy of a resource requests
   // holds a pointer to the extra data, and the extra data pointer will be
@@ -259,15 +247,12 @@ class WebURLRequest {
   BLINK_PLATFORM_EXPORT Priority GetPriority() const;
   BLINK_PLATFORM_EXPORT void SetPriority(Priority);
 
-  // https://wicg.github.io/cors-rfc1918/#external-request
-  BLINK_PLATFORM_EXPORT bool IsExternalRequest() const;
-
   BLINK_PLATFORM_EXPORT network::mojom::CorsPreflightPolicy
   GetCorsPreflightPolicy() const;
 
   // If this request was created from an anchor with a download attribute, this
   // is the value provided there.
-  BLINK_PLATFORM_EXPORT base::Optional<WebString> GetSuggestedFilename() const;
+  BLINK_PLATFORM_EXPORT absl::optional<WebString> GetSuggestedFilename() const;
 
   // Returns true if this request is tagged as an ad. This is done using various
   // heuristics so it is not expected to be 100% accurate.
@@ -287,7 +272,7 @@ class WebURLRequest {
   BLINK_PLATFORM_EXPORT bool IsRevalidating() const;
 
   // Returns the DevTools ID to throttle the network request.
-  BLINK_PLATFORM_EXPORT const base::Optional<base::UnguessableToken>&
+  BLINK_PLATFORM_EXPORT const absl::optional<base::UnguessableToken>&
   GetDevToolsToken() const;
 
   // Remembers 'X-Requested-With' header value. Blink should not set this header
@@ -306,7 +291,7 @@ class WebURLRequest {
   BLINK_PLATFORM_EXPORT const base::UnguessableToken& GetFetchWindowId() const;
   BLINK_PLATFORM_EXPORT void SetFetchWindowId(const base::UnguessableToken&);
 
-  BLINK_PLATFORM_EXPORT base::Optional<WebString> GetDevToolsId() const;
+  BLINK_PLATFORM_EXPORT absl::optional<WebString> GetDevToolsId() const;
 
   BLINK_PLATFORM_EXPORT int GetLoadFlagsForWebUrlRequest() const;
 
@@ -314,7 +299,7 @@ class WebURLRequest {
 
   BLINK_PLATFORM_EXPORT bool IsSignedExchangePrefetchCacheEnabled() const;
 
-  BLINK_PLATFORM_EXPORT base::Optional<base::UnguessableToken>
+  BLINK_PLATFORM_EXPORT absl::optional<base::UnguessableToken>
   RecursivePrefetchToken() const;
 
   // Specifies a Trust Tokens protocol operation to execute alongside the
@@ -322,8 +307,8 @@ class WebURLRequest {
   BLINK_PLATFORM_EXPORT network::OptionalTrustTokenParams TrustTokenParams()
       const;
 
-  BLINK_PLATFORM_EXPORT base::Optional<WebURL> WebBundleUrl() const;
-  BLINK_PLATFORM_EXPORT base::Optional<base::UnguessableToken> WebBundleToken()
+  BLINK_PLATFORM_EXPORT absl::optional<WebURL> WebBundleUrl() const;
+  BLINK_PLATFORM_EXPORT absl::optional<base::UnguessableToken> WebBundleToken()
       const;
 
 #if INSIDE_BLINK
@@ -348,4 +333,4 @@ class WebURLRequest {
 
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_PUBLIC_PLATFORM_WEB_URL_REQUEST_H_

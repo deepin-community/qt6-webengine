@@ -11,7 +11,7 @@
 #include "base/feature_list.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/sequenced_task_runner.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/trace_event/trace_event.h"
 #include "media/base/bind_to_current_loop.h"
 #include "media/base/cdm_context.h"
@@ -78,12 +78,12 @@ const char* GetPrepareTraceString<DemuxerStream::AUDIO>() {
   return "AudioDecoderStream::PrepareOutput";
 }
 
-const char* GetStatusString(const Status& status) {
+const char* GetStatusString(const DecoderStatus& status) {
   // TODO(crbug.com/1129662): Replace this with generic Status-to-string.
   switch (status.code()) {
-    case StatusCode::kOk:
+    case DecoderStatus::Codes::kOk:
       return "okay";
-    case StatusCode::kAborted:
+    case DecoderStatus::Codes::kAborted:
       return "aborted";
     default:
       return "decode_error";
@@ -127,7 +127,7 @@ DecoderStream<StreamType>::~DecoderStream() {
   }
   if (read_cb_) {
     read_cb_ = BindToCurrentLoop(std::move(read_cb_));
-    SatisfyRead(StatusCode::kAborted);
+    SatisfyRead(DecoderStatus::Codes::kAborted);
   }
   if (reset_cb_)
     task_runner_->PostTask(FROM_HERE, std::move(reset_cb_));
@@ -188,7 +188,7 @@ void DecoderStream<StreamType>::Read(ReadCB read_cb) {
     read_cb_ = BindToCurrentLoop(std::move(read_cb));
     // TODO(crbug.com/1129662): Consider attaching a caused-by of the original
     // error as well.
-    SatisfyRead(StatusCode::kDecoderStreamInErrorState);
+    SatisfyRead(DecoderStatus::Codes::kDecoderStreamInErrorState);
     return;
   }
 
@@ -223,7 +223,7 @@ void DecoderStream<StreamType>::Reset(base::OnceClosure closure) {
 
   if (read_cb_) {
     read_cb_ = BindToCurrentLoop(std::move(read_cb_));
-    SatisfyRead(StatusCode::kAborted);
+    SatisfyRead(DecoderStatus::Codes::kAborted);
   }
 
   ClearOutputs();
@@ -350,8 +350,9 @@ void DecoderStream<StreamType>::OnDecoderSelected(
     std::unique_ptr<Decoder> selected_decoder,
     std::unique_ptr<DecryptingDemuxerStream> decrypting_demuxer_stream) {
   FUNCTION_DVLOG(1) << ": "
-                    << (selected_decoder ? selected_decoder->GetDisplayName()
-                                         : "No decoder selected.");
+                    << (selected_decoder
+                            ? GetDecoderName(selected_decoder->GetDecoderType())
+                            : "No decoder selected.");
   DCHECK(task_runner_->RunsTasksInCurrentSequence());
   DCHECK(state_ == STATE_INITIALIZING || state_ == STATE_REINITIALIZING_DECODER)
       << state_;
@@ -362,7 +363,7 @@ void DecoderStream<StreamType>::OnDecoderSelected(
     DCHECK(!reset_cb_);
   }
 
-  auto* original_stream = stream_;
+  auto* original_stream = stream_.get();
   bool is_decrypting_demuxer_stream_selected = !!decrypting_demuxer_stream;
 
   if (decrypting_demuxer_stream) {
@@ -422,7 +423,7 @@ void DecoderStream<StreamType>::OnDecoderSelected(
   }
 
   MEDIA_LOG(INFO, media_log_)
-      << "Selected " << decoder_->GetDisplayName() << " for "
+      << "Selected " << decoder_->GetDecoderType() << " for "
       << GetStreamTypeString() << " decoding, config: "
       << traits_->GetDecoderConfig(stream_).AsHumanReadableString();
 
@@ -518,8 +519,9 @@ void DecoderStream<StreamType>::OnDecodeDone(
     int buffer_size,
     bool end_of_stream,
     std::unique_ptr<ScopedDecodeTrace> trace_event,
-    Status status) {
-  FUNCTION_DVLOG(status.is_ok() ? 3 : 1) << ": " << status.code();
+    DecoderStatus status) {
+  FUNCTION_DVLOG(status.is_ok() ? 3 : 1)
+      << ": " << static_cast<int>(status.code());
   DCHECK(state_ == STATE_NORMAL || state_ == STATE_FLUSHING_DECODER ||
          state_ == STATE_ERROR)
       << state_;
@@ -551,12 +553,11 @@ void DecoderStream<StreamType>::OnDecodeDone(
     return;
 
   switch (status.code()) {
-    case StatusCode::kAborted:
-      // Decoder can return kAborted during Reset() or during
-      // destruction.
+    case DecoderStatus::Codes::kAborted:
+      // Decoder can return kAborted during Reset() or during destruction.
       return;
 
-    case StatusCode::kOk:
+    case DecoderStatus::Codes::kOk:
       // Any successful decode counts!
       if (buffer_size > 0)
         traits_->ReportStatistics(statistics_cb_, buffer_size);
@@ -589,6 +590,7 @@ void DecoderStream<StreamType>::OnDecodeDone(
         // from being called back.
         fallback_weak_factory_.InvalidateWeakPtrs();
         pending_decode_requests_ = 0;
+        decoding_eos_ = false;
         state_ = STATE_REINITIALIZING_DECODER;
         SelectDecoder();
       } else {
@@ -741,7 +743,7 @@ void DecoderStream<StreamType>::OnBufferReady(
     pending_buffers_.clear();
     ClearOutputs();
     if (read_cb_)
-      SatisfyRead(StatusCode::kDecoderStreamDemuxerError);
+      SatisfyRead(DecoderStatus::Codes::kDecoderStreamDemuxerError);
   }
 
   // Decoding has been stopped.
@@ -817,11 +819,20 @@ void DecoderStream<StreamType>::OnBufferReady(
 
   if (status == DemuxerStream::kAborted) {
     if (read_cb_)
-      SatisfyRead(StatusCode::kAborted);
+      SatisfyRead(DecoderStatus::Codes::kAborted);
     return;
   }
 
   DCHECK(status == DemuxerStream::kOk) << status;
+
+  // Report encryption type of the stream. For simplicity, we only report it
+  // once on the first buffer of the first config, even if there may be config
+  // changes later, which is fine for metrics purposes.
+  if (!encryption_type_reported_) {
+    encryption_type_reported_ = true;
+    ReportEncryptionType(buffer);
+  }
+
   Decode(std::move(buffer));
 
   // Read more data if the decoder supports multiple parallel decoding requests.
@@ -860,7 +871,7 @@ void DecoderStream<StreamType>::CompleteDecoderReinitialization(bool success) {
   if (state_ == STATE_ERROR) {
     MEDIA_LOG(ERROR, media_log_)
         << GetStreamTypeString() << " decoder reinitialization failed";
-    SatisfyRead(StatusCode::kDecoderStreamReinitFailed);
+    SatisfyRead(DecoderStatus::Codes::kDecoderStreamReinitFailed);
     return;
   }
 
@@ -996,6 +1007,30 @@ void DecoderStream<StreamType>::CompletePrepare(const Output* output) {
       "media", GetPrepareTraceString<StreamType>(), this, "timestamp_us",
       (output ? output->timestamp() : kNoTimestamp).InMicroseconds());
   preparing_output_ = false;
+}
+
+template <DemuxerStream::Type StreamType>
+void DecoderStream<StreamType>::ReportEncryptionType(
+    const scoped_refptr<DecoderBuffer>& buffer) {
+  auto encryption_type = EncryptionType::kClear;
+  if (decrypting_demuxer_stream_) {
+    encryption_type = decrypting_demuxer_stream_->HasClearLead()
+                          ? EncryptionType::kEncryptedWithClearLead
+                          : EncryptionType::kEncrypted;
+  } else if (traits_->GetDecoderConfig(stream_).is_encrypted()) {
+    bool is_buffer_encrypted = buffer->decrypt_config();
+    encryption_type = !is_buffer_encrypted
+                          ? EncryptionType::kEncryptedWithClearLead
+                          : EncryptionType::kEncrypted;
+  }
+
+  if (encryption_type == EncryptionType::kEncryptedWithClearLead) {
+    MEDIA_LOG(INFO, media_log_)
+        << GetStreamTypeString() << "stream is encrypted with clear lead";
+  }
+
+  traits_->SetEncryptionType(encryption_type);
+  traits_->ReportStatistics(statistics_cb_, 0);
 }
 
 template class DecoderStream<DemuxerStream::VIDEO>;

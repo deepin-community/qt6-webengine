@@ -12,6 +12,7 @@
 #include "components/url_formatter/url_formatter.h"
 #include "url/android/gurl_android.h"
 #include "url/gurl.h"
+#include "url/origin.h"
 
 using base::android::JavaParamRef;
 using base::android::ScopedJavaLocalRef;
@@ -106,6 +107,18 @@ static ScopedJavaLocalRef<jstring> JNI_UrlFormatter_FormatUrlForSecurityDisplay(
 }
 
 static ScopedJavaLocalRef<jstring>
+JNI_UrlFormatter_FormatOriginForSecurityDisplay(
+    JNIEnv* env,
+    const JavaParamRef<jobject>& j_origin,
+    jint scheme_display) {
+  DCHECK(j_origin);
+  url::Origin origin = url::Origin::FromJavaObject(j_origin);
+  return base::android::ConvertUTF16ToJavaString(
+      env, url_formatter::FormatOriginForSecurityDisplay(
+               origin, static_cast<SchemeDisplay>(scheme_display)));
+}
+
+static ScopedJavaLocalRef<jstring>
 JNI_UrlFormatter_FormatUrlForDisplayOmitSchemeOmitTrivialSubdomains(
     JNIEnv* env,
     const JavaParamRef<jstring>& url) {
@@ -125,13 +138,8 @@ JNI_UrlFormatter_FormatUrlForDisplayOmitSchemePathAndTrivialSubdomains(
   DCHECK(j_gurl);
   std::unique_ptr<GURL> gurl = url::GURLAndroid::ToNativeGURL(env, j_gurl);
   return base::android::ConvertUTF16ToJavaString(
-      env, url_formatter::FormatUrl(
-               *gurl,
-               url_formatter::kFormatUrlOmitDefaults |
-                   url_formatter::kFormatUrlTrimAfterHost |
-                   url_formatter::kFormatUrlOmitHTTPS |
-                   url_formatter::kFormatUrlOmitTrivialSubdomains,
-               net::UnescapeRule::SPACES, nullptr, nullptr, nullptr));
+      env, url_formatter::FormatUrlForDisplayOmitSchemePathAndTrivialSubdomains(
+               *gurl));
 }
 
 }  // namespace android

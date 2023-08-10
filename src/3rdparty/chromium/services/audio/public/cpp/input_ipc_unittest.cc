@@ -9,6 +9,7 @@
 
 #include "base/bind.h"
 #include "base/test/task_environment.h"
+#include "media/base/audio_capturer_source.h"
 #include "media/mojo/mojom/audio_data_pipe.mojom.h"
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
@@ -50,9 +51,10 @@ class TestStreamFactory : public audio::FakeStreamFactory {
       uint32_t shared_memory_count,
       bool enable_agc,
       base::ReadOnlySharedMemoryRegion key_press_count_buffer,
-      CreateInputStreamCallback created_callback) {
+      media::mojom::AudioProcessingConfigPtr processing_config,
+      CreateInputStreamCallback created_callback) override {
     if (should_fail_) {
-      std::move(created_callback).Run(nullptr, initially_muted_, base::nullopt);
+      std::move(created_callback).Run(nullptr, initially_muted_, absl::nullopt);
       return;
     }
 
@@ -78,7 +80,7 @@ class TestStreamFactory : public audio::FakeStreamFactory {
                void(const base::UnguessableToken& input_stream_id,
                     const std::string& output_device_id));
 
-  mojo::PendingRemote<audio::mojom::StreamFactory> MakeRemote() {
+  mojo::PendingRemote<media::mojom::AudioStreamFactory> MakeRemote() {
     return receiver_.BindNewPipeAndPassRemote();
   }
 
@@ -101,7 +103,7 @@ class MockDelegate : public media::AudioInputIPCDelegate {
   }
 
   MOCK_METHOD1(GotOnStreamCreated, void(bool initially_muted));
-  MOCK_METHOD0(OnError, void());
+  MOCK_METHOD1(OnError, void(media::AudioCapturerSource::ErrorCode));
   MOCK_METHOD1(OnMuted, void(bool));
   MOCK_METHOD0(OnIPCClosed, void());
 };
@@ -230,7 +232,9 @@ TEST_F(InputIPCTest, SetOutputDeviceForAec_AssociatesInputAndOutputForAec) {
 
 TEST_F(InputIPCTest, FailedStreamCreationNullCallback) {
   StrictMock<MockDelegate> delegate;
-  EXPECT_CALL(delegate, OnError()).Times(2);
+  EXPECT_CALL(delegate,
+              OnError(media::AudioCapturerSource::ErrorCode::kUnknown))
+      .Times(2);
   factory_->should_fail_ = true;
   ipc->CreateStream(&delegate, audioParameters, false, 0);
   task_environment.RunUntilIdle();
@@ -238,7 +242,8 @@ TEST_F(InputIPCTest, FailedStreamCreationNullCallback) {
 
 TEST_F(InputIPCTest, FailedStreamCreationDestuctedFactory) {
   StrictMock<MockDelegate> delegate;
-  EXPECT_CALL(delegate, OnError());
+  EXPECT_CALL(delegate,
+              OnError(media::AudioCapturerSource::ErrorCode::kUnknown));
   factory_ = nullptr;
   ipc->CreateStream(&delegate, audioParameters, false, 0);
   task_environment.RunUntilIdle();

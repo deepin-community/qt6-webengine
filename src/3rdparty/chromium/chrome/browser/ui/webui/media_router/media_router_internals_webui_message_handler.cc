@@ -52,36 +52,38 @@ void MediaRouterInternalsWebUIMessageHandler::RegisterMessages() {
 }
 
 void MediaRouterInternalsWebUIMessageHandler::HandleGetState(
-    const base::ListValue* args) {
+    const base::Value::List& args) {
   AllowJavascript();
-  const base::Value& callback_id = args->GetList()[0];
+  const base::Value& callback_id = args[0];
   ResolveJavascriptCallback(callback_id, router_->GetState());
 }
 
 void MediaRouterInternalsWebUIMessageHandler::HandleGetProviderState(
-    const base::ListValue* args) {
+    const base::Value::List& args) {
   AllowJavascript();
-  base::Value callback_id = args->GetList()[0].Clone();
-  if (args->GetList().size() != 2 || !args->GetList()[1].is_string()) {
+  base::Value callback_id = args[0].Clone();
+  if (args.size() != 2 || !args[1].is_string()) {
     RejectJavascriptCallback(callback_id, base::Value("Invalid arguments"));
+    return;
   }
 
-  MediaRouteProviderId provider_id =
-      ProviderIdFromString(args->GetList()[1].GetString());
-  if (provider_id == MediaRouteProviderId::UNKNOWN) {
+  absl::optional<mojom::MediaRouteProviderId> provider_id =
+      ProviderIdFromString(args[1].GetString());
+  if (!provider_id) {
     RejectJavascriptCallback(callback_id,
                              base::Value("Unknown MediaRouteProviderId"));
+    return;
   }
   router_->GetProviderState(
-      provider_id,
+      *provider_id,
       base::BindOnce(&MediaRouterInternalsWebUIMessageHandler::OnProviderState,
                      weak_factory_.GetWeakPtr(), std::move(callback_id)));
 }
 
 void MediaRouterInternalsWebUIMessageHandler::HandleGetLogs(
-    const base::ListValue* args) {
+    const base::Value::List& args) {
   AllowJavascript();
-  const base::Value& callback_id = args->GetList()[0];
+  const base::Value& callback_id = args[0];
   ResolveJavascriptCallback(callback_id, router_->GetLogs());
 }
 

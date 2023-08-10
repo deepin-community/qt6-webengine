@@ -18,7 +18,14 @@ namespace content {
 
 class BrowserAccessibilityManagerAuraLinuxTest : public testing::Test {
  public:
-  BrowserAccessibilityManagerAuraLinuxTest() = default;
+  BrowserAccessibilityManagerAuraLinuxTest()
+      : ax_mode_setter_(ui::kAXModeComplete) {}
+
+  BrowserAccessibilityManagerAuraLinuxTest(
+      const BrowserAccessibilityManagerAuraLinuxTest&) = delete;
+  BrowserAccessibilityManagerAuraLinuxTest& operator=(
+      const BrowserAccessibilityManagerAuraLinuxTest&) = delete;
+
   ~BrowserAccessibilityManagerAuraLinuxTest() override = default;
 
  protected:
@@ -27,12 +34,10 @@ class BrowserAccessibilityManagerAuraLinuxTest : public testing::Test {
 
  private:
   void SetUp() override;
-
-  DISALLOW_COPY_AND_ASSIGN(BrowserAccessibilityManagerAuraLinuxTest);
+  ui::testing::ScopedAxModeSetter ax_mode_setter_;
 };
 
 void BrowserAccessibilityManagerAuraLinuxTest::SetUp() {
-  ui::AXPlatformNode::NotifyAddAXModeFlags(ui::kAXModeComplete);
   test_browser_accessibility_delegate_ =
       std::make_unique<TestBrowserAccessibilityDelegate>();
 }
@@ -98,8 +103,12 @@ TEST_F(BrowserAccessibilityManagerAuraLinuxTest, TestEmitChildrenChanged) {
                    }),
                    nullptr);
 
+  // The static text is a platform leaf.
+  ASSERT_EQ(0U, static_text_accessible->PlatformChildCount());
+  ASSERT_EQ(1U, static_text_accessible->InternalChildCount());
+
   BrowserAccessibility* inline_text_accessible =
-      static_text_accessible->PlatformGetChild(0);
+      static_text_accessible->InternalGetChild(0);
   // PlatformLeaf node such as InlineText should not trigger
   // 'children-changed' event to the parent when subtree is changed.
   aura_linux_manager->FireSubtreeCreatedEvent(inline_text_accessible);

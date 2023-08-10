@@ -11,10 +11,11 @@
 #include "chrome/common/net/safe_search_util.h"
 #include "components/google/core/common/google_util.h"
 #include "net/base/url_util.h"
+#include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/mojom/url_response_head.mojom.h"
 #include "services/network/public/mojom/x_frame_options.mojom.h"
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 #include "ui/base/device_form_factor.h"
 #endif
 
@@ -24,7 +25,7 @@
 
 namespace {
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 const char kCCTClientDataHeader[] = "X-CCT-Client-Data";
 const char kRequestDesktopDataHeader[] = "X-Eligible-Tablet";
 #endif
@@ -38,22 +39,20 @@ void GoogleURLLoaderThrottle::UpdateCorsExemptHeader(
       safe_search_util::kGoogleAppsAllowedDomains);
   params->cors_exempt_header_list.push_back(
       safe_search_util::kYouTubeRestrictHeaderName);
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   params->cors_exempt_header_list.push_back(kCCTClientDataHeader);
 #endif
 }
 
 GoogleURLLoaderThrottle::GoogleURLLoaderThrottle(
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
     const std::string& client_data_header,
-    bool night_mode_enabled,
     bool is_tab_large_enough,
 #endif
     chrome::mojom::DynamicParams dynamic_params)
     :
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
       client_data_header_(client_data_header),
-      night_mode_enabled_(night_mode_enabled),
       is_tab_large_enough_(is_tab_large_enough),
 #endif
       dynamic_params_(std::move(dynamic_params)) {
@@ -92,7 +91,7 @@ void GoogleURLLoaderThrottle::WillStartRequest(
         dynamic_params_.allowed_domains_for_apps);
   }
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   if (!client_data_header_.empty() &&
       google_util::IsGoogleAssociatedDomainUrl(request->url)) {
     request->cors_exempt_headers.SetHeader(kCCTClientDataHeader,
@@ -103,15 +102,6 @@ void GoogleURLLoaderThrottle::WillStartRequest(
       google_util::IsGoogleHomePageUrl(request->url) ||
       google_util::IsGoogleSearchUrl(request->url);
   if (is_google_homepage_or_search) {
-    // TODO (crbug.com/1081510): Remove this experimental code once a final
-    // solution is agreed upon.
-    if (base::FeatureList::IsEnabled(features::kAndroidDarkSearch)) {
-      request->url = net::AppendOrReplaceQueryParameter(
-          request->url, "cs", night_mode_enabled_ ? "1" : "0");
-    }
-    base::UmaHistogramBoolean("Android.DarkTheme.DarkSearchRequested",
-                              night_mode_enabled_);
-
     if (base::FeatureList::IsEnabled(features::kRequestDesktopSiteForTablets) &&
         ui::GetDeviceFormFactor() == ui::DEVICE_FORM_FACTOR_TABLET) {
       request->headers.SetHeader(kRequestDesktopDataHeader,
@@ -155,7 +145,7 @@ void GoogleURLLoaderThrottle::WillRedirectRequest(
         dynamic_params_.allowed_domains_for_apps);
   }
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   if (!client_data_header_.empty() &&
       !google_util::IsGoogleAssociatedDomainUrl(redirect_info->new_url)) {
     to_be_removed_headers->push_back(kCCTClientDataHeader);
@@ -181,6 +171,7 @@ void GoogleURLLoaderThrottle::WillProcessResponse(
     CHECK(response_head->parsed_headers);
     if (response_head->parsed_headers->xfo !=
         network::mojom::XFrameOptionsValue::kDeny) {
+      response_head->headers->SetHeader("X-Frame-Options", "SAMEORIGIN");
       response_head->parsed_headers->xfo =
           network::mojom::XFrameOptionsValue::kSameOrigin;
     }

@@ -12,6 +12,7 @@
 
 #include "base/allocator/buildflags.h"
 #include "base/bind.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/path_service.h"
 #include "base/process/process_handle.h"
@@ -127,6 +128,11 @@ class MemoryInternalsDOMHandler : public content::WebUIMessageHandler,
                                   ui::SelectFileDialog::Listener {
  public:
   explicit MemoryInternalsDOMHandler(content::WebUI* web_ui);
+
+  MemoryInternalsDOMHandler(const MemoryInternalsDOMHandler&) = delete;
+  MemoryInternalsDOMHandler& operator=(const MemoryInternalsDOMHandler&) =
+      delete;
+
   ~MemoryInternalsDOMHandler() override;
 
   // WebUIMessageHandler implementation.
@@ -145,13 +151,6 @@ class MemoryInternalsDOMHandler : public content::WebUIMessageHandler,
   void HandleStartProfiling(const base::ListValue* args);
 
  private:
-  // Hops to the IO thread to enumerate child processes, and back to the UI
-  // thread to fill in the renderer processes.
-  static void GetChildProcessesOnIOThread(
-      base::WeakPtr<MemoryInternalsDOMHandler> dom_handler,
-      const std::string& callback_id);
-  void GetProfiledPids(const std::string& callback_id,
-                       std::vector<base::Value> children);
   void ReturnProcessListOnUIThread(const std::string& callback_id,
                                    std::vector<base::Value> children,
                                    std::vector<base::ProcessId> profiled_pids);
@@ -165,15 +164,19 @@ class MemoryInternalsDOMHandler : public content::WebUIMessageHandler,
   void SaveTraceFinished(bool success);
 
   scoped_refptr<ui::SelectFileDialog> select_file_dialog_;
-  content::WebUI* web_ui_;  // The WebUI that owns us.
+#if !BUILDFLAG(IS_ANDROID)
+  raw_ptr<content::WebUI> web_ui_;  // The WebUI that owns us.
+#endif
 
   base::WeakPtrFactory<MemoryInternalsDOMHandler> weak_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(MemoryInternalsDOMHandler);
 };
 
 MemoryInternalsDOMHandler::MemoryInternalsDOMHandler(content::WebUI* web_ui)
-    : web_ui_(web_ui) {}
+#if !BUILDFLAG(IS_ANDROID)
+    : web_ui_(web_ui)
+#endif
+{
+}
 
 MemoryInternalsDOMHandler::~MemoryInternalsDOMHandler() {
   if (select_file_dialog_)
@@ -183,19 +186,19 @@ MemoryInternalsDOMHandler::~MemoryInternalsDOMHandler() {
 void MemoryInternalsDOMHandler::RegisterMessages() {
   // Unretained should be OK here since this class is bound to the lifetime of
   // the WebUI.
-  web_ui()->RegisterMessageCallback(
+  web_ui()->RegisterDeprecatedMessageCallback(
       "requestProcessList",
       base::BindRepeating(&MemoryInternalsDOMHandler::HandleRequestProcessList,
                           base::Unretained(this)));
-  web_ui()->RegisterMessageCallback(
+  web_ui()->RegisterDeprecatedMessageCallback(
       "saveDump",
       base::BindRepeating(&MemoryInternalsDOMHandler::HandleSaveDump,
                           base::Unretained(this)));
-  web_ui()->RegisterMessageCallback(
+  web_ui()->RegisterDeprecatedMessageCallback(
       "reportProcess",
       base::BindRepeating(&MemoryInternalsDOMHandler::HandleReportProcess,
                           base::Unretained(this)));
-  web_ui()->RegisterMessageCallback(
+  web_ui()->RegisterDeprecatedMessageCallback(
       "startProfiling",
       base::BindRepeating(&MemoryInternalsDOMHandler::HandleStartProfiling,
                           base::Unretained(this)));
@@ -204,83 +207,8 @@ void MemoryInternalsDOMHandler::RegisterMessages() {
 void MemoryInternalsDOMHandler::HandleRequestProcessList(
     const base::ListValue* args) {
   AllowJavascript();
-  std::string callback_id = args->GetList()[0].GetString();
+  std::string callback_id = args->GetListDeprecated()[0].GetString();
 
-  // This is called on the UI thread, the child process iterator must run on
-  // the IO thread, while the render process iterator must run on the UI thread.
-  content::GetIOThreadTaskRunner({})->PostTask(
-      FROM_HERE,
-      base::BindOnce(&MemoryInternalsDOMHandler::GetChildProcessesOnIOThread,
-                     weak_factory_.GetWeakPtr(), std::move(callback_id)));
-}
-
-void MemoryInternalsDOMHandler::HandleSaveDump(const base::ListValue* args) {
-  base::FilePath default_file = base::FilePath().AppendASCII(
-      base::StringPrintf("trace_with_heap_dump.json.gz"));
-
-  AllowJavascript();
-
-#if defined(OS_ANDROID)
-  base::Value result("Saving...");
-  FireWebUIListener("save-dump-progress", result);
-
-  // On Android write to the user data dir.
-  // TODO(bug 757115) Does it make sense to show the Android file picker here
-  // instead? Need to test what that looks like.
-  base::FilePath user_data_dir;
-  base::PathService::Get(chrome::DIR_USER_DATA, &user_data_dir);
-  base::FilePath output_path = user_data_dir.Append(default_file);
-  ProfilingProcessHost::GetInstance()->SaveTraceWithHeapDumpToFile(
-      std::move(output_path),
-      base::BindOnce(&MemoryInternalsDOMHandler::SaveTraceFinished,
-                     weak_factory_.GetWeakPtr()),
-      false);
-
-  (void)web_ui_;  // Avoid warning about not using private web_ui_ member.
-#else
-  if (select_file_dialog_)
-    return;  // Currently running, wait for existing save to complete.
-  select_file_dialog_ = ui::SelectFileDialog::Create(
-      this,
-      std::make_unique<ChromeSelectFilePolicy>(web_ui_->GetWebContents()));
-
-  select_file_dialog_->SelectFile(
-      ui::SelectFileDialog::SELECT_SAVEAS_FILE, base::string16(), default_file,
-      nullptr, 0, FILE_PATH_LITERAL(".json.gz"),
-      web_ui_->GetWebContents()->GetTopLevelNativeWindow(), nullptr);
-#endif
-}
-
-void MemoryInternalsDOMHandler::HandleReportProcess(
-    const base::ListValue* args) {
-  if (!args->is_list() || args->GetList().size() != 1)
-    return;
-
-  ProfilingProcessHost::GetInstance()->RequestProcessReport(
-      "MEMLOG_MANUAL_TRIGGER");
-}
-
-void MemoryInternalsDOMHandler::HandleStartProfiling(
-    const base::ListValue* args) {
-  DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
-  if (!args->is_list() || args->GetList().size() != 1)
-    return;
-
-  base::ProcessId pid = args->GetList()[0].GetInt();
-  heap_profiling::Supervisor* supervisor =
-      heap_profiling::Supervisor::GetInstance();
-  if (supervisor->HasStarted()) {
-    supervisor->StartManualProfiling(pid);
-  } else {
-    supervisor->Start(
-        base::BindOnce(&heap_profiling::Supervisor::StartManualProfiling,
-                       base::Unretained(supervisor), pid));
-  }
-}
-
-void MemoryInternalsDOMHandler::GetChildProcessesOnIOThread(
-    base::WeakPtr<MemoryInternalsDOMHandler> dom_handler,
-    const std::string& callback_id) {
   std::vector<base::Value> result;
 
   // The only non-renderer child processes that currently support out-of-process
@@ -296,31 +224,77 @@ void MemoryInternalsDOMHandler::GetChildProcessesOnIOThread(
     }
   }
 
-  content::GetUIThreadTaskRunner({})->PostTask(
-      FROM_HERE, base::BindOnce(&MemoryInternalsDOMHandler::GetProfiledPids,
-                                dom_handler, callback_id, std::move(result)));
-}
-
-void MemoryInternalsDOMHandler::GetProfiledPids(
-    const std::string& callback_id,
-    std::vector<base::Value> children) {
-  DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
   heap_profiling::Supervisor* supervisor =
       heap_profiling::Supervisor::GetInstance();
 
   // The supervisor hasn't started, so return an empty list.
   if (!supervisor->HasStarted()) {
-    content::GetUIThreadTaskRunner({})->PostTask(
-        FROM_HERE,
-        base::BindOnce(&MemoryInternalsDOMHandler::ReturnProcessListOnUIThread,
-                       weak_factory_.GetWeakPtr(), callback_id,
-                       std::move(children), std::vector<base::ProcessId>()));
+    ReturnProcessListOnUIThread(callback_id, std::move(result),
+                                std::vector<base::ProcessId>());
     return;
   }
 
   supervisor->GetProfiledPids(base::BindOnce(
       &MemoryInternalsDOMHandler::ReturnProcessListOnUIThread,
-      weak_factory_.GetWeakPtr(), callback_id, std::move(children)));
+      weak_factory_.GetWeakPtr(), callback_id, std::move(result)));
+}
+
+void MemoryInternalsDOMHandler::HandleSaveDump(const base::ListValue* args) {
+  base::FilePath default_file = base::FilePath().AppendASCII(
+      base::StringPrintf("trace_with_heap_dump.json.gz"));
+
+  AllowJavascript();
+
+#if BUILDFLAG(IS_ANDROID)
+  base::Value result("Saving...");
+  FireWebUIListener("save-dump-progress", result);
+
+  // On Android write to the user data dir.
+  // TODO(bug 757115) Does it make sense to show the Android file picker here
+  // instead? Need to test what that looks like.
+  base::FilePath user_data_dir;
+  base::PathService::Get(chrome::DIR_USER_DATA, &user_data_dir);
+  base::FilePath output_path = user_data_dir.Append(default_file);
+  ProfilingProcessHost::GetInstance()->SaveTraceWithHeapDumpToFile(
+      std::move(output_path),
+      base::BindOnce(&MemoryInternalsDOMHandler::SaveTraceFinished,
+                     weak_factory_.GetWeakPtr()),
+      false);
+#else
+  if (select_file_dialog_)
+    return;  // Currently running, wait for existing save to complete.
+  select_file_dialog_ = ui::SelectFileDialog::Create(
+      this,
+      std::make_unique<ChromeSelectFilePolicy>(web_ui_->GetWebContents()));
+
+  select_file_dialog_->SelectFile(
+      ui::SelectFileDialog::SELECT_SAVEAS_FILE, std::u16string(), default_file,
+      nullptr, 0, FILE_PATH_LITERAL(".json.gz"),
+      web_ui_->GetWebContents()->GetTopLevelNativeWindow(), nullptr);
+#endif
+}
+
+void MemoryInternalsDOMHandler::HandleReportProcess(
+    const base::ListValue* args) {
+  // TODO(etienneb): Delete the use of this method.
+}
+
+void MemoryInternalsDOMHandler::HandleStartProfiling(
+    const base::ListValue* args) {
+  DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
+  if (!args->is_list() || args->GetListDeprecated().size() != 1)
+    return;
+
+  base::ProcessId pid = args->GetListDeprecated()[0].GetInt();
+  heap_profiling::Supervisor* supervisor =
+      heap_profiling::Supervisor::GetInstance();
+  if (supervisor->HasStarted()) {
+    supervisor->StartManualProfiling(pid);
+  } else {
+    supervisor->Start(
+        base::BindOnce(&heap_profiling::Supervisor::StartManualProfiling,
+                       base::Unretained(supervisor), pid));
+  }
 }
 
 void MemoryInternalsDOMHandler::ReturnProcessListOnUIThread(
@@ -359,10 +333,10 @@ void MemoryInternalsDOMHandler::ReturnProcessListOnUIThread(
 
   // Append whether each process is being profiled.
   for (base::Value& value : process_list) {
-    DCHECK_EQ(value.GetList().size(), 2u);
+    DCHECK_EQ(value.GetListDeprecated().size(), 2u);
 
     base::ProcessId pid =
-        static_cast<base::ProcessId>(value.GetList()[0].GetInt());
+        static_cast<base::ProcessId>(value.GetListDeprecated()[0].GetInt());
     bool is_profiled =
         std::binary_search(profiled_pids.begin(), profiled_pids.end(), pid);
     value.Append(is_profiled);

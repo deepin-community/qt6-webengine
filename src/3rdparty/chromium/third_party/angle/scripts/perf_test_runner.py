@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/python3
 #
 # Copyright 2015 The ANGLE Project Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
@@ -20,8 +20,8 @@ import sys
 
 base_path = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 
-# Look for a [Rr]elease build.
-TEST_SUITE_SEARCH_PATH = glob.glob('out/*elease*')
+# We look in this path for a recent build.
+TEST_SUITE_SEARCH_PATH = glob.glob('out/*')
 DEFAULT_METRIC = 'wall_time'
 DEFAULT_EXPERIMENTS = 10
 
@@ -100,7 +100,7 @@ def main(raw_args):
         type=int)
     parser.add_argument('-v', '--verbose', help='Extra verbose logging.', action='store_true')
     parser.add_argument('test_name', help='Test to run', default=DEFAULT_TEST_NAME)
-    args = parser.parse_args(raw_args)
+    args, extra_args = parser.parse_known_args(raw_args)
 
     if args.verbose:
         logging.basicConfig(level='DEBUG')
@@ -123,7 +123,7 @@ def main(raw_args):
     perftests_path = newest_binary
 
     if perftests_path == None or not os.path.exists(perftests_path):
-        print('Cannot find Release %s!' % args.test_suite)
+        print('Cannot find %s in %s!' % (args.suite, TEST_SUITE_SEARCH_PATH))
         return EXIT_FAILURE
 
     print('Using test executable: %s' % perftests_path)
@@ -132,7 +132,8 @@ def main(raw_args):
     def get_results(metric, extra_args=[]):
         run = [perftests_path, '--gtest_filter=%s' % args.test_name] + extra_args
         logging.info('running %s' % str(run))
-        process = subprocess.Popen(run, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        process = subprocess.Popen(
+            run, stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding='utf8')
         output, err = process.communicate()
 
         m = re.search(r'Running (\d+) tests', output)
@@ -152,12 +153,13 @@ def main(raw_args):
         return [float(value) for value in m]
 
     # Calibrate the number of steps
-    steps = get_results("steps_to_run", ["--calibration"])[0]
+    steps = get_results("steps_to_run", ["--calibration"] + extra_args)[0]
     print("running with %d steps." % steps)
 
     # Loop 'args.experiments' times, running the tests.
     for experiment in range(args.experiments):
-        experiment_scores = get_results(args.metric, ["--steps-per-trial", str(steps)])
+        experiment_scores = get_results(args.metric,
+                                        ["--steps-per-trial", str(steps)] + extra_args)
 
         for score in experiment_scores:
             sys.stdout.write("%s: %.2f" % (args.metric, score))

@@ -4,6 +4,7 @@
 
 #include "chrome/browser/extensions/api/file_system/chrome_file_system_delegate.h"
 
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -13,8 +14,12 @@
 #include "base/check.h"
 #include "base/files/file_path.h"
 #include "base/path_service.h"
-#include "base/strings/string16.h"
+#include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
+#include "chrome/browser/download/chrome_download_manager_delegate.h"
+#include "chrome/browser/download/download_core_service.h"
+#include "chrome/browser/download/download_core_service_factory.h"
+#include "chrome/browser/download/download_prefs.h"
 #include "chrome/browser/extensions/api/file_system/file_entry_picker.h"
 #include "chrome/browser/extensions/chrome_extension_function_details.h"
 #include "chrome/browser/profiles/profile.h"
@@ -41,15 +46,16 @@
 #include "storage/browser/file_system/isolated_context.h"
 #include "storage/common/file_system/file_system_types.h"
 #include "storage/common/file_system/file_system_util.h"
+#include "third_party/blink/public/common/storage_key/storage_key.h"
 #include "ui/shell_dialogs/select_file_dialog.h"
 
-#if defined(OS_MAC)
+#if BUILDFLAG(IS_MAC)
 #include <CoreFoundation/CoreFoundation.h>
 #include "base/mac/foundation_util.h"
 #endif
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "chrome/browser/chromeos/file_manager/volume_manager.h"
+#include "chrome/browser/ash/file_manager/volume_manager.h"
 #include "chrome/browser/extensions/api/file_system/consent_provider.h"
 #include "extensions/browser/event_router.h"
 #include "extensions/browser/extension_registry.h"
@@ -111,7 +117,7 @@ void OnConsentReceived(content::BrowserContext* browser_context,
                        scoped_refptr<ExtensionFunction> requester,
                        FileSystemDelegate::FileSystemCallback success_callback,
                        FileSystemDelegate::ErrorCallback error_callback,
-                       const std::string& extension_id,
+                       const url::Origin& origin,
                        const base::WeakPtr<file_manager::Volume>& volume,
                        bool writable,
                        ConsentProvider::Consent result) {
@@ -142,8 +148,9 @@ void OnConsentReceived(content::BrowserContext* browser_context,
     return;
   }
 
+  DCHECK_EQ(origin.scheme(), kExtensionScheme);
   scoped_refptr<storage::FileSystemContext> file_system_context =
-      util::GetStoragePartitionForExtensionId(extension_id, browser_context)
+      util::GetStoragePartitionForExtensionId(origin.host(), browser_context)
           ->GetFileSystemContext();
   storage::ExternalFileSystemBackend* const backend =
       file_system_context->external_backend();
@@ -161,10 +168,8 @@ void OnConsentReceived(content::BrowserContext* browser_context,
 
   const storage::FileSystemURL original_url =
       file_system_context->CreateCrackedFileSystemURL(
-          url::Origin::Create(GURL(std::string(kExtensionScheme) +
-                                   url::kStandardSchemeSeparator +
-                                   extension_id)),
-          storage::kFileSystemTypeExternal, virtual_path);
+          blink::StorageKey(origin), storage::kFileSystemTypeExternal,
+          virtual_path);
 
   // Set a fixed register name, as the automatic one would leak the mount point
   // directory.
@@ -179,7 +184,7 @@ void OnConsentReceived(content::BrowserContext* browser_context,
     return;
   }
 
-  backend->GrantFileAccessToExtension(extension_id, virtual_path);
+  backend->GrantFileAccessToOrigin(origin, virtual_path);
 
   // Grant file permissions to the renderer hosting component.
   content::ChildProcessSecurityPolicy* policy =
@@ -253,6 +258,21 @@ base::FilePath ChromeFileSystemDelegate::GetDefaultDirectory() {
   return documents_dir;
 }
 
+base::FilePath ChromeFileSystemDelegate::GetManagedSaveAsDirectory(
+    content::BrowserContext* browser_context,
+    const Extension& extension) {
+  if (extension.id() != extension_misc::kPdfExtensionId)
+    return base::FilePath();
+
+  ChromeDownloadManagerDelegate* download_manager =
+      DownloadCoreServiceFactory::GetForBrowserContext(browser_context)
+          ->GetDownloadManagerDelegate();
+  DownloadPrefs* download_prefs = download_manager->download_prefs();
+  if (!download_prefs->IsDownloadPathManaged())
+    return base::FilePath();
+  return download_prefs->DownloadPath();
+}
+
 bool ChromeFileSystemDelegate::ShowSelectFileDialog(
     scoped_refptr<ExtensionFunction> extension_function,
     ui::SelectFileDialog::Type type,
@@ -297,7 +317,7 @@ bool ChromeFileSystemDelegate::ShowSelectFileDialog(
 
 void ChromeFileSystemDelegate::ConfirmSensitiveDirectoryAccess(
     bool has_write_permission,
-    const base::string16& app_name,
+    const std::u16string& app_name,
     content::WebContents* web_contents,
     base::OnceClosure on_accept,
     base::OnceClosure on_cancel) {
@@ -389,7 +409,7 @@ void ChromeFileSystemDelegate::RequestFileSystem(
   ConsentProvider::ConsentCallback callback =
       base::BindOnce(&OnConsentReceived, browser_context, requester,
                      std::move(success_callback), std::move(error_callback),
-                     extension.id(), volume, writable);
+                     extension.origin(), volume, writable);
 
   consent_provider.RequestConsent(extension, requester->render_frame_host(),
                                   volume, writable, std::move(callback));

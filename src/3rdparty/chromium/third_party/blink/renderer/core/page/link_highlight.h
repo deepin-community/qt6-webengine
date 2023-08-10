@@ -9,7 +9,8 @@
 
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/platform/graphics/compositor_element_id.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/platform/heap/member.h"
 
 namespace cc {
 class AnimationHost;
@@ -23,6 +24,7 @@ class LayoutObject;
 class LocalFrame;
 class Node;
 class Page;
+class PaintArtifactCompositor;
 
 class CORE_EXPORT LinkHighlight final : public GarbageCollected<LinkHighlight> {
  public:
@@ -35,18 +37,19 @@ class CORE_EXPORT LinkHighlight final : public GarbageCollected<LinkHighlight> {
 
   void SetTapHighlight(Node*);
 
-  void StartHighlightAnimationIfNeeded();
+  void UpdateOpacityAndRequestAnimation();
 
   void AnimationHostInitialized(cc::AnimationHost&);
   void WillCloseAnimationHost();
 
-  bool NeedsHighlightEffect(const LayoutObject& object) const {
-    return impl_ && NeedsHighlightEffectInternal(object);
+  bool IsHighlighting(const LayoutObject& object) const {
+    return impl_ && IsHighlightingInternal(object);
   }
 
   void UpdateBeforePrePaint();
   void UpdateAfterPrePaint();
   void Paint(GraphicsContext&) const;
+  void UpdateAfterPaint(const PaintArtifactCompositor*);
 
  private:
   friend class LinkHighlightImplTest;
@@ -60,7 +63,7 @@ class CORE_EXPORT LinkHighlight final : public GarbageCollected<LinkHighlight> {
     return *page_;
   }
 
-  bool NeedsHighlightEffectInternal(const LayoutObject& object) const;
+  bool IsHighlightingInternal(const LayoutObject& object) const;
 
   Member<Page> page_;
   std::unique_ptr<LinkHighlightImpl> impl_;

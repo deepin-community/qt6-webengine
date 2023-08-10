@@ -22,6 +22,8 @@ component("fido") {
     "cable/websocket_adapter.cc",
     "cable/websocket_adapter.h",
     "cbor_extract.cc",
+    "discoverable_credential_metadata.cc",
+    "discoverable_credential_metadata.h",
     "ed25519_public_key.cc",
     "ed25519_public_key.h",
     "features.cc",
@@ -77,6 +79,8 @@ component("fido") {
       "aoa/android_accessory_device.h",
       "aoa/android_accessory_discovery.cc",
       "aoa/android_accessory_discovery.h",
+      "appid_exclude_probe_task.cc",
+      "appid_exclude_probe_task.h",
       "attestation_object.cc",
       "attestation_object.h",
       "attestation_statement.cc",
@@ -181,8 +185,6 @@ component("fido") {
       "platform_credential_store.h",
       "reset_request_handler.cc",
       "reset_request_handler.h",
-      "response_data.cc",
-      "response_data.h",
       "set_pin_request_handler.cc",
       "set_pin_request_handler.h",
       "u2f_command_constructor.cc",
@@ -256,15 +258,19 @@ component("fido") {
     ]
   }
 
-  if (is_chromeos_ash) {
+  if (is_chromeos) {
     sources += [
       "cros/authenticator.cc",
       "cros/authenticator.h",
+      "cros/credential_store.cc",
+      "cros/credential_store.h",
       "cros/discovery.cc",
       "cros/discovery.h",
     ]
 
     deps += [
+      "//chromeos/dbus/tpm_manager",
+      "//chromeos/dbus/tpm_manager:tpm_manager_proto",
       "//chromeos/dbus/u2f",
       "//chromeos/dbus/u2f:u2f_proto",
       "//dbus",
@@ -284,6 +290,7 @@ static_library("cablev2_registration") {
     "//components/device_event_log",
     "//components/gcm_driver",
     "//components/gcm_driver/instance_id",
+    "//third_party/boringssl",
   ]
 }
 
@@ -296,6 +303,7 @@ static_library("cablev2_authenticator") {
     ":fido",
     "//components/cbor",
     "//components/device_event_log",
+    "//content/public/common",  # for authenticator.mojom
     "//services/network/public/mojom",
   ]
 }
@@ -310,7 +318,9 @@ static_library("cablev2_test_util") {
     ":cablev2_authenticator",
     ":fido",
     "//components/cbor",
+    "//content/public/common",  # for authenticator.mojom
     "//crypto",
+    "//net/traffic_annotation:test_support",
     "//services/network:test_support",
     "//services/network/public/mojom",
   ]

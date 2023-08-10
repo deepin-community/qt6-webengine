@@ -11,12 +11,11 @@
 #include <string>
 #include <utility>
 
+#include "base/memory/raw_ptr.h"
 #include "ui/base/clipboard/clipboard.h"
 #include "ui/events/event_constants.h"
 #include "ui/views/controls/textfield/textfield_controller.h"
 #include "ui/views/test/views_test_base.h"
-
-#define EXPECT_STR_EQ(ascii, utf16) EXPECT_EQ(base::ASCIIToUTF16(ascii), utf16)
 
 namespace ui {
 namespace test {
@@ -43,12 +42,12 @@ class TextfieldTest : public ViewsTestBase, public TextfieldController {
   void TearDown() override;
 
   ui::ClipboardBuffer GetAndResetCopiedToClipboard();
-  base::string16 GetClipboardText(ui::ClipboardBuffer type);
-  void SetClipboardText(ui::ClipboardBuffer type, const std::string& text);
+  std::u16string GetClipboardText(ui::ClipboardBuffer type);
+  void SetClipboardText(ui::ClipboardBuffer type, const std::u16string& text);
 
   // TextfieldController:
   void ContentsChanged(Textfield* sender,
-                       const base::string16& new_contents) override;
+                       const std::u16string& new_contents) override;
   void OnBeforeUserAction(Textfield* sender) override;
   void OnAfterUserAction(Textfield* sender) override;
   void OnAfterCutOrCopy(ui::ClipboardBuffer clipboard_type) override;
@@ -90,9 +89,9 @@ class TextfieldTest : public ViewsTestBase, public TextfieldController {
                     bool shift,
                     bool control_or_command);
   void SendKeyEvent(ui::KeyboardCode key_code);
-  void SendKeyEvent(base::char16 ch);
-  void SendKeyEvent(base::char16 ch, int flags);
-  void SendKeyEvent(base::char16 ch, int flags, bool from_vk);
+  void SendKeyEvent(char16_t ch);
+  void SendKeyEvent(char16_t ch, int flags);
+  void SendKeyEvent(char16_t ch, int flags, bool from_vk);
   void DispatchMockInputMethodKeyEvent();
 
   // Sends a platform-specific move (and select) to the logical start of line.
@@ -151,17 +150,17 @@ class TextfieldTest : public ViewsTestBase, public TextfieldController {
   void TapAtCursor(ui::EventPointerType pointer_type);
 
   // We need widget to populate wrapper class.
-  std::unique_ptr<Widget> widget_ = nullptr;
+  std::unique_ptr<Widget> widget_;
 
-  TestTextfield* textfield_ = nullptr;
+  raw_ptr<TestTextfield> textfield_ = nullptr;
   std::unique_ptr<TextfieldTestApi> test_api_;
-  TextfieldModel* model_ = nullptr;
+  raw_ptr<TextfieldModel> model_ = nullptr;
 
   // The string from Controller::ContentsChanged callback.
-  base::string16 last_contents_;
+  std::u16string last_contents_;
 
   // For testing input method related behaviors.
-  MockInputMethod* input_method_ = nullptr;
+  raw_ptr<MockInputMethod> input_method_ = nullptr;
 
   // Indicates how many times OnBeforeUserAction() is called.
   int on_before_user_action_ = 0;
@@ -174,7 +173,7 @@ class TextfieldTest : public ViewsTestBase, public TextfieldController {
 
   ui::ClipboardBuffer copied_to_clipboard_ = ui::ClipboardBuffer::kMaxValue;
   std::unique_ptr<ui::test::EventGenerator> event_generator_;
-  View* event_target_ = nullptr;
+  raw_ptr<View> event_target_ = nullptr;
 };
 
 }  // namespace test

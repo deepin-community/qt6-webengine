@@ -29,7 +29,7 @@ export function horizontalScrollToTs(ts: number) {
   const endNs = toNs(globals.frontendLocalState.visibleWindowTime.end);
   const currentViewNs = endNs - startNs;
   if (ts < startNs || ts > endNs) {
-    // TODO(taylori): This is an ugly jump, we should do a smooth pan instead.
+    // TODO(hjd): This is an ugly jump, we should do a smooth pan instead.
     globals.frontendLocalState.updateVisibleTime(new TimeSpan(
         fromNs(ts - currentViewNs / 2), fromNs(ts + currentViewNs / 2)));
   }
@@ -106,22 +106,4 @@ export function scrollToTrackAndTs(
     verticalScrollToTrack(trackId, openGroup);
   }
   horizontalScrollToTs(ts);
-}
-
-/**
- * Returns the UI track Id that is associated with the given |traceTrackId| in
- * the trace_processor. Due to concepts like Async tracks and TrackGroups this
- * is not always a one to one mapping.
- */
-export function findUiTrackId(traceTrackId: number) {
-  for (const [uiTrackId, trackState] of Object.entries(globals.state.tracks)) {
-    const config = trackState.config as {trackId: number};
-    if (config.trackId === traceTrackId) return uiTrackId;
-    const multiple = trackState.config as {trackIds: number[]};
-    if (multiple.trackIds !== undefined &&
-        multiple.trackIds.includes(traceTrackId)) {
-      return uiTrackId;
-    }
-  }
-  return null;
 }

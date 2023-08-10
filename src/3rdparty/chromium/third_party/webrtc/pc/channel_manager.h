@@ -27,10 +27,11 @@
 #include "media/base/media_config.h"
 #include "media/base/media_engine.h"
 #include "pc/channel.h"
-#include "pc/rtp_transport_internal.h"
+#include "pc/channel_interface.h"
 #include "pc/session_description.h"
 #include "rtc_base/system/file_wrapper.h"
 #include "rtc_base/thread.h"
+#include "rtc_base/thread_annotations.h"
 #include "rtc_base/unique_id_generator.h"
 
 namespace cricket {
@@ -43,35 +44,24 @@ namespace cricket {
 // voice or just video channels.
 // ChannelManager also allows the application to discover what devices it has
 // using device manager.
-class ChannelManager final {
+class ChannelManager : public ChannelFactoryInterface {
  public:
-  // Construct a ChannelManager with the specified media engine and data engine.
-  ChannelManager(std::unique_ptr<MediaEngineInterface> media_engine,
-                 std::unique_ptr<DataEngineInterface> data_engine,
-                 rtc::Thread* worker_thread,
-                 rtc::Thread* network_thread);
-  ~ChannelManager();
+  // Returns an initialized instance of ChannelManager.
+  // If media_engine is non-nullptr, then the returned ChannelManager instance
+  // will own that reference and media engine initialization
+  static std::unique_ptr<ChannelManager> Create(
+      std::unique_ptr<MediaEngineInterface> media_engine,
+      bool enable_rtx,
+      rtc::Thread* worker_thread,
+      rtc::Thread* network_thread);
 
-  // Accessors for the worker thread, allowing it to be set after construction,
-  // but before Init. set_worker_thread will return false if called after Init.
+  ChannelManager() = delete;
+  ~ChannelManager() override;
+
   rtc::Thread* worker_thread() const { return worker_thread_; }
-  bool set_worker_thread(rtc::Thread* thread) {
-    if (initialized_) {
-      return false;
-    }
-    worker_thread_ = thread;
-    return true;
-  }
   rtc::Thread* network_thread() const { return network_thread_; }
-  bool set_network_thread(rtc::Thread* thread) {
-    if (initialized_) {
-      return false;
-    }
-    network_thread_ = thread;
-    return true;
-  }
-
   MediaEngineInterface* media_engine() { return media_engine_.get(); }
+  rtc::UniqueRandomIdGenerator& ssrc_generator() { return ssrc_generator_; }
 
   // Retrieves the list of supported audio & video codec types.
   // Can be called before starting the media engine.
@@ -79,7 +69,6 @@ class ChannelManager final {
   void GetSupportedAudioReceiveCodecs(std::vector<AudioCodec>* codecs) const;
   void GetSupportedVideoSendCodecs(std::vector<VideoCodec>* codecs) const;
   void GetSupportedVideoReceiveCodecs(std::vector<VideoCodec>* codecs) const;
-  void GetSupportedDataCodecs(std::vector<DataCodec>* codecs) const;
   RtpHeaderExtensions GetDefaultEnabledAudioRtpHeaderExtensions() const;
   std::vector<webrtc::RtpHeaderExtensionCapability>
   GetSupportedAudioRtpHeaderExtensions() const;
@@ -87,72 +76,32 @@ class ChannelManager final {
   std::vector<webrtc::RtpHeaderExtensionCapability>
   GetSupportedVideoRtpHeaderExtensions() const;
 
-  // Indicates whether the media engine is started.
-  bool initialized() const { return initialized_; }
-  // Starts up the media engine.
-  bool Init();
-  // Shuts down the media engine.
-  void Terminate();
-
   // The operations below all occur on the worker thread.
   // ChannelManager retains ownership of the created channels, so clients should
   // call the appropriate Destroy*Channel method when done.
 
   // Creates a voice channel, to be associated with the specified session.
   VoiceChannel* CreateVoiceChannel(webrtc::Call* call,
-                                   const cricket::MediaConfig& media_config,
-                                   webrtc::RtpTransportInternal* rtp_transport,
-                                   rtc::Thread* signaling_thread,
-                                   const std::string& content_name,
+                                   const MediaConfig& media_config,
+                                   const std::string& mid,
                                    bool srtp_required,
                                    const webrtc::CryptoOptions& crypto_options,
-                                   rtc::UniqueRandomIdGenerator* ssrc_generator,
-                                   const AudioOptions& options);
-  // Destroys a voice channel created by CreateVoiceChannel.
-  void DestroyVoiceChannel(VoiceChannel* voice_channel);
+                                   const AudioOptions& options) override;
 
   // Creates a video channel, synced with the specified voice channel, and
   // associated with the specified session.
   // Version of the above that takes PacketTransportInternal.
   VideoChannel* CreateVideoChannel(
       webrtc::Call* call,
-      const cricket::MediaConfig& media_config,
-      webrtc::RtpTransportInternal* rtp_transport,
-      rtc::Thread* signaling_thread,
-      const std::string& content_name,
+      const MediaConfig& media_config,
+      const std::string& mid,
       bool srtp_required,
       const webrtc::CryptoOptions& crypto_options,
-      rtc::UniqueRandomIdGenerator* ssrc_generator,
       const VideoOptions& options,
-      webrtc::VideoBitrateAllocatorFactory* video_bitrate_allocator_factory);
-  // Destroys a video channel created by CreateVideoChannel.
-  void DestroyVideoChannel(VideoChannel* video_channel);
+      webrtc::VideoBitrateAllocatorFactory* video_bitrate_allocator_factory)
+      override;
 
-  RtpDataChannel* CreateRtpDataChannel(
-      const cricket::MediaConfig& media_config,
-      webrtc::RtpTransportInternal* rtp_transport,
-      rtc::Thread* signaling_thread,
-      const std::string& content_name,
-      bool srtp_required,
-      const webrtc::CryptoOptions& crypto_options,
-      rtc::UniqueRandomIdGenerator* ssrc_generator);
-  // Destroys a data channel created by CreateRtpDataChannel.
-  void DestroyRtpDataChannel(RtpDataChannel* data_channel);
-
-  // Indicates whether any channels exist.
-  bool has_channels() const {
-    return (!voice_channels_.empty() || !video_channels_.empty() ||
-            !data_channels_.empty());
-  }
-
-  // RTX will be enabled/disabled in engines that support it. The supporting
-  // engines will start offering an RTX codec. Must be called before Init().
-  bool SetVideoRtxEnabled(bool enable);
-
-  // Starts/stops the local microphone and enables polling of the input level.
-  bool capturing() const { return capturing_; }
-
-  // The operations below occur on the main thread.
+  void DestroyChannel(ChannelInterface* channel) override;
 
   // Starts AEC dump using existing file, with a specified maximum file size in
   // bytes. When the limit is reached, logging will stop and the file will be
@@ -162,21 +111,37 @@ class ChannelManager final {
   // Stops recording AEC dump.
   void StopAecDump();
 
+ protected:
+  ChannelManager(std::unique_ptr<MediaEngineInterface> media_engine,
+                 bool enable_rtx,
+                 rtc::Thread* worker_thread,
+                 rtc::Thread* network_thread);
+
+  // Destroys a voice channel created by CreateVoiceChannel.
+  void DestroyVoiceChannel(VoiceChannel* voice_channel);
+
+  // Destroys a video channel created by CreateVideoChannel.
+  void DestroyVideoChannel(VideoChannel* video_channel);
+
  private:
-  std::unique_ptr<MediaEngineInterface> media_engine_;  // Nullable.
-  std::unique_ptr<DataEngineInterface> data_engine_;    // Non-null.
-  bool initialized_ = false;
-  rtc::Thread* main_thread_;
-  rtc::Thread* worker_thread_;
-  rtc::Thread* network_thread_;
+  const std::unique_ptr<MediaEngineInterface> media_engine_;  // Nullable.
+  rtc::Thread* const signaling_thread_;
+  rtc::Thread* const worker_thread_;
+  rtc::Thread* const network_thread_;
+
+  // This object should be used to generate any SSRC that is not explicitly
+  // specified by the user (or by the remote party).
+  // TODO(bugs.webrtc.org/12666): This variable is used from both the signaling
+  // and worker threads. See if we can't restrict usage to a single thread.
+  rtc::UniqueRandomIdGenerator ssrc_generator_;
 
   // Vector contents are non-null.
-  std::vector<std::unique_ptr<VoiceChannel>> voice_channels_;
-  std::vector<std::unique_ptr<VideoChannel>> video_channels_;
-  std::vector<std::unique_ptr<RtpDataChannel>> data_channels_;
+  std::vector<std::unique_ptr<VoiceChannel>> voice_channels_
+      RTC_GUARDED_BY(worker_thread_);
+  std::vector<std::unique_ptr<VideoChannel>> video_channels_
+      RTC_GUARDED_BY(worker_thread_);
 
-  bool enable_rtx_ = false;
-  bool capturing_ = false;
+  const bool enable_rtx_;
 };
 
 }  // namespace cricket

@@ -58,7 +58,7 @@ struct PathFromRoot {
 void MarkRoot(TraceStorage* s,
               tables::HeapGraphObjectTable::Id id,
               StringPool::Id type);
-void FindPathFromRoot(const TraceStorage& s,
+void FindPathFromRoot(TraceStorage* storage,
                       tables::HeapGraphObjectTable::Id id,
                       PathFromRoot* path);
 
@@ -80,6 +80,10 @@ class HeapGraphTracker : public Destructible {
 
     std::vector<uint64_t> field_name_ids;
     std::vector<uint64_t> referred_objects;
+
+    // If this object is an instance of `libcore.util.NativeAllocationRegistry`,
+    // this is the value of its `size` field.
+    base::Optional<int64_t> native_allocation_registry_size;
   };
 
   struct SourceRoot {
@@ -101,7 +105,7 @@ class HeapGraphTracker : public Destructible {
   void AddInternedType(uint32_t seq_id,
                        uint64_t intern_id,
                        StringPool::Id strid,
-                       uint64_t location_id,
+                       base::Optional<uint64_t> location_id,
                        uint64_t object_size,
                        std::vector<uint64_t> field_name_ids,
                        uint64_t superclass_id,
@@ -115,10 +119,10 @@ class HeapGraphTracker : public Destructible {
                                uint64_t intern_id,
                                StringPool::Id str);
   void FinalizeProfile(uint32_t seq);
+  void FinalizeAllProfiles();
   void SetPacketIndex(uint32_t seq_id, uint64_t index);
 
   ~HeapGraphTracker() override;
-  void NotifyEndOfFile();
 
   const std::vector<tables::HeapGraphClassTable::Id>* RowsForType(
       base::Optional<StringPool::Id> package_name,
@@ -140,6 +144,10 @@ class HeapGraphTracker : public Destructible {
       const int64_t current_ts,
       const UniquePid current_upid);
 
+  uint64_t GetLastObjectId(uint32_t seq_id) {
+    return GetOrCreateSequence(seq_id).last_object_id;
+  }
+
  private:
   struct InternedField {
     StringPool::Id name;
@@ -158,6 +166,7 @@ class HeapGraphTracker : public Destructible {
   struct SequenceState {
     UniquePid current_upid = 0;
     int64_t current_ts = 0;
+    uint64_t last_object_id = 0;
     std::vector<SourceRoot> current_roots;
     std::map<uint64_t, InternedType> interned_types;
     std::map<uint64_t, StringPool::Id> interned_location_names;
@@ -177,6 +186,9 @@ class HeapGraphTracker : public Destructible {
     std::map<tables::HeapGraphClassTable::Id,
              std::vector<tables::HeapGraphObjectTable::Id>>
         deferred_size_objects_for_type_;
+    // Contains the value of the "size" field for each
+    // "libcore.util.NativeAllocationRegistry" object.
+    std::map<tables::HeapGraphObjectTable::Id, int64_t> nar_size_by_obj_id;
     bool truncated = false;
   };
 
@@ -191,6 +203,18 @@ class HeapGraphTracker : public Destructible {
   InternedType* GetSuperClass(SequenceState* sequence_state,
                               const InternedType* current_type);
   bool IsTruncated(UniquePid upid, int64_t ts);
+
+  // Returns the object pointed to by `field` in `obj`.
+  base::Optional<tables::HeapGraphObjectTable::Id> GetReferenceByFieldName(
+      tables::HeapGraphObjectTable::Id obj,
+      StringPool::Id field);
+
+  // Populates HeapGraphObject::native_size by walking the graph for
+  // `seq`.
+  //
+  // This should be called only once (it is not idempotent) per seq, after the
+  // all the other tables have been fully populated.
+  void PopulateNativeSize(const SequenceState& seq);
 
   TraceProcessorContext* const context_;
   std::map<uint32_t, SequenceState> sequence_state_;
@@ -207,6 +231,12 @@ class HeapGraphTracker : public Destructible {
            std::set<tables::HeapGraphObjectTable::Id>>
       roots_;
   std::set<std::pair<UniquePid, int64_t>> truncated_graphs_;
+
+  StringPool::Id cleaner_thunk_str_id_;
+  StringPool::Id referent_str_id_;
+  StringPool::Id cleaner_thunk_this0_str_id_;
+  StringPool::Id native_size_str_id_;
+  StringPool::Id cleaner_next_str_id_;
 };
 
 }  // namespace trace_processor

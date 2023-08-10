@@ -17,83 +17,6 @@ using testing::UnorderedElementsAre;
 
 namespace blink {
 
-TEST(ClientHintsTest, SerializeLangClientHint) {
-  std::string header = SerializeLangClientHint("");
-  EXPECT_TRUE(header.empty());
-
-  header = SerializeLangClientHint("es");
-  EXPECT_EQ(std::string("\"es\""), header);
-
-  header = SerializeLangClientHint("en-US,fr,de");
-  EXPECT_EQ(std::string("\"en-US\", \"fr\", \"de\""), header);
-
-  header = SerializeLangClientHint("en-US,fr,de,ko,zh-CN,ja");
-  EXPECT_EQ(std::string("\"en-US\", \"fr\", \"de\", \"ko\", \"zh-CN\", \"ja\""),
-            header);
-}
-
-TEST(ClientHintsTest, FilterAcceptCH) {
-  EXPECT_FALSE(FilterAcceptCH(base::nullopt, true, true).has_value());
-
-  base::Optional<std::vector<network::mojom::WebClientHintsType>> result;
-
-  result =
-      FilterAcceptCH(std::vector<network::mojom::WebClientHintsType>(
-                         {network::mojom::WebClientHintsType::kDeviceMemory,
-                          network::mojom::WebClientHintsType::kRtt,
-                          network::mojom::WebClientHintsType::kUA}),
-                     /* permit_lang_hints = */ false,
-                     /* permit_ua_hints = */ true);
-  ASSERT_TRUE(result.has_value());
-  EXPECT_THAT(
-      result.value(),
-      UnorderedElementsAre(network::mojom::WebClientHintsType::kDeviceMemory,
-                           network::mojom::WebClientHintsType::kRtt,
-                           network::mojom::WebClientHintsType::kUA));
-
-  std::vector<network::mojom::WebClientHintsType> in{
-      network::mojom::WebClientHintsType::kRtt,
-      network::mojom::WebClientHintsType::kLang,
-      network::mojom::WebClientHintsType::kUA,
-      network::mojom::WebClientHintsType::kUAArch,
-      network::mojom::WebClientHintsType::kUAPlatform,
-      network::mojom::WebClientHintsType::kUAPlatformVersion,
-      network::mojom::WebClientHintsType::kUAModel,
-      network::mojom::WebClientHintsType::kUAMobile,
-      network::mojom::WebClientHintsType::kUAFullVersion};
-
-  result = FilterAcceptCH(in,
-                          /* permit_lang_hints = */ true,
-                          /* permit_ua_hints = */ false);
-  ASSERT_TRUE(result.has_value());
-  EXPECT_THAT(result.value(),
-              UnorderedElementsAre(network::mojom::WebClientHintsType::kRtt,
-                                   network::mojom::WebClientHintsType::kLang));
-
-  result = FilterAcceptCH(in,
-                          /* permit_lang_hints = */ true,
-                          /* permit_ua_hints = */ true);
-  ASSERT_TRUE(result.has_value());
-  EXPECT_THAT(result.value(),
-              UnorderedElementsAre(
-                  network::mojom::WebClientHintsType::kRtt,
-                  network::mojom::WebClientHintsType::kLang,
-                  network::mojom::WebClientHintsType::kUA,
-                  network::mojom::WebClientHintsType::kUAArch,
-                  network::mojom::WebClientHintsType::kUAPlatform,
-                  network::mojom::WebClientHintsType::kUAPlatformVersion,
-                  network::mojom::WebClientHintsType::kUAModel,
-                  network::mojom::WebClientHintsType::kUAMobile,
-                  network::mojom::WebClientHintsType::kUAFullVersion));
-
-  result = FilterAcceptCH(in,
-                          /* permit_lang_hints = */ false,
-                          /* permit_ua_hints = */ false);
-  ASSERT_TRUE(result.has_value());
-  EXPECT_THAT(result.value(),
-              UnorderedElementsAre(network::mojom::WebClientHintsType::kRtt));
-}
-
 // Checks that the removed header list doesn't include legacy headers nor the
 // on-by-default ones, when the kAllowClientHintsToThirdParty flag is on.
 TEST(ClientHintsTest, FindClientHintsToRemoveLegacy) {
@@ -102,11 +25,16 @@ TEST(ClientHintsTest, FindClientHintsToRemoveLegacy) {
       features::kAllowClientHintsToThirdParty);
   std::vector<std::string> removed_headers;
   FindClientHintsToRemove(nullptr, GURL(), &removed_headers);
-  EXPECT_THAT(removed_headers,
-              UnorderedElementsAre("rtt", "downlink", "ect", "sec-ch-lang",
-                                   "sec-ch-ua-arch", "sec-ch-ua-platform",
-                                   "sec-ch-ua-model", "sec-ch-ua-full-version",
-                                   "sec-ch-ua-platform-version"));
+  EXPECT_THAT(
+      removed_headers,
+      UnorderedElementsAre(
+          "rtt", "downlink", "ect", "sec-ch-ua-arch", "sec-ch-ua-model",
+          "sec-ch-ua-full-version", "sec-ch-ua-platform-version",
+          "sec-ch-prefers-color-scheme", "sec-ch-ua-bitness",
+          "sec-ch-ua-reduced", "sec-ch-viewport-height", "sec-ch-device-memory",
+          "sec-ch-dpr", "sec-ch-width", "sec-ch-viewport-width",
+          "sec-ch-ua-full-version-list", "sec-ch-ua-full", "sec-ch-ua-wow64",
+          "sec-ch-partitioned-cookies"));
 }
 
 // Checks that the removed header list includes legacy headers but not the
@@ -117,11 +45,15 @@ TEST(ClientHintsTest, FindClientHintsToRemoveNoLegacy) {
       features::kAllowClientHintsToThirdParty);
   std::vector<std::string> removed_headers;
   FindClientHintsToRemove(nullptr, GURL(), &removed_headers);
-  EXPECT_THAT(removed_headers,
-              UnorderedElementsAre(
-                  "device-memory", "dpr", "width", "viewport-width", "rtt",
-                  "downlink", "ect", "sec-ch-lang", "sec-ch-ua-arch",
-                  "sec-ch-ua-platform", "sec-ch-ua-model",
-                  "sec-ch-ua-full-version", "sec-ch-ua-platform-version"));
+  EXPECT_THAT(
+      removed_headers,
+      UnorderedElementsAre(
+          "device-memory", "dpr", "width", "viewport-width", "rtt", "downlink",
+          "ect", "sec-ch-ua-arch", "sec-ch-ua-model", "sec-ch-ua-full-version",
+          "sec-ch-ua-platform-version", "sec-ch-prefers-color-scheme",
+          "sec-ch-ua-bitness", "sec-ch-ua-reduced", "sec-ch-viewport-height",
+          "sec-ch-device-memory", "sec-ch-dpr", "sec-ch-width",
+          "sec-ch-viewport-width", "sec-ch-ua-full-version-list",
+          "sec-ch-ua-full", "sec-ch-ua-wow64", "sec-ch-partitioned-cookies"));
 }
 }  // namespace blink

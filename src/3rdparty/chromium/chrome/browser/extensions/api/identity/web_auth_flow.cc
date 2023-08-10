@@ -10,9 +10,9 @@
 #include "base/base64.h"
 #include "base/location.h"
 #include "base/notreached.h"
-#include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/trace_event.h"
 #include "chrome/browser/extensions/component_loader.h"
@@ -106,18 +106,18 @@ void WebAuthFlow::Start() {
 
   // identityPrivate.onWebFlowRequest(app_window_key, provider_url_, mode_)
   std::unique_ptr<base::ListValue> args(new base::ListValue());
-  args->AppendString(app_window_key_);
-  args->AppendString(provider_url_.spec());
+  args->Append(app_window_key_);
+  args->Append(provider_url_.spec());
   if (mode_ == WebAuthFlow::INTERACTIVE)
-    args->AppendString("interactive");
+    args->Append("interactive");
   else
-    args->AppendString("silent");
-  args->AppendString(GetPartitionName(partition_));
+    args->Append("silent");
+  args->Append(GetPartitionName(partition_));
 
   auto event =
       std::make_unique<Event>(events::IDENTITY_PRIVATE_ON_WEB_FLOW_REQUEST,
                               identity_private::OnWebFlowRequest::kEventName,
-                              std::move(args), profile_);
+                              std::move(*args).TakeListDeprecated(), profile_);
   ExtensionSystem* system = ExtensionSystem::Get(profile_);
 
   extensions::ComponentLoader* component_loader =
@@ -138,8 +138,8 @@ void WebAuthFlow::DetachDelegateAndDelete() {
 }
 
 content::StoragePartition* WebAuthFlow::GetGuestPartition() {
-  return content::BrowserContext::GetStoragePartition(
-      profile_, GetWebViewPartitionConfig(partition_, profile_));
+  return profile_->GetStoragePartition(
+      GetWebViewPartitionConfig(partition_, profile_));
 }
 
 const std::string& WebAuthFlow::GetAppWindowKey() const {
@@ -153,7 +153,8 @@ content::StoragePartitionConfig WebAuthFlow::GetWebViewPartitionConfig(
   // This has to mirror the logic in WebViewGuest::CreateWebContents for
   // creating the correct StoragePartitionConfig.
   auto result = content::StoragePartitionConfig::Create(
-      extension_misc::kIdentityApiUiAppId, GetPartitionName(partition),
+      browser_context, extension_misc::kIdentityApiUiAppId,
+      GetPartitionName(partition),
       /*in_memory=*/true);
   result.set_fallback_to_partition_domain_for_blob_urls(
       browser_context->IsOffTheRecord()
@@ -205,7 +206,8 @@ void WebAuthFlow::InnerWebContentsCreated(
   WebContentsObserver::Observe(inner_web_contents);
 }
 
-void WebAuthFlow::RenderProcessGone(base::TerminationStatus status) {
+void WebAuthFlow::PrimaryMainFrameRenderProcessGone(
+    base::TerminationStatus status) {
   if (delegate_)
     delegate_->OnAuthFlowFailure(WebAuthFlow::WINDOW_CLOSED);
 }
@@ -221,13 +223,14 @@ void WebAuthFlow::DidStopLoading() {
 
 void WebAuthFlow::DidStartNavigation(
     content::NavigationHandle* navigation_handle) {
-  if (navigation_handle->IsInMainFrame())
+  if (navigation_handle->IsInPrimaryMainFrame())
     BeforeUrlLoaded(navigation_handle->GetURL());
 }
 
 void WebAuthFlow::DidRedirectNavigation(
     content::NavigationHandle* navigation_handle) {
-  BeforeUrlLoaded(navigation_handle->GetURL());
+  if (navigation_handle->IsInPrimaryMainFrame())
+    BeforeUrlLoaded(navigation_handle->GetURL());
 }
 
 void WebAuthFlow::DidFinishNavigation(
@@ -235,7 +238,7 @@ void WebAuthFlow::DidFinishNavigation(
   // Websites may create and remove <iframe> during the auth flow. In
   // particular, to integrate CAPTCHA tests. Chrome shouldn't abort the auth
   // flow if a navigation failed in a sub-frame. https://crbug.com/1049565.
-  if (!navigation_handle->IsInMainFrame())
+  if (!navigation_handle->IsInPrimaryMainFrame())
     return;
 
   bool failed = false;

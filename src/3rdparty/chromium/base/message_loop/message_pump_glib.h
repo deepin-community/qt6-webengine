@@ -8,10 +8,8 @@
 #include <memory>
 
 #include "base/base_export.h"
-#include "base/macros.h"
 #include "base/message_loop/message_pump.h"
 #include "base/message_loop/watchable_io_message_pump_posix.h"
-#include "base/observer_list.h"
 #include "base/threading/thread_checker.h"
 #include "base/time/time.h"
 
@@ -29,6 +27,10 @@ class BASE_EXPORT MessagePumpGlib : public MessagePump,
   class FdWatchController : public FdWatchControllerInterface {
    public:
     explicit FdWatchController(const Location& from_here);
+
+    FdWatchController(const FdWatchController&) = delete;
+    FdWatchController& operator=(const FdWatchController&) = delete;
+
     ~FdWatchController() override;
 
     // FdWatchControllerInterface:
@@ -66,11 +68,13 @@ class BASE_EXPORT MessagePumpGlib : public MessagePump,
     // If this pointer is non-null, the pointee is set to true in the
     // destructor.
     bool* was_destroyed_ = nullptr;
-
-    DISALLOW_COPY_AND_ASSIGN(FdWatchController);
   };
 
   MessagePumpGlib();
+
+  MessagePumpGlib(const MessagePumpGlib&) = delete;
+  MessagePumpGlib& operator=(const MessagePumpGlib&) = delete;
+
   ~MessagePumpGlib() override;
 
   // Part of WatchableIOMessagePumpPosix interface.
@@ -95,7 +99,8 @@ class BASE_EXPORT MessagePumpGlib : public MessagePump,
   void Run(Delegate* delegate) override;
   void Quit() override;
   void ScheduleWork() override;
-  void ScheduleDelayedWork(const TimeTicks& delayed_work_time) override;
+  void ScheduleDelayedWork(
+      const Delegate::NextWorkInfo& next_work_info) override;
 
   // Internal methods used for processing the FdWatchSource callbacks. As for
   // main pump callbacks, they are public for simplicity but should not be used
@@ -132,8 +137,6 @@ class BASE_EXPORT MessagePumpGlib : public MessagePump,
   std::unique_ptr<GPollFD> wakeup_gpollfd_;
 
   THREAD_CHECKER(watch_fd_caller_checker_);
-
-  DISALLOW_COPY_AND_ASSIGN(MessagePumpGlib);
 };
 
 }  // namespace base

@@ -10,14 +10,14 @@
 #include <string>
 #include <vector>
 
-#include "base/containers/span.h"
-#include "base/macros.h"
+#include "base/containers/flat_map.h"
 #include "base/no_destructor.h"
 #include "base/synchronization/lock.h"
 #include "components/autofill/core/browser/address_rewriter.h"
 #include "components/autofill/core/browser/autofill_type.h"
 #include "components/autofill/core/browser/data_model/autofill_structured_address_constants.h"
 #include "components/autofill/core/browser/field_types.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/re2/src/re2/re2.h"
 
 namespace autofill {
@@ -25,9 +25,9 @@ namespace structured_address {
 
 struct AddressToken {
   // The original value.
-  base::string16 value;
+  std::u16string value;
   // The normalized value.
-  base::string16 normalized_value;
+  std::u16string normalized_value;
   // The token position in the original string.
   int position;
 };
@@ -63,8 +63,9 @@ struct SortedTokenComparisonResult {
   explicit SortedTokenComparisonResult(
       SortedTokenComparisonStatus status,
       std::vector<AddressToken> additional_tokens = {});
+  SortedTokenComparisonResult(SortedTokenComparisonResult&& other);
+  SortedTokenComparisonResult& operator=(SortedTokenComparisonResult&& other);
   ~SortedTokenComparisonResult();
-  SortedTokenComparisonResult(const SortedTokenComparisonResult& other);
   // The status of the token comparison.
   SortedTokenComparisonStatus status = DISTINCT;
   // The additional elements in the super/subsets.
@@ -150,21 +151,21 @@ class RewriterCache {
 
   // Applies the rewriter to |text| for a specific county given by
   // |country_code|.
-  static base::string16 Rewrite(const base::string16& country_code,
-                                const base::string16& text);
+  static std::u16string Rewrite(const std::u16string& country_code,
+                                const std::u16string& text);
 
  private:
   RewriterCache();
 
   // Returns the Rewriter for |country_code|.
-  const AddressRewriter& GetRewriter(const base::string16& country_code);
+  const AddressRewriter& GetRewriter(const std::u16string& country_code);
 
   // Since the constructor is private, |base::NoDestructor| must be friend to be
   // allowed to construct the cache.
   friend class base::NoDestructor<RewriterCache>;
 
   // Stores a country-specific Rewriter keyed by its corresponding |pattern|.
-  std::map<base::string16, const AddressRewriter> rewriter_map_;
+  std::map<std::u16string, const AddressRewriter> rewriter_map_;
 
   // A lock to prevent concurrent access to the map.
   base::Lock lock_;
@@ -190,23 +191,19 @@ bool HasMiddleNameInitialsCharacteristics(const std::string& middle_name);
 
 // Reduces a name to the initials in upper case.
 // Example: George walker -> GW, Hans-Peter -> HP
-base::string16 ReduceToInitials(const base::string16& value);
+std::u16string ReduceToInitials(const std::u16string& value);
 
 // Parses |value| with an regular expression defined by |pattern|.
-// Returns true on success meaning that the expressions is fully matched.
-// The matching results are written into the supplied |result_map|, keyed by the
-// name of the capture group with the captured substrings as the value.
-bool ParseValueByRegularExpression(
-    const std::string& value,
-    const std::string& pattern,
-    std::map<std::string, std::string>* result_map);
+// If the expression is fully matched, returns the matching results, keyed by
+// the name of the capture group with the captured substrings as the value.
+// Otherwise returns `nullopt`.
+absl::optional<base::flat_map<std::string, std::string>>
+ParseValueByRegularExpression(const std::string& value, const RE2* regex);
 
-// Same as above, but accepts a compiled regular expression instead of the
-// pattern.
-bool ParseValueByRegularExpression(
-    const std::string& value,
-    const RE2* regex,
-    std::map<std::string, std::string>* result_map);
+// Same as above, but accepts pattern instead of a compiled regular expression.
+absl::optional<base::flat_map<std::string, std::string>>
+ParseValueByRegularExpression(const std::string& value,
+                              const std::string& pattern);
 
 // Returns a compiled case sensitive regular expression for |pattern|.
 std::unique_ptr<const RE2> BuildRegExFromPattern(const std::string& pattern);
@@ -287,7 +284,7 @@ std::string CaptureTypeWithPattern(
 // removes diacritics.
 // If |keep_white_spaces| is true, white spaces are collapsed. Otherwise,
 // white spaces are completely removed.
-base::string16 NormalizeValue(const base::StringPiece16 value,
+std::u16string NormalizeValue(const base::StringPiece16 value,
                               bool keep_white_space = true);
 
 // Returns true of both vectors contain the same tokens in the same order.
@@ -295,13 +292,13 @@ bool AreSortedTokensEqual(const std::vector<AddressToken>& first,
                           const std::vector<AddressToken>& second);
 
 // Returns true if both strings contain the same tokens after normalization.
-bool AreStringTokenEquivalent(const base::string16& one,
-                              const base::string16& other);
+bool AreStringTokenEquivalent(const std::u16string& one,
+                              const std::u16string& other);
 
 // Returns a sorted vector containing the tokens of |value| after |value| was
 // canonicalized. |value| is tokenized by splitting it by white spaces and
 // commas.
-std::vector<AddressToken> TokenizeValue(const base::string16 value);
+std::vector<AddressToken> TokenizeValue(const std::u16string value);
 
 // Compares two vectors of sorted AddressTokens and returns the
 // SortedTokenComparisonResult;
@@ -310,8 +307,8 @@ SortedTokenComparisonResult CompareSortedTokens(
     const std::vector<AddressToken>& second);
 
 // Convenience wrapper to supply untokenized strings.
-SortedTokenComparisonResult CompareSortedTokens(const base::string16& first,
-                                                const base::string16& second);
+SortedTokenComparisonResult CompareSortedTokens(const std::u16string& first,
+                                                const std::u16string& second);
 
 }  // namespace structured_address
 

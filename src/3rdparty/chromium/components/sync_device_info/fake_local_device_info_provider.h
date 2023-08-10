@@ -5,9 +5,6 @@
 #ifndef COMPONENTS_SYNC_DEVICE_INFO_FAKE_LOCAL_DEVICE_INFO_PROVIDER_H_
 #define COMPONENTS_SYNC_DEVICE_INFO_FAKE_LOCAL_DEVICE_INFO_PROVIDER_H_
 
-#include <memory>
-
-#include "base/macros.h"
 #include "components/sync_device_info/device_info.h"
 #include "components/sync_device_info/local_device_info_provider.h"
 
@@ -16,6 +13,11 @@ namespace syncer {
 class FakeLocalDeviceInfoProvider : public LocalDeviceInfoProvider {
  public:
   FakeLocalDeviceInfoProvider();
+
+  FakeLocalDeviceInfoProvider(const FakeLocalDeviceInfoProvider&) = delete;
+  FakeLocalDeviceInfoProvider& operator=(const FakeLocalDeviceInfoProvider&) =
+      delete;
+
   ~FakeLocalDeviceInfoProvider() override;
 
   // Overrides for LocalDeviceInfoProvider.
@@ -30,9 +32,7 @@ class FakeLocalDeviceInfoProvider : public LocalDeviceInfoProvider {
  private:
   DeviceInfo device_info_;
   bool ready_ = true;
-  base::CallbackList<void(void)> callback_list_;
-
-  DISALLOW_COPY_AND_ASSIGN(FakeLocalDeviceInfoProvider);
+  base::RepeatingClosureList closure_list_;
 };
 
 }  // namespace syncer

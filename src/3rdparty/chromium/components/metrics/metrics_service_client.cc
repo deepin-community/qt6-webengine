@@ -11,11 +11,11 @@
 #include "base/logging.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
+#include "build/build_config.h"
 #include "components/metrics/metrics_switches.h"
 #include "components/metrics/url_constants.h"
 
 namespace metrics {
-
 namespace {
 
 // The minimum time in seconds between consecutive metrics report uploads.
@@ -25,7 +25,12 @@ constexpr int kMetricsUploadIntervalSecMinimum = 20;
 // then we will discard the log, and not try to retransmit it. We also don't
 // persist the log to the prefs for transmission during the next chrome session
 // if this limit is exceeded.
+#if BUILDFLAG(IS_CHROMEOS)
+// Increase CrOS limit to accommodate SampledProfile data (crbug.com/1210595).
+constexpr size_t kMaxOngoingLogSize = 1024 * 1024;  // 1 MiB
+#else
 constexpr size_t kMaxOngoingLogSize = 100 * 1024;  // 100 KiB
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 // The number of bytes of logs to save of each type (initial/ongoing). This
 // ensures that a reasonable amount of history will be stored even if there is a
@@ -58,6 +63,10 @@ ukm::UkmService* MetricsServiceClient::GetUkmService() {
   return nullptr;
 }
 
+bool MetricsServiceClient::ShouldUploadMetricsForUserId(uint64_t user_id) {
+  return true;
+}
+
 GURL MetricsServiceClient::GetMetricsServerUrl() {
   return GURL(kNewMetricsServerUrl);
 }
@@ -76,7 +85,7 @@ base::TimeDelta MetricsServiceClient::GetUploadInterval() {
         metrics::switches::kMetricsUploadIntervalSec);
     int custom_upload_interval;
     if (base::StringToInt(switch_value, &custom_upload_interval)) {
-      return base::TimeDelta::FromSeconds(
+      return base::Seconds(
           std::max(custom_upload_interval, kMetricsUploadIntervalSecMinimum));
     }
     LOG(DFATAL) << "Malformed value for --metrics-upload-interval. "
@@ -117,7 +126,7 @@ bool MetricsServiceClient::AreNotificationListenersEnabledOnAllProfiles() {
   return false;
 }
 
-std::string MetricsServiceClient::GetAppPackageName() {
+std::string MetricsServiceClient::GetAppPackageNameIfLoggable() {
   return std::string();
 }
 
@@ -150,8 +159,16 @@ void MetricsServiceClient::UpdateRunningServices() {
 }
 
 bool MetricsServiceClient::IsMetricsReportingForceEnabled() const {
-  return base::CommandLine::ForCurrentProcess()->HasSwitch(
-      switches::kForceEnableMetricsReporting);
+  return ::metrics::IsMetricsReportingForceEnabled();
+}
+
+absl::optional<bool> MetricsServiceClient::GetCurrentUserMetricsConsent()
+    const {
+  return absl::nullopt;
+}
+
+absl::optional<std::string> MetricsServiceClient::GetCurrentUserId() const {
+  return absl::nullopt;
 }
 
 }  // namespace metrics

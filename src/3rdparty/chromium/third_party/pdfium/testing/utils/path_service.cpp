@@ -4,11 +4,16 @@
 
 #include "testing/utils/path_service.h"
 
+#include <stddef.h>
+
 #ifdef _WIN32
 #include <Windows.h>
 #elif defined(__APPLE__)
 #include <mach-o/dyld.h>
 #include <sys/stat.h>
+#elif defined(__Fuchsia__)
+#include <sys/stat.h>
+#include <unistd.h>
 #else  // Linux
 #include <linux/limits.h>
 #include <sys/stat.h>
@@ -22,7 +27,8 @@
 
 namespace {
 
-#if defined(__APPLE__) || (defined(ANDROID) && __ANDROID_API__ < 21)
+#if defined(__APPLE__) || defined(__Fuchsia__) || \
+    (defined(ANDROID) && __ANDROID_API__ < 21)
 using stat_wrapper_t = struct stat;
 
 int CallStat(const char* path, stat_wrapper_t* sb) {
@@ -90,10 +96,10 @@ bool PathService::GetExecutableDir(std::string* path) {
 #endif  // _WIN32
 
   // Get the directory path.
-  std::size_t pos = path->size() - 1;
+  size_t pos = path->size() - 1;
   if (EndsWithSeparator(*path))
     pos--;
-  std::size_t found = path->find_last_of(PATH_SEPARATOR, pos);
+  size_t found = path->find_last_of(PATH_SEPARATOR, pos);
   if (found == std::string::npos)
     return false;
   path->resize(found);
@@ -173,7 +179,10 @@ bool PathService::GetThirdPartyFilePath(const std::string& file_name,
 
   std::string potential_path = *path;
   potential_path.append("third_party");
-  if (PathService::DirectoryExists(potential_path)) {
+
+  // Use third_party/bigint as a way to distinguish PDFium's vs. other's.
+  std::string bigint = potential_path + PATH_SEPARATOR + "bigint";
+  if (PathService::DirectoryExists(bigint)) {
     *path = potential_path;
     path->append(PATH_SEPARATOR + file_name);
     return true;
@@ -185,6 +194,7 @@ bool PathService::GetThirdPartyFilePath(const std::string& file_name,
   potential_path.append("pdfium");
   potential_path.push_back(PATH_SEPARATOR);
   potential_path.append("third_party");
+  bigint = potential_path + PATH_SEPARATOR + "bigint";
   if (PathService::DirectoryExists(potential_path)) {
     *path = potential_path;
     path->append(PATH_SEPARATOR + file_name);

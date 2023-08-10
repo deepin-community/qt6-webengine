@@ -7,7 +7,7 @@
 #include <memory>
 #include <utility>
 
-#include "base/macros.h"
+#include "base/callback_helpers.h"
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/public/platform/web_set_sink_id_callbacks.h"
 #include "third_party/blink/public/web/web_local_frame_client.h"
@@ -17,7 +17,7 @@
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/web_local_frame_impl.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
-#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/heap/persistent.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 
@@ -54,20 +54,24 @@ class SetSinkIdResolver : public ScriptPromiseResolver {
                                    HTMLMediaElement&,
                                    const String& sink_id);
   SetSinkIdResolver(ScriptState*, HTMLMediaElement&, const String& sink_id);
+
+  SetSinkIdResolver(const SetSinkIdResolver&) = delete;
+  SetSinkIdResolver& operator=(const SetSinkIdResolver&) = delete;
+
   ~SetSinkIdResolver() override = default;
   void StartAsync();
+
+  void Start();
 
   void Trace(Visitor*) const override;
 
  private:
   void DoSetSinkId();
 
-  void OnSetSinkIdComplete(base::Optional<WebSetSinkIdError> error);
+  void OnSetSinkIdComplete(absl::optional<WebSetSinkIdError> error);
 
   Member<HTMLMediaElement> element_;
   String sink_id_;
-
-  DISALLOW_COPY_AND_ASSIGN(SetSinkIdResolver);
 };
 
 SetSinkIdResolver* SetSinkIdResolver::Create(ScriptState* script_state,
@@ -93,6 +97,25 @@ void SetSinkIdResolver::StartAsync() {
   context->GetTaskRunner(TaskType::kInternalMedia)
       ->PostTask(FROM_HERE, WTF::Bind(&SetSinkIdResolver::DoSetSinkId,
                                       WrapWeakPersistent(this)));
+}
+
+void SetSinkIdResolver::Start() {
+  auto* context = GetExecutionContext();
+  if (!context || context->IsContextDestroyed())
+    return;
+
+  if (LocalDOMWindow* window = DynamicTo<LocalDOMWindow>(context)) {
+    if (window->document()->IsPrerendering()) {
+      window->document()->AddPostPrerenderingActivationStep(
+          WTF::Bind(&SetSinkIdResolver::Start, WrapWeakPersistent(this)));
+      return;
+    }
+  }
+
+  if (sink_id_ == HTMLMediaElementAudioOutputDevice::sinkId(*element_))
+    Resolve();
+  else
+    StartAsync();
 }
 
 void SetSinkIdResolver::DoSetSinkId() {
@@ -132,7 +155,7 @@ void SetSinkIdResolver::DoSetSinkId() {
 }
 
 void SetSinkIdResolver::OnSetSinkIdComplete(
-    base::Optional<WebSetSinkIdError> error) {
+    absl::optional<WebSetSinkIdError> error) {
   if (!GetExecutionContext() || GetExecutionContext()->IsContextDestroyed())
     return;
 
@@ -188,11 +211,7 @@ ScriptPromise HTMLMediaElementAudioOutputDevice::setSinkId(
   SetSinkIdResolver* resolver =
       SetSinkIdResolver::Create(script_state, element, sink_id);
   ScriptPromise promise = resolver->Promise();
-  if (sink_id == HTMLMediaElementAudioOutputDevice::sinkId(element))
-    resolver->Resolve();
-  else
-    resolver->StartAsync();
-
+  resolver->Start();
   return promise;
 }
 

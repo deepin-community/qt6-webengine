@@ -22,6 +22,7 @@
 #include "avcodec.h"
 #include "internal.h"
 #include "bytestream.h"
+#include "codec_internal.h"
 #include "libavutil/imgutils.h"
 
 static int pgx_get_number(AVCodecContext *avctx, GetByteContext *g, int *number) {
@@ -95,7 +96,7 @@ error:
 }
 
 #define WRITE_FRAME(D, PIXEL, suffix)                                                       \
-    static inline void write_frame_ ##D(AVPacket *avpkt, AVFrame *frame, GetByteContext *g, \
+    static inline void write_frame_ ##D(AVFrame *frame, GetByteContext *g, \
                                         int width, int height, int sign, int depth)         \
     {                                                                                       \
         int i, j;                                                                           \
@@ -151,18 +152,18 @@ static int pgx_decode_frame(AVCodecContext *avctx, void *data,
     p->key_frame = 1;
     avctx->bits_per_raw_sample = depth;
     if (bpp == 8)
-        write_frame_8(avpkt, p, &g, width, height, sign, depth);
+        write_frame_8(p, &g, width, height, sign, depth);
     else if (bpp == 16)
-        write_frame_16(avpkt, p, &g, width, height, sign, depth);
+        write_frame_16(p, &g, width, height, sign, depth);
     *got_frame = 1;
     return 0;
 }
 
-AVCodec ff_pgx_decoder = {
-    .name           = "pgx",
-    .long_name      = NULL_IF_CONFIG_SMALL("PGX (JPEG2000 Test Format)"),
-    .type           = AVMEDIA_TYPE_VIDEO,
-    .id             = AV_CODEC_ID_PGX,
+const FFCodec ff_pgx_decoder = {
+    .p.name         = "pgx",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("PGX (JPEG2000 Test Format)"),
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_PGX,
+    .p.capabilities = AV_CODEC_CAP_DR1,
     .decode         = pgx_decode_frame,
-    .capabilities   = AV_CODEC_CAP_DR1,
 };

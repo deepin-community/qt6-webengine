@@ -1,12 +1,10 @@
 import hashlib
 import json
 import os
-from six.moves.urllib.parse import urlsplit
+from urllib.parse import urlsplit
 from abc import ABCMeta, abstractmethod
-from six.moves.queue import Empty
+from queue import Empty
 from collections import defaultdict, deque
-from six import ensure_binary, iteritems
-from six.moves import range
 
 from . import manifestinclude
 from . import manifestexpected
@@ -22,12 +20,12 @@ download_from_github = None
 def do_delayed_imports():
     # This relies on an already loaded module having set the sys.path correctly :(
     global manifest, manifest_update, download_from_github
-    from manifest import manifest
+    from manifest import manifest  # type: ignore
     from manifest import update as manifest_update
-    from manifest.download import download_from_github
+    from manifest.download import download_from_github  # type: ignore
 
 
-class TestGroupsFile(object):
+class TestGroupsFile:
     """
     Mapping object representing {group name: [test ids]}
     """
@@ -41,7 +39,7 @@ class TestGroupsFile(object):
             raise
 
         self.group_by_test = {}
-        for group, test_ids in iteritems(self._data):
+        for group, test_ids in self._data.items():
             for test_id in test_ids:
                 self.group_by_test[test_id] = group
 
@@ -51,6 +49,16 @@ class TestGroupsFile(object):
     def __getitem__(self, key):
         return self._data[key]
 
+def read_include_from_file(file):
+    new_include = []
+    with open(file) as f:
+        for line in f:
+            line = line.strip()
+            # Allow whole-line comments;
+            # fragments mean we can't have partial line #-based comments
+            if len(line) > 0 and not line.startswith("#"):
+                new_include.append(line)
+    return new_include
 
 def update_include_for_groups(test_groups, include):
     if include is None:
@@ -66,7 +74,7 @@ def update_include_for_groups(test_groups, include):
     return new_include
 
 
-class TestChunker(object):
+class TestChunker:
     def __init__(self, total_chunks, chunk_number, **kwargs):
         self.total_chunks = total_chunks
         self.chunk_number = chunk_number
@@ -85,15 +93,14 @@ class Unchunked(TestChunker):
         assert self.total_chunks == 1
 
     def __call__(self, manifest, **kwargs):
-        for item in manifest:
-            yield item
+        yield from manifest
 
 
 class HashChunker(TestChunker):
     def __call__(self, manifest):
         chunk_index = self.chunk_number - 1
         for test_type, test_path, tests in manifest:
-            h = int(hashlib.md5(ensure_binary(test_path)).hexdigest(), 16)
+            h = int(hashlib.md5(test_path.encode()).hexdigest(), 16)
             if h % self.total_chunks == chunk_index:
                 yield test_type, test_path, tests
 
@@ -112,12 +119,12 @@ class DirectoryHashChunker(TestChunker):
                 hash_path = os.path.sep.join(os.path.dirname(test_path).split(os.path.sep, depth)[:depth])
             else:
                 hash_path = os.path.dirname(test_path)
-            h = int(hashlib.md5(ensure_binary(hash_path)).hexdigest(), 16)
+            h = int(hashlib.md5(hash_path.encode()).hexdigest(), 16)
             if h % self.total_chunks == chunk_index:
                 yield test_type, test_path, tests
 
 
-class TestFilter(object):
+class TestFilter:
     """Callable that restricts the set of tests in a given manifest according
     to initial criteria"""
     def __init__(self, test_manifests, include=None, exclude=None, manifest_path=None, explicit=False):
@@ -149,7 +156,7 @@ class TestFilter(object):
                 yield test_type, test_path, include_tests
 
 
-class TagFilter(object):
+class TagFilter:
     def __init__(self, tags):
         self.tags = set(tags)
 
@@ -159,7 +166,7 @@ class TagFilter(object):
                 yield test
 
 
-class ManifestLoader(object):
+class ManifestLoader:
     def __init__(self, test_paths, force_manifest_update=False, manifest_download=False,
                  types=None):
         do_delayed_imports()
@@ -173,7 +180,7 @@ class ManifestLoader(object):
 
     def load(self):
         rv = {}
-        for url_base, paths in iteritems(self.test_paths):
+        for url_base, paths in self.test_paths.items():
             manifest_file = self.load_manifest(url_base=url_base,
                                                **paths)
             path_data = {"url_base": url_base}
@@ -193,11 +200,10 @@ class ManifestLoader(object):
 def iterfilter(filters, iter):
     for f in filters:
         iter = f(iter)
-    for item in iter:
-        yield item
+    yield from iter
 
 
-class TestLoader(object):
+class TestLoader:
     """Loads tests according to a WPT manifest and any associated expectation files"""
     def __init__(self,
                  test_manifests,
@@ -209,7 +215,7 @@ class TestLoader(object):
                  chunk_number=1,
                  include_https=True,
                  include_h2=True,
-                 include_quic=False,
+                 include_webtransport_h3=False,
                  skip_timeout=False,
                  skip_implementation_status=None,
                  chunker_kwargs=None):
@@ -224,7 +230,7 @@ class TestLoader(object):
         self.disabled_tests = None
         self.include_https = include_https
         self.include_h2 = include_h2
-        self.include_quic = include_quic
+        self.include_webtransport_h3 = include_webtransport_h3
         self.skip_timeout = skip_timeout
         self.skip_implementation_status = skip_implementation_status
 
@@ -313,8 +319,6 @@ class TestLoader(object):
                 enabled = False
             if not self.include_h2 and test.environment["protocol"] == "h2":
                 enabled = False
-            if not self.include_quic and test.environment["quic"]:
-                enabled = False
             if self.skip_timeout and test.expected() == "TIMEOUT":
                 enabled = False
             if self.skip_implementation_status and test.implementation_status() in self.skip_implementation_status:
@@ -353,7 +357,7 @@ def get_test_src(**kwargs):
     return test_source_cls, test_source_kwargs, chunker_kwargs
 
 
-class TestSource(object):
+class TestSource:
     __metaclass__ = ABCMeta
 
     def __init__(self, test_queue):
@@ -472,7 +476,7 @@ class GroupFileTestSource(TestSource):
         mp = mpcontext.get_context()
         test_queue = mp.Queue()
 
-        for group_name, test_ids in iteritems(tests_by_group):
+        for group_name, test_ids in tests_by_group.items():
             group_metadata = {"scope": group_name}
             group = deque()
 

@@ -4,9 +4,11 @@
 
 #include "extensions/shell/browser/shell_desktop_controller_aura.h"
 
+#include <memory>
+
 #include "base/bind.h"
-#include "base/macros.h"
-#include "base/task/post_task.h"
+#include "base/memory/raw_ptr.h"
+#include "base/run_loop.h"
 #include "base/test/bind.h"
 #include "base/time/time.h"
 #include "components/keep_alive_registry/keep_alive_registry.h"
@@ -25,6 +27,11 @@ class ShellDesktopControllerAuraBrowserTest : public ShellApiTest {
  public:
   ShellDesktopControllerAuraBrowserTest() = default;
   ~ShellDesktopControllerAuraBrowserTest() override = default;
+
+  ShellDesktopControllerAuraBrowserTest(
+      const ShellDesktopControllerAuraBrowserTest&) = delete;
+  ShellDesktopControllerAuraBrowserTest& operator=(
+      const ShellDesktopControllerAuraBrowserTest&) = delete;
 
   // Loads and launches a platform app that opens an app window.
   void LoadAndLaunchApp() {
@@ -62,11 +69,20 @@ class ShellDesktopControllerAuraBrowserTest : public ShellApiTest {
     ShellApiTest::TearDownOnMainThread();
   }
 
-  ShellDesktopControllerAura* desktop_controller_ = nullptr;
+  void RunDesktopController() {
+    desktop_controller_->PreMainMessageLoopRun();
+
+    auto run_loop = std::make_unique<base::RunLoop>();
+    desktop_controller_->WillRunMainMessageLoop(run_loop);
+    run_loop->Run();
+
+    desktop_controller_->PostMainMessageLoopRun();
+  }
+
   scoped_refptr<const Extension> app_;
 
  private:
-  DISALLOW_COPY_AND_ASSIGN(ShellDesktopControllerAuraBrowserTest);
+  raw_ptr<ShellDesktopControllerAura> desktop_controller_ = nullptr;
 };
 
 // Test that closing the app window stops the DesktopController.
@@ -88,7 +104,7 @@ IN_PROC_BROWSER_TEST_F(ShellDesktopControllerAuraBrowserTest, CloseAppWindow) {
       }));
 
   // Start DesktopController. It should run until the last app window closes.
-  desktop_controller_->Run();
+  RunDesktopController();
   EXPECT_TRUE(test_succeeded)
       << "DesktopController quit before test completed.";
 }
@@ -128,10 +144,10 @@ IN_PROC_BROWSER_TEST_F(ShellDesktopControllerAuraBrowserTest, TwoAppWindows) {
             // closing the last window. If DesktopController::Run() finishes
             // before we close the last window and update |test_succeeded|, the
             // test fails.
-            base::TimeDelta::FromMilliseconds(500));
+            base::Milliseconds(500));
       }));
 
-  desktop_controller_->Run();
+  RunDesktopController();
   EXPECT_TRUE(test_succeeded)
       << "DesktopController quit before test completed.";
 }
@@ -168,10 +184,10 @@ IN_PROC_BROWSER_TEST_F(ShellDesktopControllerAuraBrowserTest, ReloadApp) {
               app_window->OnNativeClose();
               test_succeeded = true;
             }),
-            base::TimeDelta::FromMilliseconds(500));
+            base::Milliseconds(500));
       }));
 
-  desktop_controller_->Run();
+  RunDesktopController();
   EXPECT_TRUE(test_succeeded)
       << "DesktopController quit before test completed.";
 }

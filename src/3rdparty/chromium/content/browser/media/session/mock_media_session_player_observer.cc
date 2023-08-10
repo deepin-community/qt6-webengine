@@ -9,8 +9,14 @@
 namespace content {
 
 MockMediaSessionPlayerObserver::MockMediaSessionPlayerObserver(
-    RenderFrameHost* render_frame_host)
-    : MediaSessionPlayerObserver(), render_frame_host_(render_frame_host) {}
+    RenderFrameHost* render_frame_host,
+    media::MediaContentType media_content_type)
+    : render_frame_host_(render_frame_host),
+      media_content_type_(media_content_type) {}
+
+MockMediaSessionPlayerObserver::MockMediaSessionPlayerObserver(
+    media::MediaContentType media_content_type)
+    : MockMediaSessionPlayerObserver(nullptr, media_content_type) {}
 
 MockMediaSessionPlayerObserver::~MockMediaSessionPlayerObserver() = default;
 
@@ -42,6 +48,13 @@ void MockMediaSessionPlayerObserver::OnSeekBackward(int player_id,
   EXPECT_GE(player_id, 0);
   EXPECT_GT(players_.size(), static_cast<size_t>(player_id));
   ++received_seek_backward_calls_;
+}
+
+void MockMediaSessionPlayerObserver::OnSeekTo(int player_id,
+                                              base::TimeDelta seek_time) {
+  EXPECT_GE(player_id, 0);
+  EXPECT_GT(players_.size(), static_cast<size_t>(player_id));
+  ++received_seek_to_calls_;
 }
 
 void MockMediaSessionPlayerObserver::OnSetVolumeMultiplier(
@@ -82,7 +95,12 @@ void MockMediaSessionPlayerObserver::OnSetAudioSinkId(
   players_[player_id].audio_sink_id_ = raw_device_id;
 }
 
-base::Optional<media_session::MediaPosition>
+void MockMediaSessionPlayerObserver::OnSetMute(int player_id, bool mute) {
+  EXPECT_GE(player_id, 0);
+  EXPECT_GT(players_.size(), static_cast<size_t>(player_id));
+}
+
+absl::optional<media_session::MediaPosition>
 MockMediaSessionPlayerObserver::GetPosition(int player_id) const {
   EXPECT_GE(player_id, 0);
   EXPECT_GT(players_.size(), static_cast<size_t>(player_id));
@@ -150,6 +168,10 @@ int MockMediaSessionPlayerObserver::received_seek_backward_calls() const {
   return received_seek_backward_calls_;
 }
 
+int MockMediaSessionPlayerObserver::received_seek_to_calls() const {
+  return received_seek_to_calls_;
+}
+
 int MockMediaSessionPlayerObserver::received_enter_picture_in_picture_calls()
     const {
   return received_enter_picture_in_picture_calls_;
@@ -188,6 +210,16 @@ bool MockMediaSessionPlayerObserver::SupportsAudioOutputDeviceSwitching(
   EXPECT_GE(player_id, 0);
   EXPECT_GT(players_.size(), static_cast<size_t>(player_id));
   return players_.at(player_id).supports_device_switching_;
+}
+
+media::MediaContentType MockMediaSessionPlayerObserver::GetMediaContentType()
+    const {
+  return media_content_type_;
+}
+
+void MockMediaSessionPlayerObserver::SetMediaContentType(
+    media::MediaContentType media_content_type) {
+  media_content_type_ = media_content_type;
 }
 
 MockMediaSessionPlayerObserver::MockPlayer::MockPlayer(bool is_playing,

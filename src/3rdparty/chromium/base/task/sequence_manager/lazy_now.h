@@ -6,8 +6,8 @@
 #define BASE_TASK_SEQUENCE_MANAGER_LAZY_NOW_H_
 
 #include "base/base_export.h"
-#include "base/optional.h"
 #include "base/time/time.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace base {
 
@@ -33,8 +33,11 @@ class BASE_EXPORT LazyNow {
   bool has_value() const { return !!now_; }
 
  private:
+  // `tick_clock_` is not a raw_ptr<TickClock> as a performance optimization:
+  // The pointee doesn't need UaF protection (it has the same lifetime as the
+  // theead/sequence).
   const TickClock* tick_clock_;  // Not owned.
-  Optional<TimeTicks> now_;
+  absl::optional<TimeTicks> now_;
 };
 
 }  // namespace sequence_manager

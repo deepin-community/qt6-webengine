@@ -28,8 +28,9 @@
 //  (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 //  THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import {rgbaToHsla} from '../front_end/common/ColorUtils.js';
-import {Bounds, Quad} from './common.js';
+import {rgbaToHsla, rgbaToHwba} from '../front_end/core/common/ColorUtils.js';  // eslint-disable-line rulesdir/es_modules_import
+
+import type {Bounds, PathCommands, Quad} from './common.js';
 
 export type PathBounds = Bounds&{
   leftmostXForY: {[key: string]: number},
@@ -48,7 +49,7 @@ export interface BoxStyle {
   hatchColor?: string;
 }
 
-const enum LinePattern {
+export const enum LinePattern {
   Solid = 'solid',
   Dotted = 'dotted',
   Dashed = 'dashed',
@@ -146,8 +147,8 @@ export function emptyBounds(): PathBounds {
   const bounds = {
     minX: Number.MAX_VALUE,
     minY: Number.MAX_VALUE,
-    maxX: Number.MIN_VALUE,
-    maxY: Number.MIN_VALUE,
+    maxX: -Number.MAX_VALUE,
+    maxY: -Number.MAX_VALUE,
     leftmostXForY: {},
     rightmostXForY: {},
     topmostYForX: {},
@@ -257,7 +258,7 @@ export function parseHexa(hexa: string): Array<number> {
   return (hexa.match(/#(\w\w)(\w\w)(\w\w)(\w\w)/) || []).slice(1).map(c => parseInt(c, 16) / 255);
 }
 
-export function formatRgba(rgba: number[], colorFormat: 'rgb'|'hsl'): string {
+export function formatRgba(rgba: number[], colorFormat: 'rgb'|'hsl'|'hwb'): string {
   if (colorFormat === 'rgb') {
     const [r, g, b, a] = rgba;
     // rgb(r g b [ / a])
@@ -272,11 +273,18 @@ export function formatRgba(rgba: number[], colorFormat: 'rgb'|'hsl'): string {
         a === 1 ? '' : ' / ' + Math.round(a * 100) / 100})`;
   }
 
+  if (colorFormat === 'hwb') {
+    const [h, w, b, a] = rgbaToHwba(rgba);
+    // hwb(hdeg w b [ / a])
+    return `hwb(${Math.round(h * 360)}deg ${Math.round(w * 100)} ${Math.round(b * 100)}${
+        a === 1 ? '' : ' / ' + Math.round(a * 100) / 100})`;
+  }
+
   throw new Error('NOT_REACHED');
 }
 
 export function formatColor(hexa: string, colorFormat: string): string {
-  if (colorFormat === 'rgb' || colorFormat === 'hsl') {
+  if (colorFormat === 'rgb' || colorFormat === 'hsl' || colorFormat === 'hwb') {
     return formatRgba(parseHexa(hexa), colorFormat);
   }
 
@@ -286,4 +294,29 @@ export function formatColor(hexa: string, colorFormat: string): string {
   }
 
   return hexa;
+}
+
+export function drawPath(
+    context: CanvasRenderingContext2D, commands: PathCommands, fillColor: string|undefined,
+    outlineColor: string|undefined, outlinePattern: LinePattern|undefined, bounds: PathBounds,
+    emulationScaleFactor: number) {
+  context.save();
+  const path = buildPath(commands, bounds, emulationScaleFactor);
+  if (fillColor) {
+    context.fillStyle = fillColor;
+    context.fill(path);
+  }
+  if (outlineColor) {
+    if (outlinePattern === LinePattern.Dashed) {
+      context.setLineDash([3, 3]);
+    }
+    if (outlinePattern === LinePattern.Dotted) {
+      context.setLineDash([2, 2]);
+    }
+    context.lineWidth = 2;
+    context.strokeStyle = outlineColor;
+    context.stroke(path);
+  }
+  context.restore();
+  return path;
 }

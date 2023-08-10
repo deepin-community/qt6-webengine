@@ -6,10 +6,10 @@
 
 #include <fstream>
 #include <iostream>
+#include <string>
 
 #include "base/check.h"
 #include "base/files/file_util.h"
-#include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_split.h"
@@ -82,7 +82,7 @@ bool RulesetConverter::Convert() {
 
 bool RulesetConverter::SetInputFiles(
     const base::CommandLine::StringType& comma_separated_paths) {
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   std::wstring separatorw = L",";
   base::WStringPiece separator(separatorw);
 #else

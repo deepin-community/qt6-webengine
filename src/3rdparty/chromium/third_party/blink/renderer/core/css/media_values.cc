@@ -4,29 +4,42 @@
 
 #include "third_party/blink/renderer/core/css/media_values.h"
 
-#include "third_party/blink/public/common/widget/screen_info.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/platform/web_theme_engine.h"
 #include "third_party/blink/renderer/core/css/css_resolution_units.h"
+#include "third_party/blink/renderer/core/css/css_to_length_conversion_data.h"
 #include "third_party/blink/renderer/core/css/media_feature_overrides.h"
 #include "third_party/blink/renderer/core/css/media_values.h"
 #include "third_party/blink/renderer/core/css/media_values_cached.h"
 #include "third_party/blink/renderer/core/css/media_values_dynamic.h"
+#include "third_party/blink/renderer/core/css/style_engine.h"
 #include "third_party/blink/renderer/core/css_value_keywords.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/element.h"
+#include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
-#include "third_party/blink/renderer/core/layout/layout_object.h"
-#include "third_party/blink/renderer/core/layout/layout_view.h"
 #include "third_party/blink/renderer/core/page/chrome_client.h"
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/platform/graphics/color_space_gamut.h"
 #include "third_party/blink/renderer/platform/network/network_state_notifier.h"
 #include "third_party/blink/renderer/platform/widget/frame_widget.h"
+#include "ui/display/screen_info.h"
 
 namespace blink {
+
+ForcedColors CSSValueIDToForcedColors(CSSValueID id) {
+  switch (id) {
+    case CSSValueID::kActive:
+      return ForcedColors::kActive;
+    case CSSValueID::kNone:
+      return ForcedColors::kNone;
+    default:
+      NOTREACHED();
+      return ForcedColors::kNone;
+  }
+}
 
 mojom::blink::PreferredColorScheme CSSValueIDToPreferredColorScheme(
     CSSValueID id) {
@@ -41,29 +54,139 @@ mojom::blink::PreferredColorScheme CSSValueIDToPreferredColorScheme(
   }
 }
 
+mojom::blink::PreferredContrast CSSValueIDToPreferredContrast(CSSValueID id) {
+  switch (id) {
+    case CSSValueID::kMore:
+      return mojom::blink::PreferredContrast::kMore;
+    case CSSValueID::kLess:
+      return mojom::blink::PreferredContrast::kLess;
+    case CSSValueID::kNoPreference:
+      return mojom::blink::PreferredContrast::kNoPreference;
+    case CSSValueID::kCustom:
+      return mojom::blink::PreferredContrast::kCustom;
+    default:
+      NOTREACHED();
+      return mojom::blink::PreferredContrast::kNoPreference;
+  }
+}
+
+absl::optional<double> MediaValues::InlineSize() const {
+  if (IsHorizontalWritingMode(GetWritingMode()))
+    return Width();
+  return Height();
+}
+
+absl::optional<double> MediaValues::BlockSize() const {
+  if (IsHorizontalWritingMode(GetWritingMode()))
+    return Height();
+  return Width();
+}
+
 MediaValues* MediaValues::CreateDynamicIfFrameExists(LocalFrame* frame) {
   if (frame)
     return MediaValuesDynamic::Create(frame);
   return MakeGarbageCollected<MediaValuesCached>();
 }
 
+double MediaValues::ViewportInlineSize() const {
+  return IsHorizontalWritingMode(GetWritingMode()) ? ViewportWidth()
+                                                   : ViewportHeight();
+}
+
+double MediaValues::ViewportBlockSize() const {
+  return IsHorizontalWritingMode(GetWritingMode()) ? ViewportHeight()
+                                                   : ViewportWidth();
+}
+
+double MediaValues::SmallViewportInlineSize() const {
+  return IsHorizontalWritingMode(GetWritingMode()) ? SmallViewportWidth()
+                                                   : SmallViewportHeight();
+}
+
+double MediaValues::SmallViewportBlockSize() const {
+  return IsHorizontalWritingMode(GetWritingMode()) ? SmallViewportHeight()
+                                                   : SmallViewportWidth();
+}
+
+double MediaValues::LargeViewportInlineSize() const {
+  return IsHorizontalWritingMode(GetWritingMode()) ? LargeViewportWidth()
+                                                   : LargeViewportHeight();
+}
+
+double MediaValues::LargeViewportBlockSize() const {
+  return IsHorizontalWritingMode(GetWritingMode()) ? LargeViewportHeight()
+                                                   : LargeViewportWidth();
+}
+
+double MediaValues::DynamicViewportInlineSize() const {
+  return IsHorizontalWritingMode(GetWritingMode()) ? DynamicViewportWidth()
+                                                   : DynamicViewportHeight();
+}
+
+double MediaValues::DynamicViewportBlockSize() const {
+  return IsHorizontalWritingMode(GetWritingMode()) ? DynamicViewportHeight()
+                                                   : DynamicViewportWidth();
+}
+
 double MediaValues::CalculateViewportWidth(LocalFrame* frame) {
   DCHECK(frame);
   DCHECK(frame->View());
   DCHECK(frame->GetDocument());
-  return frame->View()->ViewportSizeForMediaQueries().Width();
+  return frame->View()->ViewportSizeForMediaQueries().width();
 }
 
 double MediaValues::CalculateViewportHeight(LocalFrame* frame) {
   DCHECK(frame);
   DCHECK(frame->View());
   DCHECK(frame->GetDocument());
-  return frame->View()->ViewportSizeForMediaQueries().Height();
+  return frame->View()->ViewportSizeForMediaQueries().height();
+}
+
+double MediaValues::CalculateSmallViewportWidth(LocalFrame* frame) {
+  DCHECK(frame);
+  DCHECK(frame->View());
+  DCHECK(frame->GetDocument());
+  return frame->View()->SmallViewportSizeForViewportUnits().width();
+}
+
+double MediaValues::CalculateSmallViewportHeight(LocalFrame* frame) {
+  DCHECK(frame);
+  DCHECK(frame->View());
+  DCHECK(frame->GetDocument());
+  return frame->View()->SmallViewportSizeForViewportUnits().height();
+}
+
+double MediaValues::CalculateLargeViewportWidth(LocalFrame* frame) {
+  DCHECK(frame);
+  DCHECK(frame->View());
+  DCHECK(frame->GetDocument());
+  return frame->View()->LargeViewportSizeForViewportUnits().width();
+}
+
+double MediaValues::CalculateLargeViewportHeight(LocalFrame* frame) {
+  DCHECK(frame);
+  DCHECK(frame->View());
+  DCHECK(frame->GetDocument());
+  return frame->View()->LargeViewportSizeForViewportUnits().height();
+}
+
+double MediaValues::CalculateDynamicViewportWidth(LocalFrame* frame) {
+  DCHECK(frame);
+  DCHECK(frame->View());
+  DCHECK(frame->GetDocument());
+  return frame->View()->DynamicViewportSizeForViewportUnits().width();
+}
+
+double MediaValues::CalculateDynamicViewportHeight(LocalFrame* frame) {
+  DCHECK(frame);
+  DCHECK(frame->View());
+  DCHECK(frame->GetDocument());
+  return frame->View()->DynamicViewportSizeForViewportUnits().height();
 }
 
 int MediaValues::CalculateDeviceWidth(LocalFrame* frame) {
   DCHECK(frame && frame->View() && frame->GetSettings() && frame->GetPage());
-  const ScreenInfo& screen_info =
+  const display::ScreenInfo& screen_info =
       frame->GetPage()->GetChromeClient().GetScreenInfo(*frame);
   int device_width = screen_info.rect.width();
   if (frame->GetSettings()->GetReportScreenSizeInPhysicalPixelsQuirk()) {
@@ -75,7 +198,7 @@ int MediaValues::CalculateDeviceWidth(LocalFrame* frame) {
 
 int MediaValues::CalculateDeviceHeight(LocalFrame* frame) {
   DCHECK(frame && frame->View() && frame->GetSettings() && frame->GetPage());
-  const ScreenInfo& screen_info =
+  const display::ScreenInfo& screen_info =
       frame->GetPage()->GetChromeClient().GetScreenInfo(*frame);
   int device_height = screen_info.rect.height();
   if (frame->GetSettings()->GetReportScreenSizeInPhysicalPixelsQuirk()) {
@@ -95,10 +218,19 @@ float MediaValues::CalculateDevicePixelRatio(LocalFrame* frame) {
   return frame->DevicePixelRatio();
 }
 
+bool MediaValues::CalculateDeviceSupportsHDR(LocalFrame* frame) {
+  DCHECK(frame);
+  DCHECK(frame->GetPage());
+  return frame->GetPage()
+      ->GetChromeClient()
+      .GetScreenInfo(*frame)
+      .display_color_spaces.SupportsHDR();
+}
+
 int MediaValues::CalculateColorBitsPerComponent(LocalFrame* frame) {
   DCHECK(frame);
   DCHECK(frame->GetPage());
-  const ScreenInfo& screen_info =
+  const display::ScreenInfo& screen_info =
       frame->GetPage()->GetChromeClient().GetScreenInfo(*frame);
   if (screen_info.is_monochrome)
     return 0;
@@ -108,15 +240,42 @@ int MediaValues::CalculateColorBitsPerComponent(LocalFrame* frame) {
 int MediaValues::CalculateMonochromeBitsPerComponent(LocalFrame* frame) {
   DCHECK(frame);
   DCHECK(frame->GetPage());
-  const ScreenInfo& screen_info =
+  const display::ScreenInfo& screen_info =
       frame->GetPage()->GetChromeClient().GetScreenInfo(*frame);
   if (!screen_info.is_monochrome)
     return 0;
   return screen_info.depth_per_component;
 }
 
-int MediaValues::CalculateDefaultFontSize(LocalFrame* frame) {
-  return frame->GetPage()->GetSettings().GetDefaultFontSize();
+float MediaValues::CalculateEmSize(LocalFrame* frame) {
+  DCHECK(frame);
+  DCHECK(frame->GetDocument());
+  const ComputedStyle* style = frame->GetDocument()->GetComputedStyle();
+  DCHECK(style);
+  CSSToLengthConversionData::FontSizes font_sizes(style, style);
+  return font_sizes.Em();
+}
+
+float MediaValues::CalculateExSize(LocalFrame* frame) {
+  DCHECK(frame);
+  DCHECK(frame->GetDocument());
+  const ComputedStyle* style = frame->GetDocument()->GetComputedStyle();
+  DCHECK(style);
+  CSSToLengthConversionData::FontSizes font_sizes(style, style);
+  // Font metrics are based on the used font which is scaled to match the size
+  // of CSS pixels. Need to scale back to CSS pixels.
+  return font_sizes.Ex() / font_sizes.Zoom();
+}
+
+float MediaValues::CalculateChSize(LocalFrame* frame) {
+  DCHECK(frame);
+  DCHECK(frame->GetDocument());
+  const ComputedStyle* style = frame->GetDocument()->GetComputedStyle();
+  DCHECK(style);
+  CSSToLengthConversionData::FontSizes font_sizes(style, style);
+  // Font metrics are based on the used font which is scaled to match the size
+  // of CSS pixels. Need to scale back to CSS pixels.
+  return font_sizes.Ch() / font_sizes.Zoom();
 }
 
 const String MediaValues::CalculateMediaType(LocalFrame* frame) {
@@ -183,12 +342,12 @@ ColorSpaceGamut MediaValues::CalculateColorGamut(LocalFrame* frame) {
   if (const auto* overrides = frame->GetPage()->GetMediaFeatureOverrides()) {
     MediaQueryExpValue value = overrides->GetOverride("color-gamut");
     if (value.IsValid()) {
-      if (value.id == CSSValueID::kSRGB)
+      if (value.Id() == CSSValueID::kSRGB)
         return ColorSpaceGamut::SRGB;
-      if (value.id == CSSValueID::kP3)
+      if (value.Id() == CSSValueID::kP3)
         return ColorSpaceGamut::P3;
       // Rec. 2020 is also known as ITU-R-Empfehlung BT.2020.
-      if (value.id == CSSValueID::kRec2020)
+      if (value.Id() == CSSValueID::kRec2020)
         return ColorSpaceGamut::BT2020;
       NOTREACHED();
     }
@@ -206,7 +365,7 @@ mojom::blink::PreferredColorScheme MediaValues::CalculatePreferredColorScheme(
   if (const auto* overrides = frame->GetPage()->GetMediaFeatureOverrides()) {
     MediaQueryExpValue value = overrides->GetOverride("prefers-color-scheme");
     if (value.IsValid())
-      return CSSValueIDToPreferredColorScheme(value.id);
+      return CSSValueIDToPreferredColorScheme(value.Id());
   }
   return frame->GetDocument()->GetStyleEngine().GetPreferredColorScheme();
 }
@@ -215,6 +374,12 @@ mojom::blink::PreferredContrast MediaValues::CalculatePreferredContrast(
     LocalFrame* frame) {
   DCHECK(frame);
   DCHECK(frame->GetSettings());
+  DCHECK(frame->GetPage());
+  if (const auto* overrides = frame->GetPage()->GetMediaFeatureOverrides()) {
+    MediaQueryExpValue value = overrides->GetOverride("prefers-contrast");
+    if (value.IsValid())
+      return CSSValueIDToPreferredContrast(value.Id());
+  }
   return frame->GetSettings()->GetPreferredContrast();
 }
 
@@ -224,7 +389,7 @@ bool MediaValues::CalculatePrefersReducedMotion(LocalFrame* frame) {
   if (const auto* overrides = frame->GetPage()->GetMediaFeatureOverrides()) {
     MediaQueryExpValue value = overrides->GetOverride("prefers-reduced-motion");
     if (value.IsValid())
-      return value.id == CSSValueID::kReduce;
+      return value.Id() == CSSValueID::kReduce;
   }
   return frame->GetSettings()->GetPrefersReducedMotion();
 }
@@ -235,13 +400,19 @@ bool MediaValues::CalculatePrefersReducedData(LocalFrame* frame) {
   if (const auto* overrides = frame->GetPage()->GetMediaFeatureOverrides()) {
     MediaQueryExpValue value = overrides->GetOverride("prefers-reduced-data");
     if (value.IsValid())
-      return value.id == CSSValueID::kReduce;
+      return value.Id() == CSSValueID::kReduce;
   }
-  return (GetNetworkStateNotifier().SaveDataEnabled() &&
-          !frame->GetSettings()->GetDataSaverHoldbackWebApi());
+  return GetNetworkStateNotifier().SaveDataEnabled();
 }
 
-ForcedColors MediaValues::CalculateForcedColors() {
+ForcedColors MediaValues::CalculateForcedColors(LocalFrame* frame) {
+  DCHECK(frame);
+  DCHECK(frame->GetSettings());
+  if (const auto* overrides = frame->GetPage()->GetMediaFeatureOverrides()) {
+    MediaQueryExpValue value = overrides->GetOverride("forced-colors");
+    if (value.IsValid())
+      return CSSValueIDToForcedColors(value.Id());
+  }
   if (Platform::Current() && Platform::Current()->ThemeEngine())
     return Platform::Current()->ThemeEngine()->GetForcedColors();
   else
@@ -254,76 +425,147 @@ NavigationControls MediaValues::CalculateNavigationControls(LocalFrame* frame) {
   return frame->GetSettings()->GetNavigationControls();
 }
 
-ScreenSpanning MediaValues::CalculateScreenSpanning(LocalFrame* frame) {
+int MediaValues::CalculateHorizontalViewportSegments(LocalFrame* frame) {
   if (!frame->GetWidgetForLocalRoot())
-    return ScreenSpanning::kNone;
+    return 1;
 
   WebVector<gfx::Rect> window_segments =
       frame->GetWidgetForLocalRoot()->WindowSegments();
-
-  if (window_segments.size() == 2) {
-    // If there are two segments and the y value of the segments is the same,
-    // we have side-by-side segments which are represented as a single vertical
-    // fold.
-    if (window_segments[0].y() == window_segments[1].y())
-      return ScreenSpanning::kSingleFoldVertical;
-
-    // If the x value of the segments is the same, we have stacked segments
-    // which are represented as a single horizontal fold.
-    if (window_segments[0].x() == window_segments[1].x())
-      return ScreenSpanning::kSingleFoldHorizontal;
+  WTF::HashSet<int> unique_x;
+  for (const auto& segment : window_segments) {
+    // HashSet can't have 0 as a key, so add 1 to all the values we see.
+    unique_x.insert(segment.x() + 1);
   }
 
-  return ScreenSpanning::kNone;
+  return static_cast<int>(unique_x.size());
 }
 
-ScreenFoldPosture MediaValues::CalculateScreenFoldPosture(LocalFrame* frame) {
-  // TODO(darktears): Retrieve information from the host.
-  return ScreenFoldPosture::kNoFold;
+int MediaValues::CalculateVerticalViewportSegments(LocalFrame* frame) {
+  if (!frame->GetWidgetForLocalRoot())
+    return 1;
+
+  WebVector<gfx::Rect> window_segments =
+      frame->GetWidgetForLocalRoot()->WindowSegments();
+  WTF::HashSet<int> unique_y;
+  for (const auto& segment : window_segments) {
+    // HashSet can't have 0 as a key, so add 1 to all the values we see.
+    unique_y.insert(segment.y() + 1);
+  }
+
+  return static_cast<int>(unique_y.size());
+}
+
+device::mojom::blink::DevicePostureType MediaValues::CalculateDevicePosture(
+    LocalFrame* frame) {
+  return frame->GetDevicePosture();
 }
 
 bool MediaValues::ComputeLengthImpl(double value,
                                     CSSPrimitiveValue::UnitType type,
-                                    unsigned default_font_size,
-                                    double viewport_width,
-                                    double viewport_height,
-                                    double& result) {
+                                    double& result) const {
   // The logic in this function is duplicated from
   // CSSToLengthConversionData::ZoomedComputedPixels() because
   // MediaValues::ComputeLength() needs nearly identical logic, but we haven't
   // found a way to make CSSToLengthConversionData::ZoomedComputedPixels() more
   // generic (to solve both cases) without hurting performance.
-  // FIXME - Unite the logic here with CSSToLengthConversionData in a performant
+  // TODO: Unite the logic here with CSSToLengthConversionData in a performant
   // way.
   switch (type) {
     case CSSPrimitiveValue::UnitType::kEms:
+      result = value * EmSize();
+      return true;
     case CSSPrimitiveValue::UnitType::kRems:
-      result = value * default_font_size;
+      result = value * RemSize();
       return true;
     case CSSPrimitiveValue::UnitType::kPixels:
     case CSSPrimitiveValue::UnitType::kUserUnits:
       result = value;
       return true;
     case CSSPrimitiveValue::UnitType::kExs:
-    // FIXME: We have a bug right now where the zoom will be applied twice to EX
-    // units.
+      result = value * ExSize();
+      return true;
     case CSSPrimitiveValue::UnitType::kChs:
-      // FIXME: We don't seem to be able to cache fontMetrics related values.
-      // Trying to access them is triggering some sort of microtask. Serving the
-      // spec's default instead.
-      result = (value * default_font_size) / 2.0;
+      result = value * ChSize();
       return true;
     case CSSPrimitiveValue::UnitType::kViewportWidth:
-      result = (value * viewport_width) / 100.0;
+      result = (value * ViewportWidth()) / 100.0;
       return true;
     case CSSPrimitiveValue::UnitType::kViewportHeight:
-      result = (value * viewport_height) / 100.0;
+      result = (value * ViewportHeight()) / 100.0;
+      return true;
+    case CSSPrimitiveValue::UnitType::kViewportInlineSize:
+      result = (value * ViewportInlineSize()) / 100.0;
+      return true;
+    case CSSPrimitiveValue::UnitType::kViewportBlockSize:
+      result = (value * ViewportBlockSize()) / 100.0;
       return true;
     case CSSPrimitiveValue::UnitType::kViewportMin:
-      result = (value * std::min(viewport_width, viewport_height)) / 100.0;
+      result = (value * std::min(ViewportWidth(), ViewportHeight())) / 100.0;
       return true;
     case CSSPrimitiveValue::UnitType::kViewportMax:
-      result = (value * std::max(viewport_width, viewport_height)) / 100.0;
+      result = (value * std::max(ViewportWidth(), ViewportHeight())) / 100.0;
+      return true;
+    case CSSPrimitiveValue::UnitType::kSmallViewportWidth:
+      result = (value * SmallViewportWidth()) / 100.0;
+      return true;
+    case CSSPrimitiveValue::UnitType::kSmallViewportHeight:
+      result = (value * SmallViewportHeight()) / 100.0;
+      return true;
+    case CSSPrimitiveValue::UnitType::kSmallViewportInlineSize:
+      result = (value * SmallViewportInlineSize()) / 100.0;
+      return true;
+    case CSSPrimitiveValue::UnitType::kSmallViewportBlockSize:
+      result = (value * SmallViewportBlockSize()) / 100.0;
+      return true;
+    case CSSPrimitiveValue::UnitType::kSmallViewportMin:
+      result = (value * std::min(SmallViewportWidth(), SmallViewportHeight())) /
+               100.0;
+      return true;
+    case CSSPrimitiveValue::UnitType::kSmallViewportMax:
+      result = (value * std::max(SmallViewportWidth(), SmallViewportHeight())) /
+               100.0;
+      return true;
+    case CSSPrimitiveValue::UnitType::kLargeViewportWidth:
+      result = (value * LargeViewportWidth()) / 100.0;
+      return true;
+    case CSSPrimitiveValue::UnitType::kLargeViewportHeight:
+      result = (value * LargeViewportHeight()) / 100.0;
+      return true;
+    case CSSPrimitiveValue::UnitType::kLargeViewportInlineSize:
+      result = (value * LargeViewportInlineSize()) / 100.0;
+      return true;
+    case CSSPrimitiveValue::UnitType::kLargeViewportBlockSize:
+      result = (value * LargeViewportBlockSize()) / 100.0;
+      return true;
+    case CSSPrimitiveValue::UnitType::kLargeViewportMin:
+      result = (value * std::min(LargeViewportWidth(), LargeViewportHeight())) /
+               100.0;
+      return true;
+    case CSSPrimitiveValue::UnitType::kLargeViewportMax:
+      result = (value * std::max(LargeViewportWidth(), LargeViewportHeight())) /
+               100.0;
+      return true;
+    case CSSPrimitiveValue::UnitType::kDynamicViewportWidth:
+      result = (value * DynamicViewportWidth()) / 100.0;
+      return true;
+    case CSSPrimitiveValue::UnitType::kDynamicViewportHeight:
+      result = (value * DynamicViewportHeight()) / 100.0;
+      return true;
+    case CSSPrimitiveValue::UnitType::kDynamicViewportInlineSize:
+      result = (value * DynamicViewportInlineSize()) / 100.0;
+      return true;
+    case CSSPrimitiveValue::UnitType::kDynamicViewportBlockSize:
+      result = (value * DynamicViewportBlockSize()) / 100.0;
+      return true;
+    case CSSPrimitiveValue::UnitType::kDynamicViewportMin:
+      result =
+          (value * std::min(DynamicViewportWidth(), DynamicViewportHeight())) /
+          100.0;
+      return true;
+    case CSSPrimitiveValue::UnitType::kDynamicViewportMax:
+      result =
+          (value * std::max(DynamicViewportWidth(), DynamicViewportHeight())) /
+          100.0;
       return true;
     case CSSPrimitiveValue::UnitType::kCentimeters:
       result = value * kCssPixelsPerCentimeter;

@@ -7,7 +7,6 @@
 
 #include <memory>
 
-#include "base/optional.h"
 #include "build/build_config.h"
 #include "third_party/blink/public/common/input/web_gesture_event.h"
 #include "third_party/blink/public/common/input/web_input_event.h"
@@ -20,7 +19,7 @@
 
 namespace gfx {
 class PointF;
-class Vector2d;
+class Vector2dF;
 }
 
 namespace ui {
@@ -59,7 +58,7 @@ std::unique_ptr<blink::WebInputEvent> ScaleWebInputEvent(
 // Otherwise, returns the transformed version of |event|.
 std::unique_ptr<blink::WebInputEvent> TranslateAndScaleWebInputEvent(
     const blink::WebInputEvent& event,
-    const gfx::Vector2d& delta,
+    const gfx::Vector2dF& delta,
     float scale);
 
 blink::WebInputEvent::Type ToWebMouseEventType(MotionEvent::Action action);
@@ -97,7 +96,7 @@ inline const blink::WebGestureEvent& ToWebGestureEvent(
 blink::WebGestureEvent ScrollBeginFromScrollUpdate(
     const blink::WebGestureEvent& scroll_update);
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 // Convenience method that converts an instance to blink event.
 std::unique_ptr<blink::WebGestureEvent>
 CreateWebGestureEventFromGestureEventAndroid(const GestureEventAndroid& event);

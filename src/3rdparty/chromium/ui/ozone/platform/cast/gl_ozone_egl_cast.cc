@@ -10,7 +10,7 @@
 #include <utility>
 
 #include "base/command_line.h"
-#include "base/macros.h"
+#include "base/logging.h"
 #include "base/strings/string_number_conversions.h"
 #include "chromecast/base/chromecast_switches.h"
 #include "chromecast/public/cast_egl_platform.h"
@@ -132,7 +132,8 @@ bool GLOzoneEglCast::ResizeDisplay(gfx::Size size) {
   return true;
 }
 
-bool GLOzoneEglCast::LoadGLES2Bindings(gl::GLImplementation implementation) {
+bool GLOzoneEglCast::LoadGLES2Bindings(
+    const gl::GLImplementationParts& implementation) {
   InitializeHardwareIfNeeded();
 
   void* lib_egl = egl_platform_->GetEglLibrary();

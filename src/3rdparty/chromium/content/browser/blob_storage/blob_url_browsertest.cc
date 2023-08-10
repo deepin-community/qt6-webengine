@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/macros.h"
 #include "base/strings/pattern.h"
 #include "build/build_config.h"
 #include "content/browser/web_contents/web_contents_impl.h"
@@ -27,14 +26,14 @@ class BlobUrlBrowserTest : public ContentBrowserTest {
  public:
   BlobUrlBrowserTest() = default;
 
+  BlobUrlBrowserTest(const BlobUrlBrowserTest&) = delete;
+  BlobUrlBrowserTest& operator=(const BlobUrlBrowserTest&) = delete;
+
   void SetUpOnMainThread() override {
     host_resolver()->AddRule("*", "127.0.0.1");
     SetupCrossSiteRedirector(embedded_test_server());
     ASSERT_TRUE(embedded_test_server()->Start());
   }
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(BlobUrlBrowserTest);
 };
 
 IN_PROC_BROWSER_TEST_F(BlobUrlBrowserTest, LinkToUniqueOriginBlob) {
@@ -52,8 +51,7 @@ IN_PROC_BROWSER_TEST_F(BlobUrlBrowserTest, LinkToUniqueOriginBlob) {
 
   // Click the link.
   ShellAddedObserver new_shell_observer;
-  EXPECT_TRUE(
-      ExecuteScript(shell(), "document.getElementById('click_me').click()"));
+  EXPECT_TRUE(ExecJs(shell(), "document.getElementById('click_me').click()"));
 
   // The link should create a new tab.
   Shell* new_shell = new_shell_observer.GetShell();
@@ -62,13 +60,9 @@ IN_PROC_BROWSER_TEST_F(BlobUrlBrowserTest, LinkToUniqueOriginBlob) {
 
   EXPECT_TRUE(
       base::MatchPattern(new_contents->GetVisibleURL().spec(), "blob:null/*"));
-  std::string page_content;
-  EXPECT_TRUE(ExecuteScriptAndExtractString(
-      new_contents,
-      "domAutomationController.send("
-      "    self.origin + ' ' + document.body.innerText);",
-      &page_content));
-  EXPECT_EQ("null potato", page_content);
+  EXPECT_EQ(
+      "null potato",
+      EvalJs(new_contents, "self.origin + ' ' + document.body.innerText;"));
 }
 
 IN_PROC_BROWSER_TEST_F(BlobUrlBrowserTest, LinkToSameOriginBlob) {
@@ -78,7 +72,7 @@ IN_PROC_BROWSER_TEST_F(BlobUrlBrowserTest, LinkToSameOriginBlob) {
   EXPECT_TRUE(NavigateToURL(shell(), url));
 
   ShellAddedObserver new_shell_observer;
-  EXPECT_TRUE(ExecuteScript(
+  EXPECT_TRUE(ExecJs(
       shell(),
       "var link = document.body.appendChild(document.createElement('a'));"
       "link.innerText = 'Click Me!';"
@@ -93,13 +87,9 @@ IN_PROC_BROWSER_TEST_F(BlobUrlBrowserTest, LinkToSameOriginBlob) {
 
   EXPECT_TRUE(base::MatchPattern(new_contents->GetVisibleURL().spec(),
                                  "blob:" + origin.Serialize() + "/*"));
-  std::string page_content;
-  EXPECT_TRUE(ExecuteScriptAndExtractString(
-      new_contents,
-      "domAutomationController.send("
-      "    self.origin + ' ' + document.body.innerText);",
-      &page_content));
-  EXPECT_EQ(origin.Serialize() + " potato", page_content);
+  EXPECT_EQ(
+      origin.Serialize() + " potato",
+      EvalJs(new_contents, "    self.origin + ' ' + document.body.innerText;"));
 }
 
 // Regression test for https://crbug.com/646278
@@ -111,7 +101,7 @@ IN_PROC_BROWSER_TEST_F(BlobUrlBrowserTest, LinkToSameOriginBlobWithAuthority) {
   EXPECT_TRUE(NavigateToURL(shell(), url));
 
   ShellAddedObserver new_shell_observer;
-  EXPECT_TRUE(ExecuteScript(
+  EXPECT_TRUE(ExecJs(
       shell(),
       "var link = document.body.appendChild(document.createElement('a'));"
       "link.innerText = 'Click Me!';"
@@ -131,13 +121,10 @@ IN_PROC_BROWSER_TEST_F(BlobUrlBrowserTest, LinkToSameOriginBlobWithAuthority) {
   // The currently implemented behavior is that the URL gets rewritten to
   // about:blank#blocked.
   EXPECT_EQ(kBlockedURL, new_contents->GetVisibleURL().spec());
-  std::string page_content;
-  EXPECT_TRUE(ExecuteScriptAndExtractString(
-      new_contents,
-      "domAutomationController.send("
-      "    self.origin + ' ' + document.body.innerText);",
-      &page_content));
-  EXPECT_EQ(origin.Serialize() + " ", page_content);  // no potato
+  EXPECT_EQ(
+      origin.Serialize() + " ",
+      EvalJs(new_contents,
+             "self.origin + ' ' + document.body.innerText;"));  // no potato
 }
 
 // Regression test for https://crbug.com/646278
@@ -149,7 +136,7 @@ IN_PROC_BROWSER_TEST_F(BlobUrlBrowserTest, ReplaceStateToAddAuthorityToBlob) {
   EXPECT_TRUE(NavigateToURL(shell(), url));
 
   ShellAddedObserver new_shell_observer;
-  EXPECT_TRUE(ExecuteScript(
+  EXPECT_TRUE(ExecJs(
       shell(),
       "var spoof_fn = function () {\n"
       "  host_port = self.origin.split('://')[1];\n"
@@ -171,20 +158,14 @@ IN_PROC_BROWSER_TEST_F(BlobUrlBrowserTest, ReplaceStateToAddAuthorityToBlob) {
   // The currently implemented behavior is that the URL gets rewritten to
   // about:blank#blocked. The content of the page stays the same.
   EXPECT_EQ(kBlockedURL, new_contents->GetVisibleURL().spec());
-  std::string page_content;
-  EXPECT_TRUE(ExecuteScriptAndExtractString(
-      new_contents,
-      "domAutomationController.send("
-      "    self.origin + ' ' + document.body.innerText);",
-      &page_content));
-  EXPECT_EQ(origin.Serialize() + " potato", page_content);
+  EXPECT_EQ(
+      origin.Serialize() + " potato",
+      EvalJs(new_contents, "self.origin + ' ' + document.body.innerText;"));
 
   // TODO(nick): Currently, window.location still reflects the spoof URL.
   // This seems unfortunate -- can we fix it?
-  std::string window_location;
-  EXPECT_TRUE(ExecuteScriptAndExtractString(
-      new_contents, "domAutomationController.send(window.location.href);",
-      &window_location));
+  std::string window_location =
+      EvalJs(new_contents, "window.location.href;").ExtractString();
   EXPECT_TRUE(base::MatchPattern(window_location, "*spoof*"));
 }
 

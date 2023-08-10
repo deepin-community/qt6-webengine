@@ -5,11 +5,10 @@
 #include "ui/views/widget/root_view.h"
 
 #include <memory>
-#include <set>
 #include <utility>
 
-#include "base/macros.h"
 #include "base/memory/ptr_util.h"
+#include "base/memory/raw_ptr.h"
 #include "build/build_config.h"
 #include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/accessibility/ax_node_data.h"
@@ -22,7 +21,7 @@
 #include "ui/views/widget/widget_deletion_observer.h"
 #include "ui/views/window/dialog_delegate.h"
 
-#if defined(OS_MAC)
+#if BUILDFLAG(IS_MAC)
 #include "base/mac/mac_util.h"
 #endif
 
@@ -34,6 +33,10 @@ using RootViewTest = ViewsTestBase;
 class DeleteOnKeyEventView : public View {
  public:
   explicit DeleteOnKeyEventView(bool* set_on_key) : set_on_key_(set_on_key) {}
+
+  DeleteOnKeyEventView(const DeleteOnKeyEventView&) = delete;
+  DeleteOnKeyEventView& operator=(const DeleteOnKeyEventView&) = delete;
+
   ~DeleteOnKeyEventView() override = default;
 
   bool OnKeyPressed(const ui::KeyEvent& event) override {
@@ -44,9 +47,7 @@ class DeleteOnKeyEventView : public View {
 
  private:
   // Set to true in OnKeyPressed().
-  bool* set_on_key_;
-
-  DISALLOW_COPY_AND_ASSIGN(DeleteOnKeyEventView);
+  raw_ptr<bool> set_on_key_;
 };
 
 // Verifies deleting a View in OnKeyPressed() doesn't crash and that the
@@ -86,6 +87,11 @@ TEST_F(RootViewTest, DeleteViewDuringKeyEventDispatch) {
 class TestContextMenuController : public ContextMenuController {
  public:
   TestContextMenuController() = default;
+
+  TestContextMenuController(const TestContextMenuController&) = delete;
+  TestContextMenuController& operator=(const TestContextMenuController&) =
+      delete;
+
   ~TestContextMenuController() override = default;
 
   int show_context_menu_calls() const { return show_context_menu_calls_; }
@@ -109,17 +115,15 @@ class TestContextMenuController : public ContextMenuController {
 
  private:
   int show_context_menu_calls_ = 0;
-  View* menu_source_view_ = nullptr;
+  raw_ptr<View> menu_source_view_ = nullptr;
   ui::MenuSourceType menu_source_type_ = ui::MENU_SOURCE_NONE;
-
-  DISALLOW_COPY_AND_ASSIGN(TestContextMenuController);
 };
 
 // Tests that context menus are shown for certain key events (Shift+F10
 // and VKEY_APPS) by the pre-target handler installed on RootView.
 TEST_F(RootViewTest, ContextMenuFromKeyEvent) {
   // This behavior is intentionally unsupported on macOS.
-#if !defined(OS_APPLE)
+#if !BUILDFLAG(IS_MAC)
   Widget widget;
   Widget::InitParams init_params =
       CreateParams(Widget::InitParams::TYPE_WINDOW_FRAMELESS);
@@ -175,50 +179,33 @@ class GestureHandlingView : public View {
  public:
   GestureHandlingView() = default;
 
+  GestureHandlingView(const GestureHandlingView&) = delete;
+  GestureHandlingView& operator=(const GestureHandlingView&) = delete;
+
   ~GestureHandlingView() override = default;
 
   void OnGestureEvent(ui::GestureEvent* event) override { event->SetHandled(); }
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(GestureHandlingView);
 };
 
-// View which handles both mouse and gesture events.
-class EventHandlingView : public View {
+// View which handles all mouse events.
+class MouseHandlingView : public View {
  public:
-  EventHandlingView() = default;
-  EventHandlingView(const EventHandlingView&) = delete;
-  EventHandlingView& operator=(const EventHandlingView&) = delete;
-  ~EventHandlingView() override = default;
-
-  // Returns whether an event specified by `type_to_query` has been handled.
-  bool HandledEventBefore(ui::EventType type_to_query) const {
-    return handled_gestures_set_.find(type_to_query) !=
-           handled_gestures_set_.cend();
-  }
+  MouseHandlingView() = default;
+  MouseHandlingView(const MouseHandlingView&) = delete;
+  MouseHandlingView& operator=(const MouseHandlingView&) = delete;
+  ~MouseHandlingView() override = default;
 
   // View:
   void OnMouseEvent(ui::MouseEvent* event) override { event->SetHandled(); }
-
-  void OnGestureEvent(ui::GestureEvent* event) override {
-    // Record the handled gesture event.
-    auto insertion_ret = handled_gestures_set_.insert(event->type());
-    EXPECT_TRUE(insertion_ret.second);
-
-    event->SetHandled();
-  }
-
- private:
-  std::set<ui::EventType> handled_gestures_set_;
 };
 
-// Verifies that when the mouse click interrupts the gesture scroll, the view
-// where the gesture scroll starts should receive the scroll end event.
-TEST_F(RootViewTest, MouseClickInterruptsGestureScroll) {
-#if defined(OS_MAC)
-  if (base::mac::IsOS11())
-    GTEST_SKIP() << "Flaky on macOS 11: https://crbug.com/1195879";
-#endif
+// Verifies that the gesture handler stored in the root view is reset after
+// mouse is released. Note that during mouse event handling,
+// `RootView::SetMouseAndGestureHandler()` may be called to set the gesture
+// handler. Therefore we should reset the gesture handler when mouse is
+// released. We may remove this test in the future if the implementation of the
+// product code changes.
+TEST_F(RootViewTest, GestureHandlerResetAfterMouseReleased) {
   Widget widget;
   Widget::InitParams init_params =
       CreateParams(Widget::InitParams::TYPE_WINDOW_FRAMELESS);
@@ -229,41 +216,49 @@ TEST_F(RootViewTest, MouseClickInterruptsGestureScroll) {
   internal::RootView* root_view =
       static_cast<internal::RootView*>(widget.GetRootView());
   View* contents_view = widget.SetContentsView(std::make_unique<View>());
-  View* child_view =
-      contents_view->AddChildView(std::make_unique<EventHandlingView>());
-  child_view->SetBoundsRect(gfx::Rect(gfx::Size{50, 50}));
+
+  // Create a child view to handle gestures.
+  View* gesture_handler =
+      contents_view->AddChildView(std::make_unique<GestureHandlingView>());
+  gesture_handler->SetBoundsRect(gfx::Rect(gfx::Size{50, 50}));
+
+  // Create a child view to handle mouse events.
+  View* mouse_handler =
+      contents_view->AddChildView(std::make_unique<MouseHandlingView>());
+  mouse_handler->SetBoundsRect(
+      gfx::Rect(gesture_handler->bounds().bottom_right(), gfx::Size{50, 50}));
 
   // Emulate to start gesture scroll on `child_view`.
-  const gfx::Point center_point = child_view->GetBoundsInScreen().CenterPoint();
+  const gfx::Point gesture_handler_center_point =
+      gesture_handler->GetBoundsInScreen().CenterPoint();
   ui::GestureEvent scroll_begin(
-      center_point.x(), center_point.y(), ui::EF_NONE, base::TimeTicks(),
+      gesture_handler_center_point.x(), gesture_handler_center_point.y(),
+      ui::EF_NONE, base::TimeTicks(),
       ui::GestureEventDetails(ui::ET_GESTURE_SCROLL_BEGIN));
   root_view->OnEventFromSource(&scroll_begin);
   ui::GestureEvent scroll_update(
-      center_point.x(), center_point.y(), ui::EF_NONE, base::TimeTicks(),
+      gesture_handler_center_point.x(), gesture_handler_center_point.y(),
+      ui::EF_NONE, base::TimeTicks(),
       ui::GestureEventDetails(ui::ET_GESTURE_SCROLL_UPDATE, /*delta_x=*/20,
                               /*delta_y=*/10));
   root_view->OnEventFromSource(&scroll_update);
 
-  // Emulate the mouse click on `child_view_`.
-  ui::MouseEvent pressed_event(ui::ET_MOUSE_PRESSED, center_point, center_point,
+  // Emulate the mouse click on `mouse_handler` before gesture scroll ends.
+  const gfx::Point mouse_handler_center_point =
+      mouse_handler->GetBoundsInScreen().CenterPoint();
+  ui::MouseEvent pressed_event(ui::ET_MOUSE_PRESSED, mouse_handler_center_point,
+                               mouse_handler_center_point,
                                ui::EventTimeForNow(), ui::EF_NONE,
                                /*changed_button_flags=*/0);
-  ui::MouseEvent released_event(ui::ET_MOUSE_RELEASED, center_point,
-                                center_point, ui::EventTimeForNow(),
-                                ui::EF_NONE, /*changed_button_flags=*/0);
+  ui::MouseEvent released_event(
+      ui::ET_MOUSE_RELEASED, mouse_handler_center_point,
+      mouse_handler_center_point, ui::EventTimeForNow(), ui::EF_NONE,
+      /*changed_button_flags=*/0);
   root_view->OnMousePressed(pressed_event);
   root_view->OnMouseReleased(released_event);
 
-  // End the gesture scroll.
-  ui::GestureEvent scroll_end(
-      center_point.x(), center_point.y(), ui::EF_NONE, base::TimeTicks(),
-      ui::GestureEventDetails(ui::ET_GESTURE_SCROLL_END));
-  root_view->OnEventFromSource(&scroll_end);
-
-  // Verify that `child_view` receives the gesture scroll end event.
-  EXPECT_TRUE(static_cast<EventHandlingView*>(child_view)
-                  ->HandledEventBefore(ui::ET_GESTURE_SCROLL_END));
+  // Check that the gesture handler is reset.
+  EXPECT_EQ(nullptr, root_view->gesture_handler_for_testing());
 }
 
 // Tests that context menus are shown for long press by the post-target handler
@@ -423,6 +418,9 @@ class DeleteViewOnEvent : public View {
   DeleteViewOnEvent(ui::EventType delete_event_type, bool* was_destroyed)
       : delete_event_type_(delete_event_type), was_destroyed_(was_destroyed) {}
 
+  DeleteViewOnEvent(const DeleteViewOnEvent&) = delete;
+  DeleteViewOnEvent& operator=(const DeleteViewOnEvent&) = delete;
+
   ~DeleteViewOnEvent() override { *was_destroyed_ = true; }
 
   void OnEvent(ui::Event* event) override {
@@ -435,9 +433,7 @@ class DeleteViewOnEvent : public View {
   ui::EventType delete_event_type_;
 
   // Tracks whether the view was destroyed.
-  bool* was_destroyed_;
-
-  DISALLOW_COPY_AND_ASSIGN(DeleteViewOnEvent);
+  raw_ptr<bool> was_destroyed_;
 };
 
 // View class which remove itself when it gets an event of type
@@ -447,6 +443,9 @@ class RemoveViewOnEvent : public View {
   explicit RemoveViewOnEvent(ui::EventType remove_event_type)
       : remove_event_type_(remove_event_type) {}
 
+  RemoveViewOnEvent(const RemoveViewOnEvent&) = delete;
+  RemoveViewOnEvent& operator=(const RemoveViewOnEvent&) = delete;
+
   void OnEvent(ui::Event* event) override {
     if (event->type() == remove_event_type_)
       parent()->RemoveChildView(this);
@@ -455,8 +454,6 @@ class RemoveViewOnEvent : public View {
  private:
   // The event type which causes the view to remove itself.
   ui::EventType remove_event_type_;
-
-  DISALLOW_COPY_AND_ASSIGN(RemoveViewOnEvent);
 };
 
 // View class which generates a nested event the first time it gets an event of
@@ -466,6 +463,9 @@ class NestedEventOnEvent : public View {
  public:
   NestedEventOnEvent(ui::EventType nested_event_type, View* root_view)
       : nested_event_type_(nested_event_type), root_view_(root_view) {}
+
+  NestedEventOnEvent(const NestedEventOnEvent&) = delete;
+  NestedEventOnEvent& operator=(const NestedEventOnEvent&) = delete;
 
   void OnEvent(ui::Event* event) override {
     if (event->type() == nested_event_type_) {
@@ -482,9 +482,7 @@ class NestedEventOnEvent : public View {
   // The event type which causes the view to generate a nested event.
   ui::EventType nested_event_type_;
   // root view of this view; owned by widget.
-  View* root_view_;
-
-  DISALLOW_COPY_AND_ASSIGN(NestedEventOnEvent);
+  raw_ptr<View> root_view_;
 };
 
 }  // namespace
@@ -713,14 +711,15 @@ class DeleteWidgetOnMouseExit : public View {
  public:
   explicit DeleteWidgetOnMouseExit(Widget* widget) : widget_(widget) {}
 
+  DeleteWidgetOnMouseExit(const DeleteWidgetOnMouseExit&) = delete;
+  DeleteWidgetOnMouseExit& operator=(const DeleteWidgetOnMouseExit&) = delete;
+
   ~DeleteWidgetOnMouseExit() override = default;
 
   void OnMouseExited(const ui::MouseEvent& event) override { delete widget_; }
 
  private:
-  Widget* widget_;
-
-  DISALLOW_COPY_AND_ASSIGN(DeleteWidgetOnMouseExit);
+  raw_ptr<Widget> widget_;
 };
 
 }  // namespace
@@ -810,6 +809,11 @@ class RootViewTestDialogDelegate : public DialogDelegateView {
     // Ensure that buttons don't influence the layout.
     DialogDelegate::SetButtons(ui::DIALOG_BUTTON_NONE);
   }
+
+  RootViewTestDialogDelegate(const RootViewTestDialogDelegate&) = delete;
+  RootViewTestDialogDelegate& operator=(const RootViewTestDialogDelegate&) =
+      delete;
+
   ~RootViewTestDialogDelegate() override = default;
 
   int layout_count() const { return layout_count_; }
@@ -825,8 +829,6 @@ class RootViewTestDialogDelegate : public DialogDelegateView {
   const gfx::Size preferred_size_ = gfx::Size(111, 111);
 
   int layout_count_ = 0;
-
-  DISALLOW_COPY_AND_ASSIGN(RootViewTestDialogDelegate);
 };
 }  // namespace
 
@@ -851,7 +853,7 @@ TEST_F(RootViewDesktopNativeWidgetTest, SingleLayoutDuringInit) {
   widget->CloseNow();
 }
 
-#if !defined(OS_APPLE)
+#if !BUILDFLAG(IS_MAC)
 
 // Tests that AnnounceText sets up the correct text value on the hidden view,
 // and that the resulting hidden view actually stays hidden.
@@ -868,7 +870,7 @@ TEST_F(RootViewTest, AnnounceTextTest) {
   root_view->SetContentsView(new View());
 
   EXPECT_EQ(1U, root_view->children().size());
-  const base::string16 kText = base::ASCIIToUTF16("Text");
+  const std::u16string kText = u"Text";
   root_view->AnnounceText(kText);
   EXPECT_EQ(2U, root_view->children().size());
   root_view->Layout();
@@ -881,7 +883,7 @@ TEST_F(RootViewTest, AnnounceTextTest) {
             node_data.GetString16Attribute(ax::mojom::StringAttribute::kName));
 }
 
-#endif  // !defined(OS_APPLE)
+#endif  // !BUILDFLAG(IS_MAC)
 
 TEST_F(RootViewTest, MouseEventDispatchedToClosestEnabledView) {
   Widget widget;

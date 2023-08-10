@@ -17,8 +17,6 @@ class StubGpuPlatformSupportHost : public GpuPlatformSupportHost {
   void OnChannelDestroyed(int host_id) override {}
   void OnGpuServiceLaunched(
       int host_id,
-      scoped_refptr<base::SingleThreadTaskRunner> ui_runner,
-      scoped_refptr<base::SingleThreadTaskRunner> io_runner,
       GpuHostBindInterfaceCallback binder,
       GpuHostTerminateCallback terminate_callback) override {}
 };

@@ -74,6 +74,10 @@ class RawAnnexBBuffer : public AnnexBBuffer {
       : annexb_buffer_(annexb_buffer),
         annexb_buffer_size_(annexb_buffer_size),
         annexb_buffer_offset_(0) {}
+  RawAnnexBBuffer() = delete;
+  RawAnnexBBuffer(const RawAnnexBBuffer&) = delete;
+  RawAnnexBBuffer& operator=(const RawAnnexBBuffer&) = delete;
+
   bool Reserve(size_t size) override {
     reserved_size_ = size;
     return size <= annexb_buffer_size_;
@@ -90,14 +94,16 @@ class RawAnnexBBuffer : public AnnexBBuffer {
   size_t annexb_buffer_size_;
   size_t annexb_buffer_offset_;
   size_t reserved_size_;
-
-  DISALLOW_IMPLICIT_CONSTRUCTORS(RawAnnexBBuffer);
 };
 
 class StringAnnexBBuffer : public AnnexBBuffer {
  public:
   explicit StringAnnexBBuffer(std::string* str_annexb_buffer)
       : str_annexb_buffer_(str_annexb_buffer) {}
+  StringAnnexBBuffer() = delete;
+  StringAnnexBBuffer(const StringAnnexBBuffer&) = delete;
+  StringAnnexBBuffer& operator=(const StringAnnexBBuffer&) = delete;
+
   bool Reserve(size_t size) override {
     str_annexb_buffer_->reserve(size);
     return true;
@@ -109,7 +115,6 @@ class StringAnnexBBuffer : public AnnexBBuffer {
 
  private:
   std::string* str_annexb_buffer_;
-  DISALLOW_IMPLICIT_CONSTRUCTORS(StringAnnexBBuffer);
 };
 
 template <typename NalSizeType>
@@ -125,7 +130,7 @@ void CopyNalsToAnnexB(char* avcc_buffer,
   while (bytes_left > 0) {
     DCHECK_GT(bytes_left, sizeof(NalSizeType));
     NalSizeType nal_size;
-    base::ReadBigEndian(avcc_buffer, &nal_size);
+    base::ReadBigEndian(reinterpret_cast<uint8_t*>(avcc_buffer), &nal_size);
     bytes_left -= sizeof(NalSizeType);
     avcc_buffer += sizeof(NalSizeType);
 
@@ -271,6 +276,16 @@ SessionPropertySetter::SessionPropertySetter(
 
 SessionPropertySetter::~SessionPropertySetter() {}
 
+bool SessionPropertySetter::IsSupported(CFStringRef key) {
+  DCHECK(session_);
+  if (!supported_keys_) {
+    CFDictionaryRef dict_ref;
+    if (VTSessionCopySupportedPropertyDictionary(session_, &dict_ref) == noErr)
+      supported_keys_.reset(dict_ref);
+  }
+  return supported_keys_ && CFDictionaryContainsKey(supported_keys_, key);
+}
+
 bool SessionPropertySetter::Set(CFStringRef key, int32_t value) {
   DCHECK(session_);
   base::ScopedCFTypeRef<CFNumberRef> cfvalue(
@@ -281,6 +296,13 @@ bool SessionPropertySetter::Set(CFStringRef key, int32_t value) {
 bool SessionPropertySetter::Set(CFStringRef key, bool value) {
   DCHECK(session_);
   CFBooleanRef cfvalue = (value) ? kCFBooleanTrue : kCFBooleanFalse;
+  return VTSessionSetProperty(session_, key, cfvalue) == noErr;
+}
+
+bool SessionPropertySetter::Set(CFStringRef key, double value) {
+  DCHECK(session_);
+  base::ScopedCFTypeRef<CFNumberRef> cfvalue(
+      CFNumberCreate(nullptr, kCFNumberDoubleType, &value));
   return VTSessionSetProperty(session_, key, cfvalue) == noErr;
 }
 

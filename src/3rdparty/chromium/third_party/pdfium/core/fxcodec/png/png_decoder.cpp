@@ -6,14 +6,13 @@
 
 #include "core/fxcodec/png/png_decoder.h"
 
-#include <algorithm>
+#include <setjmp.h>
+#include <string.h>
 
 #include "core/fxcodec/cfx_codec_memory.h"
 #include "core/fxcodec/fx_codec.h"
 #include "core/fxcodec/fx_codec_def.h"
 #include "core/fxcrt/unowned_ptr.h"
-#include "core/fxge/dib/fx_dib.h"
-#include "third_party/base/compiler_specific.h"
 
 #ifdef USE_SYSTEM_LIBPNG
 #include <png.h>
@@ -59,10 +58,10 @@ void _png_load_bmp_attribute(png_structp png_ptr,
     png_get_pHYs(png_ptr, info_ptr, &res_x, &res_y, &unit_type);
     switch (unit_type) {
       case PNG_RESOLUTION_METER:
-        pAttribute->m_wDPIUnit = FXCODEC_RESUNIT_METER;
+        pAttribute->m_wDPIUnit = CFX_DIBAttribute::kResUnitMeter;
         break;
       default:
-        pAttribute->m_wDPIUnit = FXCODEC_RESUNIT_NONE;
+        pAttribute->m_wDPIUnit = CFX_DIBAttribute::kResUnitNone;
     }
 #endif
 #if defined(PNG_iCCP_SUPPORTED)

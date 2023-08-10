@@ -19,7 +19,7 @@
 #include "third_party/blink/renderer/modules/modules_export.h"
 #include "third_party/blink/renderer/modules/service_worker/extendable_event.h"
 #include "third_party/blink/renderer/modules/service_worker/wait_until_observer.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/loader/fetch/data_pipe_bytes_consumer.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_response.h"
 #include "third_party/blink/renderer/platform/mojo/heap_mojo_remote.h"
@@ -107,9 +107,7 @@ class MODULES_EXPORT FetchEvent final
       handled_property_;
   // This is currently null for navigation while https://crbug.com/900700 is
   // being implemented.
-  HeapMojoRemote<mojom::blink::WorkerTimingContainer,
-                 HeapMojoWrapperMode::kWithoutContextObserver>
-      worker_timing_remote_;
+  HeapMojoRemote<mojom::blink::WorkerTimingContainer> worker_timing_remote_;
   String client_id_;
   String resulting_client_id_;
   bool is_reload_;

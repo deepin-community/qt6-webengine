@@ -50,8 +50,12 @@ design docs should follow the process at
 
 ## Legal stuff
 
-All contributors must complete the contributor license agreement. For
-individual contributors, please complete the [Individual Contributor License
+All contributors must have valid Gerrit/Google accounts (which means you must
+be [old enough to manage your own
+account](https://support.google.com/accounts/answer/1350409)) and complete the
+contributor license agreement.
+
+For individual contributors, please complete the [Individual Contributor License
 Agreement][individual-cla] online. Corporate contributors must fill out the
 [Corporate Contributor License Agreement][corporate-cla] and send it to us as
 described on that page.
@@ -103,11 +107,11 @@ contribution can be accepted:
 ## Creating a change
 
 First, create a new branch for your change in git. Here, we create a branch
-called `mychange` (use whatever name you want here), with `origin/master` as
+called `mychange` (use whatever name you want here), with `origin/main` as
 the upstream branch.
 
 ```
-git checkout -b mychange -t origin/master
+git checkout -b mychange -t origin/main
 ```
 
 Write and test your change.
@@ -327,9 +331,14 @@ general rules of thumb can be helpful in navigating how to structure changes:
   find a product in the Chromium repositories that depends on that line of code
   or else the line of code should be removed.
 
-  Completely new additions to the project (for example, support for a new OS
-  or architecture, or a new top-level directory for a new sub-project) must
-  be approved by [//ENG_REVIEW_OWNERS](../ENG_REVIEW_OWNERS).
+  Completely new additions to the project (e.g., support for a new OS or
+  architecture, or a new top-level directory for a new sub-project) must be
+  approved by chrome-eng-review@google.com. For long-term maintenance reasons,
+  we will accept only things that are used by the Chromium project and things
+  that do not increase the cost of maintaining Chromium's supported
+  architectures / platforms (e.g., adding one ifdef branch for an unsupported
+  architecture / platform is fine but introducing new abstractions in the
+  codebase is problematic).
 
 - **Code should only be moved to a central location (e.g., //base) when
   multiple consumers would benefit.** We should resist the temptation to
@@ -420,8 +429,11 @@ formats.
 * **Cq-Include-Trybots:**
   * A comma-separated list of trybots which should be triggered and
     checked by the CQ in addition to the normal set.
-  * Trybots are indicated in `master:builder` format (e.g.
-    `tryserver.chromium.linux:linux_asan_experimental`).
+  * Trybots are indicated in `bucket:builder` format (e.g.
+    `luci.chromium.try:android-asan`).
+  * The "Choose Tryjobs" UI in the "Checks" tab in Gerrit shows (and has
+    a button to copy) the Cq-Include-Trybots syntax for the currently
+    selected tryjobs.
 * **No-Presubmit:**
   * If present, the value should always be the string `true`.
   * Indicates to the CQ that it should not run presubmit checks on the CL.
@@ -460,12 +472,12 @@ formats.
     number.
 * **Cr-Branched-From:**
   * Automatically added by the git-numberer Gerrit plugin on changes
-    which are submitted to non-master branches.
-  * Aids those reading a non-master branch history in finding when a
-    given commit diverged from master.
+    which are submitted to non-main branches.
+  * Aids those reading a non-main branch history in finding when a
+    given commit diverged from main.
 
 [//]: # (the reference link section should be alphabetically sorted)
-[checkout-and-build]: https://chromium.googlesource.com/chromium/src/+/master/docs/#checking-out-and-building
+[checkout-and-build]: https://chromium.googlesource.com/chromium/src/+/main/docs/#checking-out-and-building
 [chrome-dd-review-process]: http://go/chrome-dd-review-process
 [chromium-design-docs]: https://groups.google.com/a/chromium.org/forum/#!forum/chromium-design-docs
 [code-reviews-owners]: code_reviews.md#OWNERS-files
@@ -475,12 +487,12 @@ formats.
 [core-principles]: https://www.chromium.org/developers/core-principles
 [corporate-cla]: https://cla.developers.google.com/about/google-corporate?csw=1
 [cr-authors]: https://chromium.googlesource.com/chromium/src/+/HEAD/AUTHORS
-[cr-gitiles]: https://chromium.googlesource.com/chromium/src/+/master/
-[cr-styleguide]: https://chromium.googlesource.com/chromium/src/+/master/styleguide/styleguide.md
+[cr-gitiles]: https://chromium.googlesource.com/chromium/src/+/main/
+[cr-styleguide]: https://chromium.googlesource.com/chromium/src/+/main/styleguide/styleguide.md
 [crbug-new]: https://bugs.chromium.org/p/chromium/issues/entry
 [crbug]: https://bugs.chromium.org/p/chromium/issues/list
-[cros-authors]: https://chromium.googlesource.com/chromium/src/+/master/AUTHORS
-[cros-dev-guide]: https://chromium.googlesource.com/chromiumos/docs/+/master/developer_guide.md
+[cros-authors]: https://chromium.googlesource.com/chromium/src/+/main/AUTHORS
+[cros-dev-guide]: https://chromium.googlesource.com/chromiumos/docs/+/main/developer_guide.md
 [crrev]: https://chromium-review.googlesource.com
 [depot-tools-setup]: https://commondatastorage.googleapis.com/chrome-infra-docs/flat/depot_tools/docs/html/depot_tools_tutorial.html#_setting_up
 [design-doc-template]: https://docs.google.com/document/d/14YBYKgk-uSfjfwpKFlp_omgUq5hwMVazy_M965s_1KA
@@ -489,7 +501,7 @@ formats.
 [github-tutorial]: https://try.github.io
 [good-git-commit-message]: https://chris.beams.io/posts/git-commit/
 [individual-cla]: https://cla.developers.google.com/about/google-individual?csw=1
-[life-of-a-chromium-developer]: https://docs.google.com/a/google.com/present/view?id=0AetfwCoL2lQAZGQ5bXJ0NDVfMGRtdGQ0OWM2
+[life-of-a-chromium-developer]: https://docs.google.com/presentation/d/1abnqM9j6zFodPHA38JG1061rG2iGj_GABxEDgZsdbJg/edit
 [noms-tutorial]: https://meowni.ca/posts/chromium-101
 [review-lag]: https://dev.chromium.org/developers/contributing-code/minimizing-review-lag-across-time-zones
 [skia-dev-guide]: https://skia.org/dev/contrib

@@ -7,10 +7,11 @@
 #ifndef CORE_FXGE_APPLE_FX_QUARTZ_DEVICE_H_
 #define CORE_FXGE_APPLE_FX_QUARTZ_DEVICE_H_
 
+#include <stdint.h>
 
-#include "core/fxcrt/fx_system.h"
-#include "core/fxge/cfx_gemodule.h"
+#include "core/fxcrt/retain_ptr.h"
 #include "core/fxge/dib/fx_dib.h"
+#include "third_party/base/span.h"
 
 #if !defined(OS_IOS)
 #include <Carbon/Carbon.h>
@@ -26,15 +27,14 @@ class CQuartz2D {
   void* CreateGraphics(const RetainPtr<CFX_DIBitmap>& bitmap);
   void DestroyGraphics(void* graphics);
 
-  void* CreateFont(const uint8_t* pFontData, uint32_t dwFontSize);
+  void* CreateFont(pdfium::span<const uint8_t> pFontData);
   void DestroyFont(void* pFont);
   void SetGraphicsTextMatrix(void* graphics, const CFX_Matrix& matrix);
   bool DrawGraphicsString(void* graphics,
                           void* font,
                           float fontSize,
-                          uint16_t* glyphIndices,
-                          CGPoint* glyphPositions,
-                          int32_t chars,
+                          pdfium::span<uint16_t> glyphIndices,
+                          pdfium::span<CGPoint> glyphPositions,
                           FX_ARGB argb);
 };
 

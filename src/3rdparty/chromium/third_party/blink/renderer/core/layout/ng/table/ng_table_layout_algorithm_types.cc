@@ -24,10 +24,10 @@ inline void InlineSizesFromStyle(
     const ComputedStyle& style,
     LayoutUnit inline_border_padding,
     bool is_parallel,
-    base::Optional<LayoutUnit>* inline_size,
-    base::Optional<LayoutUnit>* min_inline_size,
-    base::Optional<LayoutUnit>* max_inline_size,
-    base::Optional<float>* percentage_inline_size) {
+    absl::optional<LayoutUnit>* inline_size,
+    absl::optional<LayoutUnit>* min_inline_size,
+    absl::optional<LayoutUnit>* max_inline_size,
+    absl::optional<float>* percentage_inline_size) {
   const Length& length =
       is_parallel ? style.LogicalWidth() : style.LogicalHeight();
   const Length& min_length =
@@ -39,16 +39,23 @@ inline void InlineSizesFromStyle(
     *inline_size = LayoutUnit(length.Value());
     if (is_content_box)
       *inline_size = **inline_size + inline_border_padding;
+    else
+      *inline_size = std::max(**inline_size, inline_border_padding);
   }
   if (min_length.IsFixed()) {
     *min_inline_size = LayoutUnit(min_length.Value());
     if (is_content_box)
       *min_inline_size = **min_inline_size + inline_border_padding;
+    else
+      *min_inline_size = std::max(**min_inline_size, inline_border_padding);
   }
   if (max_length.IsFixed()) {
     *max_inline_size = LayoutUnit(max_length.Value());
     if (is_content_box)
       *max_inline_size = **max_inline_size + inline_border_padding;
+    else
+      *max_inline_size = std::max(**max_inline_size, inline_border_padding);
+
     if (*min_inline_size)
       *max_inline_size = std::max(**min_inline_size, **max_inline_size);
   }
@@ -78,12 +85,12 @@ constexpr LayoutUnit NGTableTypes::kTableMaxInlineSize;
 // "outer min-content and outer max-content widths for colgroups"
 NGTableTypes::Column NGTableTypes::CreateColumn(
     const ComputedStyle& style,
-    base::Optional<LayoutUnit> default_inline_size,
+    absl::optional<LayoutUnit> default_inline_size,
     bool is_table_fixed) {
-  base::Optional<LayoutUnit> inline_size;
-  base::Optional<LayoutUnit> min_inline_size;
-  base::Optional<LayoutUnit> max_inline_size;
-  base::Optional<float> percentage_inline_size;
+  absl::optional<LayoutUnit> inline_size;
+  absl::optional<LayoutUnit> min_inline_size;
+  absl::optional<LayoutUnit> max_inline_size;
+  absl::optional<float> percentage_inline_size;
   InlineSizesFromStyle(style, /* inline_border_padding */ LayoutUnit(),
                        /* is_parallel */ true, &inline_size, &min_inline_size,
                        &max_inline_size, &percentage_inline_size);
@@ -116,74 +123,68 @@ NGTableTypes::CellInlineConstraint NGTableTypes::CreateCellInlineConstraint(
     WritingMode table_writing_mode,
     bool is_fixed_layout,
     const NGBoxStrut& cell_border,
-    const NGBoxStrut& cell_padding,
-    bool has_collapsed_borders) {
-  base::Optional<LayoutUnit> css_inline_size;
-  base::Optional<LayoutUnit> css_min_inline_size;
-  base::Optional<LayoutUnit> css_max_inline_size;
-  base::Optional<float> css_percentage_inline_size;
+    const NGBoxStrut& cell_padding) {
+  absl::optional<LayoutUnit> css_inline_size;
+  absl::optional<LayoutUnit> css_min_inline_size;
+  absl::optional<LayoutUnit> css_max_inline_size;
+  absl::optional<float> css_percentage_inline_size;
   const auto& style = node.Style();
-  bool is_parallel =
+  const bool is_parallel =
       IsParallelWritingMode(table_writing_mode, style.GetWritingMode());
 
-  // Algorithm:
-  // - Compute cell's minmax sizes.
-  // - Constrain by css inline-size/max-inline-size.
+  // Be lazy when determining the min/max sizes, as in some circumstances we
+  // don't need to call this (relatively) expensive function.
+  absl::optional<MinMaxSizes> cached_min_max_sizes;
+  auto MinMaxSizesFunc = [&]() -> MinMaxSizes {
+    if (!cached_min_max_sizes) {
+      NGConstraintSpaceBuilder builder(table_writing_mode,
+                                       style.GetWritingDirection(),
+                                       /* is_new_fc */ true);
+      builder.SetTableCellBorders(cell_border);
+      builder.SetIsTableCell(true);
+      builder.SetCacheSlot(NGCacheSlot::kMeasure);
+      if (!is_parallel) {
+        // Only consider the ICB-size for the orthogonal fallback inline-size
+        // (don't use the size of the containing-block).
+        const PhysicalSize icb_size = node.InitialContainingBlockSize();
+        builder.SetOrthogonalFallbackInlineSize(
+            IsHorizontalWritingMode(table_writing_mode) ? icb_size.height
+                                                        : icb_size.width);
+      }
+      builder.SetAvailableSize({kIndefiniteSize, kIndefiniteSize});
+      const auto space = builder.ToConstraintSpace();
+
+      cached_min_max_sizes =
+          node.ComputeMinMaxSizes(table_writing_mode,
+                                  MinMaxSizesType::kIntrinsic, space)
+              .sizes;
+    }
+
+    return *cached_min_max_sizes;
+  };
+
   InlineSizesFromStyle(style, (cell_border + cell_padding).InlineSum(),
                        is_parallel, &css_inline_size, &css_min_inline_size,
                        &css_max_inline_size, &css_percentage_inline_size);
 
-  MinMaxSizesInput input(kIndefiniteSize, MinMaxSizesType::kIntrinsic);
-  MinMaxSizesResult min_max_size;
-  bool need_constraint_space = has_collapsed_borders || !is_parallel;
-  if (need_constraint_space) {
-    NGConstraintSpaceBuilder builder(table_writing_mode,
-                                     style.GetWritingDirection(),
-                                     /* is_new_fc */ true);
-    builder.SetTableCellBorders(cell_border);
-    builder.SetIsTableCell(true, /* is_legacy_table_cell */ false);
-    builder.SetCacheSlot(NGCacheSlot::kMeasure);
-    if (!is_parallel) {
-      PhysicalSize icb_size = node.InitialContainingBlockSize();
-      builder.SetOrthogonalFallbackInlineSize(
-          IsHorizontalWritingMode(table_writing_mode) ? icb_size.height
-                                                      : icb_size.width);
-      builder.SetAvailableSize({kIndefiniteSize, kIndefiniteSize});
-    }
-    NGConstraintSpace space = builder.ToConstraintSpace();
-    // It'd be nice to avoid computing minmax if not needed, but the criteria
-    // is not clear.
-    min_max_size = node.ComputeMinMaxSizes(table_writing_mode, input, &space);
-  } else {
-    min_max_size = node.ComputeMinMaxSizes(table_writing_mode, input);
-  }
-  // Compute min inline size.
+  // Compute the resolved min inline-size.
   LayoutUnit resolved_min_inline_size;
   if (!is_fixed_layout) {
-    resolved_min_inline_size =
-        std::max(min_max_size.sizes.min_size,
-                 css_min_inline_size.value_or(LayoutUnit()));
+    resolved_min_inline_size = std::max(
+        MinMaxSizesFunc().min_size, css_min_inline_size.value_or(LayoutUnit()));
     // https://quirks.spec.whatwg.org/#the-table-cell-nowrap-minimum-width-calculation-quirk
-    // Has not worked in Legacy, might be pulled out.
-    if (css_inline_size && node.GetDocument().InQuirksMode()) {
-      bool has_nowrap_attribute =
-          !To<Element>(node.GetDOMNode())
-               ->FastGetAttribute(html_names::kNowrapAttr)
-               .IsNull();
-      if (has_nowrap_attribute && style.AutoWrap()) {
-        resolved_min_inline_size =
-            std::max(resolved_min_inline_size, *css_inline_size);
-      }
+    bool has_nowrap_attribute =
+        node.GetDOMNode() && To<Element>(node.GetDOMNode())
+                                 ->FastHasAttribute(html_names::kNowrapAttr);
+    if (css_inline_size && node.GetDocument().InQuirksMode() &&
+        has_nowrap_attribute) {
+      resolved_min_inline_size =
+          std::max(resolved_min_inline_size, *css_inline_size);
     }
   }
 
-  // Compute resolved max inline size.
-  LayoutUnit content_max;
-  if (css_inline_size) {
-    content_max = *css_inline_size;
-  } else {
-    content_max = min_max_size.sizes.max_size;
-  }
+  // Compute the resolved max inline-size.
+  LayoutUnit content_max = css_inline_size.value_or(MinMaxSizesFunc().max_size);
   if (css_max_inline_size) {
     content_max = std::min(content_max, *css_max_inline_size);
     resolved_min_inline_size =
@@ -211,54 +212,23 @@ NGTableTypes::CellInlineConstraint NGTableTypes::CreateCellInlineConstraint(
 NGTableTypes::Section NGTableTypes::CreateSection(
     const NGLayoutInputNode& section,
     wtf_size_t start_row,
-    wtf_size_t rows,
+    wtf_size_t row_count,
     LayoutUnit block_size,
     bool treat_as_tbody) {
   const Length& section_css_block_size = section.Style().LogicalHeight();
   // TODO(crbug.com/1105272): Decide what to do with |Length::IsCalculated()|.
   bool is_constrained =
       section_css_block_size.IsFixed() || section_css_block_size.IsPercent();
-  base::Optional<float> percent;
+  absl::optional<float> percent;
   if (section_css_block_size.IsPercent())
     percent = section_css_block_size.Percent();
   return Section{start_row,
-                 rows,
+                 row_count,
                  block_size,
                  percent,
                  is_constrained,
                  treat_as_tbody,
                  /* needs_redistribution */ false};
-}
-
-NGTableTypes::CellBlockConstraint NGTableTypes::CreateCellBlockConstraint(
-    const NGLayoutInputNode& node,
-    LayoutUnit computed_block_size,
-    LayoutUnit baseline,
-    const NGBoxStrut& border_box_borders,
-    wtf_size_t row_index,
-    wtf_size_t column_index,
-    wtf_size_t rowspan) {
-  bool is_constrained = node.Style().LogicalHeight().IsFixed();
-  return CellBlockConstraint{computed_block_size,
-                             baseline,
-                             border_box_borders,
-                             row_index,
-                             column_index,
-                             rowspan,
-                             node.Style().VerticalAlign(),
-                             is_constrained};
-}
-
-NGTableTypes::RowspanCell NGTableTypes::CreateRowspanCell(
-    wtf_size_t row_index,
-    wtf_size_t rowspan,
-    CellBlockConstraint* cell_block_constraint,
-    base::Optional<LayoutUnit> css_cell_block_size) {
-  if (css_cell_block_size) {
-    cell_block_constraint->min_block_size =
-        std::max(cell_block_constraint->min_block_size, *css_cell_block_size);
-  }
-  return RowspanCell{row_index, rowspan, *cell_block_constraint};
 }
 
 void NGTableTypes::CellInlineConstraint::Encompass(
@@ -286,7 +256,7 @@ void NGTableTypes::CellInlineConstraint::Encompass(
 }
 
 void NGTableTypes::Column::Encompass(
-    const base::Optional<NGTableTypes::CellInlineConstraint>& cell) {
+    const absl::optional<NGTableTypes::CellInlineConstraint>& cell) {
   if (!cell)
     return;
 
@@ -358,6 +328,14 @@ NGTableGroupedChildren::NGTableGroupedChildren(const NGBlockNode& table)
   }
 }
 
+void NGTableGroupedChildren::Trace(Visitor* visitor) const {
+  visitor->Trace(captions);
+  visitor->Trace(columns);
+  visitor->Trace(header);
+  visitor->Trace(bodies);
+  visitor->Trace(footer);
+}
+
 NGTableGroupedChildrenIterator NGTableGroupedChildren::begin() const {
   return NGTableGroupedChildrenIterator(*this);
 }
@@ -385,8 +363,8 @@ NGTableGroupedChildrenIterator& NGTableGroupedChildrenIterator::operator++() {
       AdvanceToNonEmptySection();
       break;
     case kBody:
-      ++body_iterator_;
-      if (body_iterator_ == grouped_children_.bodies.end())
+      ++position_;
+      if (body_vector_->begin() + position_ == grouped_children_.bodies.end())
         AdvanceToNonEmptySection();
       break;
     case kEnd:
@@ -405,7 +383,7 @@ NGBlockNode NGTableGroupedChildrenIterator::operator*() const {
     case kFoot:
       return grouped_children_.footer;
     case kBody:
-      return *body_iterator_;
+      return body_vector_->at(position_);
     case kEnd:
     case kNone:
       NOTREACHED();
@@ -418,7 +396,7 @@ bool NGTableGroupedChildrenIterator::operator==(
   if (current_section_ != rhs.current_section_)
     return false;
   if (current_section_ == kBody)
-    return rhs.body_iterator_ == body_iterator_;
+    return rhs.body_vector_ == body_vector_ && rhs.position_ == position_;
   return true;
 }
 
@@ -436,8 +414,9 @@ void NGTableGroupedChildrenIterator::AdvanceToNonEmptySection() {
       break;
     case kHead:
       current_section_ = kBody;
-      body_iterator_ = grouped_children_.bodies.begin();
-      if (body_iterator_ == grouped_children_.bodies.end())
+      body_vector_ = &grouped_children_.bodies;
+      position_ = 0;
+      if (body_vector_->size() == 0)
         AdvanceToNonEmptySection();
       break;
     case kBody:

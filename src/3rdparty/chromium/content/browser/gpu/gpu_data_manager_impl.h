@@ -11,15 +11,13 @@
 #include <memory>
 #include <string>
 
-#include "base/compiler_specific.h"
-#include "base/macros.h"
 #include "base/no_destructor.h"
 #include "base/process/kill.h"
 #include "base/synchronization/lock.h"
 #include "base/thread_annotations.h"
-#include "base/time/time.h"
 #include "base/values.h"
 #include "build/build_config.h"
+#include "content/common/content_export.h"
 #include "content/public/browser/gpu_data_manager.h"
 #include "content/public/common/three_d_api_types.h"
 #include "gpu/config/device_perf_info.h"
@@ -39,6 +37,11 @@ namespace gpu {
 struct GpuPreferences;
 }
 
+namespace media {
+struct SupportedVideoDecoderConfig;
+using SupportedVideoDecoderConfigs = std::vector<SupportedVideoDecoderConfig>;
+}  // namespace media
+
 namespace content {
 
 class GpuDataManagerImplPrivate;
@@ -46,8 +49,23 @@ class GpuDataManagerImplPrivate;
 class CONTENT_EXPORT GpuDataManagerImpl : public GpuDataManager,
                                           public display::DisplayObserver {
  public:
+  enum GpuInfoRequest {
+    kGpuInfoRequestDxDiag = 1 << 0,
+    kGpuInfoRequestDx12 = 1 << 1,
+    kGpuInfoRequestVulkan = 1 << 2,
+    kGpuInfoRequestDawnInfo = 1 << 3,
+    kGpuInfoRequestDx12Vulkan = kGpuInfoRequestVulkan | kGpuInfoRequestDx12,
+    kGpuInfoRequestVideo = 1 << 4,
+    kGpuInfoRequestAll = kGpuInfoRequestDxDiag | kGpuInfoRequestDx12 |
+                         kGpuInfoRequestVulkan | kGpuInfoRequestDawnInfo |
+                         kGpuInfoRequestVideo,
+  };
+
   // Getter for the singleton. This will return NULL on failure.
   static GpuDataManagerImpl* GetInstance();
+
+  GpuDataManagerImpl(const GpuDataManagerImpl&) = delete;
+  GpuDataManagerImpl& operator=(const GpuDataManagerImpl&) = delete;
 
   // This returns true after the first call of GetInstance().
   static bool Initialized();
@@ -57,8 +75,6 @@ class CONTENT_EXPORT GpuDataManagerImpl : public GpuDataManager,
   gpu::GPUInfo GetGPUInfo() override;
   gpu::GpuFeatureStatus GetFeatureStatus(gpu::GpuFeatureType feature) override;
   bool GpuAccessAllowed(std::string* reason) override;
-  void RequestDxdiagDx12VulkanGpuInfoIfNeeded(GpuInfoRequest request,
-                                              bool delayed) override;
   bool IsEssentialGpuInfoAvailable() override;
   void RequestVideoMemoryUsageStatsUpdate(
       VideoMemoryUsageStatsCallback callback) override;
@@ -80,15 +96,18 @@ class CONTENT_EXPORT GpuDataManagerImpl : public GpuDataManager,
   // to measure what tasks are in the queue or to move mock time forward.
   void StartUmaTimer();
 
-  bool GpuProcessStartAllowed() const;
+  // Requests complete GPU info if it has not already been requested
+  void RequestDxdiagDx12VulkanVideoGpuInfoIfNeeded(
+      GpuDataManagerImpl::GpuInfoRequest request,
+      bool delayed);
 
   bool IsDx12VulkanVersionAvailable() const;
   bool IsGpuFeatureInfoAvailable() const;
 
   void UpdateGpuInfo(
       const gpu::GPUInfo& gpu_info,
-      const base::Optional<gpu::GPUInfo>& gpu_info_for_hardware_gpu);
-#if defined(OS_WIN)
+      const absl::optional<gpu::GPUInfo>& gpu_info_for_hardware_gpu);
+#if BUILDFLAG(IS_WIN)
   void UpdateDxDiagNode(const gpu::DxDiagNode& dx_diagnostics);
   void UpdateDx12Info(uint32_t d3d12_feature_level);
   void UpdateVulkanInfo(uint32_t vulkan_version);
@@ -100,16 +119,22 @@ class CONTENT_EXPORT GpuDataManagerImpl : public GpuDataManager,
   void UpdateVulkanRequestStatus(bool request_continues);
   bool Dx12Requested() const;
   bool VulkanRequested() const;
-  // Called from BrowserMainLoop::BrowserThreadsStarted().
-  void OnBrowserThreadsStarted();
+  // Called from BrowserMainLoop::PostCreateThreads().
+  // TODO(content/browser/gpu/OWNERS): This should probably use a
+  // BrowserMainParts override instead.
+  void PostCreateThreads();
   void TerminateInfoCollectionGpuProcess();
 #endif
+  void UpdateDawnInfo(const std::vector<std::string>& dawn_info_list);
+
   // Update the GPU feature info. This updates the blocklist and enabled status
   // of GPU rasterization. In the future this will be used for more features.
   void UpdateGpuFeatureInfo(const gpu::GpuFeatureInfo& gpu_feature_info,
-                            const base::Optional<gpu::GpuFeatureInfo>&
+                            const absl::optional<gpu::GpuFeatureInfo>&
                                 gpu_feature_info_for_hardware_gpu);
   void UpdateGpuExtraInfo(const gfx::GpuExtraInfo& gpu_extra_info);
+  void UpdateMojoMediaVideoCapabilities(
+      const media::SupportedVideoDecoderConfigs& configs);
 
   gpu::GpuFeatureInfo GetGpuFeatureInfo() const;
 
@@ -118,6 +143,7 @@ class CONTENT_EXPORT GpuDataManagerImpl : public GpuDataManager,
   // Such info are displayed in about:gpu for diagostic purpose.
   gpu::GPUInfo GetGPUInfoForHardwareGpu() const;
   gpu::GpuFeatureInfo GetGpuFeatureInfoForHardwareGpu() const;
+  std::vector<std::string> GetDawnInfoList() const;
   bool GpuAccessAllowedForHardwareGpu(std::string* reason);
   bool IsGpuCompositingDisabledForHardwareGpu() const;
 
@@ -138,7 +164,7 @@ class CONTENT_EXPORT GpuDataManagerImpl : public GpuDataManager,
                      const std::string& header,
                      const std::string& message);
 
-  void ProcessCrashed(base::TerminationStatus exit_code);
+  void ProcessCrashed();
 
   // Returns a new copy of the ListValue.
   std::unique_ptr<base::ListValue> GetLogMessages() const;
@@ -203,8 +229,6 @@ class CONTENT_EXPORT GpuDataManagerImpl : public GpuDataManager,
   mutable base::Lock lock_;
   std::unique_ptr<GpuDataManagerImplPrivate> private_ GUARDED_BY(lock_)
       PT_GUARDED_BY(lock_);
-
-  DISALLOW_COPY_AND_ASSIGN(GpuDataManagerImpl);
 };
 
 }  // namespace content

@@ -210,9 +210,10 @@ def summarized_results(port,
 
 class RunResultsWithSinkTest(unittest.TestCase):
     def setUp(self):
-        expectations = test_expectations.TestExpectations(
+        self.expectations = test_expectations.TestExpectations(
             MockHost().port_factory.get(port_name='test'))
-        self.results = test_run_results.TestRunResults(expectations, 1, None)
+        self.results = test_run_results.TestRunResults(self.expectations, 1,
+                                                       None)
         self.test = get_result('failures/expected/text.html',
                                ResultType.Timeout,
                                run_time=1)
@@ -220,7 +221,8 @@ class RunResultsWithSinkTest(unittest.TestCase):
     def testAddWithSink(self):
         self.results.result_sink = mock.Mock()
         self.results.add(self.test, False, False)
-        self.results.result_sink.sink.assert_called_with(False, self.test)
+        self.results.result_sink.sink.assert_called_with(
+            False, self.test, self.expectations)
 
     def testAddWithoutSink(self):
         self.results.result_sink = None
@@ -331,16 +333,16 @@ class SummarizedResultsTest(unittest.TestCase):
             passing=True,
             flaky=False,
             extra_skipped_tests=['passes/text.html'])
-        self.assertEquals(summary['tests']['passes']['text.html']['expected'],
-                          'SKIP PASS')
+        actual = summary['tests']['passes']['text.html']['expected']
+        self.assertEquals(sorted(list(actual.split(" "))), ['PASS', 'SKIP'])
 
     def test_summarized_results_wontfix(self):
         self.port._options.builder_name = 'dummy builder'
         summary = summarized_results(
             self.port, expected=False, passing=False, flaky=False)
-        self.assertEquals(
-            summary['tests']['failures']['expected']['keyboard.html']
-            ['expected'], 'SKIP CRASH')
+        actual = summary['tests']['failures']['expected']['keyboard.html'][
+            'expected']
+        self.assertEquals(sorted(list(actual.split(" "))), ['CRASH', 'SKIP'])
         self.assertTrue(
             summary['tests']['passes']['text.html']['is_unexpected'])
         self.assertEqual(summary['num_passes'], 1)

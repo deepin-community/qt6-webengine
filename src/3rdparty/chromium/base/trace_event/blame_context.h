@@ -8,7 +8,6 @@
 #include <inttypes.h>
 
 #include "base/base_export.h"
-#include "base/macros.h"
 #include "base/threading/thread_checker.h"
 #include "base/trace_event/trace_log.h"
 #include "third_party/perfetto/include/perfetto/tracing/traced_value_forward.h"
@@ -70,6 +69,10 @@ class BASE_EXPORT BlameContext
                const char* scope,
                int64_t id,
                const BlameContext* parent_context);
+
+  BlameContext(const BlameContext&) = delete;
+  BlameContext& operator=(const BlameContext&) = delete;
+
   ~BlameContext() override;
 
   // Initialize the blame context, automatically taking a snapshot if tracing is
@@ -105,14 +108,14 @@ class BASE_EXPORT BlameContext
   void OnTraceLogEnabled() override;
   void OnTraceLogDisabled() override;
 
-  void WriteIntoTracedValue(perfetto::TracedValue context) const;
+  void WriteIntoTrace(perfetto::TracedValue context) const;
 
  protected:
   // Serialize the properties of this blame context into |state|. Subclasses can
   // override this method to record additional properties (e.g, the URL for an
   // <iframe> blame context). Note that an overridden implementation must still
   // call this base method.
-  // TODO(altimin): Replace all users with WriteIntoTracedValue and remove it.
+  // TODO(altimin): Replace all users with WriteIntoTrace and remove it.
   virtual void AsValueInto(trace_event::TracedValue* state);
 
  private:
@@ -132,8 +135,6 @@ class BASE_EXPORT BlameContext
 
   ThreadChecker thread_checker_;
   WeakPtrFactory<BlameContext> weak_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(BlameContext);
 };
 
 }  // namespace trace_event

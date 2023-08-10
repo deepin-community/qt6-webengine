@@ -81,13 +81,25 @@ public:
         fValue.set(std::move(value));
     }
 
-    T* operator->() const {
+    T* operator->() {
         SkASSERT(fState == SkSVGPropertyState::kValue);
         SkASSERT(fValue.isValid());
         return fValue.get();
     }
 
-    T& operator*() const {
+    const T* operator->() const {
+        SkASSERT(fState == SkSVGPropertyState::kValue);
+        SkASSERT(fValue.isValid());
+        return fValue.get();
+    }
+
+    T& operator*() {
+        SkASSERT(fState == SkSVGPropertyState::kValue);
+        SkASSERT(fValue.isValid());
+        return *fValue;
+    }
+
+    const T& operator*() const {
         SkASSERT(fState == SkSVGPropertyState::kValue);
         SkASSERT(fValue.isValid());
         return *fValue;
@@ -194,8 +206,8 @@ public:
     SkSVGPaint() : fType(Type::kNone), fColor(SK_ColorBLACK) {}
     explicit SkSVGPaint(Type t) : fType(t), fColor(SK_ColorBLACK) {}
     explicit SkSVGPaint(const SkSVGColor& c) : fType(Type::kColor), fColor(c) {}
-    explicit SkSVGPaint(const SkSVGIRI& iri)
-        : fType(Type::kIRI), fColor(SK_ColorBLACK), fIRI(iri) {}
+    SkSVGPaint(const SkSVGIRI& iri, const SkSVGColor& fallback_color)
+        : fType(Type::kIRI), fColor(fallback_color), fIRI(iri) {}
 
     SkSVGPaint(const SkSVGPaint&)            = default;
     SkSVGPaint& operator=(const SkSVGPaint&) = default;
@@ -206,7 +218,10 @@ public:
     bool operator!=(const SkSVGPaint& other) const { return !(*this == other); }
 
     Type type() const { return fType; }
-    const SkSVGColor& color() const { SkASSERT(fType == Type::kColor); return fColor; }
+    const SkSVGColor& color() const {
+        SkASSERT(fType == Type::kColor || fType == Type::kIRI);
+        return fColor;
+    }
     const SkSVGIRI& iri() const { SkASSERT(fType == Type::kIRI); return fIRI; }
 
 private:
@@ -677,6 +692,12 @@ enum class SkSVGColorspace {
     kAuto,
     kSRGB,
     kLinearRGB,
+};
+
+// https://www.w3.org/TR/SVG11/painting.html#DisplayProperty
+enum class SkSVGDisplay {
+    kInline,
+    kNone,
 };
 
 #endif // SkSVGTypes_DEFINED

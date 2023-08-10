@@ -62,7 +62,7 @@
   }
 
   ntp-mini-page {
-    --ntp-mini-page-shortcut-color: var(--google-grey-refresh-500);
+    --ntp-mini-page-shortcut-color: var(--google-grey-500);
   }
 
   .selected ntp-mini-page {
@@ -129,7 +129,8 @@
 
   .option-title {
     font-weight: bold;
-    margin: 8px 0;
+    margin-bottom: 4px;
+    margin-top: 12px;
   }
 
   .option-description {
@@ -227,7 +228,7 @@
       -webkit-mask-image: url(icons/check_circle.svg);
       -webkit-mask-repeat: no-repeat;
       -webkit-mask-size: 28px;
-      background-color: var(--google-blue-refresh-300);
+      background-color: var(--google-blue-300);
       content: '';
       display: block;
       height: 28px;
@@ -281,6 +282,6 @@
       $i18n{hideShortcutsDesc}
     </div>
   </div>
-  <cr-toggle id="hideToggle" title="$i18n{hideShortcuts}" checked="[[hide_]]"
-      on-change="onHideChange_"></cr-toggle>
+  <cr-toggle id="hideToggle" title="$i18n{hideShortcuts}"
+      checked="[[hide_]]" on-change="onHideChange_"></cr-toggle>
 </div>

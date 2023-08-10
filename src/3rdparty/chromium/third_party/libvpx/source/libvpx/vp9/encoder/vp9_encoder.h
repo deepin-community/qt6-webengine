@@ -273,10 +273,6 @@ typedef struct VP9EncoderConfig {
 
   vpx_fixed_buf_t two_pass_stats_in;
 
-#if CONFIG_FP_MB_STATS
-  vpx_fixed_buf_t firstpass_mb_stats_in;
-#endif
-
   vp8e_tuning tuning;
   vp9e_tune_content content;
 #if CONFIG_VP9_HIGHBITDEPTH
@@ -291,6 +287,7 @@ typedef struct VP9EncoderConfig {
   int row_mt;
   unsigned int motion_vector_unit_test;
   int delta_q_uv;
+  int use_simple_encode_api;  // Use SimpleEncode APIs or not
 } VP9EncoderConfig;
 
 static INLINE int is_lossless_requested(const VP9EncoderConfig *cfg) {
@@ -710,9 +707,6 @@ typedef struct VP9_COMP {
   TileDataEnc *tile_data;
   int allocated_tiles;  // Keep track of memory allocated for tiles.
 
-  // For a still frame, this flag is set to 1 to skip partition search.
-  int partition_search_skippable_frame;
-
   int scaled_ref_idx[REFS_PER_FRAME];
   int lst_fb_idx;
   int gld_fb_idx;
@@ -746,6 +740,7 @@ typedef struct VP9_COMP {
   // Ambient reconstruction err target for force key frames
   int64_t ambient_err;
 
+  RD_CONTROL rd_ctrl;
   RD_OPT rd;
 
   CODING_CONTEXT coding_context;
@@ -803,10 +798,6 @@ typedef struct VP9_COMP {
   uint64_t time_compress_data;
   uint64_t time_pick_lpf;
   uint64_t time_encode_sb_row;
-
-#if CONFIG_FP_MB_STATS
-  int use_fp_mb_stats;
-#endif
 
   TWO_PASS twopass;
 
@@ -958,6 +949,8 @@ typedef struct VP9_COMP {
   uint8_t *content_state_sb_fd;
 
   int compute_source_sad_onepass;
+
+  int compute_frame_low_motion_onepass;
 
   LevelConstraint level_constraint;
 
@@ -1201,6 +1194,13 @@ int vp9_get_quantizer(const VP9_COMP *cpi);
 static INLINE int frame_is_kf_gf_arf(const VP9_COMP *cpi) {
   return frame_is_intra_only(&cpi->common) || cpi->refresh_alt_ref_frame ||
          (cpi->refresh_golden_frame && !cpi->rc.is_src_frame_alt_ref);
+}
+
+static INLINE int ref_frame_to_flag(int8_t ref_frame) {
+  static const int kVp9RefFlagList[4] = { 0, VP9_LAST_FLAG, VP9_GOLD_FLAG,
+                                          VP9_ALT_FLAG };
+  assert(ref_frame >= LAST_FRAME && ref_frame <= ALTREF_FRAME);
+  return kVp9RefFlagList[ref_frame];
 }
 
 static INLINE int get_ref_frame_map_idx(const VP9_COMP *cpi,

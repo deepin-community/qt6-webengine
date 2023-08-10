@@ -5,11 +5,10 @@
 #ifndef COMPONENTS_SERVICES_UNZIP_PUBLIC_CPP_UNZIP_H_
 #define COMPONENTS_SERVICES_UNZIP_PUBLIC_CPP_UNZIP_H_
 
-#include <memory>
-
 #include "base/callback_forward.h"
 #include "components/services/unzip/public/mojom/unzipper.mojom.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
+#include "third_party/ced/src/util/encodings/encodings.h"
 
 namespace base {
 class FilePath;
@@ -33,6 +32,17 @@ void UnzipWithFilter(mojo::PendingRemote<mojom::Unzipper> unzipper,
                      const base::FilePath& output_dir,
                      UnzipFilterCallback filter_callback,
                      UnzipCallback result_callback);
+
+void Unzip(mojo::PendingRemote<mojom::Unzipper> unzipper,
+           const base::FilePath& zip_file,
+           const base::FilePath& output_dir,
+           mojom::UnzipOptionsPtr options,
+           UnzipCallback result_callback);
+
+using DetectEncodingCallback = base::OnceCallback<void(Encoding)>;
+void DetectEncoding(mojo::PendingRemote<mojom::Unzipper> unzipper,
+                    const base::FilePath& zip_file,
+                    DetectEncodingCallback result_callback);
 
 }  // namespace unzip
 

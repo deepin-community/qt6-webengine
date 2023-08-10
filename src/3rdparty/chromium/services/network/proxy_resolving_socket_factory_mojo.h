@@ -5,10 +5,7 @@
 #ifndef SERVICES_NETWORK_PROXY_RESOLVING_SOCKET_FACTORY_MOJO_H_
 #define SERVICES_NETWORK_PROXY_RESOLVING_SOCKET_FACTORY_MOJO_H_
 
-#include <memory>
-
 #include "base/component_export.h"
-#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
@@ -29,6 +26,12 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) ProxyResolvingSocketFactoryMojo
     : public mojom::ProxyResolvingSocketFactory {
  public:
   ProxyResolvingSocketFactoryMojo(net::URLRequestContext* request_context);
+
+  ProxyResolvingSocketFactoryMojo(const ProxyResolvingSocketFactoryMojo&) =
+      delete;
+  ProxyResolvingSocketFactoryMojo& operator=(
+      const ProxyResolvingSocketFactoryMojo&) = delete;
+
   ~ProxyResolvingSocketFactoryMojo() override;
 
   // mojom::ProxyResolvingSocketFactory implementation.
@@ -46,8 +49,6 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) ProxyResolvingSocketFactoryMojo
   TLSSocketFactory tls_socket_factory_;
   mojo::UniqueReceiverSet<mojom::ProxyResolvingSocket>
       proxy_resolving_socket_receivers_;
-
-  DISALLOW_COPY_AND_ASSIGN(ProxyResolvingSocketFactoryMojo);
 };
 
 }  // namespace network

@@ -6,13 +6,16 @@
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_WEBUSB_USB_DEVICE_H_
 
 #include <bitset>
+
+#include "base/containers/span.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "services/device/public/mojom/usb_device.mojom-blink.h"
-#include "third_party/blink/renderer/bindings/core/v8/array_buffer_or_array_buffer_view.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
+#include "third_party/blink/renderer/core/typed_arrays/dom_array_piece.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_set.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/mojo/heap_mojo_remote.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
@@ -20,6 +23,7 @@ namespace blink {
 
 class ScriptPromiseResolver;
 class ScriptState;
+class USB;
 class USBConfiguration;
 class USBControlTransferParameters;
 
@@ -28,7 +32,8 @@ class USBDevice : public ScriptWrappable,
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  explicit USBDevice(device::mojom::blink::UsbDeviceInfoPtr,
+  explicit USBDevice(USB* parent,
+                     device::mojom::blink::UsbDeviceInfoPtr,
                      mojo::PendingRemote<device::mojom::blink::UsbDevice>,
                      ExecutionContext*);
   ~USBDevice() override;
@@ -38,7 +43,7 @@ class USBDevice : public ScriptWrappable,
   }
   bool IsInterfaceClaimed(wtf_size_t configuration_index,
                           wtf_size_t interface_index) const;
-  wtf_size_t SelectedAlternateInterface(wtf_size_t interface_index) const;
+  wtf_size_t SelectedAlternateInterfaceIndex(wtf_size_t interface_index) const;
 
   // USBDevice.idl
   uint8_t usbVersionMajor() const { return Info().usb_version_major; }
@@ -63,6 +68,7 @@ class USBDevice : public ScriptWrappable,
 
   ScriptPromise open(ScriptState*);
   ScriptPromise close(ScriptState*);
+  ScriptPromise forget(ScriptState*, ExceptionState& exception_state);
   ScriptPromise selectConfiguration(ScriptState*, uint8_t configuration_value);
   ScriptPromise claimInterface(ScriptState*, uint8_t interface_number);
   ScriptPromise releaseInterface(ScriptState*, uint8_t interface_number);
@@ -76,7 +82,7 @@ class USBDevice : public ScriptWrappable,
                                    const USBControlTransferParameters* setup);
   ScriptPromise controlTransferOut(ScriptState*,
                                    const USBControlTransferParameters* setup,
-                                   const ArrayBufferOrArrayBufferView& data);
+                                   const DOMArrayPiece& data);
   ScriptPromise clearHalt(ScriptState*,
                           String direction,
                           uint8_t endpoint_number);
@@ -85,13 +91,13 @@ class USBDevice : public ScriptWrappable,
                            unsigned length);
   ScriptPromise transferOut(ScriptState*,
                             uint8_t endpoint_number,
-                            const ArrayBufferOrArrayBufferView& data);
+                            const DOMArrayPiece& data);
   ScriptPromise isochronousTransferIn(ScriptState*,
                                       uint8_t endpoint_number,
                                       Vector<unsigned> packet_lengths);
   ScriptPromise isochronousTransferOut(ScriptState*,
                                        uint8_t endpoint_number,
-                                       const ArrayBufferOrArrayBufferView& data,
+                                       const DOMArrayPiece& data,
                                        Vector<unsigned> packet_lengths);
   ScriptPromise reset(ScriptState*);
 
@@ -107,7 +113,6 @@ class USBDevice : public ScriptWrappable,
   wtf_size_t FindInterfaceIndex(uint8_t interface_number) const;
   wtf_size_t FindAlternateIndex(wtf_size_t interface_index,
                                 uint8_t alternate_setting) const;
-  bool IsProtectedInterfaceClass(wtf_size_t interface_index) const;
   bool EnsureNoDeviceChangeInProgress(ScriptPromiseResolver*) const;
   bool EnsureNoDeviceOrInterfaceChangeInProgress(ScriptPromiseResolver*) const;
   bool EnsureDeviceConfigured(ScriptPromiseResolver*) const;
@@ -125,14 +130,16 @@ class USBDevice : public ScriptWrappable,
   void AsyncOpen(ScriptPromiseResolver*,
                  device::mojom::blink::UsbOpenDeviceError);
   void AsyncClose(ScriptPromiseResolver*);
+  void AsyncForget(ScriptPromiseResolver*);
   void OnDeviceOpenedOrClosed(bool);
   void AsyncSelectConfiguration(wtf_size_t configuration_index,
                                 ScriptPromiseResolver*,
                                 bool success);
   void OnConfigurationSelected(bool success, wtf_size_t configuration_index);
-  void AsyncClaimInterface(wtf_size_t interface_index,
-                           ScriptPromiseResolver*,
-                           bool success);
+  void AsyncClaimInterface(
+      wtf_size_t interface_index,
+      ScriptPromiseResolver*,
+      device::mojom::blink::UsbClaimInterfaceResult result);
   void AsyncReleaseInterface(wtf_size_t interface_index,
                              ScriptPromiseResolver*,
                              bool success);
@@ -143,20 +150,20 @@ class USBDevice : public ScriptWrappable,
                                      bool success);
   void AsyncControlTransferIn(ScriptPromiseResolver*,
                               device::mojom::blink::UsbTransferStatus,
-                              const Vector<uint8_t>&);
-  void AsyncControlTransferOut(unsigned,
+                              base::span<const uint8_t> data);
+  void AsyncControlTransferOut(uint32_t transfer_length,
                                ScriptPromiseResolver*,
                                device::mojom::blink::UsbTransferStatus);
   void AsyncClearHalt(ScriptPromiseResolver*, bool success);
   void AsyncTransferIn(ScriptPromiseResolver*,
                        device::mojom::blink::UsbTransferStatus,
-                       const Vector<uint8_t>&);
-  void AsyncTransferOut(unsigned,
+                       base::span<const uint8_t> data);
+  void AsyncTransferOut(uint32_t transfer_length,
                         ScriptPromiseResolver*,
                         device::mojom::blink::UsbTransferStatus);
   void AsyncIsochronousTransferIn(
       ScriptPromiseResolver*,
-      const Vector<uint8_t>&,
+      base::span<const uint8_t> data,
       Vector<device::mojom::blink::UsbIsochronousPacketPtr>);
   void AsyncIsochronousTransferOut(
       ScriptPromiseResolver*,
@@ -166,9 +173,11 @@ class USBDevice : public ScriptWrappable,
   void OnConnectionError();
   bool MarkRequestComplete(ScriptPromiseResolver*);
 
+  const Member<USB> parent_;
   device::mojom::blink::UsbDeviceInfoPtr device_info_;
   HeapMojoRemote<device::mojom::blink::UsbDevice> device_;
   HeapHashSet<Member<ScriptPromiseResolver>> device_requests_;
+  HeapVector<Member<USBConfiguration>> configurations_;
   bool opened_;
   bool device_state_change_in_progress_;
   wtf_size_t configuration_index_;
@@ -177,7 +186,7 @@ class USBDevice : public ScriptWrappable,
   // configured. Use the index returned by FindInterfaceIndex().
   WTF::Vector<bool> claimed_interfaces_;
   WTF::Vector<bool> interface_state_change_in_progress_;
-  WTF::Vector<wtf_size_t> selected_alternates_;
+  WTF::Vector<wtf_size_t> selected_alternate_indices_;
 
   // These bit sets have one entry for each endpoint. Index using the endpoint
   // number (lower 4 bits of the endpoint address).

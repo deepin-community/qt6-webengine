@@ -6,9 +6,8 @@
 
 #include "core/fxcodec/fx_codec.h"
 
-#include <algorithm>
+#include <utility>
 
-#include "core/fxcrt/fx_memory.h"
 #include "core/fxge/dib/fx_dib.h"
 
 namespace fxcodec {
@@ -16,10 +15,7 @@ namespace fxcodec {
 #ifdef PDF_ENABLE_XFA
 CFX_DIBAttribute::CFX_DIBAttribute() = default;
 
-CFX_DIBAttribute::~CFX_DIBAttribute() {
-  for (const auto& pair : m_Exif)
-    FX_Free(pair.second);
-}
+CFX_DIBAttribute::~CFX_DIBAttribute() = default;
 #endif  // PDF_ENABLE_XFA
 
 void ReverseRGB(uint8_t* pDestBuf, const uint8_t* pSrcBuf, int pixels) {
@@ -35,24 +31,6 @@ void ReverseRGB(uint8_t* pDestBuf, const uint8_t* pSrcBuf, int pixels) {
       pSrcBuf += 3;
     }
   }
-}
-
-FX_SAFE_UINT32 CalculatePitch8(uint32_t bpc, uint32_t components, int width) {
-  FX_SAFE_UINT32 pitch = bpc;
-  pitch *= components;
-  pitch *= width;
-  pitch += 7;
-  pitch /= 8;
-  return pitch;
-}
-
-FX_SAFE_UINT32 CalculatePitch32(int bpp, int width) {
-  FX_SAFE_UINT32 pitch = bpp;
-  pitch *= width;
-  pitch += 31;
-  pitch /= 32;  // quantized to number of 32-bit words.
-  pitch *= 4;   // and then back to bytes, (not just /8 in one step).
-  return pitch;
 }
 
 }  // namespace fxcodec

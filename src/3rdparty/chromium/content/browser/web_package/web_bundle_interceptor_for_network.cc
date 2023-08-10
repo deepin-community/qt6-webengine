@@ -92,8 +92,7 @@ bool WebBundleInterceptorForNetwork::MaybeCreateLoaderForResponse(
 
   reader_ = base::MakeRefCounted<WebBundleReader>(
       std::move(source), length_hint, std::move(*response_body),
-      url_loader->Unbind(),
-      BrowserContext::GetBlobStorageContext(browser_context_));
+      url_loader->Unbind(), browser_context_->GetBlobStorageContext());
   reader_->ReadMetadata(
       base::BindOnce(&WebBundleInterceptorForNetwork::OnMetadataReady,
                      weak_factory_.GetWeakPtr(), request));
@@ -110,13 +109,20 @@ void WebBundleInterceptorForNetwork::OnMetadataReady(
     return;
   }
   primary_url_ = reader_->GetPrimaryURL();
+  if (primary_url_.is_empty()) {
+    web_bundle_utils::CompleteWithInvalidWebBundleError(
+        std::move(forwarding_client_), frame_tree_node_id_,
+        web_bundle_utils::kNoPrimaryUrlErrorMessage);
+    return;
+  }
   if (!reader_->HasEntry(primary_url_)) {
     web_bundle_utils::CompleteWithInvalidWebBundleError(
         std::move(forwarding_client_), frame_tree_node_id_,
         "The primary URL resource is not found in the web bundle.");
     return;
   }
-  if (primary_url_.GetOrigin() != reader_->source().url().GetOrigin()) {
+  if (primary_url_.DeprecatedGetOriginAsURL() !=
+      reader_->source().url().DeprecatedGetOriginAsURL()) {
     web_bundle_utils::CompleteWithInvalidWebBundleError(
         std::move(forwarding_client_), frame_tree_node_id_,
         "The origin of primary URL doesn't match with the origin of the web "
@@ -146,7 +152,7 @@ void WebBundleInterceptorForNetwork::StartResponse(
   network::ResourceRequest new_resource_request = resource_request;
   new_resource_request.url = primary_url_;
   url_loader_factory_->CreateLoaderAndStart(
-      std::move(receiver), 0, 0, 0, new_resource_request, std::move(client),
+      std::move(receiver), 0, 0, new_resource_request, std::move(client),
       net::MutableNetworkTrafficAnnotationTag(
           web_bundle_utils::kTrafficAnnotation));
   std::move(done_callback_).Run(primary_url_, std::move(url_loader_factory_));

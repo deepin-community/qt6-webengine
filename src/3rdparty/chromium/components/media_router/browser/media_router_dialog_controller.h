@@ -6,15 +6,12 @@
 #define COMPONENTS_MEDIA_ROUTER_BROWSER_MEDIA_ROUTER_DIALOG_CONTROLLER_H_
 
 #include <memory>
-#include <string>
 
 #include "base/callback.h"
-#include "base/macros.h"
-#include "components/media_router/common/mojom/media_router.mojom.h"
+#include "base/memory/raw_ptr.h"
 #include "content/public/browser/presentation_request.h"
 #include "content/public/browser/presentation_service_delegate.h"
 #include "content/public/browser/web_contents_observer.h"
-#include "third_party/blink/public/mojom/presentation/presentation.mojom.h"
 
 namespace content {
 class WebContents;
@@ -32,6 +29,10 @@ enum class MediaRouterDialogOpenOrigin;
 // This class is not thread safe and must be called on the UI thread.
 class MediaRouterDialogController {
  public:
+  MediaRouterDialogController(const MediaRouterDialogController&) = delete;
+  MediaRouterDialogController& operator=(const MediaRouterDialogController&) =
+      delete;
+
   virtual ~MediaRouterDialogController();
 
   using GetOrCreate = base::RepeatingCallback<MediaRouterDialogController*(
@@ -102,9 +103,7 @@ class MediaRouterDialogController {
   // An observer for the |initiator_| that closes the dialog when |initiator_|
   // is destroyed or navigated.
   std::unique_ptr<InitiatorWebContentsObserver> initiator_observer_;
-  content::WebContents* const initiator_;
-
-  DISALLOW_COPY_AND_ASSIGN(MediaRouterDialogController);
+  const raw_ptr<content::WebContents> initiator_;
 };
 
 }  // namespace media_router

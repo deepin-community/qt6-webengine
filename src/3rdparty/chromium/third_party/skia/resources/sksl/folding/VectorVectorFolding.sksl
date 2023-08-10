@@ -36,7 +36,7 @@ bool test_half() {
     ok = ok &&  (half4(1) * half4(unknown) == half4(unknown));
     ok = ok &&  (half4(unknown) * half4(0) == half4(0));
     ok = ok &&  (half4(0) * half4(unknown) == half4(0));
-    ok = ok &&  (half4(0) / half4(unknown) == half4(0));
+    ok = ok &&  (half4(0) / half4(unknown) == half4(0));  // this should NOT optimize away
     ok = ok &&  (half4(unknown) + half4(0) == half4(unknown));
     ok = ok &&  (half4(0) + half4(unknown) == half4(unknown));
     ok = ok &&  (half4(unknown) - half4(0) == half4(unknown));
@@ -127,6 +127,6 @@ bool test_int() {
     return ok;
 }
 
-half4 main() {
+half4 main(float2 coords) {
     return test_half() && test_int() ? colorGreen : colorRed;
 }

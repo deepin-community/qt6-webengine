@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtWebEngine module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 // Copyright (c) 2012 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE.Chromium file.
@@ -74,7 +38,6 @@ private:
     gin::ObjectTemplateBuilder GetObjectTemplateBuilder(v8::Isolate *isolate) override;
     mojo::AssociatedRemote<qtwebchannel::mojom::WebChannelTransportHost> m_remote;
     content::RenderFrame *m_renderFrame = nullptr;
-    DISALLOW_COPY_AND_ASSIGN(WebChannelTransport);
 };
 
 gin::WrapperInfo WebChannelTransport::kWrapperInfo = { gin::kEmbedderNativeGin };
@@ -83,14 +46,20 @@ void WebChannelTransport::Install(blink::WebLocalFrame *frame, uint worldId)
 {
     v8::Isolate *isolate = blink::MainThreadIsolate();
     v8::HandleScope handleScope(isolate);
+    v8::MicrotasksScope microtasks_scope(
+        isolate, v8::MicrotasksScope::kDoNotRunMicrotasks);
     v8::Local<v8::Context> context;
     if (worldId == 0)
         context = frame->MainWorldScriptContext();
     else
         context = frame->IsolatedWorldScriptContext(worldId);
+    if (context.IsEmpty())
+        return;
     v8::Context::Scope contextScope(context);
 
     gin::Handle<WebChannelTransport> transport = gin::CreateHandle(isolate, new WebChannelTransport);
+    if (transport.IsEmpty())
+        return;
 
     v8::Local<v8::Object> global = context->Global();
     v8::Local<v8::Value> qtObjectValue;
@@ -113,6 +82,8 @@ void WebChannelTransport::Uninstall(blink::WebLocalFrame *frame, uint worldId)
         context = frame->MainWorldScriptContext();
     else
         context = frame->IsolatedWorldScriptContext(worldId);
+    if (context.IsEmpty())
+        return;
     v8::Context::Scope contextScope(context);
 
     v8::Local<v8::Object> global(context->Global());
@@ -224,17 +195,18 @@ void WebChannelIPCTransport::DispatchWebChannelMessage(const std::vector<uint8_t
     v8::Context::Scope contextScope(context);
 
     v8::Local<v8::Object> global(context->Global());
-    v8::MaybeLocal<v8::Value> qtObjectValue(global->Get(context, gin::StringToV8(isolate, "qt")));
-    if (qtObjectValue.IsEmpty() || !qtObjectValue.ToLocalChecked()->IsObject())
+    v8::Local<v8::Value> qtObjectValue;
+    if (!global->Get(context, gin::StringToV8(isolate, "qt")).ToLocal(&qtObjectValue) || !qtObjectValue->IsObject())
         return;
-    v8::Local<v8::Object> qtObject = v8::Local<v8::Object>::Cast(qtObjectValue.ToLocalChecked());
-    v8::MaybeLocal<v8::Value> webChannelObjectValue(
-            qtObject->Get(context, gin::StringToV8(isolate, "webChannelTransport")));
-    if (webChannelObjectValue.IsEmpty() || !webChannelObjectValue.ToLocalChecked()->IsObject())
+    v8::Local<v8::Object> qtObject = v8::Local<v8::Object>::Cast(qtObjectValue);
+    v8::Local<v8::Value> webChannelObjectValue;
+    if (!qtObject->Get(context, gin::StringToV8(isolate, "webChannelTransport")).ToLocal(&webChannelObjectValue)
+            || !webChannelObjectValue->IsObject())
         return;
-    v8::Local<v8::Object> webChannelObject = v8::Local<v8::Object>::Cast(webChannelObjectValue.ToLocalChecked());
-    v8::MaybeLocal<v8::Value> callbackValue(webChannelObject->Get(context, gin::StringToV8(isolate, "onmessage")));
-    if (callbackValue.IsEmpty() || !callbackValue.ToLocalChecked()->IsFunction()) {
+    v8::Local<v8::Object> webChannelObject = v8::Local<v8::Object>::Cast(webChannelObjectValue);
+    v8::Local<v8::Value> callbackValue;
+    if (!webChannelObject->Get(context, gin::StringToV8(isolate, "onmessage")).ToLocal(&callbackValue)
+            || !callbackValue->IsFunction()) {
         LOG(WARNING) << "onmessage is not a callable property of qt.webChannelTransport. Some things might not work as "
                         "expected.";
         return;
@@ -249,7 +221,7 @@ void WebChannelIPCTransport::DispatchWebChannelMessage(const std::vector<uint8_t
             v8::PropertyAttribute(v8::ReadOnly | v8::DontDelete));
     DCHECK(!wasSet.IsNothing() && wasSet.FromJust());
 
-    v8::Local<v8::Function> callback = v8::Local<v8::Function>::Cast(callbackValue.ToLocalChecked());
+    v8::Local<v8::Function> callback = v8::Local<v8::Function>::Cast(callbackValue);
     v8::Local<v8::Value> argv[] = { messageObject };
     frame->CallFunctionEvenIfScriptDisabled(callback, webChannelObject, 1, argv);
 }

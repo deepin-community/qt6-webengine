@@ -6,10 +6,8 @@
 #define COMPONENTS_HISTORY_CORE_BROWSER_TOP_SITES_DATABASE_H_
 
 #include <map>
-#include <string>
 
 #include "base/gtest_prod_util.h"
-#include "base/macros.h"
 #include "components/history/core/browser/history_types.h"
 #include "sql/meta_table.h"
 #include "sql/transaction.h"
@@ -27,13 +25,17 @@ namespace history {
 class TopSitesDatabase {
  public:
   TopSitesDatabase();
+
+  TopSitesDatabase(const TopSitesDatabase&) = delete;
+  TopSitesDatabase& operator=(const TopSitesDatabase&) = delete;
+
   ~TopSitesDatabase();
 
   // Must be called after creation but before any other methods are called.
   // Returns true on success. If false, no other functions should be called.
   bool Init(const base::FilePath& db_name);
 
-  // Updates the database according to the changes recorded in |delta|.
+  // Updates the database according to the changes recorded in `delta`.
   void ApplyDelta(const TopSitesDelta& delta);
 
   // Returns a list of all URLs currently in the table.
@@ -47,8 +49,10 @@ class TopSitesDatabase {
   FRIEND_TEST_ALL_PREFIXES(TopSitesDatabaseTest, Version4);
   FRIEND_TEST_ALL_PREFIXES(TopSitesDatabaseTest, Recovery1);
   FRIEND_TEST_ALL_PREFIXES(TopSitesDatabaseTest, Recovery2);
-  FRIEND_TEST_ALL_PREFIXES(TopSitesDatabaseTest, Recovery3);
-  FRIEND_TEST_ALL_PREFIXES(TopSitesDatabaseTest, Recovery4);
+  FRIEND_TEST_ALL_PREFIXES(TopSitesDatabaseTest, Recovery3to4_CorruptIndex);
+  FRIEND_TEST_ALL_PREFIXES(TopSitesDatabaseTest, Recovery4_CorruptIndex);
+  FRIEND_TEST_ALL_PREFIXES(TopSitesDatabaseTest,
+                           Recovery4_CorruptIndexAndLostRow);
 
   // Rank used to indicate that a URL is not stored in the database.
   static const int kRankOfNonExistingURL;
@@ -61,7 +65,7 @@ class TopSitesDatabase {
   // was successful.
   bool UpgradeToVersion4();
 
-  // Sets a top site for the URL. |new_rank| is the position of the URL in the
+  // Sets a top site for the URL. `new_rank` is the position of the URL in the
   // list of top sites, zero-based.
   // If the URL is not in the table, adds it. If it is, updates its rank and
   // shifts the ranks of other URLs if necessary. Should be called within an
@@ -75,7 +79,7 @@ class TopSitesDatabase {
   // Returns true if the database query succeeds.
   bool UpdateSite(const MostVisitedURL& url);
 
-  // Returns |url|'s current rank or kRankOfNonExistingURL if not present.
+  // Returns `url`'s current rank or kRankOfNonExistingURL if not present.
   int GetURLRank(const MostVisitedURL& url);
 
   // Sets the rank for a given URL. The URL must be in the database. Should be
@@ -95,8 +99,6 @@ class TopSitesDatabase {
 
   std::unique_ptr<sql::Database> db_;
   sql::MetaTable meta_table_;
-
-  DISALLOW_COPY_AND_ASSIGN(TopSitesDatabase);
 };
 
 }  // namespace history

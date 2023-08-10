@@ -14,6 +14,7 @@
 
 #include "av1/common/mv.h"
 #include "av1/encoder/block.h"
+#include "av1/encoder/rd.h"
 
 #include "aom_dsp/variance.h"
 
@@ -83,7 +84,7 @@ typedef struct {
 } MV_COST_PARAMS;
 
 int av1_mv_bit_cost(const MV *mv, const MV *ref_mv, const int *mvjcost,
-                    int *mvcost[2], int weight);
+                    int *const mvcost[2], int weight);
 
 int av1_get_mvpred_sse(const MV_COST_PARAMS *mv_cost_params,
                        const FULLPEL_MV best_mv,
@@ -182,6 +183,8 @@ typedef struct {
                           // prune_mesh_search.
   int prune_mesh_search;  // Disables mesh search if the best_mv after a normal
                           // search if close to the start_mv.
+  int mesh_search_mv_diff_threshold;  // mv diff threshold to enable
+                                      // prune_mesh_search
   int force_mesh_thresh;  // Forces mesh search if the residue variance is
                           // higher than the threshold.
   const struct MESH_PATTERN *mesh_patterns[2];
@@ -208,8 +211,12 @@ void av1_init_obmc_buffer(OBMCBuffer *obmc_buffer);
 void av1_make_default_fullpel_ms_params(
     FULLPEL_MOTION_SEARCH_PARAMS *ms_params, const struct AV1_COMP *cpi,
     const MACROBLOCK *x, BLOCK_SIZE bsize, const MV *ref_mv,
-    const search_site_config search_sites[NUM_SEARCH_METHODS],
+    const search_site_config search_sites[NUM_DISTINCT_SEARCH_METHODS],
     int fine_search_interval);
+
+/*! Sets the \ref FULLPEL_MOTION_SEARCH_PARAMS to intra mode. */
+void av1_set_ms_to_intra_mode(FULLPEL_MOTION_SEARCH_PARAMS *ms_params,
+                              const IntraBCMVCosts *dv_costs);
 
 // Sets up configs for fullpixel DIAMOND / CLAMPED_DIAMOND search method.
 void av1_init_dsmotion_compensation(search_site_config *cfg, int stride,
@@ -233,7 +240,7 @@ void av1_init_motion_compensation_square(search_site_config *cfg, int stride,
 // Mv beyond the range do not produce new/different prediction block.
 static INLINE void av1_set_mv_search_method(
     FULLPEL_MOTION_SEARCH_PARAMS *ms_params,
-    const search_site_config search_sites[NUM_SEARCH_METHODS],
+    const search_site_config search_sites[NUM_DISTINCT_SEARCH_METHODS],
     SEARCH_METHODS search_method) {
   // Array to inform which all search methods are having
   // same candidates and different in number of search steps.

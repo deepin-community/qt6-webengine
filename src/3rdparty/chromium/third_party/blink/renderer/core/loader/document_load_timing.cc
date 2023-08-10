@@ -38,7 +38,10 @@
 namespace blink {
 
 DocumentLoadTiming::DocumentLoadTiming(DocumentLoader& document_loader)
-    : redirect_count_(0),
+    : user_timing_mark_fully_loaded_(absl::nullopt),
+      user_timing_mark_fully_visible_(absl::nullopt),
+      user_timing_mark_interactive_(absl::nullopt),
+      redirect_count_(0),
       has_cross_origin_redirect_(false),
       can_request_from_previous_document_(false),
       clock_(base::DefaultClock::GetInstance()),
@@ -70,8 +73,7 @@ void DocumentLoadTiming::NotifyDocumentTimingChanged() {
 
 void DocumentLoadTiming::EnsureReferenceTimesSet() {
   if (reference_wall_time_.is_zero()) {
-    reference_wall_time_ =
-        base::TimeDelta::FromSecondsD(clock_->Now().ToDoubleT());
+    reference_wall_time_ = base::Seconds(clock_->Now().ToDoubleT());
   }
   if (reference_monotonic_time_.is_null())
     reference_monotonic_time_ = tick_clock_->NowTicks();
@@ -89,8 +91,7 @@ int64_t DocumentLoadTiming::ZeroBasedDocumentTimeToMonotonicTime(
   if (reference_monotonic_time_.is_null())
     return 0;
   base::TimeTicks monotonic_time =
-      reference_monotonic_time_ +
-      base::TimeDelta::FromMillisecondsD(dom_event_time);
+      reference_monotonic_time_ + base::Milliseconds(dom_event_time);
   return monotonic_time.since_origin().InMilliseconds();
 }
 
@@ -159,6 +160,24 @@ void DocumentLoadTiming::MarkBackForwardCacheRestoreNavigationStart(
 
 void DocumentLoadTiming::SetInputStart(base::TimeTicks input_start) {
   input_start_ = input_start;
+  NotifyDocumentTimingChanged();
+}
+
+void DocumentLoadTiming::SetUserTimingMarkFullyLoaded(
+    base::TimeDelta loaded_time) {
+  user_timing_mark_fully_loaded_ = loaded_time;
+  NotifyDocumentTimingChanged();
+}
+
+void DocumentLoadTiming::SetUserTimingMarkFullyVisible(
+    base::TimeDelta visible_time) {
+  user_timing_mark_fully_visible_ = visible_time;
+  NotifyDocumentTimingChanged();
+}
+
+void DocumentLoadTiming::SetUserTimingMarkInteractive(
+    base::TimeDelta interactive_time) {
+  user_timing_mark_interactive_ = interactive_time;
   NotifyDocumentTimingChanged();
 }
 
@@ -256,6 +275,14 @@ void DocumentLoadTiming::MarkCommitNavigationEnd() {
   commit_navigation_end_ = tick_clock_->NowTicks();
   TRACE_EVENT_MARK_WITH_TIMESTAMP1("blink.user_timing", "commitNavigationEnd",
                                    commit_navigation_end_, "frame",
+                                   ToTraceValue(GetFrame()));
+  NotifyDocumentTimingChanged();
+}
+
+void DocumentLoadTiming::MarkActivationStart(base::TimeTicks activation_start) {
+  activation_start_ = activation_start;
+  TRACE_EVENT_MARK_WITH_TIMESTAMP1("blink.user_timing", "activationtart",
+                                   activation_start, "frame",
                                    ToTraceValue(GetFrame()));
   NotifyDocumentTimingChanged();
 }

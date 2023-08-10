@@ -4,10 +4,10 @@
 
 // https://github.com/wicg/trusted-types
 
-typedef (DOMString or TrustedHTML or TrustedScript or TrustedScriptURL) TrustedString;
+typedef (TrustedHTML or TrustedScript or TrustedScriptURL) TrustedType;
 
 [
-    Exposed=Window,
+    Exposed=(Window, Worker),
     RuntimeEnabled=TrustedDOMTypes
 ] interface TrustedTypePolicy {
     readonly attribute DOMString name;

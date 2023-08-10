@@ -20,8 +20,10 @@
 
 #include "absl/types/optional.h"
 #include "api/candidate.h"
+#include "api/field_trials_view.h"
 #include "api/packet_socket_factory.h"
 #include "api/rtc_error.h"
+#include "api/transport/field_trial_based_config.h"
 #include "api/transport/stun.h"
 #include "logging/rtc_event_log/events/rtc_event_ice_candidate_pair.h"
 #include "logging/rtc_event_log/events/rtc_event_ice_candidate_pair_config.h"
@@ -35,6 +37,7 @@
 #include "rtc_base/async_packet_socket.h"
 #include "rtc_base/callback_list.h"
 #include "rtc_base/checks.h"
+#include "rtc_base/memory/always_valid_pointer.h"
 #include "rtc_base/net_helper.h"
 #include "rtc_base/network.h"
 #include "rtc_base/proxy_info.h"
@@ -99,14 +102,24 @@ class StunStats {
 // Stats that we can return about a candidate.
 class CandidateStats {
  public:
-  CandidateStats();
-  explicit CandidateStats(Candidate candidate);
-  CandidateStats(const CandidateStats&);
-  ~CandidateStats();
+  CandidateStats() = default;
+  CandidateStats(const CandidateStats&) = default;
+  CandidateStats(CandidateStats&&) = default;
+  CandidateStats(Candidate candidate,
+                 absl::optional<StunStats> stats = absl::nullopt)
+      : candidate_(std::move(candidate)), stun_stats_(std::move(stats)) {}
+  ~CandidateStats() = default;
 
-  Candidate candidate;
+  CandidateStats& operator=(const CandidateStats& other) = default;
+
+  const Candidate& candidate() const { return candidate_; }
+
+  const absl::optional<StunStats>& stun_stats() const { return stun_stats_; }
+
+ private:
+  Candidate candidate_;
   // STUN port stats if this candidate is a STUN candidate.
-  absl::optional<StunStats> stun_stats;
+  absl::optional<StunStats> stun_stats_;
 };
 
 typedef std::vector<CandidateStats> CandidateStatsList;
@@ -173,17 +186,19 @@ class Port : public PortInterface,
   Port(rtc::Thread* thread,
        const std::string& type,
        rtc::PacketSocketFactory* factory,
-       rtc::Network* network,
+       const rtc::Network* network,
        const std::string& username_fragment,
-       const std::string& password);
+       const std::string& password,
+       const webrtc::FieldTrialsView* field_trials = nullptr);
   Port(rtc::Thread* thread,
        const std::string& type,
        rtc::PacketSocketFactory* factory,
-       rtc::Network* network,
+       const rtc::Network* network,
        uint16_t min_port,
        uint16_t max_port,
        const std::string& username_fragment,
-       const std::string& password);
+       const std::string& password,
+       const webrtc::FieldTrialsView* field_trials = nullptr);
   ~Port() override;
 
   // Note that the port type does NOT uniquely identify different subclasses of
@@ -192,7 +207,7 @@ class Port : public PortInterface,
   // conflit in the value of the 2-tuple, make sure that the implementation that
   // relies on this 2-tuple for RTTI is properly changed.
   const std::string& Type() const override;
-  rtc::Network* Network() const override;
+  const rtc::Network* Network() const override;
 
   // Methods to set/get ICE role and tiebreaker values.
   IceRole GetIceRole() const override;
@@ -218,9 +233,6 @@ class Port : public PortInterface,
 
   // The factory used to create the sockets of this port.
   rtc::PacketSocketFactory* socket_factory() const { return factory_; }
-  void set_socket_factory(rtc::PacketSocketFactory* factory) {
-    factory_ = factory;
-  }
 
   // For debugging purposes.
   const std::string& content_name() const { return content_name_; }
@@ -281,11 +293,8 @@ class Port : public PortInterface,
   // Returns the connection to the given address or NULL if none exists.
   Connection* GetConnection(const rtc::SocketAddress& remote_addr) override;
 
-  // Called each time a connection is created.
-  sigslot::signal2<Port*, Connection*> SignalConnectionCreated;
-
   // In a shared socket mode each port which shares the socket will decide
-  // to accept the packet based on the |remote_addr|. Currently only UDP
+  // to accept the packet based on the `remote_addr`. Currently only UDP
   // port implemented this method.
   // TODO(mallinath) - Make it pure virtual.
   virtual bool HandleIncomingPacket(rtc::AsyncPacketSocket* socket,
@@ -294,18 +303,18 @@ class Port : public PortInterface,
                                     const rtc::SocketAddress& remote_addr,
                                     int64_t packet_time_us);
 
-  // Shall the port handle packet from this |remote_addr|.
+  // Shall the port handle packet from this `remote_addr`.
   // This method is overridden by TurnPort.
   virtual bool CanHandleIncomingPacketsFrom(
       const rtc::SocketAddress& remote_addr) const;
 
   // Sends a response error to the given request.
-  void SendBindingErrorResponse(StunMessage* request,
+  void SendBindingErrorResponse(StunMessage* message,
                                 const rtc::SocketAddress& addr,
                                 int error_code,
                                 const std::string& reason) override;
   void SendUnknownAttributesErrorResponse(
-      StunMessage* request,
+      StunMessage* message,
       const rtc::SocketAddress& addr,
       const std::vector<uint16_t>& unknown_types);
 
@@ -367,10 +376,13 @@ class Port : public PortInterface,
   //   then the foundation will be different.  Two candidate pairs with
   //   the same foundation pairs are likely to have similar network
   //   characteristics. Foundations are used in the frozen algorithm.
-  static std::string ComputeFoundation(const std::string& type,
-                                       const std::string& protocol,
-                                       const std::string& relay_protocol,
-                                       const rtc::SocketAddress& base_address);
+  std::string ComputeFoundation(const std::string& type,
+                                const std::string& protocol,
+                                const std::string& relay_protocol,
+                                const rtc::SocketAddress& base_address);
+
+  // TODO(tommi): Make protected after updating ProxyConnection.
+  rtc::WeakPtr<Port> NewWeakPtr() { return weak_factory_.GetWeakPtr(); }
 
  protected:
   enum { MSG_DESTROY_IF_DEAD = 0, MSG_FIRST_AVAILABLE };
@@ -428,6 +440,8 @@ class Port : public PortInterface,
   // Extra work to be done in subclasses when a connection is destroyed.
   virtual void HandleConnectionDestroyed(Connection* conn) {}
 
+  void DestroyAllConnections();
+
   void CopyPortInformationToPacketInfo(rtc::PacketInfo* info) const;
 
   MdnsNameRegistrationStatus mdns_name_registration_status() const {
@@ -445,10 +459,10 @@ class Port : public PortInterface,
   void OnNetworkTypeChanged(const rtc::Network* network);
 
   rtc::Thread* const thread_;
-  rtc::PacketSocketFactory* factory_;
+  rtc::PacketSocketFactory* const factory_;
   std::string type_;
   bool send_retransmit_count_attribute_;
-  rtc::Network* network_;
+  const rtc::Network* network_;
   uint16_t min_port_;
   uint16_t max_port_;
   std::string content_name_;
@@ -460,7 +474,7 @@ class Port : public PortInterface,
   // PortAllocatorSession will provide these username_fragment and password.
   //
   // Note: we should always use username_fragment() instead of using
-  // |ice_username_fragment_| directly. For the details see the comment on
+  // `ice_username_fragment_` directly. For the details see the comment on
   // username_fragment().
   std::string ice_username_fragment_;
   std::string password_;
@@ -485,6 +499,9 @@ class Port : public PortInterface,
       MdnsNameRegistrationStatus::kNotStarted;
 
   rtc::WeakPtrFactory<Port> weak_factory_;
+  webrtc::AlwaysValidPointer<const webrtc::FieldTrialsView,
+                             webrtc::FieldTrialBasedConfig>
+      field_trials_;
 
   bool MaybeObfuscateAddress(Candidate* c,
                              const std::string& type,

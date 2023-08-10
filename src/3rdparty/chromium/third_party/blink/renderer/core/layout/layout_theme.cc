@@ -103,7 +103,7 @@ ControlPart AutoAppearanceFor(const Element& element) {
         type == input_type_names::kDatetimeLocal ||
         type == input_type_names::kMonth || type == input_type_names::kTime ||
         type == input_type_names::kWeek) {
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
       return kMenulistPart;
 #else
       return kTextFieldPart;
@@ -148,7 +148,9 @@ LayoutTheme& LayoutTheme::GetTheme() {
   return NativeTheme();
 }
 
-LayoutTheme::LayoutTheme() : has_custom_focus_ring_color_(false) {}
+LayoutTheme::LayoutTheme() : has_custom_focus_ring_color_(false) {
+  UpdateForcedColorsState();
+}
 
 ControlPart LayoutTheme::AdjustAppearanceWithAuthorStyle(
     ControlPart part,
@@ -250,11 +252,6 @@ void LayoutTheme::AdjustStyle(const Element* e, ComputedStyle& style) {
            style.Display() == EDisplay::kTable)
     style.SetDisplay(EDisplay::kBlock);
 
-  // TODO(tkent): We should not update Appearance, which is a source of
-  // getComputedStyle(). https://drafts.csswg.org/css-ui-4/#propdef-appearance
-  // says "Computed value: specified keyword".
-  style.SetAppearance(AdjustAppearanceWithAuthorStyle(original_part, style));
-
   ControlPart part = AdjustAppearanceWithAuthorStyle(
       AdjustAppearanceWithElementType(style, e), style);
   style.SetEffectiveAppearance(part);
@@ -274,49 +271,21 @@ void LayoutTheme::AdjustStyle(const Element* e, ComputedStyle& style) {
       return AdjustMenuListStyle(style);
     case kMenulistButtonPart:
       return AdjustMenuListButtonStyle(style);
-    case kSliderHorizontalPart:
-    case kSliderVerticalPart:
-    case kMediaSliderPart:
-    case kMediaVolumeSliderPart:
-      return AdjustSliderContainerStyle(*e, style);
     case kSliderThumbHorizontalPart:
     case kSliderThumbVerticalPart:
       return AdjustSliderThumbStyle(style);
-    case kSearchFieldPart:
-      return AdjustSearchFieldStyle(style);
     case kSearchFieldCancelButtonPart:
       return AdjustSearchFieldCancelButtonStyle(style);
     default:
       break;
   }
+
+  if (IsSliderContainer(*e))
+    AdjustSliderContainerStyle(*e, style);
 }
 
 String LayoutTheme::ExtraDefaultStyleSheet() {
-  if (RuntimeEnabledFeatures::SummaryListItemEnabled()) {
-    // https://html.spec.whatwg.org/C/#the-details-and-summary-elements
-    // The specification doesn't have |details >| and |:first-of-type|.
-    // We add them because:
-    //  - We had provided |summary { display: block }| for a long time,
-    //    there are sites using <summary> without details, and they
-    //    expect that <summary> is not a list-item.
-    //  - Firefox does so.
-    return String(R"CSS(
-details > summary:first-of-type {
-    display: list-item;
-    counter-increment: list-item 0;
-    list-style: disclosure-closed inside;
-}
-
-details[open] > summary:first-of-type {
-    list-style-type: disclosure-open;
-}
-)CSS");
-  }
   return g_empty_string;
-}
-
-String LayoutTheme::ExtraQuirksStyleSheet() {
-  return String();
 }
 
 String LayoutTheme::ExtraFullscreenStyleSheet() {
@@ -326,7 +295,7 @@ String LayoutTheme::ExtraFullscreenStyleSheet() {
 Color LayoutTheme::ActiveSelectionBackgroundColor(
     mojom::blink::ColorScheme color_scheme) const {
   Color color = PlatformActiveSelectionBackgroundColor(color_scheme);
-#if defined(OS_MAC)
+#if BUILDFLAG(IS_MAC)
   // BlendWithWhite() darkens Mac system colors too much.
   // Apply .8 (204/255) alpha instead, same as Safari.
   if (color_scheme == mojom::blink::ColorScheme::kDark)
@@ -509,10 +478,8 @@ void LayoutTheme::AdjustMenuListButtonStyle(ComputedStyle&) const {}
 
 void LayoutTheme::AdjustSliderContainerStyle(const Element& e,
                                              ComputedStyle& style) const {
-  const AtomicString& pseudo = e.ShadowPseudoId();
-  if (pseudo != shadow_element_names::kPseudoMediaSliderContainer &&
-      pseudo != shadow_element_names::kPseudoSliderContainer)
-    return;
+  DCHECK(IsSliderContainer(e));
+
   if (style.EffectiveAppearance() == kSliderVerticalPart) {
     style.SetTouchAction(TouchAction::kPanX);
     style.SetWritingMode(WritingMode::kVerticalRl);
@@ -535,16 +502,19 @@ void LayoutTheme::AdjustSliderThumbStyle(ComputedStyle& style) const {
 
 void LayoutTheme::AdjustSliderThumbSize(ComputedStyle&) const {}
 
-void LayoutTheme::AdjustSearchFieldStyle(ComputedStyle&) const {}
-
 void LayoutTheme::AdjustSearchFieldCancelButtonStyle(ComputedStyle&) const {}
 
 void LayoutTheme::PlatformColorsDidChange() {
+  UpdateForcedColorsState();
   Page::PlatformColorsChanged();
 }
 
 void LayoutTheme::ColorSchemeDidChange() {
   Page::ColorSchemeChanged();
+}
+
+void LayoutTheme::ColorProvidersDidChange() {
+  Page::ColorProvidersChanged();
 }
 
 void LayoutTheme::SetCaretBlinkInterval(base::TimeDelta interval) {
@@ -597,112 +567,110 @@ static FontDescription& GetCachedFontDescription(CSSValueID system_font_id) {
 }
 
 void LayoutTheme::SystemFont(CSSValueID system_font_id,
-                             FontDescription& font_description) {
+                             FontDescription& font_description,
+                             const Document* document) {
   font_description = GetCachedFontDescription(system_font_id);
   if (font_description.IsAbsoluteSize())
     return;
 
-  FontSelectionValue font_slope = NormalSlopeValue();
-  FontSelectionValue font_weight = NormalWeightValue();
-  float font_size = 0;
-  AtomicString font_family;
-  LayoutThemeFontProvider::SystemFont(system_font_id, font_slope, font_weight,
-                                      font_size, font_family);
-  font_description.SetStyle(font_slope);
-  font_description.SetWeight(font_weight);
-  font_description.SetSpecifiedSize(font_size);
+  font_description.SetStyle(
+      LayoutThemeFontProvider::SystemFontStyle(system_font_id));
+  font_description.SetWeight(
+      LayoutThemeFontProvider::SystemFontWeight(system_font_id));
+  font_description.SetSpecifiedSize(
+      LayoutThemeFontProvider::SystemFontSize(system_font_id, document));
   font_description.SetIsAbsoluteSize(true);
-  font_description.FirstFamily().SetFamily(font_family);
+  const AtomicString& system_font =
+      LayoutThemeFontProvider::SystemFontFamily(system_font_id);
+  font_description.FirstFamily().SetFamily(
+      system_font, FontFamily::InferredTypeFor(system_font));
   font_description.SetGenericFamily(FontDescription::kNoFamily);
 }
 
 Color LayoutTheme::SystemColor(CSSValueID css_value_id,
                                mojom::blink::ColorScheme color_scheme) const {
+  if (!WebTestSupport::IsRunningWebTest() && InForcedColorsMode())
+    return SystemColorFromNativeTheme(css_value_id, color_scheme);
+  return DefaultSystemColor(css_value_id, color_scheme);
+}
+
+Color LayoutTheme::DefaultSystemColor(
+    CSSValueID css_value_id,
+    mojom::blink::ColorScheme color_scheme) const {
+  // The source for the deprecations commented on below is
+  // https://www.w3.org/TR/css-color-4/#deprecated-system-colors.
+
   switch (css_value_id) {
-    case CSSValueID::kActiveborder:
-      return 0xFFFFFFFF;
-    case CSSValueID::kActivecaption:
-      return 0xFFCCCCCC;
     case CSSValueID::kActivetext:
       return 0xFFFF0000;
-    case CSSValueID::kAppworkspace:
-      return color_scheme == mojom::blink::ColorScheme::kDark ? 0xFF000000
-                                                              : 0xFFFFFFFF;
-    case CSSValueID::kBackground:
-      return 0xFF6363CE;
+    case CSSValueID::kButtonborder:
+    // The following system colors were deprecated to default to ButtonBorder.
+    case CSSValueID::kActiveborder:
+    case CSSValueID::kInactiveborder:
+    case CSSValueID::kThreeddarkshadow:
+    case CSSValueID::kThreedhighlight:
+    case CSSValueID::kThreedlightshadow:
+    case CSSValueID::kThreedshadow:
+    case CSSValueID::kWindowframe:
+      return color_scheme == mojom::blink::ColorScheme::kDark ? 0xFF6B6B6B
+                                                              : 0xFF767676;
     case CSSValueID::kButtonface:
-      return color_scheme == mojom::blink::ColorScheme::kDark ? 0xFF444444
-                                                              : 0xFFDDDDDD;
+    // The following system colors were deprecated to default to ButtonFace.
     case CSSValueID::kButtonhighlight:
-      return 0xFFDDDDDD;
     case CSSValueID::kButtonshadow:
-      return 0xFF888888;
+    case CSSValueID::kThreedface:
+      return color_scheme == mojom::blink::ColorScheme::kDark ? 0xFF6B6B6B
+                                                              : 0xFFEFEFEF;
     case CSSValueID::kButtontext:
-      return color_scheme == mojom::blink::ColorScheme::kDark ? 0xFFAAAAAA
-                                                              : 0xFF000000;
-    case CSSValueID::kCaptiontext:
       return color_scheme == mojom::blink::ColorScheme::kDark ? 0xFFFFFFFF
                                                               : 0xFF000000;
+    case CSSValueID::kCanvas:
+    // The following system colors were deprecated to default to Canvas.
+    case CSSValueID::kAppworkspace:
+    case CSSValueID::kBackground:
+    case CSSValueID::kInactivecaption:
+    case CSSValueID::kInfobackground:
+    case CSSValueID::kMenu:
+    case CSSValueID::kScrollbar:
+    case CSSValueID::kWindow:
+      return color_scheme == mojom::blink::ColorScheme::kDark ? 0xFF121212
+                                                              : 0xFFFFFFFF;
+    case CSSValueID::kCanvastext:
+    // The following system colors were deprecated to default to CanvasText.
+    case CSSValueID::kActivecaption:
+    case CSSValueID::kCaptiontext:
+    case CSSValueID::kInfotext:
+    case CSSValueID::kMenutext:
+    case CSSValueID::kWindowtext:
+      return color_scheme == mojom::blink::ColorScheme::kDark ? 0xFFFFFFFF
+                                                              : 0xFF000000;
+
     case CSSValueID::kField:
-      return color_scheme == mojom::blink::ColorScheme::kDark ? 0xFF000000
+      return color_scheme == mojom::blink::ColorScheme::kDark ? 0xFF3B3B3B
                                                               : 0xFFFFFFFF;
     case CSSValueID::kFieldtext:
       return color_scheme == mojom::blink::ColorScheme::kDark ? 0xFFFFFFFF
                                                               : 0xFF000000;
     case CSSValueID::kGraytext:
+    // The following system color was deprecated to default to GrayText.
+    case CSSValueID::kInactivecaptiontext:
       return 0xFF808080;
     case CSSValueID::kHighlight:
       return 0xFFB5D5FF;
     case CSSValueID::kHighlighttext:
       return color_scheme == mojom::blink::ColorScheme::kDark ? 0xFFFFFFFF
                                                               : 0xFF000000;
-    case CSSValueID::kInactiveborder:
-      return 0xFFFFFFFF;
-    case CSSValueID::kInactivecaption:
-      return 0xFFFFFFFF;
-    case CSSValueID::kInactivecaptiontext:
-      return 0xFF7F7F7F;
-    case CSSValueID::kInfobackground:
-      return color_scheme == mojom::blink::ColorScheme::kDark ? 0xFFB46E32
-                                                              : 0xFFFBFCC5;
-    case CSSValueID::kInfotext:
-      return color_scheme == mojom::blink::ColorScheme::kDark ? 0xFFFFFFFF
-                                                              : 0xFF000000;
     case CSSValueID::kLinktext:
       return 0xFF0000EE;
-    case CSSValueID::kMenu:
-      return color_scheme == mojom::blink::ColorScheme::kDark ? 0xFF404040
-                                                              : 0xFFF7F7F7;
-    case CSSValueID::kMenutext:
-      return color_scheme == mojom::blink::ColorScheme::kDark ? 0xFFFFFFFF
-                                                              : 0xFF000000;
-    case CSSValueID::kScrollbar:
-      return 0xFFFFFFFF;
+    case CSSValueID::kMark:
+      return 0xFFFFFF00;
+    case CSSValueID::kMarktext:
+      return 0xFF000000;
     case CSSValueID::kText:
       return color_scheme == mojom::blink::ColorScheme::kDark ? 0xFFFFFFFF
                                                               : 0xFF000000;
-    case CSSValueID::kThreeddarkshadow:
-      return 0xFF666666;
-    case CSSValueID::kThreedface:
-      return 0xFFC0C0C0;
-    case CSSValueID::kThreedhighlight:
-      return 0xFFDDDDDD;
-    case CSSValueID::kThreedlightshadow:
-      return 0xFFC0C0C0;
-    case CSSValueID::kThreedshadow:
-      return 0xFF888888;
     case CSSValueID::kVisitedtext:
       return 0xFF551A8B;
-    case CSSValueID::kWindow:
-    case CSSValueID::kCanvas:
-      return color_scheme == mojom::blink::ColorScheme::kDark ? 0xFF000000
-                                                              : 0xFFFFFFFF;
-    case CSSValueID::kWindowframe:
-      return 0xFFCCCCCC;
-    case CSSValueID::kWindowtext:
-    case CSSValueID::kCanvastext:
-      return color_scheme == mojom::blink::ColorScheme::kDark ? 0xFFFFFFFF
-                                                              : 0xFF000000;
     case CSSValueID::kInternalActiveListBoxSelection:
       return ActiveListBoxSelectionBackgroundColor(color_scheme);
     case CSSValueID::kInternalActiveListBoxSelectionText:
@@ -718,12 +686,81 @@ Color LayoutTheme::SystemColor(CSSValueID css_value_id,
   return Color();
 }
 
+Color LayoutTheme::SystemColorFromNativeTheme(
+    CSSValueID css_value_id,
+    mojom::blink::ColorScheme color_scheme) const {
+  blink::WebThemeEngine::SystemThemeColor theme_color;
+  switch (css_value_id) {
+    case CSSValueID::kActivetext:
+    case CSSValueID::kLinktext:
+    case CSSValueID::kVisitedtext:
+      theme_color = blink::WebThemeEngine::SystemThemeColor::kHotlight;
+      break;
+    case CSSValueID::kButtonface:
+    case CSSValueID::kButtonhighlight:
+    case CSSValueID::kButtonshadow:
+    case CSSValueID::kThreedface:
+      theme_color = blink::WebThemeEngine::SystemThemeColor::kButtonFace;
+      break;
+    case CSSValueID::kButtonborder:
+    case CSSValueID::kButtontext:
+    // Deprecated colors, see DefaultSystemColor().
+    case CSSValueID::kActiveborder:
+    case CSSValueID::kInactiveborder:
+    case CSSValueID::kThreeddarkshadow:
+    case CSSValueID::kThreedhighlight:
+    case CSSValueID::kThreedlightshadow:
+    case CSSValueID::kThreedshadow:
+    case CSSValueID::kWindowframe:
+      theme_color = blink::WebThemeEngine::SystemThemeColor::kButtonText;
+      break;
+    case CSSValueID::kGraytext:
+      theme_color = blink::WebThemeEngine::SystemThemeColor::kGrayText;
+      break;
+    case CSSValueID::kHighlight:
+      theme_color = blink::WebThemeEngine::SystemThemeColor::kHighlight;
+      break;
+    case CSSValueID::kHighlighttext:
+      theme_color = blink::WebThemeEngine::SystemThemeColor::kHighlightText;
+      break;
+    case CSSValueID::kCanvas:
+    case CSSValueID::kField:
+    // Deprecated colors, see DefaultSystemColor().
+    case CSSValueID::kAppworkspace:
+    case CSSValueID::kBackground:
+    case CSSValueID::kInactivecaption:
+    case CSSValueID::kInfobackground:
+    case CSSValueID::kMenu:
+    case CSSValueID::kScrollbar:
+    case CSSValueID::kWindow:
+      theme_color = blink::WebThemeEngine::SystemThemeColor::kWindow;
+      break;
+    case CSSValueID::kCanvastext:
+    case CSSValueID::kFieldtext:
+    // Deprecated colors, see DefaultSystemColor().
+    case CSSValueID::kActivecaption:
+    case CSSValueID::kCaptiontext:
+    case CSSValueID::kInfotext:
+    case CSSValueID::kMenutext:
+    case CSSValueID::kWindowtext:
+      theme_color = blink::WebThemeEngine::SystemThemeColor::kWindowText;
+      break;
+    default:
+      return DefaultSystemColor(css_value_id, color_scheme);
+  }
+  DCHECK(Platform::Current() && Platform::Current()->ThemeEngine());
+  const absl::optional<SkColor> system_color =
+      Platform::Current()->ThemeEngine()->GetSystemColor(theme_color);
+  if (system_color)
+    return Color(system_color.value());
+  return DefaultSystemColor(css_value_id, color_scheme);
+}
+
 Color LayoutTheme::PlatformTextSearchHighlightColor(
     bool active_match,
-    bool in_forced_colors_mode,
     mojom::blink::ColorScheme color_scheme) const {
   if (active_match) {
-    if (in_forced_colors_mode)
+    if (InForcedColorsMode())
       return GetTheme().SystemColor(CSSValueID::kHighlight, color_scheme);
     return Color(255, 150, 50);  // Orange.
   }
@@ -732,9 +769,8 @@ Color LayoutTheme::PlatformTextSearchHighlightColor(
 
 Color LayoutTheme::PlatformTextSearchColor(
     bool active_match,
-    bool in_forced_colors_mode,
     mojom::blink::ColorScheme color_scheme) const {
-  if (in_forced_colors_mode && active_match)
+  if (InForcedColorsMode() && active_match)
     return GetTheme().SystemColor(CSSValueID::kHighlighttext, color_scheme);
   return Color::kBlack;
 }
@@ -768,8 +804,7 @@ String LayoutTheme::DisplayNameForFile(const File& file) const {
 
 bool LayoutTheme::SupportsCalendarPicker(const AtomicString& type) const {
   DCHECK(RuntimeEnabledFeatures::InputMultipleFieldsUIEnabled());
-  if (::features::IsFormControlsRefreshEnabled() &&
-      type == input_type_names::kTime)
+  if (type == input_type_names::kTime)
     return true;
 
   return type == input_type_names::kDate ||
@@ -803,6 +838,13 @@ bool LayoutTheme::HasCustomFocusRingColor() const {
 
 Color LayoutTheme::GetCustomFocusRingColor() const {
   return custom_focus_ring_color_;
+}
+
+void LayoutTheme::UpdateForcedColorsState() {
+  in_forced_colors_mode_ =
+      Platform::Current() && Platform::Current()->ThemeEngine() &&
+      Platform::Current()->ThemeEngine()->GetForcedColors() !=
+          ForcedColors::kNone;
 }
 
 }  // namespace blink

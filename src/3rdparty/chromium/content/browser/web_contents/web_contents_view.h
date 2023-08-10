@@ -7,9 +7,7 @@
 
 #include <string>
 
-#include "base/strings/string16.h"
 #include "build/build_config.h"
-#include "content/common/content_export.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/native_widget_types.h"
@@ -25,7 +23,7 @@ struct DropData;
 // them.
 class WebContentsView {
  public:
-  virtual ~WebContentsView() {}
+  virtual ~WebContentsView() = default;
 
   // Returns the native widget that contains the contents of the tab.
   virtual gfx::NativeView GetNativeView() const = 0;
@@ -85,7 +83,7 @@ class WebContentsView {
   // is not strictly necessary and isn't expected to be displayed anywhere, but
   // can aid certain debugging tools such as Spy++ on Windows where you are
   // trying to find a specific window.
-  virtual void SetPageTitle(const base::string16& title) = 0;
+  virtual void SetPageTitle(const std::u16string& title) = 0;
 
   // Invoked when the WebContents is notified that the RenderView is ready.
   virtual void RenderViewReady() = 0;
@@ -98,7 +96,10 @@ class WebContentsView {
   // Invoked to enable/disable overscroll gesture navigation.
   virtual void SetOverscrollControllerEnabled(bool enabled) = 0;
 
-#if defined(OS_MAC)
+  // Called when the capturer-count of the WebContents changes.
+  virtual void OnCapturerCountChanged() = 0;
+
+#if BUILDFLAG(IS_MAC)
   // If we close the tab while a UI control is in an event-tracking loop, the
   // the control may message freed objects and crash. WebContents::Close will
   // call this. If it returns true, then WebContents::Close will early-out, and

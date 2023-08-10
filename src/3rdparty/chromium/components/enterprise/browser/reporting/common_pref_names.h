@@ -9,11 +9,15 @@
 
 namespace enterprise_reporting {
 
-#if !defined(OS_ANDROID)
 extern const char kCloudReportingEnabled[];
-#endif
+
+extern const char kCloudProfileReportingEnabled[];
 
 extern const char kLastUploadTimestamp[];
+
+extern const char kLastUploadSucceededTimestamp[];
+
+extern const char kCloudReportingUploadFrequency[];
 
 }  // namespace enterprise_reporting
 

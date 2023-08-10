@@ -30,11 +30,13 @@ import difflib
 import common_codegen
 
 # files to exclude from --verify check
-verify_exclude = ['.clang-format']
+verify_exclude = ['.clang-format',
+                  'gpu_pre_draw_shader.h'] # Requires glslangvalidator, so updated manually when needed
 
 def main(argv):
     parser = argparse.ArgumentParser(description='Generate source code for this repository')
     parser.add_argument('registry', metavar='REGISTRY_PATH', help='path to the Vulkan-Headers registry directory')
+    parser.add_argument('grammar', metavar='GRAMMAR_PATH', help='path to the SPIRV-Headers grammar directory')
     group = parser.add_mutually_exclusive_group()
     group.add_argument('-i', '--incremental', action='store_true', help='only update repo files that change')
     group.add_argument('-v', '--verify', action='store_true', help='verify repo files match generator output')
@@ -42,6 +44,8 @@ def main(argv):
 
     gen_cmds = [*[[common_codegen.repo_relative('scripts/lvl_genvk.py'),
                    '-registry', os.path.abspath(os.path.join(args.registry,  'vk.xml')),
+                   '-grammar', os.path.abspath(os.path.join(args.grammar,  'spirv.core.grammar.json')),
+                   '-warnExtensions', 'VK_KHR_dynamic_rendering',
                    '-quiet',
                    filename] for filename in ["chassis.cpp",
                                               "chassis.h",
@@ -69,16 +73,20 @@ def main(argv):
                                               "best_practices.h",
                                               "best_practices.cpp",
                                               "spirv_validation_helper.cpp",
+                                              "spirv_grammar_helper.cpp",
+                                              "spirv_grammar_helper.h",
+                                              "command_validation.cpp",
+                                              "command_validation.h",
+                                              "vk_format_utils.cpp",
+                                              "vk_format_utils.h",
                                               "corechecks_optick_instrumentation.cpp",
-                                              "corechecks_optick_instrumentation.h",
-                                              "command_counter_helper.cpp",
-                                              "command_counter_helper.h"]],
+                                              "corechecks_optick_instrumentation.h"]],
                 [common_codegen.repo_relative('scripts/vk_validation_stats.py'),
                  os.path.abspath(os.path.join(args.registry, 'validusage.json')),
                  '-export_header'],
                 [common_codegen.repo_relative('scripts/external_revision_generator.py'),
                  '--json_file', common_codegen.repo_relative('scripts/known_good.json'),
-                 '--json_keys', 'repos,0,commit',
+                 '--json_keys', 'repos,3,commit',
                  '-s', 'SPIRV_TOOLS_COMMIT_ID',
                  '-o', 'spirv_tools_commit_id.h']]
 

@@ -6,10 +6,10 @@
 #define COMPONENTS_SIGNIN_PUBLIC_IDENTITY_MANAGER_PRIMARY_ACCOUNT_CHANGE_EVENT_H_
 
 #include "build/build_config.h"
+#include "components/signin/public/base/consent_level.h"
 #include "components/signin/public/identity_manager/account_info.h"
-#include "components/signin/public/identity_manager/consent_level.h"
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 #include "base/android/scoped_java_ref.h"
 #endif
 
@@ -36,7 +36,7 @@ class PrimaryAccountChangeEvent {
     State& operator=(const State& other);
 
     CoreAccountInfo primary_account;
-    ConsentLevel consent_level = ConsentLevel::kNotRequired;
+    ConsentLevel consent_level = ConsentLevel::kSignin;
   };
 
   PrimaryAccountChangeEvent();
@@ -68,7 +68,7 @@ std::ostream& operator<<(std::ostream& os,
 std::ostream& operator<<(std::ostream& os,
                          const PrimaryAccountChangeEvent& event);
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 base::android::ScopedJavaLocalRef<jobject>
 ConvertToJavaPrimaryAccountChangeEvent(
     JNIEnv* env,

@@ -1,7 +1,7 @@
 /*
  * Minimum CUDA compatibility definitions header
  *
- * Copyright (c) 2019 Rodger Combs
+ * Copyright (c) 2019 rcombs
  *
  * This file is part of FFmpeg.
  *
@@ -73,7 +73,7 @@ typedef struct __device_builtin__ __align__(4) uchar4
 
 typedef struct __device_builtin__ __align__(8) ushort4
 {
-    unsigned char x, y, z, w;
+    unsigned short x, y, z, w;
 } ushort4;
 
 typedef struct __device_builtin__ __align__(16) int4
@@ -184,5 +184,6 @@ static inline __device__ double fabs(double a) { return __builtin_fabs(a); }
 
 static inline __device__ float __sinf(float a) { return __nvvm_sin_approx_f(a); }
 static inline __device__ float __cosf(float a) { return __nvvm_cos_approx_f(a); }
+static inline __device__ float __expf(float a) { return __nvvm_ex2_approx_f(a * (float)__builtin_log2(__builtin_exp(1))); }
 
 #endif /* COMPAT_CUDA_CUDA_RUNTIME_H */

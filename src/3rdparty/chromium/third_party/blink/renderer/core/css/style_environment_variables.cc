@@ -6,7 +6,6 @@
 
 #include "third_party/blink/renderer/core/css/parser/css_tokenizer.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
-
 namespace blink {
 
 namespace {
@@ -69,7 +68,8 @@ StyleEnvironmentVariables& StyleEnvironmentVariables::GetRootInstance() {
 
 // static
 const AtomicString StyleEnvironmentVariables::GetVariableName(
-    UADefinedVariable variable) {
+    UADefinedVariable variable,
+    const FeatureContext* feature_context) {
   switch (variable) {
     case UADefinedVariable::kSafeAreaInsetTop:
       return "safe-area-inset-top";
@@ -97,36 +97,51 @@ const AtomicString StyleEnvironmentVariables::GetVariableName(
     case UADefinedVariable::kKeyboardInsetHeight:
       DCHECK(RuntimeEnabledFeatures::VirtualKeyboardEnabled());
       return "keyboard-inset-height";
-    case UADefinedVariable::kFoldTop:
+    case UADefinedVariable::kTitlebarAreaX:
+      DCHECK(RuntimeEnabledFeatures::WebAppWindowControlsOverlayEnabled(
+          feature_context));
+      return "titlebar-area-x";
+    case UADefinedVariable::kTitlebarAreaY:
+      DCHECK(RuntimeEnabledFeatures::WebAppWindowControlsOverlayEnabled(
+          feature_context));
+      return "titlebar-area-y";
+    case UADefinedVariable::kTitlebarAreaWidth:
+      DCHECK(RuntimeEnabledFeatures::WebAppWindowControlsOverlayEnabled(
+          feature_context));
+      return "titlebar-area-width";
+    case UADefinedVariable::kTitlebarAreaHeight:
+      DCHECK(RuntimeEnabledFeatures::WebAppWindowControlsOverlayEnabled(
+          feature_context));
+      return "titlebar-area-height";
+    default:
+      break;
+  }
+
+  NOTREACHED();
+}
+
+const AtomicString StyleEnvironmentVariables::GetVariableName(
+    UADefinedTwoDimensionalVariable variable,
+    const FeatureContext* feature_context) {
+  switch (variable) {
+    case UADefinedTwoDimensionalVariable::kViewportSegmentTop:
       DCHECK(RuntimeEnabledFeatures::CSSFoldablesEnabled());
-      return "fold-top";
-    case UADefinedVariable::kFoldRight:
+      return "viewport-segment-top";
+    case UADefinedTwoDimensionalVariable::kViewportSegmentRight:
       DCHECK(RuntimeEnabledFeatures::CSSFoldablesEnabled());
-      return "fold-right";
-    case UADefinedVariable::kFoldBottom:
+      return "viewport-segment-right";
+    case UADefinedTwoDimensionalVariable::kViewportSegmentBottom:
       DCHECK(RuntimeEnabledFeatures::CSSFoldablesEnabled());
-      return "fold-bottom";
-    case UADefinedVariable::kFoldLeft:
+      return "viewport-segment-bottom";
+    case UADefinedTwoDimensionalVariable::kViewportSegmentLeft:
       DCHECK(RuntimeEnabledFeatures::CSSFoldablesEnabled());
-      return "fold-left";
-    case UADefinedVariable::kFoldWidth:
+      return "viewport-segment-left";
+    case UADefinedTwoDimensionalVariable::kViewportSegmentWidth:
       DCHECK(RuntimeEnabledFeatures::CSSFoldablesEnabled());
-      return "fold-width";
-    case UADefinedVariable::kFoldHeight:
+      return "viewport-segment-width";
+    case UADefinedTwoDimensionalVariable::kViewportSegmentHeight:
       DCHECK(RuntimeEnabledFeatures::CSSFoldablesEnabled());
-      return "fold-height";
-    case UADefinedVariable::kTitlebarAreaInsetTop:
-      DCHECK(RuntimeEnabledFeatures::WebAppWindowControlsOverlayEnabled());
-      return "titlebar-area-inset-top";
-    case UADefinedVariable::kTitlebarAreaInsetLeft:
-      DCHECK(RuntimeEnabledFeatures::WebAppWindowControlsOverlayEnabled());
-      return "titlebar-area-inset-left";
-    case UADefinedVariable::kTitlebarAreaInsetRight:
-      DCHECK(RuntimeEnabledFeatures::WebAppWindowControlsOverlayEnabled());
-      return "titlebar-area-inset-right";
-    case UADefinedVariable::kTitlebarAreaInsetBottom:
-      DCHECK(RuntimeEnabledFeatures::WebAppWindowControlsOverlayEnabled());
-      return "titlebar-area-inset-bottom";
+      return "viewport-segment-height";
     default:
       break;
   }
@@ -155,13 +170,6 @@ StyleEnvironmentVariables::~StyleEnvironmentVariables() {
   }
 }
 
-void StyleEnvironmentVariables::SetVariable(
-    const AtomicString& name,
-    scoped_refptr<CSSVariableData> value) {
-  data_.Set(name, std::move(value));
-  InvalidateVariable(name);
-}
-
 void StyleEnvironmentVariables::SetVariable(const AtomicString& name,
                                             const String& value) {
   CSSTokenizer tokenizer(value);
@@ -171,32 +179,121 @@ void StyleEnvironmentVariables::SetVariable(const AtomicString& name,
   Vector<String> backing_strings;
   backing_strings.push_back(value);
 
-  SetVariable(
-      name,
+  scoped_refptr<CSSVariableData> variable_data =
       CSSVariableData::CreateResolved(
           std::move(tokens), std::move(backing_strings),
           false /* is_animation_tainted */, false /* has_font_units */,
-          false /* has_root_font_units*/, g_null_atom, WTF::TextEncoding()));
+          false /* has_root_font_units*/, g_null_atom, WTF::TextEncoding());
+  data_.Set(name, std::move(variable_data));
+  InvalidateVariable(name);
 }
 
-void StyleEnvironmentVariables::SetVariable(const UADefinedVariable name,
+void StyleEnvironmentVariables::SetVariable(const AtomicString& name,
+                                            unsigned first_dimension,
+                                            unsigned second_dimension,
                                             const String& value) {
-  SetVariable(GetVariableName(name), value);
+  base::CheckedNumeric<unsigned> first_dimension_size = first_dimension;
+  ++first_dimension_size;
+  if (!first_dimension_size.IsValid())
+    return;
+
+  base::CheckedNumeric<unsigned> second_dimension_size = second_dimension;
+  ++second_dimension_size;
+  if (!second_dimension_size.IsValid())
+    return;
+
+  CSSTokenizer tokenizer(value);
+  Vector<CSSParserToken> tokens;
+  tokens.AppendVector(tokenizer.TokenizeToEOF());
+
+  Vector<String> backing_strings;
+  backing_strings.push_back(value);
+
+  scoped_refptr<CSSVariableData> variable_data =
+      CSSVariableData::CreateResolved(
+          std::move(tokens), std::move(backing_strings),
+          false /* is_animation_tainted */, false /* has_font_units */,
+          false /* has_root_font_units*/, g_null_atom, WTF::TextEncoding());
+
+  TwoDimensionVariableValues* values_to_set = nullptr;
+  auto it = two_dimension_data_.find(name);
+  if (it == two_dimension_data_.end()) {
+    auto result = two_dimension_data_.Set(name, TwoDimensionVariableValues());
+    values_to_set = &result.stored_value->value;
+  } else {
+    values_to_set = &it->value;
+  }
+
+  if (first_dimension_size.ValueOrDie() > values_to_set->size())
+    values_to_set->Grow(first_dimension_size.ValueOrDie());
+
+  if (second_dimension_size.ValueOrDie() >
+      (*values_to_set)[first_dimension].size()) {
+    (*values_to_set)[first_dimension].Grow(second_dimension_size.ValueOrDie());
+  }
+
+  (*values_to_set)[first_dimension][second_dimension] = variable_data;
+  InvalidateVariable(name);
+}
+
+void StyleEnvironmentVariables::SetVariable(UADefinedVariable variable,
+                                            const String& value) {
+  SetVariable(GetVariableName(variable, GetFeatureContext()), value);
+}
+
+void StyleEnvironmentVariables::SetVariable(
+    UADefinedTwoDimensionalVariable variable,
+    unsigned first_dimension,
+    unsigned second_dimension,
+    const String& value) {
+  SetVariable(GetVariableName(variable, GetFeatureContext()), first_dimension,
+              second_dimension, value);
+}
+
+void StyleEnvironmentVariables::RemoveVariable(UADefinedVariable variable) {
+  const AtomicString name = GetVariableName(variable, GetFeatureContext());
+  RemoveVariable(name);
+}
+
+void StyleEnvironmentVariables::RemoveVariable(
+    UADefinedTwoDimensionalVariable variable) {
+  const AtomicString name = GetVariableName(variable, GetFeatureContext());
+  RemoveVariable(name);
 }
 
 void StyleEnvironmentVariables::RemoveVariable(const AtomicString& name) {
   data_.erase(name);
+  two_dimension_data_.erase(name);
   InvalidateVariable(name);
 }
 
 CSSVariableData* StyleEnvironmentVariables::ResolveVariable(
-    const AtomicString& name) {
-  auto result = data_.find(name);
-  if (result == data_.end() && parent_)
-    return parent_->ResolveVariable(name);
-  if (result == data_.end())
-    return nullptr;
-  return result->value.get();
+    const AtomicString& name,
+    WTF::Vector<unsigned> indices) {
+  if (indices.size() == 0u) {
+    auto result = data_.find(name);
+    if (result == data_.end() && parent_)
+      return parent_->ResolveVariable(name, std::move(indices));
+    if (result == data_.end())
+      return nullptr;
+    return result->value.get();
+  } else if (indices.size() == 2u) {
+    auto result = two_dimension_data_.find(name);
+    if (result == two_dimension_data_.end() && parent_)
+      return parent_->ResolveVariable(name, std::move(indices));
+
+    unsigned first_dimension = indices[0];
+    unsigned second_dimension = indices[1];
+    if (result == two_dimension_data_.end())
+      return nullptr;
+    if (first_dimension >= result->value.size() ||
+        second_dimension >= result->value[first_dimension].size()) {
+      return nullptr;
+    }
+    return result->value[first_dimension][second_dimension].get();
+  }
+
+  return nullptr;
 }
 
 void StyleEnvironmentVariables::DetachFromParent() {
@@ -212,6 +309,10 @@ void StyleEnvironmentVariables::DetachFromParent() {
 
 String StyleEnvironmentVariables::FormatPx(int value) {
   return String::Format("%dpx", value);
+}
+
+const FeatureContext* StyleEnvironmentVariables::GetFeatureContext() const {
+  return nullptr;
 }
 
 void StyleEnvironmentVariables::ClearForTesting() {
@@ -233,8 +334,10 @@ void StyleEnvironmentVariables::ParentInvalidatedVariable(
     const AtomicString& name) {
   // If we have not overridden the variable then we should invalidate it
   // locally.
-  if (data_.find(name) == data_.end())
+  if (data_.find(name) == data_.end() &&
+      two_dimension_data_.find(name) == two_dimension_data_.end()) {
     InvalidateVariable(name);
+  }
 }
 
 void StyleEnvironmentVariables::InvalidateVariable(const AtomicString& name) {

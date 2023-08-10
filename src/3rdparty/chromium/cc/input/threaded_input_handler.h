@@ -8,7 +8,8 @@
 #include <memory>
 
 #include "base/containers/flat_set.h"
-#include "base/optional.h"
+#include "base/gtest_prod_util.h"
+#include "base/memory/raw_ptr.h"
 #include "base/time/time.h"
 #include "cc/input/compositor_input_interfaces.h"
 #include "cc/input/event_listener_properties.h"
@@ -20,22 +21,23 @@
 #include "cc/metrics/frame_sequence_metrics.h"
 #include "cc/paint/element_id.h"
 #include "components/viz/common/frame_sinks/begin_frame_args.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/events/types/scroll_input_type.h"
 
 namespace gfx {
 class Point;
 class PointF;
-class ScrollOffset;
+class Vector2dF;
 }  // namespace gfx
 
 namespace cc {
 
+class LatencyInfoSwapPromiseMonitor;
 class LayerImpl;
 class ScrollbarController;
 class ScrollElasticityHelper;
 struct ScrollNode;
 class ScrollTree;
-class SwapPromiseMonitor;
 class Viewport;
 
 class CC_EXPORT ThreadedInputHandler : public InputHandler,
@@ -70,11 +72,12 @@ class CC_EXPORT ThreadedInputHandler : public InputHandler,
       const gfx::PointF& viewport_point) override;
   void RequestUpdateForSynchronousInputHandler() override;
   void SetSynchronousInputHandlerRootScrollOffset(
-      const gfx::ScrollOffset& root_content_offset) override;
-  void PinchGestureBegin() override;
+      const gfx::PointF& root_content_offset) override;
+  void PinchGestureBegin(const gfx::Point& anchor,
+                         ui::ScrollInputType source) override;
   void PinchGestureUpdate(float magnify_delta,
                           const gfx::Point& anchor) override;
-  void PinchGestureEnd(const gfx::Point& anchor, bool snap_to_min) override;
+  void PinchGestureEnd(const gfx::Point& anchor) override;
   void SetNeedsAnimateInput() override;
   bool IsCurrentlyScrollingViewport() const override;
   EventListenerProperties GetEventListenerProperties(
@@ -85,23 +88,24 @@ class CC_EXPORT ThreadedInputHandler : public InputHandler,
   EventListenerTypeForTouchStartOrMoveAt(
       const gfx::Point& viewport_port,
       TouchAction* out_touch_action) override;
-  std::unique_ptr<SwapPromiseMonitor> CreateLatencyInfoSwapPromiseMonitor(
-      ui::LatencyInfo* latency) override;
+  std::unique_ptr<LatencyInfoSwapPromiseMonitor>
+  CreateLatencyInfoSwapPromiseMonitor(ui::LatencyInfo* latency) override;
   std::unique_ptr<EventsMetricsManager::ScopedMonitor>
   GetScopedEventMetricsMonitor(
       EventsMetricsManager::ScopedMonitor::DoneCallback done_callback) override;
   ScrollElasticityHelper* CreateScrollElasticityHelper() override;
+  void DestroyScrollElasticityHelper() override;
   bool GetScrollOffsetForLayer(ElementId element_id,
-                               gfx::ScrollOffset* offset) override;
-  bool ScrollLayerTo(ElementId element_id,
-                     const gfx::ScrollOffset& offset) override;
+                               gfx::PointF* offset) override;
+  bool ScrollLayerTo(ElementId element_id, const gfx::PointF& offset) override;
   bool ScrollingShouldSwitchtoMainThread() override;
   bool GetSnapFlingInfoAndSetAnimatingSnapTarget(
       const gfx::Vector2dF& natural_displacement_in_viewport,
-      gfx::Vector2dF* out_initial_position,
-      gfx::Vector2dF* out_target_position) override;
+      gfx::PointF* out_initial_position,
+      gfx::PointF* out_target_position) override;
   void ScrollEndForSnapFling(bool did_finish) override;
   void NotifyInputEvent() override;
+  bool ScrollbarScrollIsActive() override;
 
   // =========== InputDelegateForCompositor Interface - This section implements
   // the interface that LayerTreeHostImpl uses to communicate with the input
@@ -117,6 +121,7 @@ class CC_EXPORT ThreadedInputHandler : public InputHandler,
   void DidUnregisterScrollbar(ElementId scroll_element_id,
                               ScrollbarOrientation orientation) override;
   void ScrollOffsetAnimationFinished() override;
+  void SetPrefersReducedMotion(bool prefers_reduced_motion) override;
   bool IsCurrentlyScrolling() const override;
   ActivelyScrollingType GetActivelyScrollingType() const override;
 
@@ -133,6 +138,8 @@ class CC_EXPORT ThreadedInputHandler : public InputHandler,
                                   const gfx::Vector2dF& delta,
                                   const gfx::Point& viewport_point,
                                   bool is_direct_manipulation);
+
+  float LineStep() const;
 
   // Resolves a delta in the given granularity for the |scroll_node| into
   // physical pixels to scroll.
@@ -180,7 +187,7 @@ class CC_EXPORT ThreadedInputHandler : public InputHandler,
 
   // This method gets the scroll offset for a regular scroller, or the combined
   // visual and layout offsets of the viewport.
-  gfx::ScrollOffset GetVisualScrollOffset(const ScrollNode& scroll_node) const;
+  gfx::PointF GetVisualScrollOffset(const ScrollNode& scroll_node) const;
   bool IsScrolledBy(LayerImpl* child, ScrollNode* ancestor);
   bool IsAnimatingForSnap() const;
 
@@ -240,9 +247,11 @@ class CC_EXPORT ThreadedInputHandler : public InputHandler,
   InputHandler::ScrollStatus TryScroll(const ScrollTree& scroll_tree,
                                        ScrollNode* scroll_node) const;
 
+  enum class SnapReason { kGestureScrollEnd, kScrollOffsetAnimationFinished };
+
   // Creates an animation curve and returns true if we need to update the
   // scroll position to a snap point. Otherwise returns false.
-  bool SnapAtScrollEnd();
+  bool SnapAtScrollEnd(SnapReason reason);
 
   // |layer| is returned from a regular hit test, and
   // |first_scrolling_layer_or_drawn_scrollbar| is returned from a hit test
@@ -340,6 +349,8 @@ class CC_EXPORT ThreadedInputHandler : public InputHandler,
   gfx::Vector2dF UserScrollableDelta(const ScrollNode& node,
                                      const gfx::Vector2dF& delta) const;
 
+  void AdjustScrollDeltaForScrollbarSnap(ScrollState* scroll_state);
+
   FrameSequenceTrackerType GetTrackerTypeForScroll(
       ui::ScrollInputType input_type) const;
 
@@ -351,7 +362,7 @@ class CC_EXPORT ThreadedInputHandler : public InputHandler,
   // together.
   CompositorDelegateForInput& compositor_delegate_;
 
-  InputHandlerClient* input_handler_client_ = nullptr;
+  raw_ptr<InputHandlerClient> input_handler_client_ = nullptr;
 
   // An object to implement the ScrollElasticityHelper interface and
   // hold all state related to elasticity. May be nullptr if never requested.
@@ -370,12 +381,12 @@ class CC_EXPORT ThreadedInputHandler : public InputHandler,
 
   // The source device type that started the scroll gesture. Only set between a
   // ScrollBegin and ScrollEnd.
-  base::Optional<ui::ScrollInputType> latched_scroll_type_;
+  absl::optional<ui::ScrollInputType> latched_scroll_type_;
 
   // Tracks the last scroll update/begin state received. Used to infer the most
   // recent scroll type and direction.
-  base::Optional<ScrollState> last_scroll_begin_state_;
-  base::Optional<ScrollState> last_scroll_update_state_;
+  absl::optional<ScrollState> last_scroll_begin_state_;
+  absl::optional<ScrollState> last_scroll_update_state_;
 
   // If a scroll snap is being animated, then the value of this will be the
   // element id(s) of the target(s). Otherwise, the ids will be invalid.
@@ -386,7 +397,7 @@ class CC_EXPORT ThreadedInputHandler : public InputHandler,
   // A set of elements that scroll-snapped to a new target since the last
   // begin main frame. The snap target ids of these elements will be sent to
   // the main thread in the next begin main frame.
-  base::flat_set<ElementId> updated_snapped_elements_;
+  base::flat_map<ElementId, TargetSnapAreaElementIds> updated_snapped_elements_;
 
   ElementId scroll_element_id_mouse_currently_over_;
   ElementId scroll_element_id_mouse_currently_captured_;
@@ -438,6 +449,8 @@ class CC_EXPORT ThreadedInputHandler : public InputHandler,
   bool has_scrolled_by_touch_ = false;
   bool has_scrolled_by_precisiontouchpad_ = false;
   bool has_scrolled_by_scrollbar_ = false;
+
+  bool prefers_reduced_motion_ = false;
 
   // Must be the last member to ensure this is destroyed first in the
   // destruction order and invalidates all weak pointers.

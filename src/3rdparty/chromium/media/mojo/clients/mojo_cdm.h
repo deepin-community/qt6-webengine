@@ -11,7 +11,6 @@
 #include <utility>
 #include <vector>
 
-#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/thread_checker.h"
@@ -26,6 +25,7 @@
 #include "mojo/public/cpp/bindings/associated_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/remote.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace base {
 class SingleThreadTaskRunner;
@@ -44,13 +44,16 @@ class MojoCdm final : public ContentDecryptionModule,
  public:
   using MessageType = CdmMessageType;
 
+  // All parameters must be non-null.
   MojoCdm(mojo::Remote<mojom::ContentDecryptionModule> remote_cdm,
-          const base::Optional<base::UnguessableToken>& cdm_id,
-          mojo::PendingRemote<mojom::Decryptor> decryptor_remote,
+          media::mojom::CdmContextPtr cdm_context,
           const SessionMessageCB& session_message_cb,
           const SessionClosedCB& session_closed_cb,
           const SessionKeysChangeCB& session_keys_change_cb,
           const SessionExpirationUpdateCB& session_expiration_update_cb);
+
+  MojoCdm(const MojoCdm&) = delete;
+  MojoCdm& operator=(const MojoCdm&) = delete;
 
   // ContentDecryptionModule implementation.
   void SetServerCertificate(const std::vector<uint8_t>& certificate,
@@ -78,10 +81,10 @@ class MojoCdm final : public ContentDecryptionModule,
   // All GetDecryptor() calls must be made on the same thread.
   std::unique_ptr<CallbackRegistration> RegisterEventCB(EventCB event_cb) final;
   Decryptor* GetDecryptor() final;
-  base::Optional<base::UnguessableToken> GetCdmId() const final;
-#if defined(OS_WIN)
+  absl::optional<base::UnguessableToken> GetCdmId() const final;
+#if BUILDFLAG(IS_WIN)
   bool RequiresMediaFoundationRenderer() final;
-#endif  // defined(OS_WIN)
+#endif  // BUILDFLAG(IS_WIN)
 
  private:
   ~MojoCdm() final;
@@ -93,7 +96,8 @@ class MojoCdm final : public ContentDecryptionModule,
   void OnSessionMessage(const std::string& session_id,
                         MessageType message_type,
                         const std::vector<uint8_t>& message) final;
-  void OnSessionClosed(const std::string& session_id) final;
+  void OnSessionClosed(const std::string& session_id,
+                       CdmSessionClosedReason reason) final;
   void OnSessionKeysChange(
       const std::string& session_id,
       bool has_additional_usable_key,
@@ -117,26 +121,31 @@ class MojoCdm final : public ContentDecryptionModule,
   mojo::AssociatedReceiver<ContentDecryptionModuleClient> client_receiver_{
       this};
 
-  // Protects |cdm_id_|, |decryptor_remote_|, |decryptor_| and
-  // |decryptor_task_runner_| which could be accessed from other threads.
-  // See CdmContext implementation above.
+  // Protects |cdm_id_|, |decryptor_remote_|, |decryptor_|,
+  // |decryptor_task_runner_| and |requires_media_foundation_renderer_|, which
+  // could be accessed from other threads. See CdmContext implementation above.
   mutable base::Lock lock_;
 
   // CDM ID of the remote CDM. Set after initialization is completed. Must not
   // be invalid if initialization succeeded.
-  base::Optional<base::UnguessableToken> cdm_id_;
+  absl::optional<base::UnguessableToken> cdm_id_ GUARDED_BY(lock_);
 
   // The mojo::PendingRemote<mojom::Decryptor> exposed by the remote CDM. Set
   // after initialization is completed and cleared after |decryptor_| is
   // created. May be invalid after initialization if the CDM doesn't support a
   // Decryptor.
-  mojo::PendingRemote<mojom::Decryptor> decryptor_remote_;
+  mojo::PendingRemote<mojom::Decryptor> decryptor_remote_ GUARDED_BY(lock_);
 
   // Decryptor based on |decryptor_remote_|, lazily created in
   // GetDecryptor(). Since GetDecryptor() can be called on a different thread,
   // use |decryptor_task_runner_| to bind |decryptor_| to that thread.
-  std::unique_ptr<MojoDecryptor> decryptor_;
-  scoped_refptr<base::SingleThreadTaskRunner> decryptor_task_runner_;
+  std::unique_ptr<MojoDecryptor> decryptor_ GUARDED_BY(lock_);
+  scoped_refptr<base::SingleThreadTaskRunner> decryptor_task_runner_
+      GUARDED_BY(lock_);
+
+#if BUILDFLAG(IS_WIN)
+  bool requires_media_foundation_renderer_ GUARDED_BY(lock_) = false;
+#endif  // BUILDFLAG(IS_WIN)
 
   // Callbacks for firing session events.
   SessionMessageCB session_message_cb_;
@@ -152,15 +161,8 @@ class MojoCdm final : public ContentDecryptionModule,
 
   CallbackRegistry<EventCB::RunType> event_callbacks_;
 
-#if defined(OS_WIN)
-  // The current content is for MediaFoundationRenderer or not.
-  bool is_mf_renderer_content_ = false;
-#endif  // defined(OS_WIN)
-
   // This must be the last member.
   base::WeakPtrFactory<MojoCdm> weak_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(MojoCdm);
 };
 
 }  // namespace media

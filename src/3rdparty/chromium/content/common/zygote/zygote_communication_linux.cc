@@ -16,7 +16,6 @@
 #include "base/pickle.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/posix/unix_domain_socket.h"
-#include "base/stl_util.h"
 #include "content/common/zygote/zygote_commands_linux.h"
 #include "content/public/common/child_process_host.h"
 #include "content/public/common/content_switches.h"
@@ -250,7 +249,7 @@ void ZygoteCommunication::Init(
 #endif
   };
   cmd_line.CopySwitchesFrom(browser_command_line, kForwardSwitches,
-                            base::size(kForwardSwitches));
+                            std::size(kForwardSwitches));
 
   pid_ = std::move(launcher).Run(&cmd_line, &control_fd_);
 

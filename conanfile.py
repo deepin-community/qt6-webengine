@@ -1,30 +1,5 @@
-#############################################################################
-##
-## Copyright (C) 2021 The Qt Company Ltd.
-## Contact: https://www.qt.io/licensing/
-##
-## This file is part of the release tools of the Qt Toolkit.
-##
-## $QT_BEGIN_LICENSE:GPL-EXCEPT$
-## Commercial License Usage
-## Licensees holding valid commercial Qt licenses may use this file in
-## accordance with the commercial license agreement provided with the
-## Software or, alternatively, in accordance with the terms contained in
-## a written agreement between you and The Qt Company. For licensing terms
-## and conditions see https://www.qt.io/terms-conditions. For further
-## information use the contact form at https://www.qt.io/contact-us.
-##
-## GNU General Public License Usage
-## Alternatively, this file may be used under the terms of the GNU
-## General Public License version 3 as published by the Free Software
-## Foundation with exceptions as appearing in the file LICENSE.GPL3-EXCEPT
-## included in the packaging of this file. Please review the following
-## information to ensure the GNU General Public License requirements will
-## be met: https://www.gnu.org/licenses/gpl-3.0.html.
-##
-## $QT_END_LICENSE$
-##
-#############################################################################
+# Copyright (C) 2021 The Qt Company Ltd.
+# SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
 from conans import ConanFile
 import re
@@ -33,10 +8,29 @@ from typing import Dict, Any
 
 _qtwebengine_features = [
     "qtpdf-build",
+    "qtpdf-quick-build",
+    "qtpdf-widgets-build",
     "qtwebengine-build",
+    "qtwebengine-core-build",
     "qtwebengine-quick-build",
     "qtwebengine-widgets-build",
     "webengine-developer-build",
+    "webengine-embedded-build",
+    "webengine-extensions",
+    "webengine-full-debug-info",
+    "webengine-jumbo-build",
+    "webengine-kerberos",
+    "webengine-native-spellchecker",
+    "webengine-pepper-plugins",
+    "webengine-printing-and-pdf",
+    "webengine-proprietary-codecs",
+    "webengine-sanitizer",
+    "webengine-spellchecker",
+    "webengine-webchannel",
+    "webengine-webrtc",
+    "webengine-webrtc-pipewire",
+    "system-webengine-ffmpeg",
+    "system-webengine-icu",
 ]
 
 
@@ -71,8 +65,25 @@ class QtWebEngine(ConanFile):
 
     def get_qt_leaf_module_options(self) -> Dict[str, Any]:
         """Implements abstractmethod from qt-conan-common.QtLeafModule"""
-        return {item.replace("-", "_"): ["yes", "no", None] for item in _qtwebengine_features}
+        return self._shared.convert_qt_features_to_conan_options(_qtwebengine_features)
 
     def get_qt_leaf_module_default_options(self) -> Dict[str, Any]:
         """Implements abstractmethod from qt-conan-common.QtLeafModule"""
-        return {item.replace("-", "_"): None for item in _qtwebengine_features}
+        return self._shared.convert_qt_features_to_default_conan_options(_qtwebengine_features)
+
+    def package_env_info(self) -> Dict[str, Any]:
+        """Implements abstractmethod from qt-conan-common.QtLeafModule"""
+        # this will be called only after a successful build
+        _f = lambda p: True
+        if tools.os_info.is_windows:
+            ptrn = "**/QtWebEngineProcess.exe"
+        elif tools.os_info.is_macos:
+            ptrn = "**/QtWebEngineProcess.app/**/QtWebEngineProcess"
+            _f = lambda p: not any(".dSYM" in item for item in p.parts)
+        else:
+            ptrn = "**/QtWebEngineProcess"
+        ret = [str(p) for p in Path(self.package_folder).rglob(ptrn) if p.is_file() and _f(p)]
+        if len(ret) != 1:
+            print("Expected to find one 'QtWebEngineProcess'. Found: {0}".format(ret))
+        return {"QTWEBENGINEPROCESS_PATH": ret.pop() if ret else ""}
+

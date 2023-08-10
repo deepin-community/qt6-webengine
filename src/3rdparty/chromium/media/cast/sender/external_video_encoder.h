@@ -10,7 +10,6 @@
 
 #include <memory>
 
-#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "media/cast/cast_environment.h"
 #include "media/cast/sender/size_adaptable_video_encoder_base.h"
@@ -30,14 +29,26 @@ class ExternalVideoEncoder final : public VideoEncoder {
   // using ExternalVideoEncoder with the given |video_config|.
   static bool IsSupported(const FrameSenderConfig& video_config);
 
+  // Returns true if the external encoder should be used for a codec with a
+  // given receiver and set of VEA profiles. Some receivers have implementation
+  // bugs that keep the external encoder from being used even if it is supported
+  // by the sender.
+  static bool IsRecommended(
+      Codec codec,
+      base::StringPiece receiver_model_name,
+      const std::vector<media::VideoEncodeAccelerator::SupportedProfile>&
+          profiles);
+
   ExternalVideoEncoder(
       const scoped_refptr<CastEnvironment>& cast_environment,
       const FrameSenderConfig& video_config,
       const gfx::Size& frame_size,
       FrameId first_frame_id,
       StatusChangeCallback status_change_cb,
-      const CreateVideoEncodeAcceleratorCallback& create_vea_cb,
-      const CreateVideoEncodeMemoryCallback& create_video_encode_memory_cb);
+      const CreateVideoEncodeAcceleratorCallback& create_vea_cb);
+
+  ExternalVideoEncoder(const ExternalVideoEncoder&) = delete;
+  ExternalVideoEncoder& operator=(const ExternalVideoEncoder&) = delete;
 
   ~ExternalVideoEncoder() final;
 
@@ -66,21 +77,18 @@ class ExternalVideoEncoder final : public VideoEncoder {
       std::unique_ptr<media::VideoEncodeAccelerator> vea);
 
   const scoped_refptr<CastEnvironment> cast_environment_;
-  const CreateVideoEncodeMemoryCallback create_video_encode_memory_cb_;
 
   // The size of the visible region of the video frames to be encoded.
   const gfx::Size frame_size_;
 
   int bit_rate_;
-  bool key_frame_requested_;
+  bool key_frame_requested_ = false;
 
   scoped_refptr<VEAClientImpl> client_;
 
   // Provides a weak pointer for the OnCreateVideoEncoderAccelerator() callback.
   // NOTE: Weak pointers must be invalidated before all other member variables.
   base::WeakPtrFactory<ExternalVideoEncoder> weak_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(ExternalVideoEncoder);
 };
 
 // An implementation of SizeAdaptableVideoEncoderBase to proxy for
@@ -92,8 +100,12 @@ class SizeAdaptableExternalVideoEncoder final
       const scoped_refptr<CastEnvironment>& cast_environment,
       const FrameSenderConfig& video_config,
       StatusChangeCallback status_change_cb,
-      const CreateVideoEncodeAcceleratorCallback& create_vea_cb,
-      const CreateVideoEncodeMemoryCallback& create_video_encode_memory_cb);
+      const CreateVideoEncodeAcceleratorCallback& create_vea_cb);
+
+  SizeAdaptableExternalVideoEncoder(const SizeAdaptableExternalVideoEncoder&) =
+      delete;
+  SizeAdaptableExternalVideoEncoder& operator=(
+      const SizeAdaptableExternalVideoEncoder&) = delete;
 
   ~SizeAdaptableExternalVideoEncoder() final;
 
@@ -102,11 +114,7 @@ class SizeAdaptableExternalVideoEncoder final
 
  private:
   // Special callbacks needed by media::cast::ExternalVideoEncoder.
-  // TODO(miu): Remove these.  http://crbug.com/454029
   const CreateVideoEncodeAcceleratorCallback create_vea_cb_;
-  const CreateVideoEncodeMemoryCallback create_video_encode_memory_cb_;
-
-  DISALLOW_COPY_AND_ASSIGN(SizeAdaptableExternalVideoEncoder);
 };
 
 // A utility class for examining the sequence of frames sent to an external
@@ -122,6 +130,10 @@ class QuantizerEstimator {
   };
 
   QuantizerEstimator();
+
+  QuantizerEstimator(const QuantizerEstimator&) = delete;
+  QuantizerEstimator& operator=(const QuantizerEstimator&) = delete;
+
   ~QuantizerEstimator();
 
   // Discard any state related to the processing of prior frames.
@@ -135,13 +147,6 @@ class QuantizerEstimator {
   double EstimateForDeltaFrame(const VideoFrame& frame);
 
  private:
-  enum {
-    // The percentage of each frame to sample.  This value is based on an
-    // analysis that showed sampling 10% of the rows of a frame generated
-    // reasonably accurate results.
-    FRAME_SAMPLING_PERCENT = 10,
-  };
-
   // Returns true if the frame is in planar YUV format.
   static bool CanExamineFrame(const VideoFrame& frame);
 
@@ -149,7 +154,7 @@ class QuantizerEstimator {
   // based on the probabilities of values falling within each of the buckets of
   // the given |histogram|.
   static double ComputeEntropyFromHistogram(const int* histogram,
-                                            size_t num_buckets,
+                                            size_t histogram_size,
                                             int num_samples);
 
   // Map the |shannon_entropy| to its corresponding software VP8 quantizer.
@@ -160,8 +165,6 @@ class QuantizerEstimator {
   // turn is used to compute the entropy and quantizer.
   std::unique_ptr<uint8_t[]> last_frame_pixel_buffer_;
   gfx::Size last_frame_size_;
-
-  DISALLOW_COPY_AND_ASSIGN(QuantizerEstimator);
 };
 
 }  // namespace cast

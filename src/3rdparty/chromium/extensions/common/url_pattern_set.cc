@@ -7,6 +7,7 @@
 #include <iterator>
 #include <ostream>
 
+#include "base/containers/contains.h"
 #include "base/logging.h"
 #include "base/stl_util.h"
 #include "base/values.h"
@@ -80,7 +81,7 @@ URLPatternSet URLPatternSet::CreateIntersection(
   // they have with the other patterns.
   for (const auto* pattern : unique_set1) {
     for (const auto* pattern2 : unique_set2) {
-      base::Optional<URLPattern> intersection =
+      absl::optional<URLPattern> intersection =
           pattern->CreateIntersection(*pattern2);
       if (intersection)
         result.patterns_.insert(std::move(*intersection));
@@ -95,38 +96,6 @@ URLPatternSet URLPatternSet::CreateUnion(const URLPatternSet& set1,
                                          const URLPatternSet& set2) {
   return URLPatternSet(
       base::STLSetUnion<std::set<URLPattern>>(set1.patterns_, set2.patterns_));
-}
-
-// static
-URLPatternSet URLPatternSet::CreateUnion(
-    const std::vector<URLPatternSet>& sets) {
-  URLPatternSet result;
-  if (sets.empty())
-    return result;
-
-  // N-way union algorithm is basic O(nlog(n)) merge algorithm.
-  //
-  // Do the first merge step into a working set so that we don't mutate any of
-  // the input.
-  // TODO(devlin): Looks like this creates a bunch of copies; we can probably
-  // clean that up.
-  std::vector<URLPatternSet> working;
-  for (size_t i = 0; i < sets.size(); i += 2) {
-    if (i + 1 < sets.size())
-      working.push_back(CreateUnion(sets[i], sets[i + 1]));
-    else
-      working.push_back(sets[i].Clone());
-  }
-
-  for (size_t skip = 1; skip < working.size(); skip *= 2) {
-    for (size_t i = 0; i < (working.size() - skip); i += skip) {
-      URLPatternSet u = CreateUnion(working[i], working[i + skip]);
-      working[i].patterns_.swap(u.patterns_);
-    }
-  }
-
-  result.patterns_.swap(working[0].patterns_);
-  return result;
 }
 
 URLPatternSet::URLPatternSet() = default;
@@ -193,7 +162,8 @@ bool URLPatternSet::AddOrigin(int valid_schemes, const GURL& origin) {
   if (origin.is_empty())
     return false;
   const url::Origin real_origin = url::Origin::Create(origin);
-  DCHECK(real_origin.IsSameOriginWith(url::Origin::Create(origin.GetOrigin())));
+  DCHECK(real_origin.IsSameOriginWith(
+      url::Origin::Create(origin.DeprecatedGetOriginAsURL())));
   URLPattern origin_pattern(valid_schemes);
   // Origin adding could fail if |origin| does not match |valid_schemes|.
   if (origin_pattern.Parse(origin.spec()) !=
@@ -266,8 +236,11 @@ bool URLPatternSet::OverlapsWith(const URLPatternSet& other) const {
 
 std::unique_ptr<base::ListValue> URLPatternSet::ToValue() const {
   std::unique_ptr<base::ListValue> value(new base::ListValue);
-  for (auto i = patterns_.cbegin(); i != patterns_.cend(); ++i)
-    value->AppendIfNotPresent(std::make_unique<base::Value>(i->GetAsString()));
+  for (auto i = patterns_.cbegin(); i != patterns_.cend(); ++i) {
+    base::Value pattern_str_value(i->GetAsString());
+    if (!base::Contains(value->GetListDeprecated(), pattern_str_value))
+      value->Append(std::move(pattern_str_value));
+  }
   return value;
 }
 
@@ -310,11 +283,11 @@ bool URLPatternSet::Populate(const base::ListValue& value,
                              bool allow_file_access,
                              std::string* error) {
   std::vector<std::string> patterns;
-  for (size_t i = 0; i < value.GetSize(); ++i) {
-    std::string item;
-    if (!value.GetString(i, &item))
+  for (const base::Value& pattern : value.GetListDeprecated()) {
+    const std::string* item = pattern.GetIfString();
+    if (!item)
       return false;
-    patterns.push_back(item);
+    patterns.push_back(*item);
   }
   return Populate(patterns, valid_schemes, allow_file_access, error);
 }

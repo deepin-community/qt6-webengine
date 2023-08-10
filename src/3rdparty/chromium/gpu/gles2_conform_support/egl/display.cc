@@ -4,7 +4,8 @@
 
 #include "gpu/gles2_conform_support/egl/display.h"
 
-#include "base/stl_util.h"
+#include <memory>
+
 #include "build/build_config.h"
 #include "gpu/gles2_conform_support/egl/config.h"
 #include "gpu/gles2_conform_support/egl/context.h"
@@ -88,7 +89,7 @@ EGLBoolean Display::ChooseConfig(ThreadState* ts,
   if (!configs)
     config_size = 0;
   *num_config = 0;
-  for (size_t i = 0; i < base::size(configs_); ++i) {
+  for (size_t i = 0; i < std::size(configs_); ++i) {
     if (configs_[i]->Matches(attrib_list)) {
       if (*num_config < config_size) {
         configs[*num_config] = configs_[i].get();
@@ -111,21 +112,21 @@ EGLBoolean Display::GetConfigs(ThreadState* ts,
   InitializeConfigsIfNeeded();
   if (!configs)
     config_size = 0;
-  *num_config = base::size(configs_);
+  *num_config = std::size(configs_);
   size_t count =
-      std::min(base::size(configs_), static_cast<size_t>(config_size));
+      std::min(std::size(configs_), static_cast<size_t>(config_size));
   for (size_t i = 0; i < count; ++i)
     configs[i] = configs_[i].get();
   return ts->ReturnSuccess(EGL_TRUE);
 }
 
 bool Display::IsValidNativeWindow(EGLNativeWindowType win) {
-#if defined OS_WIN
+#if BUILDFLAG(IS_WIN)
   return ::IsWindow(win) != FALSE;
 #else
   // TODO(alokp): Validate window handle.
   return true;
-#endif  // OS_WIN
+#endif  // BUILDFLAG(IS_WIN)
 }
 
 EGLBoolean Display::GetConfigAttrib(ThreadState* ts,
@@ -217,7 +218,7 @@ EGLSurface Display::CreateWindowSurface(ThreadState* ts,
     return result;
   }
   scoped_refptr<gl::GLSurface> gl_surface;
-#if defined(OS_MAC)
+#if BUILDFLAG(IS_MAC)
   gfx::AcceleratedWidget widget = gfx::kNullAcceleratedWidget;
 #else
   gfx::AcceleratedWidget widget = static_cast<gfx::AcceleratedWidget>(win);
@@ -364,8 +365,8 @@ void Display::InitializeConfigsIfNeeded() {
     // This way we can record the client intention at context creation time.
     // The GL implementation (gl::GLContext and gl::GLSurface) needs this
     // distinction when creating a context.
-    configs_[0].reset(new Config(EGL_WINDOW_BIT));
-    configs_[1].reset(new Config(EGL_PBUFFER_BIT));
+    configs_[0] = std::make_unique<Config>(EGL_WINDOW_BIT);
+    configs_[1] = std::make_unique<Config>(EGL_PBUFFER_BIT);
   }
 }
 

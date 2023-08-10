@@ -9,8 +9,8 @@
 #include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/values.h"
+#include "chrome/browser/ash/attestation/tpm_challenge_key_result.h"
 #include "chrome/browser/ash/settings/cros_settings.h"
-#include "chrome/browser/chromeos/attestation/tpm_challenge_key_result.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chromeos/login/login_state/login_state.h"
 #include "components/content_settings/core/common/content_settings_pattern.h"
@@ -44,12 +44,13 @@ bool IsDeviceWebBasedAttestationEnabledForUrl(const GURL& url,
     return false;
   }
 
-  if (patterns->GetSize() >= kPatternsSizeWarningLevel) {
-    LOG(WARNING) << "Allowed urls list size is " << patterns->GetSize()
+  if (patterns->GetListDeprecated().size() >= kPatternsSizeWarningLevel) {
+    LOG(WARNING) << "Allowed urls list size is "
+                 << patterns->GetListDeprecated().size()
                  << ". Check may be slow.";
   }
 
-  for (const base::Value& cur_pattern : *patterns) {
+  for (const base::Value& cur_pattern : patterns->GetListDeprecated()) {
     if (ContentSettingsPattern::FromString(cur_pattern.GetString())
             .Matches(url)) {
       return true;
@@ -132,7 +133,8 @@ void SamlChallengeKeyHandler::BuildChallengeResponse() {
       GetTpmResponseTimeout(), attestation::KEY_DEVICE, profile_,
       base::BindOnce(&SamlChallengeKeyHandler::ReturnResult,
                      weak_factory_.GetWeakPtr()),
-      decoded_challenge_, /*register_key=*/false, /*key_name_for_spkac=*/"");
+      decoded_challenge_, /*register_key=*/false, /*key_name_for_spkac=*/"",
+      /*signals=*/absl::nullopt);
 }
 
 base::TimeDelta SamlChallengeKeyHandler::GetTpmResponseTimeout() const {

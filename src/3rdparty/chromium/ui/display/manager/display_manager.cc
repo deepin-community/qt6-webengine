@@ -26,6 +26,7 @@
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/display/display.h"
@@ -52,10 +53,6 @@
 #include "ui/display/manager/display_configurator.h"
 #include "ui/display/types/native_display_delegate.h"
 #include "ui/events/devices/touchscreen_device.h"
-#endif
-
-#if defined(OS_WIN)
-#include "base/win/windows_version.h"
 #endif
 
 namespace display {
@@ -394,7 +391,7 @@ void DisplayManager::RefreshFontParams() {
 const DisplayLayout& DisplayManager::GetCurrentDisplayLayout() const {
   DCHECK_LE(2U, num_connected_displays());
   if (num_connected_displays() > 1) {
-    DisplayIdList list = GetCurrentDisplayIdList();
+    DisplayIdList list = GetConnectedDisplayIdList();
     return layout_store_->GetRegisteredDisplayLayout(list);
   }
   DLOG(ERROR) << "DisplayLayout is requested for single display";
@@ -409,33 +406,42 @@ const DisplayLayout& DisplayManager::GetCurrentResolvedDisplayLayout() const {
                                   : GetCurrentDisplayLayout();
 }
 
-DisplayIdList DisplayManager::GetCurrentDisplayIdList() const {
+DisplayIdList DisplayManager::GetConnectedDisplayIdList() const {
   if (IsInUnifiedMode())
     return CreateDisplayIdList(software_mirroring_display_list_);
+  DisplayIdList active_display_id_list =
+      CreateDisplayIdList(active_display_list_);
+  return GenerateConnectedDisplayIdListUsingDisplayIdList(
+      active_display_id_list);
+}
 
-  DisplayIdList display_id_list = CreateDisplayIdList(active_display_list_);
+DisplayIdList DisplayManager::GenerateConnectedDisplayIdListUsingDisplayIdList(
+    const DisplayIdList& display_id_list) const {
+  if (IsInUnifiedMode()) {
+    DCHECK_EQ(1u, display_id_list.size());
+    DCHECK_EQ(display_id_list[0], kUnifiedDisplayId);
+    return CreateDisplayIdList(software_mirroring_display_list_);
+  }
+  DisplayIdList connected_display_id_list = display_id_list;
 
   if (IsInSoftwareMirrorMode()) {
     DisplayIdList software_mirroring_display_id_list =
         CreateDisplayIdList(software_mirroring_display_list_);
-    display_id_list.insert(display_id_list.end(),
-                           software_mirroring_display_id_list.begin(),
-                           software_mirroring_display_id_list.end());
+    connected_display_id_list.insert(connected_display_id_list.end(),
+                                     software_mirroring_display_id_list.begin(),
+                                     software_mirroring_display_id_list.end());
     // Ordered display id list is used to retrieve layout from layout store, so
     // always keep it sorted after merging two id list.
-    SortDisplayIdList(&display_id_list);
-    return display_id_list;
+    SortDisplayIdList(&connected_display_id_list);
+  } else if (IsInHardwareMirrorMode()) {
+    connected_display_id_list.insert(
+        connected_display_id_list.end(),
+        hardware_mirroring_display_id_list_.begin(),
+        hardware_mirroring_display_id_list_.end());
+    SortDisplayIdList(&connected_display_id_list);
   }
 
-  if (IsInHardwareMirrorMode()) {
-    display_id_list.insert(display_id_list.end(),
-                           hardware_mirroring_display_id_list_.begin(),
-                           hardware_mirroring_display_id_list_.end());
-    SortDisplayIdList(&display_id_list);
-    return display_id_list;
-  }
-
-  return display_id_list;
+  return connected_display_id_list;
 }
 
 void DisplayManager::SetLayoutForCurrentDisplays(
@@ -444,7 +450,7 @@ void DisplayManager::SetLayoutForCurrentDisplays(
     return;
   BeginEndNotifier notifier(this);
 
-  const DisplayIdList list = GetCurrentDisplayIdList();
+  const DisplayIdList list = GetConnectedDisplayIdList();
 
   DCHECK(DisplayLayout::Validate(list, *layout));
 
@@ -537,7 +543,7 @@ void DisplayManager::SetOverscanInsets(int64_t display_id,
 void DisplayManager::SetDisplayRotation(int64_t display_id,
                                         Display::Rotation rotation,
                                         Display::RotationSource source) {
-  if (IsInUnifiedMode())
+  if (IsInUnifiedMode() && display_id == kUnifiedDisplayId)
     return;
 
   DisplayInfoList display_info_list;
@@ -885,12 +891,6 @@ void DisplayManager::UpdateDisplaysWith(
     const DisplayInfoList& updated_display_info_list) {
   BeginEndNotifier notifier(this);
 
-#if defined(OS_WIN)
-  DCHECK_EQ(1u, updated_display_info_list.size())
-      << ": Multiple display test does not work on Windows bots. Please "
-         "skip (don't disable) the test.";
-#endif
-
   DisplayInfoList new_display_info_list = updated_display_info_list;
   std::sort(active_display_list_.begin(), active_display_list_.end(),
             DisplaySortFunctor());
@@ -900,9 +900,13 @@ void DisplayManager::UpdateDisplaysWith(
   DisplayIdList new_display_id_list = GenerateDisplayIdList(
       new_display_info_list.begin(), new_display_info_list.end(),
       [](const ManagedDisplayInfo& info) { return info.id(); });
-  if (new_display_info_list.size() > 1) {
+
+  if (num_connected_displays_ > 1) {
+    DisplayIdList connected_display_id_list =
+        GenerateConnectedDisplayIdListUsingDisplayIdList(new_display_id_list);
     const DisplayLayout& layout =
-        layout_store_->GetRegisteredDisplayLayout(new_display_id_list);
+        layout_store_->GetOrCreateRegisteredDisplayLayout(
+            connected_display_id_list);
     current_default_multi_display_mode_ =
         (layout.default_unified && unified_desktop_enabled_) ? UNIFIED
                                                              : EXTENDED;
@@ -1067,6 +1071,14 @@ void DisplayManager::UpdateDisplaysWith(
   active_display_list_.resize(active_display_list_size);
   is_updating_display_list_ = false;
 
+  // OnDidRemoveDisplays is called after the displays have been removed,
+  // in comparison to NotifyDisplayRemoved/OnDisplayRemoved which on Ash
+  // is called before.
+  if (!removed_displays.empty()) {
+    for (auto& observer : observers_)
+      observer.OnDidRemoveDisplays();
+  }
+
   UpdatePrimaryDisplayIdIfNecessary();
 
   bool notify_primary_change =
@@ -1143,7 +1155,7 @@ const Display& DisplayManager::GetPrimaryDisplayCandidate() const {
   if (GetNumDisplays() != 2)
     return active_display_list_[0];
   const DisplayLayout& layout =
-      layout_store_->GetRegisteredDisplayLayout(GetCurrentDisplayIdList());
+      layout_store_->GetRegisteredDisplayLayout(GetConnectedDisplayIdList());
   return GetDisplayForId(layout.primary_id);
 }
 
@@ -1352,9 +1364,16 @@ bool DisplayManager::ShouldSetMirrorModeOn(
 
 void DisplayManager::SetMirrorMode(
     MirrorMode mode,
-    const base::Optional<MixedMirrorModeParams>& mixed_params) {
+    const absl::optional<MixedMirrorModeParams>& mixed_params) {
   if (num_connected_displays() < 2)
     return;
+
+  // If the user turned off mirror mode, disable
+  // `forced_mirror_mode_for_tablet`.
+  if (mode != MirrorMode::kNormal &&
+      layout_store_->forced_mirror_mode_for_tablet()) {
+    layout_store_->set_forced_mirror_mode_for_tablet(false);
+  }
 
   if (mode == MirrorMode::kMixed) {
     // Set mixed mirror mode parameters. This will be used to do two things:
@@ -1363,10 +1382,10 @@ void DisplayManager::SetMirrorMode(
     // 2. Restore the mixed mirror mode when display configuration changes.
     mixed_mirror_mode_params_ = mixed_params;
   } else {
-    DCHECK(mixed_params == base::nullopt);
+    DCHECK(mixed_params == absl::nullopt);
     // Clear mixed mirror mode parameters here to avoid restoring the mode after
     // display configuration changes.
-    mixed_mirror_mode_params_ = base::nullopt;
+    mixed_mirror_mode_params_ = absl::nullopt;
   }
 
   const bool enabled = mode != MirrorMode::kOff;
@@ -1399,7 +1418,8 @@ void DisplayManager::AddRemoveDisplay(
     gfx::Rect host_bounds = first_display.bounds_in_native();
     if (display_modes.empty()) {
       display_modes.emplace_back(
-          gfx::Size(600 /* width */, host_bounds.height()),
+          gfx::Size(host_bounds.height() + 100 /* width */,
+                    host_bounds.height()),
           60.0, /* refresh_rate */
           false /* is_interlaced */, true /* native */);
     }
@@ -1428,20 +1448,6 @@ void DisplayManager::AddRemoveDisplay(
   }
   num_connected_displays_ = new_display_info_list.size();
   ClearMirroringSourceAndDestination();
-  UpdateDisplaysWith(new_display_info_list);
-}
-
-void DisplayManager::ToggleDisplayScaleFactor() {
-  DCHECK(!active_display_list_.empty());
-  DisplayInfoList new_display_info_list;
-  for (Displays::const_iterator iter = active_display_list_.begin();
-       iter != active_display_list_.end(); ++iter) {
-    ManagedDisplayInfo display_info = GetDisplayInfo(iter->id());
-    display_info.set_device_scale_factor(
-        display_info.device_scale_factor() == 1.0f ? 2.0f : 1.0f);
-    new_display_info_list.push_back(display_info);
-  }
-  AddMirrorDisplayInfoIfAny(&new_display_info_list);
   UpdateDisplaysWith(new_display_info_list);
 }
 
@@ -1546,7 +1552,7 @@ void DisplayManager::SetTouchCalibrationData(
 
 void DisplayManager::ClearTouchCalibrationData(
     int64_t display_id,
-    base::Optional<ui::TouchscreenDevice> touchdevice) {
+    absl::optional<ui::TouchscreenDevice> touchdevice) {
   if (touchdevice) {
     touch_device_manager_->ClearTouchCalibrationData(*touchdevice, display_id);
   } else {
@@ -1574,7 +1580,7 @@ void DisplayManager::UpdateZoomFactor(int64_t display_id, float zoom_factor) {
         base::BindOnce(&OnInternalDisplayZoomChanged, zoom_factor));
     base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
         FROM_HERE, on_display_zoom_modify_timeout_.callback(),
-        base::TimeDelta::FromSeconds(kDisplayZoomModifyTimeoutSec));
+        base::Seconds(kDisplayZoomModifyTimeoutSec));
   }
 
   iter->second.set_zoom_factor(zoom_factor);
@@ -1595,7 +1601,7 @@ bool DisplayManager::HasUnassociatedDisplay() const {
 void DisplayManager::SetDefaultMultiDisplayModeForCurrentDisplays(
     MultiDisplayMode mode) {
   DCHECK_NE(MIRRORING, mode);
-  DisplayIdList list = GetCurrentDisplayIdList();
+  DisplayIdList list = GetConnectedDisplayIdList();
   layout_store_->UpdateDefaultUnified(list, mode == UNIFIED);
   ReconfigureDisplays();
 }
@@ -1823,6 +1829,19 @@ void DisplayManager::CreateUnifiedDesktopDisplayInfo(
   if (display_info_list->size() == 1)
     return;
 
+  for (auto& display_info : *display_info_list) {
+    auto it = display_info_.find(display_info.id());
+    if (it != display_info_.end()) {
+      display_info.SetRotation(
+          it->second.GetRotation(Display::RotationSource::USER),
+          Display::RotationSource::USER);
+      display_info.SetRotation(
+          it->second.GetRotation(Display::RotationSource::ACTIVE),
+          Display::RotationSource::ACTIVE);
+      display_info.UpdateDisplaySize();
+    }
+  }
+
   if (!ValidateMatrix(current_unified_desktop_matrix_) ||
       !ValidateMatrixForDisplayInfoList(*display_info_list,
                                         current_unified_desktop_matrix_)) {
@@ -1849,7 +1868,6 @@ void DisplayManager::CreateUnifiedDesktopDisplayInfo(
     for (const auto& id : row) {
       const ManagedDisplayInfo* info = FindInfoById(*display_info_list, id);
       DCHECK(info);
-
       max_height = std::max(max_height, info->size_in_pixel().height());
     }
     rows_max_heights.emplace_back(max_height);
@@ -2111,6 +2129,8 @@ Display DisplayManager::CreateMirroringDisplayFromDisplayInfoById(
                                   display_info.size_in_pixel(), scale)));
   new_display.set_touch_support(display_info.touch_support());
   new_display.set_maximum_cursor_size(display_info.maximum_cursor_size());
+  new_display.set_rotation(display_info.GetActiveRotation());
+  new_display.set_panel_rotation(display_info.GetLogicalActiveRotation());
   return new_display;
 }
 
@@ -2119,9 +2139,9 @@ void DisplayManager::UpdateNonPrimaryDisplayBoundsForLayout(
     std::vector<size_t>* updated_indices) {
   if (display_list->size() == 1u)
     return;
-
+  DisplayIdList display_id_list = CreateDisplayIdList(*display_list);
   const DisplayLayout& layout = layout_store_->GetRegisteredDisplayLayout(
-      CreateDisplayIdList(*display_list));
+      GenerateConnectedDisplayIdListUsingDisplayIdList(display_id_list));
 
   // Ignore if a user has a old format (should be extremely rare)
   // and this will be replaced with DCHECK.
@@ -2164,9 +2184,18 @@ void DisplayManager::ApplyDisplayLayout(DisplayLayout* layout,
     // layout.
     return;
   }
-
-  layout->ApplyToDisplayList(display_list, updated_ids,
-                             kMinimumOverlapForInvalidOffset);
+  // In mixed mirror mode, temporarily remove the mirror destination from the
+  // layout.
+  if (mixed_mirror_mode_params_) {
+    std::unique_ptr<DisplayLayout> temp_layout = layout->Copy();
+    temp_layout->RemoveDisplayPlacements(
+        mixed_mirror_mode_params_->destination_ids);
+    temp_layout->ApplyToDisplayList(display_list, updated_ids,
+                                    kMinimumOverlapForInvalidOffset);
+  } else {
+    layout->ApplyToDisplayList(display_list, updated_ids,
+                               kMinimumOverlapForInvalidOffset);
+  }
 }
 
 void DisplayManager::RunPendingTasksForTest() {
@@ -2225,7 +2254,7 @@ void DisplayManager::UpdateInfoForRestoringMirrorMode() {
   if (layout_store_->forced_mirror_mode_for_tablet())
     return;
 
-  for (auto id : GetCurrentDisplayIdList()) {
+  for (auto id : GetConnectedDisplayIdList()) {
     if (Display::IsInternalDisplayId(id))
       continue;
     // Mask the output index out (8 bits) so that the user does not have to
@@ -2242,7 +2271,7 @@ void DisplayManager::UpdatePrimaryDisplayIdIfNecessary() {
   if (num_connected_displays() < 2)
     return;
 
-  const display::DisplayIdList list = GetCurrentDisplayIdList();
+  const display::DisplayIdList list = GetConnectedDisplayIdList();
   const display::DisplayLayout& layout =
       layout_store()->GetRegisteredDisplayLayout(list);
   layout_store()->UpdateDefaultUnified(list, layout.default_unified);

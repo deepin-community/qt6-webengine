@@ -7,8 +7,12 @@
 #include <stdint.h>
 #include <string.h>
 
+#include <memory>
+
+#include "base/memory/raw_ptr.h"
 #include "base/test/task_environment.h"
 #include "base/threading/simple_thread.h"
+#include "base/time/time.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace discardable_memory {
@@ -62,7 +66,7 @@ class DiscardableSharedMemoryManagerTest : public testing::Test {
  protected:
   // Overridden from testing::Test:
   void SetUp() override {
-    manager_.reset(new TestDiscardableSharedMemoryManager);
+    manager_ = std::make_unique<TestDiscardableSharedMemoryManager>();
   }
 
   // DiscardableSharedMemoryManager requires a message loop.
@@ -237,7 +241,9 @@ class DiscardableSharedMemoryManagerScheduleEnforceMemoryPolicyTest
     : public testing::Test {
  protected:
   // Overridden from testing::Test:
-  void SetUp() override { manager_.reset(new DiscardableSharedMemoryManager); }
+  void SetUp() override {
+    manager_ = std::make_unique<DiscardableSharedMemoryManager>();
+  }
 
   // DiscardableSharedMemoryManager requires a message loop.
   base::test::SingleThreadTaskEnvironment task_environment_;
@@ -253,7 +259,7 @@ class SetMemoryLimitRunner : public base::DelegateSimpleThread::Delegate {
   void Run() override { manager_->SetMemoryLimit(limit_); }
 
  private:
-  DiscardableSharedMemoryManager* const manager_;
+  const raw_ptr<DiscardableSharedMemoryManager> manager_;
   const size_t limit_;
 };
 

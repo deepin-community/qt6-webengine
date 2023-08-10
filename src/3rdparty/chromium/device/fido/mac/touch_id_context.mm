@@ -4,16 +4,17 @@
 
 #include "device/fido/mac/touch_id_context.h"
 
-#import <CoreFoundation/CoreFoundation.h>
-#import <Security/Security.h>
+#include <CoreFoundation/CoreFoundation.h>
+#import <Foundation/Foundation.h>
+#include <Security/Security.h>
 
 #include "base/bind.h"
 #include "base/logging.h"
 #include "base/mac/foundation_util.h"
 #include "base/mac/scoped_cftyperef.h"
 #include "base/memory/ptr_util.h"
-#include "base/sequenced_task_runner.h"
 #include "base/strings/sys_string_conversions.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
 #include "base/threading/scoped_blocking_call.h"
@@ -39,53 +40,38 @@ base::ScopedCFTypeRef<SecAccessControlRef> DefaultAccessControl() {
           nullptr));
 }
 
-// Returns whether the current binary is signed with a keychain-access-groups
+// Returns whether the main executable is signed with a keychain-access-groups
 // entitlement that contains |keychain_access_group|. This is required for the
 // TouchIdAuthenticator to access key material stored in the Touch ID secure
 // enclave.
-bool BinaryHasKeychainAccessGroupEntitlementBlocking(
+bool ExecutableHasKeychainAccessGroupEntitlement(
     const std::string& keychain_access_group) {
-  // This method makes call into the macOS Security Framework, which may block.
-  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
-                                                base::BlockingType::MAY_BLOCK);
+  base::ScopedCFTypeRef<SecTaskRef> task(SecTaskCreateFromSelf(nullptr));
+  if (!task) {
+    return false;
+  }
 
-  base::ScopedCFTypeRef<SecCodeRef> code;
-  if (SecCodeCopySelf(kSecCSDefaultFlags, code.InitializeInto()) !=
-      errSecSuccess) {
+  base::ScopedCFTypeRef<CFTypeRef> entitlement_value_cftype(
+      SecTaskCopyValueForEntitlement(task, CFSTR("keychain-access-groups"),
+                                     nullptr));
+  if (!entitlement_value_cftype) {
     return false;
   }
-  base::ScopedCFTypeRef<CFDictionaryRef> signing_info;
-  if (SecCodeCopySigningInformation(code, kSecCSDefaultFlags,
-                                    signing_info.InitializeInto()) !=
-      errSecSuccess) {
+
+  NSArray* entitlement_value_nsarray = base::mac::CFToNSCast(
+      base::mac::CFCast<CFArrayRef>(entitlement_value_cftype));
+  if (!entitlement_value_nsarray) {
     return false;
   }
-  CFDictionaryRef entitlements =
-      base::mac::GetValueFromDictionary<CFDictionaryRef>(
-          signing_info, kSecCodeInfoEntitlementsDict);
-  if (!entitlements) {
-    return false;
-  }
-  CFArrayRef keychain_access_groups =
-      base::mac::GetValueFromDictionary<CFArrayRef>(
-          entitlements,
-          base::ScopedCFTypeRef<CFStringRef>(
-              base::SysUTF8ToCFStringRef("keychain-access-groups")));
-  if (!keychain_access_groups) {
-    return false;
-  }
-  return CFArrayContainsValue(
-      keychain_access_groups,
-      CFRangeMake(0, CFArrayGetCount(keychain_access_groups)),
-      base::ScopedCFTypeRef<CFStringRef>(
-          base::SysUTF8ToCFStringRef(keychain_access_group)));
+
+  return [entitlement_value_nsarray
+      containsObject:base::SysUTF8ToNSString(keychain_access_group)];
 }
 
+// Returns whether creating a key pair in the secure enclave succeeds. Keys are
+// not persisted to the keychain.
 API_AVAILABLE(macosx(10.12.2))
 bool CanCreateSecureEnclaveKeyPairBlocking() {
-  // CryptoKit offers SecureEnclave.isAvailable but does not have Swift
-  // bindings. Instead, attempt to create an ephemeral key pair in the secure
-  // enclave.
   base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
                                                 base::BlockingType::MAY_BLOCK);
 
@@ -103,11 +89,7 @@ bool CanCreateSecureEnclaveKeyPairBlocking() {
   base::ScopedCFTypeRef<SecKeyRef> private_key(
       Keychain::GetInstance().KeyCreateRandomKey(params,
                                                  cferr.InitializeInto()));
-  if (!private_key) {
-    FIDO_LOG(DEBUG) << "SecKeyCreateRandomKey failed: " << cferr;
-    return false;
-  }
-  return true;
+  return !!private_key;
 }
 
 }  // namespace
@@ -128,21 +110,17 @@ std::unique_ptr<TouchIdContext> TouchIdContext::Create() {
 }
 
 // static
-bool TouchIdContext::TouchIdAvailableImplBlocking(AuthenticatorConfig config) {
-  // Ensure that the binary is signed with the keychain-access-group
+bool TouchIdContext::TouchIdAvailableImpl(AuthenticatorConfig config) {
+  // Ensure that the main executable is signed with the keychain-access-group
   // entitlement that is configured by the embedder; that user authentication
   // with biometry, watch, or device passcode possible; and that the device has
   // a secure enclave.
-  // TODO(martinkr): The calls into the Security Framework in these methods
-  // have been observed to hang or crash. We have since moved them off the UI
-  // thread to keep the browser responsive during hangs at least. But we should
-  // find a way to eliminate them or perhaps cache the result.
-
-  if (!BinaryHasKeychainAccessGroupEntitlementBlocking(
+  if (!ExecutableHasKeychainAccessGroupEntitlement(
           config.keychain_access_group)) {
     FIDO_LOG(ERROR)
         << "Touch ID authenticator unavailable because keychain-access-group "
-           "entitlement is missing or incorrect";
+           "entitlement is missing or incorrect. Expected value: "
+        << config.keychain_access_group;
     return false;
   }
 
@@ -154,17 +132,16 @@ bool TouchIdContext::TouchIdAvailableImplBlocking(AuthenticatorConfig config) {
     return false;
   }
 
-  if (!CanCreateSecureEnclaveKeyPairBlocking()) {
-    FIDO_LOG(DEBUG) << "No secure enclave";
-    return false;
-  }
-
-  return true;
+  // CryptoKit offers a SecureEnclave.isAvailable property, but no ObjectiveC
+  // bindings exist. Instead, test whether we can create a key pair in the
+  // secure enclave. This takes hundreds of milliseconds, so only do it once.
+  static const bool kHasSecureEnclave = CanCreateSecureEnclaveKeyPairBlocking();
+  return kHasSecureEnclave;
 }
 
 // Testing seam to allow faking Touch ID in tests.
 TouchIdContext::TouchIdAvailableFuncPtr TouchIdContext::g_touch_id_available_ =
-    &TouchIdContext::TouchIdAvailableImplBlocking;
+    &TouchIdContext::TouchIdAvailableImpl;
 
 // static
 void TouchIdContext::TouchIdAvailable(
@@ -191,7 +168,7 @@ TouchIdContext::~TouchIdContext() {
   [context_ invalidate];
 }
 
-void TouchIdContext::PromptTouchId(const base::string16& reason,
+void TouchIdContext::PromptTouchId(const std::u16string& reason,
                                    Callback callback) {
   callback_ = std::move(callback);
   scoped_refptr<base::SequencedTaskRunner> runner =

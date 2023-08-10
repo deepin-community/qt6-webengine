@@ -5,15 +5,18 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_NG_MATHML_LAYOUT_NG_MATHML_BLOCK_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_NG_MATHML_LAYOUT_NG_MATHML_BLOCK_H_
 
-#include "third_party/blink/renderer/core/layout/ng/layout_ng_mixin.h"
+#include "third_party/blink/renderer/core/layout/ng/layout_ng_block.h"
 
 namespace blink {
 
-class LayoutNGMathMLBlock : public LayoutNGMixin<LayoutBlock> {
+class LayoutNGMathMLBlock : public LayoutNGBlock {
  public:
   explicit LayoutNGMathMLBlock(Element*);
 
-  const char* GetName() const override { return "LayoutNGMathMLBlock"; }
+  const char* GetName() const override {
+    NOT_DESTROYED();
+    return "LayoutNGMathMLBlock";
+  }
 
  private:
   void UpdateBlockLayout(bool relayout_children) final;
@@ -25,6 +28,7 @@ class LayoutNGMathMLBlock : public LayoutNGMixin<LayoutBlock> {
 
   PaginationBreakability GetPaginationBreakability(
       FragmentationEngine) const final {
+    NOT_DESTROYED();
     return kForbidBreaks;
   }
 };

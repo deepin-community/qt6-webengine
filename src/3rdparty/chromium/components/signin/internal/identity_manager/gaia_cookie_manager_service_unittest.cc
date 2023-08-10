@@ -12,11 +12,10 @@
 #include "base/bind.h"
 #include "base/callback_helpers.h"
 #include "base/location.h"
-#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/run_loop.h"
-#include "base/single_thread_task_runner.h"
 #include "base/strings/stringprintf.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/mock_callback.h"
 #include "base/test/task_environment.h"
@@ -54,13 +53,13 @@ class MockObserver {
         &MockObserver::OnGaiaAccountsInCookieUpdated, base::Unretained(this)));
   }
 
+  MockObserver(const MockObserver&) = delete;
+  MockObserver& operator=(const MockObserver&) = delete;
+
   MOCK_METHOD3(OnGaiaAccountsInCookieUpdated,
                void(const std::vector<gaia::ListedAccount>&,
                     const std::vector<gaia::ListedAccount>&,
                     const GoogleServiceAuthError&));
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(MockObserver);
 };
 
 // Counts number of InstrumentedGaiaCookieManagerService created.
@@ -98,6 +97,11 @@ MATCHER_P(ListedAccountEquals, expected, "") {
   return AreAccountListsEqual(expected, arg);
 }
 
+// Custom matcher for ListedAccount.
+MATCHER_P(ListedAccountMatchesGaiaId, gaia_id, "") {
+  return arg.gaia_id == std::string(gaia_id);
+}
+
 class InstrumentedGaiaCookieManagerService : public GaiaCookieManagerService {
  public:
   InstrumentedGaiaCookieManagerService(ProfileOAuth2TokenService* token_service,
@@ -106,15 +110,17 @@ class InstrumentedGaiaCookieManagerService : public GaiaCookieManagerService {
     total++;
   }
 
+  InstrumentedGaiaCookieManagerService(
+      const InstrumentedGaiaCookieManagerService&) = delete;
+  InstrumentedGaiaCookieManagerService& operator=(
+      const InstrumentedGaiaCookieManagerService&) = delete;
+
   ~InstrumentedGaiaCookieManagerService() override { total--; }
 
   MOCK_METHOD0(StartFetchingUbertoken, void());
   MOCK_METHOD0(StartFetchingListAccounts, void());
   MOCK_METHOD0(StartGaiaLogOut, void());
   MOCK_METHOD0(StartFetchingMergeSession, void());
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(InstrumentedGaiaCookieManagerService);
 };
 
 class GaiaCookieManagerServiceTest : public testing::Test {
@@ -208,8 +214,7 @@ class GaiaCookieManagerServiceTest : public testing::Test {
 
   void Advance(scoped_refptr<base::TestMockTimeTaskRunner> test_task_runner,
                base::TimeDelta advance_by) {
-    test_task_runner->FastForwardBy(advance_by +
-                                    base::TimeDelta::FromMilliseconds(1));
+    test_task_runner->FastForwardBy(advance_by + base::Milliseconds(1));
     test_task_runner->RunUntilIdle();
   }
 
@@ -248,6 +253,7 @@ class GaiaCookieManagerServiceTest : public testing::Test {
 }  // namespace
 
 using ::testing::_;
+using ::testing::ElementsAre;
 
 TEST_F(GaiaCookieManagerServiceTest, Success) {
   InstrumentedGaiaCookieManagerService helper(token_service(), signin_client());
@@ -986,7 +992,7 @@ TEST_F(GaiaCookieManagerServiceTest, ExternalCcResultFetcher) {
       &InstrumentedGaiaCookieManagerService::StartFetchingMergeSession,
       base::Unretained(&helper)));
 
-  // Simulate a successful completion of GetCheckConnctionInfo.
+  // Simulate a successful completion of GetCheckConnectionInfo.
   SimulateGetCheckConnectionInfoSuccess(
       "[{\"carryBackToken\": \"yt\", \"url\": \"http://www.yt.com\"},"
       " {\"carryBackToken\": \"bl\", \"url\": \"http://www.bl.com\"}]");
@@ -1013,7 +1019,7 @@ TEST_F(GaiaCookieManagerServiceTest, ExternalCcResultFetcherTimeout) {
       &InstrumentedGaiaCookieManagerService::StartFetchingMergeSession,
       base::Unretained(&helper)));
 
-  // Simulate a successful completion of GetCheckConnctionInfo.
+  // Simulate a successful completion of GetCheckConnectionInfo.
   SimulateGetCheckConnectionInfoSuccess(
       "[{\"carryBackToken\": \"yt\", \"url\": \"http://www.yt.com\"},"
       " {\"carryBackToken\": \"bl\", \"url\": \"http://www.bl.com\"}]");
@@ -1044,7 +1050,7 @@ TEST_F(GaiaCookieManagerServiceTest, ExternalCcResultFetcherTruncate) {
       &InstrumentedGaiaCookieManagerService::StartFetchingMergeSession,
       base::Unretained(&helper)));
 
-  // Simulate a successful completion of GetCheckConnctionInfo.
+  // Simulate a successful completion of GetCheckConnectionInfo.
   SimulateGetCheckConnectionInfoSuccess(
       "[{\"carryBackToken\": \"yt\", \"url\": \"http://www.yt.com\"}]");
 
@@ -1057,6 +1063,29 @@ TEST_F(GaiaCookieManagerServiceTest, ExternalCcResultFetcherTruncate) {
   SimulateGetCheckConnectionInfoResult("http://www.yt.com",
                                        "1234567890123456trunc");
   ASSERT_EQ("yt:1234567890123456", result_fetcher.GetExternalCcResult());
+}
+
+TEST_F(GaiaCookieManagerServiceTest, ExternalCcResultFetcherWithCommas) {
+  InstrumentedGaiaCookieManagerService helper(token_service(), signin_client());
+  GaiaCookieManagerService::ExternalCcResultFetcher result_fetcher(&helper);
+  EXPECT_CALL(helper, StartFetchingMergeSession());
+  result_fetcher.Start(base::BindOnce(
+      &InstrumentedGaiaCookieManagerService::StartFetchingMergeSession,
+      base::Unretained(&helper)));
+
+  // Simulate a successful completion of GetCheckConnectionInfo.
+  SimulateGetCheckConnectionInfoSuccess(
+      "[{\"carryBackToken\": \"yt\", \"url\": \"http://www.yt.com\"}]");
+
+  GaiaCookieManagerService::ExternalCcResultFetcher::LoaderToToken loaders =
+      result_fetcher.get_loader_map_for_testing();
+  ASSERT_EQ(1u, loaders.size());
+  ASSERT_TRUE(IsLoadPending("http://www.yt.com"));
+
+  // Simulate response for "yt" with a string that contains a comma-separated
+  // string that could trick the server that a connection to "bl" is ok.
+  SimulateGetCheckConnectionInfoResult("http://www.yt.com", "ok,bl:ok");
+  ASSERT_EQ("yt:ok%2Cbl%3Aok", result_fetcher.GetExternalCcResult());
 }
 
 TEST_F(GaiaCookieManagerServiceTest, UbertokenSuccessFetchesExternalCC) {
@@ -1096,4 +1125,131 @@ TEST_F(GaiaCookieManagerServiceTest, UbertokenSuccessFetchesExternalCCOnce) {
   // StartFetchingMergeSession.
   EXPECT_CALL(helper, StartFetchingMergeSession());
   SimulateUbertokenSuccess(&helper, "token3");
+}
+
+TEST_F(GaiaCookieManagerServiceTest, RemoveLoggedOutAccountByGaiaId) {
+  const std::string kTestGaiaId1 = "8";
+  const std::string kTestGaiaId2 = "9";
+
+  ::testing::NiceMock<InstrumentedGaiaCookieManagerService> helper(
+      token_service(), signin_client());
+  ::testing::NiceMock<MockObserver> observer(&helper);
+
+  std::vector<gaia::ListedAccount> signed_in_accounts;
+  std::vector<gaia::ListedAccount> signed_out_accounts;
+  ASSERT_FALSE(helper.ListAccounts(&signed_in_accounts, &signed_out_accounts));
+
+  // Simulate two signed out accounts being listed.
+  SimulateListAccountsSuccess(
+      &helper,
+      base::StringPrintf(
+          "[\"f\","
+          "[[\"a\", 0, \"n\", \"a@d.com\", \"p\", 0, 0, 0, 0, 1, \"%s\","
+          "null,null,null,1],"
+          "[\"b\", 0, \"n\", \"b@d.com\", \"p\", 0, 0, 0, 0, 1, \"%s\","
+          "null,null,null,1]]]",
+          kTestGaiaId1.c_str(), kTestGaiaId2.c_str()));
+
+  ASSERT_TRUE(helper.ListAccounts(&signed_in_accounts, &signed_out_accounts));
+  ASSERT_THAT(signed_out_accounts,
+              ElementsAre(ListedAccountMatchesGaiaId(kTestGaiaId1),
+                          ListedAccountMatchesGaiaId(kTestGaiaId2)));
+
+  // The removal should notify observers, with one account removed.
+  EXPECT_CALL(observer,
+              OnGaiaAccountsInCookieUpdated(
+                  _, /*signed_out_accounts=*/
+                  ElementsAre(ListedAccountMatchesGaiaId(kTestGaiaId2)), _));
+  EXPECT_CALL(helper, StartFetchingListAccounts()).Times(0);
+  helper.RemoveLoggedOutAccountByGaiaId(kTestGaiaId1);
+
+  // Verify that ListAccounts wasn't triggered.
+  EXPECT_FALSE(helper.is_running());
+  EXPECT_TRUE(testing::Mock::VerifyAndClearExpectations(&helper));
+
+  ASSERT_TRUE(helper.ListAccounts(&signed_in_accounts, &signed_out_accounts));
+  EXPECT_THAT(signed_out_accounts,
+              ElementsAre(ListedAccountMatchesGaiaId(kTestGaiaId2)));
+}
+
+TEST_F(GaiaCookieManagerServiceTest,
+       RemoveLoggedOutAccountByGaiaIdWhileAccountsStale) {
+  const std::string kTestGaiaId1 = "8";
+
+  ::testing::NiceMock<InstrumentedGaiaCookieManagerService> helper(
+      token_service(), signin_client());
+  ::testing::NiceMock<MockObserver> observer(&helper);
+
+  std::vector<gaia::ListedAccount> signed_in_accounts;
+  std::vector<gaia::ListedAccount> signed_out_accounts;
+  ASSERT_FALSE(helper.ListAccounts(&signed_in_accounts, &signed_out_accounts));
+
+  // Simulate one signed out account being listed.
+  SimulateListAccountsSuccess(
+      &helper,
+      base::StringPrintf(
+          "[\"f\","
+          "[[\"a\", 0, \"n\", \"a@d.com\", \"p\", 0, 0, 0, 0, 1, \"%s\","
+          "null,null,null,1]]]",
+          kTestGaiaId1.c_str()));
+
+  // Change list account state to be stale, which will trigger list accounts
+  // request.
+  helper.ForceOnCookieChangeProcessing();
+
+  ASSERT_FALSE(helper.ListAccounts(&signed_in_accounts, &signed_out_accounts));
+  ASSERT_THAT(signed_out_accounts,
+              ElementsAre(ListedAccountMatchesGaiaId(kTestGaiaId1)));
+
+  // The removal should be ignored because the account list is stale.
+  EXPECT_CALL(observer, OnGaiaAccountsInCookieUpdated(_, _, _)).Times(0);
+  EXPECT_CALL(helper, StartFetchingListAccounts()).Times(0);
+  helper.RemoveLoggedOutAccountByGaiaId(kTestGaiaId1);
+
+  // Verify that ListAccounts wasn't triggered again.
+  EXPECT_TRUE(testing::Mock::VerifyAndClearExpectations(&helper));
+
+  ASSERT_FALSE(helper.ListAccounts(&signed_in_accounts, &signed_out_accounts));
+  EXPECT_THAT(signed_out_accounts,
+              ElementsAre(ListedAccountMatchesGaiaId(kTestGaiaId1)));
+}
+
+TEST_F(GaiaCookieManagerServiceTest,
+       RemoveLoggedOutAccountByGaiaIdForMissingAccount) {
+  const std::string kTestGaiaId1 = "8";
+  const std::string kNonListedAccount = "9";
+
+  ::testing::NiceMock<InstrumentedGaiaCookieManagerService> helper(
+      token_service(), signin_client());
+  ::testing::NiceMock<MockObserver> observer(&helper);
+
+  std::vector<gaia::ListedAccount> signed_in_accounts;
+  std::vector<gaia::ListedAccount> signed_out_accounts;
+  ASSERT_FALSE(helper.ListAccounts(&signed_in_accounts, &signed_out_accounts));
+
+  // Simulate one signed out account being listed.
+  SimulateListAccountsSuccess(
+      &helper,
+      base::StringPrintf(
+          "[\"f\","
+          "[[\"a\", 0, \"n\", \"a@d.com\", \"p\", 0, 0, 0, 0, 1, \"%s\","
+          "null,null,null,1]]]",
+          kTestGaiaId1.c_str()));
+
+  ASSERT_TRUE(helper.ListAccounts(&signed_in_accounts, &signed_out_accounts));
+  ASSERT_THAT(signed_out_accounts,
+              ElementsAre(ListedAccountMatchesGaiaId(kTestGaiaId1)));
+
+  // The removal should be ignored because the Gaia ID is not listed/known.
+  EXPECT_CALL(observer, OnGaiaAccountsInCookieUpdated(_, _, _)).Times(0);
+  EXPECT_CALL(helper, StartFetchingListAccounts()).Times(0);
+  helper.RemoveLoggedOutAccountByGaiaId(kNonListedAccount);
+
+  // Verify that ListAccounts wasn't triggered.
+  EXPECT_FALSE(helper.is_running());
+  EXPECT_TRUE(testing::Mock::VerifyAndClearExpectations(&helper));
+
+  ASSERT_TRUE(helper.ListAccounts(&signed_in_accounts, &signed_out_accounts));
+  EXPECT_THAT(signed_out_accounts,
+              ElementsAre(ListedAccountMatchesGaiaId(kTestGaiaId1)));
 }

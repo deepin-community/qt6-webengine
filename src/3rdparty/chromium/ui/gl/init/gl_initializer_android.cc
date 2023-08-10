@@ -48,12 +48,12 @@ bool InitializeStaticNativeEGLInternal() {
   return true;
 }
 
-bool InitializeStaticEGLInternal(GLImplementation implementation) {
+bool InitializeStaticEGLInternal(GLImplementationParts implementation) {
   bool initialized = false;
 
 #if BUILDFLAG(USE_STATIC_ANGLE)
   // Use ANGLE if it is requested and it is statically linked
-  if (implementation == kGLImplementationEGLANGLE) {
+  if (implementation.gl == kGLImplementationEGLANGLE) {
     initialized = InitializeStaticANGLEEGL();
   }
 #endif  // BUILDFLAG(USE_STATIC_ANGLE)
@@ -66,7 +66,7 @@ bool InitializeStaticEGLInternal(GLImplementation implementation) {
     return false;
   }
 
-  SetGLImplementation(implementation);
+  SetGLImplementationParts(implementation);
 
   InitializeStaticGLBindingsGL();
   InitializeStaticGLBindingsEGL();
@@ -76,12 +76,12 @@ bool InitializeStaticEGLInternal(GLImplementation implementation) {
 
 }  // namespace
 
-bool InitializeGLOneOffPlatform() {
+bool InitializeGLOneOffPlatform(uint64_t system_device_id) {
   switch (GetGLImplementation()) {
     case kGLImplementationEGLGLES2:
     case kGLImplementationEGLANGLE:
       if (!GLSurfaceEGL::InitializeOneOff(
-              EGLDisplayPlatform(EGL_DEFAULT_DISPLAY))) {
+              EGLDisplayPlatform(EGL_DEFAULT_DISPLAY), system_device_id)) {
         LOG(ERROR) << "GLSurfaceEGL::InitializeOneOff failed.";
         return false;
       }
@@ -91,19 +91,19 @@ bool InitializeGLOneOffPlatform() {
   }
 }
 
-bool InitializeStaticGLBindings(GLImplementation implementation) {
+bool InitializeStaticGLBindings(GLImplementationParts implementation) {
   // Prevent reinitialization with a different implementation. Once the gpu
   // unit tests have initialized with kGLImplementationMock, we don't want to
   // later switch to another GL implementation.
   DCHECK_EQ(kGLImplementationNone, GetGLImplementation());
 
-  switch (implementation) {
+  switch (implementation.gl) {
     case kGLImplementationEGLGLES2:
     case kGLImplementationEGLANGLE:
       return InitializeStaticEGLInternal(implementation);
     case kGLImplementationMockGL:
     case kGLImplementationStubGL:
-      SetGLImplementation(implementation);
+      SetGLImplementationParts(implementation);
       InitializeStaticGLBindingsGL();
       return true;
     default:

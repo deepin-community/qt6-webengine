@@ -5,7 +5,9 @@
 #include "mojo/public/cpp/platform/named_platform_channel.h"
 
 #include "base/check.h"
+#include "base/strings/string_piece.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 
 namespace mojo {
 
@@ -28,10 +30,10 @@ NamedPlatformChannel& NamedPlatformChannel::operator=(
 // static
 NamedPlatformChannel::ServerName NamedPlatformChannel::ServerNameFromUTF8(
     base::StringPiece name) {
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   return base::UTF8ToWide(name);
 #else
-  return name.as_string();
+  return std::string(name);
 #endif
 }
 

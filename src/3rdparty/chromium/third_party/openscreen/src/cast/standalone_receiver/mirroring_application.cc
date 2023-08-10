@@ -4,7 +4,11 @@
 
 #include "cast/standalone_receiver/mirroring_application.h"
 
+#include <utility>
+
+#include "cast/common/public/cast_streaming_app_ids.h"
 #include "cast/common/public/message_port.h"
+#include "cast/streaming/constants.h"
 #include "cast/streaming/environment.h"
 #include "cast/streaming/message_fields.h"
 #include "cast/streaming/receiver_session.h"
@@ -14,9 +18,6 @@
 namespace openscreen {
 namespace cast {
 
-const char kMirroringAppId[] = "0F5096E8";
-const char kMirroringAudioOnlyAppId[] = "85CDB22F";
-
 const char kMirroringDisplayName[] = "Chrome Mirroring";
 const char kRemotingRpcNamespace[] = "urn:x-cast:com.google.cast.remoting";
 
@@ -25,7 +26,7 @@ MirroringApplication::MirroringApplication(TaskRunner* task_runner,
                                            ApplicationAgent* agent)
     : task_runner_(task_runner),
       interface_address_(interface_address),
-      app_ids_({kMirroringAppId, kMirroringAudioOnlyAppId}),
+      app_ids_(GetCastStreamingAppIds()),
       agent_(agent) {
   OSP_DCHECK(task_runner_);
   OSP_DCHECK(agent_);
@@ -44,8 +45,7 @@ const std::vector<std::string>& MirroringApplication::GetAppIds() const {
 bool MirroringApplication::Launch(const std::string& app_id,
                                   const Json::Value& app_params,
                                   MessagePort* message_port) {
-  if ((app_id != kMirroringAppId && app_id != kMirroringAudioOnlyAppId) ||
-      !message_port || current_session_) {
+  if (!IsCastStreamingAppId(app_id) || !message_port || current_session_) {
     return false;
   }
 
@@ -55,9 +55,15 @@ bool MirroringApplication::Launch(const std::string& app_id,
       IPEndpoint{interface_address_, kDefaultCastStreamingPort});
   controller_ =
       std::make_unique<StreamingPlaybackController>(task_runner_, this);
-  current_session_ = std::make_unique<ReceiverSession>(
-      controller_.get(), environment_.get(), message_port,
-      ReceiverSession::Preferences{});
+
+  ReceiverSession::Preferences preferences;
+  preferences.video_codecs.insert(preferences.video_codecs.begin(),
+                                  {VideoCodec::kAv1, VideoCodec::kVp9});
+  preferences.remoting =
+      std::make_unique<ReceiverSession::RemotingPreferences>();
+  current_session_ =
+      std::make_unique<ReceiverSession>(controller_.get(), environment_.get(),
+                                        message_port, std::move(preferences));
   return true;
 }
 

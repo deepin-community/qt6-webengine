@@ -1,5 +1,430 @@
-qt6-webengine (6.2.4.1-1+dde) unstable; urgency=medium
+qt6-webengine (6.4.2-final+dfsg-11) unstable; urgency=medium
 
-  * upgrade version for build
+  * Team upload.
+  * Fix build dependencies.
 
- -- Ma Aiguo <maaiguo@uniontech.com>  Mon, 10 Oct 2022 13:25:55 +0800
+ -- Lisandro Damián Nicanor Pérez Meyer <lisandro@debian.org>  Thu, 03 Aug 2023 15:27:17 -0300
+
+qt6-webengine (6.4.2-final+dfsg-10) unstable; urgency=medium
+
+  * Team upload to unstable.
+  * Build all arch:all content as part of the arch:any build.
+
+ -- Lisandro Damián Nicanor Pérez Meyer <lisandro@debian.org>  Thu, 03 Aug 2023 14:26:03 -0300
+
+qt6-webengine (6.4.2-final+dfsg-9) unstable; urgency=medium
+
+  [ Patrick Franz ]
+  * Limit qt6-webengine-examples to architectures where it can be built.
+
+ -- Patrick Franz <deltaone@debian.org>  Wed, 02 Aug 2023 22:36:54 +0200
+
+qt6-webengine (6.4.2-final+dfsg-8) experimental; urgency=medium
+
+  [ Lisandro Damián Nicanor Pérez Meyer ]
+  * Add documentation and example packages.
+
+  [ Patrick Franz ]
+  * Update symbols from buildlogs.
+  * Update lintian-overrides.
+
+ -- Patrick Franz <deltaone@debian.org>  Wed, 02 Aug 2023 15:34:22 +0200
+
+qt6-webengine (6.4.2-final+dfsg-7) unstable; urgency=medium
+
+  [ Patrick Franz ]
+  * Remove build-dependency on libqt6opengl6-dev as it has been merged
+    into qt6-base-dev.
+  * Update symbols from buildlogs.
+
+ -- Patrick Franz <deltaone@debian.org>  Thu, 20 Jul 2023 23:13:26 +0200
+
+qt6-webengine (6.4.2-final+dfsg-6) unstable; urgency=medium
+
+  [ Patrick Franz ]
+  * Update symbols from buildlogs.
+  * Add patch to fix build failures with GCC-13 (Closes: #1037828).
+  * Do not install examples.
+
+ -- Patrick Franz <deltaone@debian.org>  Wed, 19 Jul 2023 19:03:14 +0200
+
+qt6-webengine (6.4.2-final+dfsg-5) unstable; urgency=medium
+
+  [ Patrick Franz ]
+  * Re-enable lto but produce no debug info.
+
+ -- Patrick Franz <deltaone@debian.org>  Thu, 22 Jun 2023 12:47:26 +0200
+
+qt6-webengine (6.4.2-final+dfsg-4) unstable; urgency=medium
+
+  [ Patrick Franz ]
+  * Disable LTO.
+
+ -- Patrick Franz <deltaone@debian.org>  Wed, 21 Jun 2023 12:11:28 +0200
+
+qt6-webengine (6.4.2-final+dfsg-3) unstable; urgency=medium
+
+  [ Patrick Franz ]
+  * Reduce parallelism during build on armhf and i386.
+
+ -- Patrick Franz <deltaone@debian.org>  Tue, 20 Jun 2023 20:04:29 +0200
+
+qt6-webengine (6.4.2-final+dfsg-2) unstable; urgency=medium
+
+  [ Patrick Franz ]
+  * Remove ffmpeg code for shift optimization on x86, thx to Dmitry
+    Shachnev (Closes: #1038131).
+
+ -- Patrick Franz <deltaone@debian.org>  Mon, 19 Jun 2023 19:30:46 +0200
+
+qt6-webengine (6.4.2-final+dfsg-1) unstable; urgency=medium
+
+  [ Soren Stoutner ]
+  * Add debian/90qt6webengine-dictionaries-path.conf.
+  * Add debian/qt6-webengine-dev-tools.links
+  * Add debian/patches/system-openjpeg2.patch.
+  * debian/control:
+    - Make the qt6-webengine-dev-tools binary package
+      provide the convert-dict virtual package so that Hunspell
+      dictionaries can depend on it at build time.
+    - Add a build-depends on libopenjp2-7-dev.
+  * debian/copyright: Add myself to copyright file.
+  * debian/libqt6webengine6-data.install: Install
+    90qt6webengine-dictionaries-path.conf to /etc/environment.d/.
+  * debian/rules: Use system libopenjpeg2.
+
+  [ Patrick Franz ]
+  * Switch to the official 6.4.2 tarball, the tarball is the same.
+  * Switch libfontconfig1-dev BD to libfontconfig-dev as the former is
+    obsolete.
+
+ -- Patrick Franz <deltaone@debian.org>  Sun, 26 Feb 2023 16:42:03 +0100
+
+qt6-webengine (6.4.2+dfsg-0rc0-2) unstable; urgency=medium
+
+  [ Patrick Franz ]
+  * Upload to unstable.
+
+ -- Patrick Franz <deltaone@debian.org>  Fri, 30 Dec 2022 16:59:27 +0100
+
+qt6-webengine (6.4.2+dfsg-0rc0-1) experimental; urgency=medium
+
+  [ Patrick Franz ]
+  * Change version as ninja causes problems with a tilde in the version.
+
+ -- Patrick Franz <deltaone@debian.org>  Thu, 29 Dec 2022 13:45:52 +0100
+
+qt6-webengine (6.4.2+dfsg~rc1-1) experimental; urgency=medium
+
+  [ Patrick Franz ]
+  * New upstream release (6.4.2).
+  * Bump Qt B-Ds to 6.4.2.
+  * Update ABI to 6.4.2.
+  * Bump Standards-Version to 4.6.2 (no changes needed).
+
+ -- Patrick Franz <deltaone@debian.org>  Tue, 27 Dec 2022 22:29:37 +0100
+
+qt6-webengine (6.4.1+dfsg-2) experimental; urgency=medium
+
+  [ Patrick Franz ]
+  * Adjust build-dependencies.
+  * Enable link time optimization (Closes: #1015628).
+  * Remove redundant build-dependencies (Closes: #1018256).
+
+ -- Patrick Franz <deltaone@debian.org>  Thu, 15 Dec 2022 20:07:21 +0100
+
+qt6-webengine (6.4.1+dfsg-1) experimental; urgency=medium
+
+  [ Patrick Franz ]
+  * New upstream release (6.4.1).
+  * Bump Qt B-Ds to 6.4.1.
+  * Update ABI to 6.4.1.
+  * Update d/copyright.
+
+ -- Patrick Franz <deltaone@debian.org>  Thu, 17 Nov 2022 01:52:38 +0100
+
+qt6-webengine (6.4.0+dfsg-2) experimental; urgency=medium
+
+  [ Patrick Franz ]
+  * Add patch to allow building on i386.
+
+ -- Patrick Franz <deltaone@debian.org>  Sat, 15 Oct 2022 11:06:12 +0200
+
+qt6-webengine (6.4.0+dfsg-1) experimental; urgency=medium
+
+  [ Patrick Franz ]
+  * New upstream release (6.4.0).
+  * Bump Qt B-Ds to 6.4.0.
+  * Bump minimum CMake version in order to ensure we get .pc files.
+  * Increase CMake verbosity level.
+  * Update ABI to 6.4.0.
+  * Update runtime-dependencies.
+  * Adjust patches.
+  * Update list of installed files.
+  * Update symbols from buildlogs.
+  * Update lintian-overrides.
+
+ -- Patrick Franz <deltaone@debian.org>  Thu, 13 Oct 2022 12:35:00 +0200
+
+qt6-webengine (6.3.1+dfsg2-13) unstable; urgency=medium
+
+  [ Lisandro Damián Nicanor Pérez Meyer ]
+  * Refresh remove_catapult_core.patch.
+
+  [ Patrick Franz ]
+  * Speed up builds on armhf by allowing more parallelism.
+
+ -- Patrick Franz <deltaone@debian.org>  Thu, 25 Aug 2022 01:30:26 +0200
+
+qt6-webengine (6.3.1+dfsg2-12) unstable; urgency=medium
+
+  * Team upload.
+  * Adjust symbols files with buildds' logs.
+  * Manually mark some symbols of vtable entries to templates as optional.
+
+ -- Lisandro Damián Nicanor Pérez Meyer <lisandro@debian.org>  Thu, 18 Aug 2022 12:27:13 -0300
+
+qt6-webengine (6.3.1+dfsg2-11) unstable; urgency=medium
+
+  [ Patrick Franz ]
+  * Update symbols from buildlogs (Closes: #1013023).
+
+ -- Patrick Franz <deltaone@debian.org>  Wed, 17 Aug 2022 15:54:21 +0200
+
+qt6-webengine (6.3.1+dfsg2-10) unstable; urgency=medium
+
+  [ Patrick Franz ]
+  * Update lintian-overrides.
+
+ -- Patrick Franz <deltaone@debian.org>  Wed, 17 Aug 2022 00:24:26 +0200
+
+qt6-webengine (6.3.1+dfsg2-9) unstable; urgency=medium
+
+  [ Patrick Franz ]
+  * Update lintian-overrides.
+  * Make libqt6webenginecore6 and libqt6webenginewidgets6 depend on the
+    source package version instead of the binary package version to
+    allow safe binNMUs.
+
+ -- Patrick Franz <deltaone@debian.org>  Mon, 15 Aug 2022 21:33:19 +0200
+
+qt6-webengine (6.3.1+dfsg2-8) unstable; urgency=medium
+
+  [ Dmitry Shachnev ]
+  * Make libqt6webenginecore6 symbols depend also on libqt6webenginecore6-bin.
+    Qt WebEngine is unusable without QtWebEngineProcess, and we cannot make
+    the library depend on it because that would mean a circular dependency.
+
+  [ Patrick Franz ]
+  * Update symbols from buildlogs (Closes: #1013023).
+  * Add sse3-support dependency to libqt6webenginecore6 to ensure that
+    x86 CPUs support SSE3 as Chromium 89+ requires it.
+
+ -- Patrick Franz <deltaone@debian.org>  Mon, 15 Aug 2022 19:06:02 +0200
+
+qt6-webengine (6.3.1+dfsg2-7) experimental; urgency=medium
+
+  [ Patrick Franz ]
+  * Speed up builds on armhf by allowing more parallelism.
+  * Update symbols from buildlogs.
+
+ -- Patrick Franz <deltaone@debian.org>  Sat, 23 Jul 2022 12:54:54 +0200
+
+qt6-webengine (6.3.1+dfsg2-6) experimental; urgency=medium
+
+  [ Patrick Franz ]
+  * Adjust patch to fix build failures.
+
+ -- Patrick Franz <deltaone@debian.org>  Fri, 22 Jul 2022 13:42:39 +0200
+
+qt6-webengine (6.3.1+dfsg2-5) experimental; urgency=medium
+
+  [ Patrick Franz ]
+  * Adjust patch to fix build failures.
+
+ -- Patrick Franz <deltaone@debian.org>  Tue, 19 Jul 2022 18:22:34 +0200
+
+qt6-webengine (6.3.1+dfsg2-4) experimental; urgency=medium
+
+  [ Patrick Franz ]
+  * Add patch to fix build failures on 32-bit architectures when trying
+    to compress files in the devtools-frontend.
+
+ -- Patrick Franz <deltaone@debian.org>  Tue, 19 Jul 2022 17:10:43 +0200
+
+qt6-webengine (6.3.1+dfsg2-3) experimental; urgency=medium
+
+  [ Patrick Franz ]
+  * Reupload with repacked source.
+
+ -- Patrick Franz <deltaone@debian.org>  Tue, 19 Jul 2022 02:51:44 +0200
+
+qt6-webengine (6.3.1+dfsg-2) experimental; urgency=medium
+
+  [ Patrick Franz ]
+  * Remove patch for diff_match_patch.js and provide the uncompressed
+    original source instead.
+
+ -- Patrick Franz <deltaone@debian.org>  Tue, 19 Jul 2022 01:26:25 +0200
+
+qt6-webengine (6.3.1+dfsg-1) experimental; urgency=medium
+
+  [ Patrick Franz ]
+  * New upstream release (6.3.1).
+  * Bump Qt B-Ds to 6.3.1.
+  * Bump Standards-Version to 4.6.1 (no changes needed).
+  * Update ABI to 6.3.1.
+  * Remove ICU patch as it has been applied upstream.
+  * Update list of installed files.
+  * Update symbols from buildlogs.
+  * Update lintian-overrides.
+
+ -- Patrick Franz <deltaone@debian.org>  Mon, 18 Jul 2022 19:48:36 +0200
+
+qt6-webengine (6.3.0+dfsg-2) experimental; urgency=medium
+
+  [ Patrick Franz ]
+  * Switch python2 B-D to python3 as Chromium can now be compiled with
+    python3 (Closes: #1011197).
+
+ -- Patrick Franz <deltaone@debian.org>  Wed, 29 Jun 2022 22:43:03 +0200
+
+qt6-webengine (6.3.0+dfsg-1) experimental; urgency=medium
+
+  [ Patrick Franz ]
+  * New upstream release (6.3.0).
+  * Bump Qt B-Ds to 6.3.0.
+  * Update ABI to 6.3.0.
+  * Update d/copyright.
+  * Adjust patches.
+  * Add python3-html5lib as a B-D.
+  * Update list of installed files.
+  * Update symbols from buildlogs.
+  * Update lintian-overrides.
+  * Update description of qt6-webengine-dev-tools (Closes: #1007951).
+  * Remove dependency to qtchooser as it is dead upstream.
+
+ -- Patrick Franz <deltaone@debian.org>  Sat, 18 Jun 2022 05:33:00 +0200
+
+qt6-webengine (6.2.4+dfsg-10) unstable; urgency=medium
+
+  * Team upload.
+
+  [ Patrick Franz ]
+  * Remove dependency to qtchooser as it is dead upstream.
+
+ -- Lisandro Damián Nicanor Pérez Meyer <lisandro@debian.org>  Fri, 15 Jul 2022 16:47:14 -0300
+
+qt6-webengine (6.2.4+dfsg-9) unstable; urgency=medium
+
+  [ Patrick Franz ]
+  * Turn off feature to use system FFmpeg libraries (Closes: #1013427).
+
+ -- Patrick Franz <deltaone@debian.org>  Fri, 24 Jun 2022 10:25:22 +0200
+
+qt6-webengine (6.2.4+dfsg-8) unstable; urgency=medium
+
+  [ Patrick Franz ]
+  * Remove lower_libicu_min_to_67.patch as libicu 71 is now available.
+  * Make qt6-webengine-dev depend on qt6-webengine-dev-tools as it needs
+    it.
+
+ -- Patrick Franz <deltaone@debian.org>  Thu, 26 May 2022 13:27:19 +0200
+
+qt6-webengine (6.2.4+dfsg-7) unstable; urgency=medium
+
+  [ Patrick Franz ]
+  * Upload to unstable.
+
+ -- Patrick Franz <deltaone@debian.org>  Fri, 22 Apr 2022 20:08:01 +0200
+
+qt6-webengine (6.2.4+dfsg-6) experimental; urgency=medium
+
+  [ Patrick Franz ]
+  * Tweak build options for armhf once more.
+
+ -- Patrick Franz <deltaone@debian.org>  Sun, 10 Apr 2022 15:31:38 +0200
+
+qt6-webengine (6.2.4+dfsg-5) experimental; urgency=medium
+
+  [ Patrick Franz ]
+  * Update symbols from buildlogs.
+  * Tweak build options for armhf and i386.
+
+ -- Patrick Franz <deltaone@debian.org>  Sat, 09 Apr 2022 21:45:34 +0200
+
+qt6-webengine (6.2.4+dfsg-4) experimental; urgency=medium
+
+  [ Patrick Franz ]
+  * Add patch to reduce debugging info.
+
+ -- Patrick Franz <deltaone@debian.org>  Fri, 08 Apr 2022 21:45:49 +0200
+
+qt6-webengine (6.2.4+dfsg-3) experimental; urgency=medium
+
+  [ Patrick Franz ]
+  * Tweak build options for armhf and i386.
+
+ -- Patrick Franz <deltaone@debian.org>  Wed, 06 Apr 2022 21:22:25 +0200
+
+qt6-webengine (6.2.4+dfsg-2) experimental; urgency=medium
+
+  [ Patrick Franz ]
+  * Add patch to mitigate CVE-2022-1096 in Chromium.
+
+ -- Patrick Franz <deltaone@debian.org>  Mon, 04 Apr 2022 19:32:12 +0200
+
+qt6-webengine (6.2.4+dfsg-1) experimental; urgency=medium
+
+  [ Patrick Franz ]
+  * New upstream release (6.2.4).
+  * Bump Qt B-Ds to 6.2.4.
+  * Update ABI to 6.2.4.
+  * Update symbols from buildlogs.
+  * Bump minimum version for cmake to 3.19.
+  * Re-enable building on i386 and armhf.
+
+ -- Patrick Franz <deltaone@debian.org>  Sun, 03 Apr 2022 02:30:06 +0200
+
+qt6-webengine (6.2.2+dfsg-6) unstable; urgency=medium
+
+  [ Patrick Franz ]
+  * Lower minimum version for libicu to 67.
+
+ -- Patrick Franz <deltaone@debian.org>  Sat, 19 Feb 2022 18:43:10 +0100
+
+qt6-webengine (6.2.2+dfsg-5) unstable; urgency=medium
+
+  [ Patrick Franz ]
+  * Upload to unstable.
+
+ -- Patrick Franz <deltaone@debian.org>  Tue, 15 Feb 2022 22:09:30 +0100
+
+qt6-webengine (6.2.2+dfsg-4) experimental; urgency=medium
+
+  [ Patrick Franz ]
+  * Disable building on 32 bit architectures.
+
+ -- Patrick Franz <deltaone@debian.org>  Thu, 03 Feb 2022 15:39:04 +0100
+
+qt6-webengine (6.2.2+dfsg-3) experimental; urgency=medium
+
+  [ Patrick Franz ]
+  * Fix architecture for libqt6webengine6-data.
+
+ -- Patrick Franz <deltaone@debian.org>  Tue, 01 Feb 2022 22:21:14 +0100
+
+qt6-webengine (6.2.2+dfsg-2) experimental; urgency=medium
+
+  [ Patrick Franz ]
+  * Limit the build to the following architectures:
+    amd64 arm64 armhf i386
+  * Reduce memory consumption during building on armhf.
+
+ -- Patrick Franz <deltaone@debian.org>  Mon, 31 Jan 2022 20:00:59 +0100
+
+qt6-webengine (6.2.2+dfsg-1) experimental; urgency=medium
+
+  * Initial release (Closes: #1000166)
+
+ -- Patrick Franz <deltaone@debian.org>  Thu, 18 Nov 2021 22:33:38 +0100

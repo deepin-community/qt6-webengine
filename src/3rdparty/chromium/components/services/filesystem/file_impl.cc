@@ -16,6 +16,7 @@
 #include "base/files/file.h"
 #include "base/files/file_path.h"
 #include "base/files/scoped_file.h"
+#include "base/time/time.h"
 #include "build/build_config.h"
 #include "components/services/filesystem/lock_table.h"
 #include "components/services/filesystem/shared_temp_dir.h"
@@ -65,7 +66,7 @@ bool FileImpl::IsValid() const {
   return file_.IsValid();
 }
 
-#if !defined(OS_FUCHSIA)
+#if !BUILDFLAG(IS_FUCHSIA)
 base::File::Error FileImpl::RawLockFile() {
   return file_.Lock(base::File::LockMode::kExclusive);
 }
@@ -73,7 +74,7 @@ base::File::Error FileImpl::RawLockFile() {
 base::File::Error FileImpl::RawUnlockFile() {
   return file_.Unlock();
 }
-#endif  // !OS_FUCHSIA
+#endif  // !BUILDFLAG(IS_FUCHSIA)
 
 void FileImpl::Close(CloseCallback callback) {
   if (!file_.IsValid()) {
@@ -92,28 +93,28 @@ void FileImpl::Read(uint32_t num_bytes_to_read,
                     mojom::Whence whence,
                     ReadCallback callback) {
   if (!file_.IsValid()) {
-    std::move(callback).Run(GetError(file_), base::nullopt);
+    std::move(callback).Run(GetError(file_), absl::nullopt);
     return;
   }
   if (num_bytes_to_read > kMaxReadSize) {
     std::move(callback).Run(base::File::Error::FILE_ERROR_INVALID_OPERATION,
-                            base::nullopt);
+                            absl::nullopt);
     return;
   }
   base::File::Error error = IsOffsetValid(offset);
   if (error != base::File::Error::FILE_OK) {
-    std::move(callback).Run(error, base::nullopt);
+    std::move(callback).Run(error, absl::nullopt);
     return;
   }
   error = IsWhenceValid(whence);
   if (error != base::File::Error::FILE_OK) {
-    std::move(callback).Run(error, base::nullopt);
+    std::move(callback).Run(error, absl::nullopt);
     return;
   }
 
   if (file_.Seek(static_cast<base::File::Whence>(whence), offset) == -1) {
     std::move(callback).Run(base::File::Error::FILE_ERROR_FAILED,
-                            base::nullopt);
+                            absl::nullopt);
     return;
   }
 
@@ -122,7 +123,7 @@ void FileImpl::Read(uint32_t num_bytes_to_read,
       reinterpret_cast<char*>(&bytes_read.front()), num_bytes_to_read);
   if (num_bytes_read < 0) {
     std::move(callback).Run(base::File::Error::FILE_ERROR_FAILED,
-                            base::nullopt);
+                            absl::nullopt);
     return;
   }
 
@@ -143,7 +144,7 @@ void FileImpl::Write(const std::vector<uint8_t>& bytes_to_write,
   // Who knows what |write()| would return if the size is that big (and it
   // actually wrote that much).
   if (bytes_to_write.size() >
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
       static_cast<size_t>(std::numeric_limits<int>::max())) {
 #else
       static_cast<size_t>(std::numeric_limits<ssize_t>::max())) {

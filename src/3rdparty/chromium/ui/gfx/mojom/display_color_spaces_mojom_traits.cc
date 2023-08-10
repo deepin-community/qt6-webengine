@@ -68,7 +68,9 @@ bool StructTraits<
   if (!input.ReadColorSpaces(&color_spaces))
     return false;
 
-  out->SetSDRWhiteLevel(input.sdr_white_level());
+  out->SetSDRMaxLuminanceNits(input.sdr_max_luminance_nits());
+  out->SetHDRMaxLuminanceRelative(input.hdr_max_luminance_relative());
+
   return true;
 }
 

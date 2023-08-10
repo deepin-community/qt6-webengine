@@ -40,7 +40,7 @@ class RuntimeFunctions : public skiagm::GM {
 
     void onDraw(SkCanvas* canvas) override {
         sk_sp<SkRuntimeEffect> gEffect =
-                SkRuntimeEffect::Make(SkString(RUNTIME_FUNCTIONS_SRC)).effect;
+                SkRuntimeEffect::MakeForShader(SkString(RUNTIME_FUNCTIONS_SRC)).effect;
         SkASSERT(gEffect);
 
         SkMatrix localM;
@@ -48,7 +48,7 @@ class RuntimeFunctions : public skiagm::GM {
 
         SkColor4f inputColor = { 1, 0, 0, 1 };
         auto shader = gEffect->makeShader(SkData::MakeWithCopy(&inputColor, sizeof(inputColor)),
-                                          nullptr, 0, &localM, true);
+                                          nullptr, 0, &localM);
         SkPaint p;
         p.setShader(std::move(shader));
         canvas->drawRect({0, 0, 256, 256}, p);

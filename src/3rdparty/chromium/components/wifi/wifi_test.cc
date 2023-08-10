@@ -19,7 +19,6 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
-#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/current_thread.h"
 #include "base/task/single_thread_task_executor.h"
@@ -27,7 +26,7 @@
 #include "build/build_config.h"
 #include "components/wifi/wifi_service.h"
 
-#if defined(OS_APPLE)
+#if BUILDFLAG(IS_APPLE)
 #include "base/mac/scoped_nsautorelease_pool.h"
 #endif
 
@@ -72,7 +71,7 @@ class WiFiTest {
     VLOG(0) << "Network List Changed: " << network_guid_list.size();
   }
 
-#if defined(OS_APPLE)
+#if BUILDFLAG(IS_APPLE)
   // Without this there will be a mem leak on osx.
   base::mac::ScopedNSAutoreleasePool scoped_pool_;
 #endif
@@ -123,14 +122,14 @@ bool WiFiTest::ParseCommandLine(int argc, const char* argv[]) {
       parsed_command_line.GetSwitchValueASCII("security");
 
   if (parsed_command_line.GetArgs().size() == 1) {
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
     network_guid = base::WideToASCII(parsed_command_line.GetArgs()[0]);
 #else
     network_guid = parsed_command_line.GetArgs()[0];
 #endif
   }
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   if (parsed_command_line.HasSwitch("debug"))
     MessageBoxA(nullptr, __FUNCTION__, "Debug Me!", MB_OK);
 #endif
@@ -191,7 +190,7 @@ bool WiFiTest::ParseCommandLine(int argc, const char* argv[]) {
   if (parsed_command_line.HasSwitch("connect")) {
     if (!network_guid.empty()) {
       std::string error;
-      if (!properties->empty()) {
+      if (!properties->DictEmpty()) {
         VLOG(0) << "Using connect properties: " << *properties;
         wifi_service_->SetProperties(network_guid, std::move(properties),
                                      &error);

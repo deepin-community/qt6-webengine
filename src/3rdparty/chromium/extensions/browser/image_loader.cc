@@ -15,7 +15,6 @@
 #include "base/compiler_specific.h"
 #include "base/files/file_util.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/task/post_task.h"
 #include "base/task/thread_pool.h"
 #include "content/public/browser/browser_thread.h"
 #include "extensions/browser/component_extension_resource_manager.h"
@@ -31,6 +30,7 @@
 #include "ui/gfx/codec/png_codec.h"
 #include "ui/gfx/image/image_family.h"
 #include "ui/gfx/image/image_skia.h"
+#include "ui/gfx/image/image_skia_rep.h"
 
 using content::BrowserThread;
 
@@ -113,7 +113,7 @@ std::vector<SkBitmap> LoadResourceBitmaps(
            extension->path() == it->resource.extension_root());
 
     int resource_id = 0;
-    if (extension->location() == Manifest::COMPONENT) {
+    if (extension->location() == mojom::ManifestLocation::kComponent) {
       const extensions::ComponentExtensionResourceManager* manager =
           extensions::ExtensionsBrowserClient::Get()
               ->GetComponentExtensionResourceManager();
@@ -239,8 +239,8 @@ void ImageLoader::LoadImageAtEveryScaleFactorAsync(
   std::vector<ImageRepresentation> info_list;
 
   std::set<float> scales;
-  for (auto scale : ui::GetSupportedScaleFactors())
-    scales.insert(ui::GetScaleForScaleFactor(scale));
+  for (auto scale : ui::GetSupportedResourceScaleFactors())
+    scales.insert(ui::GetScaleForResourceScaleFactor(scale));
 
   // There may not be a screen in unit tests.
   auto* screen = display::Screen::GetScreen();

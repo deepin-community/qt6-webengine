@@ -5,13 +5,15 @@
 #ifndef COMPONENTS_WEBAPPS_BROWSER_INSTALLABLE_INSTALLABLE_METRICS_H_
 #define COMPONENTS_WEBAPPS_BROWSER_INSTALLABLE_INSTALLABLE_METRICS_H_
 
-#include "base/macros.h"
-#include "base/time/time.h"
-#include "content/public/browser/service_worker_context.h"
+namespace base {
+class TimeDelta;
+}
 
 namespace content {
 class WebContents;
-}
+enum class OfflineCapability;
+enum class ServiceWorkerCapability;
+}  // namespace content
 
 namespace webapps {
 
@@ -25,11 +27,18 @@ enum class InstallTrigger {
   CREATE_SHORTCUT,
 };
 
-// Sources for triggering webapp installation.
+// Sources for triggering webapp installation. Each install source must map to
+// one web_app::Source::Type that is calculated in the method
+// `web_app::ConvertExternalInstallSourceToSource`.
+//
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
+//
 // NOTE: each enum entry which is reportable must be added to
-// InstallableMetrics::IsReportableInstallSource().
-// This enum backs a UMA histogram and must be treated as append-only.
-// A Java counterpart will be generated for this enum.
+// InstallableMetrics::IsReportableInstallSource(). This enum backs a UMA
+// histogram and must be treated as append-only. A Java counterpart will be
+// generated for this enum.
+//
 // GENERATED_JAVA_ENUM_PACKAGE: org.chromium.components.webapps
 enum class WebappInstallSource {
   // Menu item in a browser tab.
@@ -87,8 +96,74 @@ enum class WebappInstallSource {
   // Create shortcut item in menu
   MENU_CREATE_SHORTCUT = 17,
 
+  // Installed via the SubApps API.
+  SUB_APP = 18,
+
+  // Chrome Android service for installing WebAPKs from another app.
+  CHROME_SERVICE = 19,
+
   // Add any new values above this one.
   COUNT,
+};
+
+// Uninstall surface from which an uninstall was initiated. This value cannot be
+// used to infer an install source. These values are persisted to logs. Entries
+// should not be renumbered and numeric values should never be reused.
+enum class WebappUninstallSource {
+  // Unknown surface, potentially in ChromeOS.
+  kUnknown = 0,
+
+  // Menu item from the 3-dot menu of a WebApp window.
+  kAppMenu = 1,
+
+  // Context menu for a WebApp in chrome://apps.
+  kAppsPage = 2,
+
+  // Via OS Settings or Controls.
+  kOsSettings = 3,
+
+  // Uninstalled from Sync.
+  kSync = 4,
+
+  // App management surface, currently ChromeOS-only.
+  kAppManagement = 5,
+
+  // Migration.
+  kMigration = 6,
+
+  // App List (Launcher in ChromeOS).
+  kAppList = 7,
+
+  // Shelf (in ChromeOS).
+  kShelf = 8,
+
+  // Internally managed pre-installed app management.
+  kInternalPreinstalled = 9,
+
+  // Externally managed pre-installed app management.
+  kExternalPreinstalled = 10,
+
+  // Enterprise policy app management.
+  kExternalPolicy = 11,
+
+  // System app management on ChromeOS.
+  kSystemPreinstalled = 12,
+
+  // Placeholder app management for preinstalled apps.
+  kPlaceholderReplacement = 13,
+
+  // Externally managed Arc apps.
+  kArc = 14,
+
+  // SubApp API.
+  kSubApp = 15,
+
+  // On system startup, any apps that are flagged as uninstalling but have not
+  // yet been fully uninstalled are re-uninstalled.
+  kStartupCleanup = 16,
+
+  // Add any new values above this one.
+  kMaxValue = kStartupCleanup,
 };
 
 // This is the result of the promotability check that is recorded in the
@@ -108,7 +183,11 @@ enum class ServiceWorkerOfflineCapability {
 
 class InstallableMetrics {
  public:
-  // Records |source| in the Webapp.Install.InstallSource histogram.
+  InstallableMetrics() = delete;
+  InstallableMetrics(const InstallableMetrics&) = delete;
+  InstallableMetrics& operator=(const InstallableMetrics&) = delete;
+
+  // Records |source| in the Webapp.Install.InstallEvent histogram.
   // IsReportableInstallSource(|source|) must be true.
   static void TrackInstallEvent(WebappInstallSource source);
 
@@ -140,8 +219,8 @@ class InstallableMetrics {
   static ServiceWorkerOfflineCapability ConvertFromOfflineCapability(
       content::OfflineCapability capability);
 
- private:
-  DISALLOW_IMPLICIT_CONSTRUCTORS(InstallableMetrics);
+  // Records |source| in the Webapp.Install.UninstallEvent histogram.
+  static void TrackUninstallEvent(WebappUninstallSource source);
 };
 
 }  // namespace webapps

@@ -24,6 +24,8 @@
  */
 
 #include <memory>
+
+#include "base/synchronization/lock.h"
 #include "third_party/blink/renderer/modules/webaudio/biquad_dsp_kernel.h"
 #include "third_party/blink/renderer/modules/webaudio/biquad_processor.h"
 #include "third_party/blink/renderer/platform/audio/audio_utilities.h"
@@ -32,11 +34,14 @@ namespace blink {
 
 BiquadProcessor::BiquadProcessor(float sample_rate,
                                  uint32_t number_of_channels,
+                                 unsigned render_quantum_frames,
                                  AudioParamHandler& frequency,
                                  AudioParamHandler& q,
                                  AudioParamHandler& gain,
                                  AudioParamHandler& detune)
-    : AudioDSPKernelProcessor(sample_rate, number_of_channels),
+    : AudioDSPKernelProcessor(sample_rate,
+                              number_of_channels,
+                              render_quantum_frames),
       type_(FilterType::kLowPass),
       parameter1_(&frequency),
       parameter2_(&q),
@@ -46,8 +51,9 @@ BiquadProcessor::BiquadProcessor(float sample_rate,
       has_sample_accurate_values_(false) {}
 
 BiquadProcessor::~BiquadProcessor() {
-  if (IsInitialized())
+  if (IsInitialized()) {
     Uninitialize();
+  }
 }
 
 std::unique_ptr<AudioDSPKernel> BiquadProcessor::CreateKernel() {
@@ -102,8 +108,9 @@ void BiquadProcessor::CheckForDirtyCoefficients() {
       bool is_stable2 = parameter2_->Smooth();
       bool is_stable3 = parameter3_->Smooth();
       bool is_stable4 = parameter4_->Smooth();
-      if (!(is_stable1 && is_stable2 && is_stable3 && is_stable4))
+      if (!(is_stable1 && is_stable2 && is_stable3 && is_stable4)) {
         filter_coefficients_dirty_ = true;
+      }
     }
   }
 }
@@ -117,8 +124,8 @@ void BiquadProcessor::Process(const AudioBus* source,
   }
 
   // Synchronize with possible dynamic changes to the impulse response.
-  MutexTryLocker try_locker(process_lock_);
-  if (!try_locker.Locked()) {
+  base::AutoTryLock try_locker(process_lock_);
+  if (!try_locker.is_acquired()) {
     // Can't get the lock. We must be in the middle of changing something.
     destination->Zero();
     return;
@@ -128,21 +135,22 @@ void BiquadProcessor::Process(const AudioBus* source,
 
   // For each channel of our input, process using the corresponding
   // BiquadDSPKernel into the output channel.
-  for (unsigned i = 0; i < kernels_.size(); ++i)
+  for (unsigned i = 0; i < kernels_.size(); ++i) {
     kernels_[i]->Process(source->Channel(i)->Data(),
                          destination->Channel(i)->MutableData(),
                          frames_to_process);
+  }
 }
 
 void BiquadProcessor::ProcessOnlyAudioParams(uint32_t frames_to_process) {
-  DCHECK_LE(frames_to_process, audio_utilities::kRenderQuantumFrames);
+  DCHECK_LE(frames_to_process, RenderQuantumFrames());
 
-  float values[audio_utilities::kRenderQuantumFrames];
+  Vector<float> values(RenderQuantumFrames());
 
-  parameter1_->CalculateSampleAccurateValues(values, frames_to_process);
-  parameter2_->CalculateSampleAccurateValues(values, frames_to_process);
-  parameter3_->CalculateSampleAccurateValues(values, frames_to_process);
-  parameter4_->CalculateSampleAccurateValues(values, frames_to_process);
+  parameter1_->CalculateSampleAccurateValues(values.data(), frames_to_process);
+  parameter2_->CalculateSampleAccurateValues(values.data(), frames_to_process);
+  parameter3_->CalculateSampleAccurateValues(values.data(), frames_to_process);
+  parameter4_->CalculateSampleAccurateValues(values.data(), frames_to_process);
 }
 
 void BiquadProcessor::SetType(FilterType type) {
@@ -177,7 +185,7 @@ void BiquadProcessor::GetFrequencyResponse(int n_frequencies,
     // while we're trying to access them.  Since this is on the main thread, we
     // can wait.  The audio thread will update the coefficients the next time
     // around, it it were blocked.
-    MutexLocker process_locker(process_lock_);
+    base::AutoLock process_locker(process_lock_);
 
     cutoff_frequency = Parameter1().Value();
     q = Parameter2().Value();

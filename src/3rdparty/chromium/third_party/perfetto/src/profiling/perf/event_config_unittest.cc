@@ -18,11 +18,13 @@
 
 #include <linux/perf_event.h>
 #include <stdint.h>
+#include <time.h>
 
 #include "perfetto/base/logging.h"
 #include "perfetto/ext/base/optional.h"
 #include "test/gtest_and_gmock.h"
 
+#include "protos/perfetto/common/perf_events.gen.h"
 #include "protos/perfetto/config/data_source_config.gen.h"
 #include "protos/perfetto/config/profiling/perf_event_config.gen.h"
 
@@ -203,21 +205,8 @@ TEST(EventConfigTest, SelectTimebaseEvent) {
 
   {
     protos::gen::PerfEventConfig cfg;
-    protos::gen::PerfEventConfig::Tracepoint* mutable_tracpoint =
+    protos::gen::PerfEvents::Tracepoint* mutable_tracepoint =
         cfg.mutable_timebase()->mutable_tracepoint();
-    mutable_tracpoint->set_name("sched:sched_switch");
-
-    base::Optional<EventConfig> event_config =
-        EventConfig::Create(AsDataSourceConfig(cfg), id_lookup);
-
-    ASSERT_TRUE(event_config.has_value());
-    EXPECT_EQ(event_config->perf_attr()->type, PERF_TYPE_TRACEPOINT);
-    EXPECT_EQ(event_config->perf_attr()->config, 42u);
-  }
-  {  // legacy field:
-    protos::gen::PerfEventConfig cfg;
-    protos::gen::PerfEventConfig::Tracepoint* mutable_tracepoint =
-        cfg.mutable_tracepoint();
     mutable_tracepoint->set_name("sched:sched_switch");
 
     base::Optional<EventConfig> event_config =
@@ -291,7 +280,7 @@ TEST(EventConfigTest, CounterOnlyModeDetection) {
     protos::gen::PerfEventConfig cfg;
     auto* mutable_timebase = cfg.mutable_timebase();
     mutable_timebase->set_period(500);
-    mutable_timebase->set_counter(protos::gen::PerfEventConfig::HW_CPU_CYCLES);
+    mutable_timebase->set_counter(protos::gen::PerfEvents::HW_CPU_CYCLES);
 
     base::Optional<EventConfig> event_config =
         EventConfig::Create(AsDataSourceConfig(cfg));
@@ -307,7 +296,7 @@ TEST(EventConfigTest, CounterOnlyModeDetection) {
     protos::gen::PerfEventConfig cfg;
     auto* mutable_timebase = cfg.mutable_timebase();
     mutable_timebase->set_period(500);
-    mutable_timebase->set_counter(protos::gen::PerfEventConfig::SW_PAGE_FAULTS);
+    mutable_timebase->set_counter(protos::gen::PerfEvents::SW_PAGE_FAULTS);
 
     base::Optional<EventConfig> event_config =
         EventConfig::Create(AsDataSourceConfig(cfg));
@@ -330,12 +319,47 @@ TEST(EventConfigTest, CallstackSamplingModeDetection) {
         EventConfig::Create(AsDataSourceConfig(cfg));
 
     ASSERT_TRUE(event_config.has_value());
-    EXPECT_EQ(event_config->perf_attr()->sample_type &
-                  (PERF_SAMPLE_STACK_USER | PERF_SAMPLE_REGS_USER),
-              PERF_SAMPLE_STACK_USER | PERF_SAMPLE_REGS_USER);
+    EXPECT_EQ(
+        event_config->perf_attr()->sample_type &
+            (PERF_SAMPLE_STACK_USER | PERF_SAMPLE_REGS_USER),
+        static_cast<uint64_t>(PERF_SAMPLE_STACK_USER | PERF_SAMPLE_REGS_USER));
 
     EXPECT_NE(event_config->perf_attr()->sample_regs_user, 0u);
     EXPECT_NE(event_config->perf_attr()->sample_stack_user, 0u);
+  }
+}
+
+TEST(EventConfigTest, TimestampClockId) {
+  {  // if unset, a default is used
+    protos::gen::PerfEventConfig cfg;
+    base::Optional<EventConfig> event_config =
+        EventConfig::Create(AsDataSourceConfig(cfg));
+
+    ASSERT_TRUE(event_config.has_value());
+    EXPECT_TRUE(event_config->perf_attr()->use_clockid);
+    EXPECT_EQ(event_config->perf_attr()->clockid, CLOCK_MONOTONIC_RAW);
+  }
+  {  // explicit boottime
+    protos::gen::PerfEventConfig cfg;
+    cfg.mutable_timebase()->set_timestamp_clock(
+        protos::gen::PerfEvents::PERF_CLOCK_BOOTTIME);
+    base::Optional<EventConfig> event_config =
+        EventConfig::Create(AsDataSourceConfig(cfg));
+
+    ASSERT_TRUE(event_config.has_value());
+    EXPECT_TRUE(event_config->perf_attr()->use_clockid);
+    EXPECT_EQ(event_config->perf_attr()->clockid, CLOCK_BOOTTIME);
+  }
+  {  // explicit monotonic
+    protos::gen::PerfEventConfig cfg;
+    cfg.mutable_timebase()->set_timestamp_clock(
+        protos::gen::PerfEvents::PERF_CLOCK_MONOTONIC);
+    base::Optional<EventConfig> event_config =
+        EventConfig::Create(AsDataSourceConfig(cfg));
+
+    ASSERT_TRUE(event_config.has_value());
+    EXPECT_TRUE(event_config->perf_attr()->use_clockid);
+    EXPECT_EQ(event_config->perf_attr()->clockid, CLOCK_MONOTONIC);
   }
 }
 

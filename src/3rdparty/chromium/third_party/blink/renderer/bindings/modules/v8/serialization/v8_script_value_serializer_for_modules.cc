@@ -9,27 +9,95 @@
 #include "third_party/blink/public/platform/web_crypto_key.h"
 #include "third_party/blink/public/platform/web_crypto_key_algorithm.h"
 #include "third_party/blink/renderer/bindings/core/v8/serialization/v8_script_value_serializer.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_dom_rect_read_only.h"
 #include "third_party/blink/renderer/bindings/modules/v8/serialization/web_crypto_sub_tags.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_audio_data.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_crypto_key.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_dom_file_system.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_encoded_audio_chunk.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_encoded_video_chunk.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_file_system_directory_handle.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_file_system_file_handle.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_landmark.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_media_stream_track.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_point_2d.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_rtc_certificate.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_rtc_encoded_audio_frame.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_rtc_encoded_video_frame.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_video_frame.h"
+#include "third_party/blink/renderer/core/dom/dom_exception.h"
+#include "third_party/blink/renderer/modules/crypto/crypto_key.h"
+#include "third_party/blink/renderer/modules/file_system_access/file_system_handle.h"
+#include "third_party/blink/renderer/modules/filesystem/dom_file_system.h"
+#include "third_party/blink/renderer/modules/mediastream/media_stream_track.h"
+#include "third_party/blink/renderer/modules/peerconnection/rtc_certificate.h"
 #include "third_party/blink/renderer/modules/peerconnection/rtc_encoded_audio_frame.h"
 #include "third_party/blink/renderer/modules/peerconnection/rtc_encoded_audio_frame_delegate.h"
 #include "third_party/blink/renderer/modules/peerconnection/rtc_encoded_video_frame.h"
 #include "third_party/blink/renderer/modules/peerconnection/rtc_encoded_video_frame_delegate.h"
+#include "third_party/blink/renderer/modules/webcodecs/audio_data.h"
+#include "third_party/blink/renderer/modules/webcodecs/audio_data_attachment.h"
+#include "third_party/blink/renderer/modules/webcodecs/decoder_buffer_attachment.h"
+#include "third_party/blink/renderer/modules/webcodecs/encoded_audio_chunk.h"
+#include "third_party/blink/renderer/modules/webcodecs/encoded_video_chunk.h"
 #include "third_party/blink/renderer/modules/webcodecs/video_frame.h"
 #include "third_party/blink/renderer/modules/webcodecs/video_frame_attachment.h"
+#include "third_party/blink/renderer/modules/webcodecs/video_frame_transfer_list.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 
 namespace blink {
+
+// static
+bool V8ScriptValueSerializerForModules::ExtractTransferable(
+    v8::Isolate* isolate,
+    v8::Local<v8::Value> object,
+    wtf_size_t object_index,
+    Transferables& transferables,
+    ExceptionState& exception_state) {
+  // Give the core/ implementation a chance to try first.
+  // If it didn't recognize the kind of object, try the modules types.
+  if (V8ScriptValueSerializer::ExtractTransferable(
+          isolate, object, object_index, transferables, exception_state)) {
+    return true;
+  }
+  if (exception_state.HadException())
+    return false;
+
+  if (V8VideoFrame::HasInstance(object, isolate)) {
+    VideoFrame* video_frame =
+        V8VideoFrame::ToImpl(v8::Local<v8::Object>::Cast(object));
+    VideoFrameTransferList* transfer_list =
+        transferables.GetOrCreateTransferList<VideoFrameTransferList>();
+    if (transfer_list->video_frames.Contains(video_frame)) {
+      exception_state.ThrowDOMException(
+          DOMExceptionCode::kDataCloneError,
+          "VideoFrame at index " + String::Number(object_index) +
+              " is a duplicate of an earlier VideoFrame.");
+      return false;
+    }
+    transfer_list->video_frames.push_back(video_frame);
+    return true;
+  }
+
+  if (V8MediaStreamTrack::HasInstance(object, isolate) &&
+      RuntimeEnabledFeatures::MediaStreamTrackTransferEnabled(
+          CurrentExecutionContext(isolate))) {
+    MediaStreamTrack* track =
+        V8MediaStreamTrack::ToImpl(v8::Local<v8::Object>::Cast(object));
+    if (transferables.media_stream_tracks.Contains(track)) {
+      exception_state.ThrowDOMException(
+          DOMExceptionCode::kDataCloneError,
+          "MediaStreamTrack at index " + String::Number(object_index) +
+              " is a duplicate of an earlier MediaStreamTrack.");
+      return false;
+    }
+    transferables.media_stream_tracks.push_back(track);
+    return true;
+  }
+
+  return false;
+}
 
 bool V8ScriptValueSerializerForModules::WriteDOMObject(
     ScriptWrappable* wrappable,
@@ -117,6 +185,57 @@ bool V8ScriptValueSerializerForModules::WriteDOMObject(
       return false;
     }
     return WriteVideoFrameHandle(std::move(handle));
+  }
+  if (wrapper_type_info == V8AudioData::GetWrapperTypeInfo() &&
+      RuntimeEnabledFeatures::WebCodecsEnabled(
+          ExecutionContext::From(GetScriptState()))) {
+    if (IsForStorage()) {
+      exception_state.ThrowDOMException(DOMExceptionCode::kDataCloneError,
+                                        "AudioData cannot be serialized for "
+                                        "storage.");
+      return false;
+    }
+    scoped_refptr<media::AudioBuffer> data =
+        wrappable->ToImpl<AudioData>()->data();
+    if (!data) {
+      exception_state.ThrowDOMException(DOMExceptionCode::kDataCloneError,
+                                        "AudioData could not be cloned "
+                                        "because it was closed.");
+      return false;
+    }
+    return WriteMediaAudioBuffer(std::move(data));
+  }
+  if ((wrapper_type_info == V8EncodedAudioChunk::GetWrapperTypeInfo() ||
+       wrapper_type_info == V8EncodedVideoChunk::GetWrapperTypeInfo()) &&
+      RuntimeEnabledFeatures::WebCodecsEnabled(
+          ExecutionContext::From(GetScriptState()))) {
+    if (IsForStorage()) {
+      exception_state.ThrowDOMException(
+          DOMExceptionCode::kDataCloneError,
+          "Encoded chunks cannot be serialized for storage.");
+      return false;
+    }
+
+    if (wrapper_type_info == V8EncodedAudioChunk::GetWrapperTypeInfo()) {
+      auto data = wrappable->ToImpl<EncodedAudioChunk>()->buffer();
+      return WriteDecoderBuffer(std::move(data), /*for_audio=*/true);
+    }
+
+    auto data = wrappable->ToImpl<EncodedVideoChunk>()->buffer();
+    return WriteDecoderBuffer(std::move(data), /*for_audio=*/false);
+  }
+  if (wrapper_type_info == V8MediaStreamTrack::GetWrapperTypeInfo() &&
+      RuntimeEnabledFeatures::MediaStreamTrackTransferEnabled(
+          ExecutionContext::From(GetScriptState()))) {
+    if (IsForStorage()) {
+      exception_state.ThrowDOMException(
+          DOMExceptionCode::kDataCloneError,
+          "A MediaStreamTrack cannot be serialized for storage.");
+      return false;
+    }
+
+    return WriteMediaStreamTrack(wrappable->ToImpl<MediaStreamTrack>(),
+                                 exception_state);
   }
   return false;
 }
@@ -355,6 +474,50 @@ bool V8ScriptValueSerializerForModules::WriteVideoFrameHandle(
   WriteTag(kVideoFrameTag);
   WriteUint32(index);
 
+  return true;
+}
+
+bool V8ScriptValueSerializerForModules::WriteMediaAudioBuffer(
+    scoped_refptr<media::AudioBuffer> audio_data) {
+  auto* attachment =
+      GetSerializedScriptValue()->GetOrCreateAttachment<AudioDataAttachment>();
+  auto& audio_buffers = attachment->AudioBuffers();
+  audio_buffers.push_back(std::move(audio_data));
+  const uint32_t index = static_cast<uint32_t>(audio_buffers.size() - 1);
+
+  WriteTag(kAudioDataTag);
+  WriteUint32(index);
+
+  return true;
+}
+
+bool V8ScriptValueSerializerForModules::WriteDecoderBuffer(
+    scoped_refptr<media::DecoderBuffer> data,
+    bool for_audio) {
+  auto* attachment = GetSerializedScriptValue()
+                         ->GetOrCreateAttachment<DecoderBufferAttachment>();
+  auto& buffers = attachment->Buffers();
+  buffers.push_back(std::move(data));
+  const uint32_t index = static_cast<uint32_t>(buffers.size() - 1);
+
+  WriteTag(for_audio ? kEncodedAudioChunkTag : kEncodedVideoChunkTag);
+  WriteUint32(index);
+
+  return true;
+}
+
+bool V8ScriptValueSerializerForModules::WriteMediaStreamTrack(
+    MediaStreamTrack* track,
+    ExceptionState& exception_state) {
+  if (!track->serializable_session_id()) {
+    exception_state.ThrowDOMException(
+        DOMExceptionCode::kDataCloneError,
+        "MediaStreamTrack could not be serialized.");
+    return false;
+  }
+
+  WriteTag(kMediaStreamTrack);
+  WriteUnguessableToken(*track->serializable_session_id());
   return true;
 }
 

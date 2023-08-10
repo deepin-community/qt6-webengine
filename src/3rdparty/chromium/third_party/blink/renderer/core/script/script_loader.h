@@ -45,6 +45,8 @@ class ResourceFetcher;
 class ScriptElementBase;
 class Script;
 class ScriptResource;
+class ScriptWebBundle;
+class SpeculationRuleSet;
 class Modulator;
 
 class CORE_EXPORT ScriptLoader final : public GarbageCollected<ScriptLoader>,
@@ -64,7 +66,14 @@ class CORE_EXPORT ScriptLoader final : public GarbageCollected<ScriptLoader>,
   // Script type at the time of #prepare-a-script. Import maps are included here
   // but not in `mojom::blink::ScriptType` because import maps are handled
   // differently from ordinal scripts after PrepareScript().
-  enum class ScriptTypeAtPrepare { kClassic, kModule, kImportMap, kInvalid };
+  enum class ScriptTypeAtPrepare {
+    kClassic,
+    kModule,
+    kImportMap,
+    kSpeculationRules,
+    kWebBundle,
+    kInvalid
+  };
 
   static ScriptTypeAtPrepare GetScriptTypeAtPrepare(
       const String& type_attribute_value,
@@ -91,7 +100,6 @@ class CORE_EXPORT ScriptLoader final : public GarbageCollected<ScriptLoader>,
   bool WillExecuteWhenDocumentFinishedParsing() const {
     return will_execute_when_document_finished_parsing_;
   }
-  bool IsForceDeferred() const { return force_deferred_; }
   bool IsParserInserted() const { return parser_inserted_; }
   bool AlreadyStarted() const { return already_started_; }
   bool IsNonBlocking() const { return non_blocking_; }
@@ -102,6 +110,7 @@ class CORE_EXPORT ScriptLoader final : public GarbageCollected<ScriptLoader>,
   void ChildrenChanged();
   void HandleSourceAttribute(const String& source_url);
   void HandleAsyncAttribute();
+  void Removed();
 
   void SetFetchDocWrittenScriptDeferIdle();
 
@@ -170,6 +179,10 @@ class CORE_EXPORT ScriptLoader final : public GarbageCollected<ScriptLoader>,
   // script elements must have this flag set. ...</spec>
   bool non_blocking_ = true;
 
+  // Non-specified flag. Indicating that the script is a dynamically injected
+  // one with an async attribute, and therefore not render blocking.
+  bool dynamic_async_ = false;
+
   // <spec href="https://html.spec.whatwg.org/C/#ready-to-be-parser-executed">
   // ... Initially, script elements must have this flag unset ...</spec>
   bool ready_to_be_parser_executed_ = false;
@@ -183,12 +196,9 @@ class CORE_EXPORT ScriptLoader final : public GarbageCollected<ScriptLoader>,
   bool is_external_script_ = false;
 
   // Same as "The parser will handle executing the script."
-  bool will_be_parser_executed_;
+  bool will_be_parser_executed_ = false;
 
-  bool will_execute_when_document_finished_parsing_;
-
-  // The script will be force deferred (https://crbug.com/976061).
-  bool force_deferred_;
+  bool will_execute_when_document_finished_parsing_ = false;
 
   // A PendingScript is first created in PrepareScript() and stored in
   // |prepared_pending_script_|.
@@ -207,6 +217,13 @@ class CORE_EXPORT ScriptLoader final : public GarbageCollected<ScriptLoader>,
   // and thus to keep it on MemoryCache, even after script execution, as long
   // as ScriptLoader is alive. crbug.com/778799
   Member<Resource> resource_keep_alive_;
+
+  // This is created only for <script type=webbundle>, representing a webbundle
+  // mapping rule and its loader.
+  Member<ScriptWebBundle> script_web_bundle_;
+
+  // Speculation rule set registered by this script, if applicable.
+  Member<SpeculationRuleSet> speculation_rule_set_;
 };
 
 }  // namespace blink

@@ -226,7 +226,6 @@ which binds it.
 
 ``` cpp
 #include "base/logging.h"
-#include "base/macros.h"
 #include "sample/logger.mojom.h"
 
 class LoggerImpl : public sample::mojom::Logger {
@@ -236,9 +235,9 @@ class LoggerImpl : public sample::mojom::Logger {
 
   explicit LoggerImpl(mojo::PendingReceiver<sample::mojom::Logger> receiver)
       : receiver_(this, std::move(receiver)) {}
-  ~Logger() override {}
   Logger(const Logger&) = delete;
   Logger& operator=(const Logger&) = delete;
+  ~Logger() override {}
 
   // sample::mojom::Logger:
   void Log(const std::string& message) override {
@@ -1541,7 +1540,7 @@ to valid getter return types:
 | `FooEnum`                    | Value of any type that has an appropriate `EnumTraits` specialization defined. By default this inlcudes only the generated `FooEnum` type.
 | `FooStruct`                  | Value or reference to any type that has an appropriate `StructTraits` specialization defined. By default this includes only the generated `FooStructPtr` type.
 | `FooUnion`                   | Value of reference to any type that has an appropriate `UnionTraits` specialization defined. By default this includes only the generated `FooUnionPtr` type.
-| `Foo?`                       | `base::Optional<CppType>`, where `CppType` is the value type defined by the appropriate traits class specialization (e.g. `StructTraits`, `mojo::MapTraits`, etc.). This may be customized by the [typemapping](#Enabling-a-New-Type-Mapping).
+| `Foo?`                       | `absl::optional<CppType>`, where `CppType` is the value type defined by the appropriate traits class specialization (e.g. `StructTraits`, `mojo::MapTraits`, etc.). This may be customized by the [typemapping](#Enabling-a-New-Type-Mapping).
 
 ### Using Generated DataView Types
 
@@ -1710,7 +1709,7 @@ C++ sources can depend on shared sources only, by referencing the
 example above.
 
 For converting between Blink and non-Blink variants, please see
-`//chromium/third_party/blink/public/platform/cross_variant_mojo_util.h`.
+`//third_party/blink/public/platform/cross_variant_mojo_util.h`.
 
 ## Versioning Considerations
 

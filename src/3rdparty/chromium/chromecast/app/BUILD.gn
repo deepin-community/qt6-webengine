@@ -12,16 +12,16 @@ cast_source_set("app") {
     "cast_main_delegate.h",
   ]
 
+  public_deps = [ "//base" ]
+
   deps = [
     ":cast_crash_client",
-    "//base",
     "//chromecast:chromecast_buildflags",
     "//chromecast/base",
     "//chromecast/browser",
     "//chromecast/common",
     "//chromecast/common:resource_delegate",
     "//chromecast/gpu",
-    "//chromecast/renderer",
     "//chromecast/utility",
     "//components/crash/core/common:crash_key",
     "//content/public/app",
@@ -30,8 +30,14 @@ cast_source_set("app") {
     "//ui/base",
   ]
 
+  if (enable_cast_media_runtime) {
+    deps += [ "//chromecast/renderer:renderer_base" ]
+  } else {
+    deps += [ "//chromecast/renderer" ]
+  }
+
   if (!is_fuchsia) {
-    # TODO(crbug.com/753619): Enable crash reporting on Fuchsia.
+    # TODO(crbug.com/1226159): Complete crash reporting integration on Fuchsia.
     deps += [ "//components/crash/core/app" ]
   }
 }
@@ -117,8 +123,6 @@ cast_source_set("unittests") {
 grit("resources") {
   source = "//chromecast/app/resources/shell_resources.grd"
 
-  resource_ids = "//chromecast/app/resources/resource_ids"
-
   outputs = [
     "grit/shell_resources.h",
     "shell_resources.pak",
@@ -127,7 +131,6 @@ grit("resources") {
 
 grit("chromecast_settings") {
   source = "//chromecast/app/resources/chromecast_settings.grd"
-  resource_ids = "//chromecast/app/resources/resource_ids"
 
   outputs = [ "grit/chromecast_settings.h" ]
   foreach(locale, cast_locales) {

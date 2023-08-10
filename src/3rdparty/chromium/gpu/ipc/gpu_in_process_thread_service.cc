@@ -53,7 +53,7 @@ bool GpuInProcessThreadService::ShouldCreateMemoryTracker() const {
 
 std::unique_ptr<SingleTaskSequence>
 GpuInProcessThreadService::CreateSequence() {
-  return std::make_unique<SchedulerSequence>(scheduler_);
+  return std::make_unique<SchedulerSequence>(scheduler_, task_runner_);
 }
 
 void GpuInProcessThreadService::ScheduleOutOfOrderTask(base::OnceClosure task) {
@@ -62,7 +62,7 @@ void GpuInProcessThreadService::ScheduleOutOfOrderTask(base::OnceClosure task) {
 
 void GpuInProcessThreadService::ScheduleDelayedWork(base::OnceClosure task) {
   task_runner_->PostDelayedTask(FROM_HERE, std::move(task),
-                                base::TimeDelta::FromMilliseconds(2));
+                                base::Milliseconds(2));
 }
 
 void GpuInProcessThreadService::PostNonNestableToClient(

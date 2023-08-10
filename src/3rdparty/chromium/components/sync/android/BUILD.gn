@@ -8,7 +8,6 @@ import("//build/config/android/rules.gni")
 android_library("sync_java") {
   deps = [
     "//base:base_java",
-    "//base:jni_java",
     "//net/android:net_java",
     "//third_party/android_deps:com_google_code_findbugs_jsr305_java",
     "//third_party/androidx:androidx_annotation_annotation_java",
@@ -17,7 +16,6 @@ android_library("sync_java") {
   srcjar_deps = [ ":java_enums" ]
   sources = [
     "java/src/org/chromium/components/sync/Passphrase.java",
-    "java/src/org/chromium/components/sync/SyncConstants.java",
   ]
 }
 
@@ -25,7 +23,7 @@ java_cpp_enum("java_enums") {
   sources = [
     "//components/sync/base/model_type.h",
     "//components/sync/base/passphrase_enums.h",
-    "//components/sync/base/stop_source.h",
     "//components/sync/driver/sync_service_utils.h",
+    "//components/sync/driver/sync_user_settings.h",
   ]
 }

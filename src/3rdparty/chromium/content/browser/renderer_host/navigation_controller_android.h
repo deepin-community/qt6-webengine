@@ -8,9 +8,9 @@
 #include <jni.h>
 
 #include "base/android/scoped_java_ref.h"
-#include "base/compiler_specific.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "content/common/content_export.h"
+#include "url/origin.h"
 
 namespace content {
 
@@ -23,6 +23,11 @@ class CONTENT_EXPORT NavigationControllerAndroid {
  public:
   explicit NavigationControllerAndroid(
       NavigationControllerImpl* navigation_controller);
+
+  NavigationControllerAndroid(const NavigationControllerAndroid&) = delete;
+  NavigationControllerAndroid& operator=(const NavigationControllerAndroid&) =
+      delete;
+
   ~NavigationControllerAndroid();
 
   NavigationControllerImpl* navigation_controller() const {
@@ -80,7 +85,11 @@ class CONTENT_EXPORT NavigationControllerAndroid {
       const base::android::JavaParamRef<jstring>& data_url_as_string,
       jboolean can_load_local_resources,
       jboolean is_renderer_initiated,
-      jboolean should_replace_current_entry);
+      jboolean should_replace_current_entry,
+      const base::android::JavaParamRef<jobject>& j_initiator_origin,
+      jboolean has_user_gesture,
+      jboolean should_clear_history_list,
+      jlong input_start);
   void ClearSslPreferences(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& /* obj */);
@@ -137,10 +146,8 @@ class CONTENT_EXPORT NavigationControllerAndroid {
       jint index);
 
  private:
-  NavigationControllerImpl* navigation_controller_;
+  raw_ptr<NavigationControllerImpl> navigation_controller_;
   base::android::ScopedJavaGlobalRef<jobject> obj_;
-
-  DISALLOW_COPY_AND_ASSIGN(NavigationControllerAndroid);
 };
 
 }  // namespace content

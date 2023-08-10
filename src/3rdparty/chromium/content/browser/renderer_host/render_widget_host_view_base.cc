@@ -5,7 +5,10 @@
 #include "content/browser/renderer_host/render_widget_host_view_base.h"
 
 #include "base/bind.h"
+#include "base/check.h"
+#include "base/containers/contains.h"
 #include "base/logging.h"
+#include "base/observer_list.h"
 #include "base/unguessable_token.h"
 #include "build/build_config.h"
 #include "components/viz/common/features.h"
@@ -14,7 +17,6 @@
 #include "content/browser/compositor/surface_utils.h"
 #include "content/browser/gpu/gpu_data_manager_impl.h"
 #include "content/browser/renderer_host/delegated_frame_host.h"
-#include "content/browser/renderer_host/display_util.h"
 #include "content/browser/renderer_host/event_with_latency_info.h"
 #include "content/browser/renderer_host/input/mouse_wheel_phase_handler.h"
 #include "content/browser/renderer_host/input/synthetic_gesture_target_base.h"
@@ -27,9 +29,11 @@
 #include "content/browser/renderer_host/render_widget_host_view_child_frame.h"
 #include "content/browser/renderer_host/text_input_manager.h"
 #include "content/common/content_switches_internal.h"
-#include "third_party/blink/public/mojom/page/record_content_to_visible_time_request.mojom.h"
+#include "content/public/common/page_visibility_state.h"
+#include "third_party/blink/public/mojom/frame/intrinsic_sizing_info.mojom.h"
 #include "ui/base/layout.h"
 #include "ui/base/ui_base_types.h"
+#include "ui/display/display_util.h"
 #include "ui/display/screen.h"
 #include "ui/events/event.h"
 #include "ui/events/keycodes/dom/dom_code.h"
@@ -38,10 +42,31 @@
 #include "ui/gfx/geometry/size_conversions.h"
 #include "ui/gfx/geometry/size_f.h"
 
+namespace {
+using RenderWidgetHostViewBaseAllocMap = std::unordered_map<const void*, int>;
+base::LazyInstance<RenderWidgetHostViewBaseAllocMap>::DestructorAtExit
+    g_alloc_dealloc_tracker_map = LAZY_INSTANCE_INITIALIZER;
+}  // namespace
+
 namespace content {
 
+// static
+int RenderWidgetHostViewBase::IsValidRWHVBPointer(
+    const RenderWidgetHostViewBase* view) {
+  if (!base::Contains(g_alloc_dealloc_tracker_map.Get(),
+                      static_cast<const void*>(view))) {
+    return -1;
+  }
+  return g_alloc_dealloc_tracker_map.Get()[view];
+}
+
 RenderWidgetHostViewBase::RenderWidgetHostViewBase(RenderWidgetHost* host)
-    : host_(RenderWidgetHostImpl::From(host)) {
+    : host_(RenderWidgetHostImpl::From(host)),
+      // `screen_infos_` must be initialized, to permit unconditional access to
+      // its current display. A placeholder ScreenInfo is used here, so the
+      // first call to UpdateScreenInfo will trigger the expected updates.
+      screen_infos_(display::ScreenInfos(display::ScreenInfo())) {
+  g_alloc_dealloc_tracker_map.Get()[this]++;
 }
 
 RenderWidgetHostViewBase::~RenderWidgetHostViewBase() {
@@ -59,6 +84,7 @@ RenderWidgetHostViewBase::~RenderWidgetHostViewBase() {
   // so that the |text_input_manager_| will free its state.
   if (text_input_manager_)
     text_input_manager_->Unregister(this);
+  g_alloc_dealloc_tracker_map.Get()[this]--;
 }
 
 RenderWidgetHostImpl* RenderWidgetHostViewBase::GetFocusedWidget() const {
@@ -124,11 +150,13 @@ void RenderWidgetHostViewBase::SelectionBoundsChanged(
     base::i18n::TextDirection anchor_dir,
     const gfx::Rect& focus_rect,
     base::i18n::TextDirection focus_dir,
+    const gfx::Rect& bounding_box,
     bool is_anchor_first) {
-#if !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
   if (GetTextInputManager())
     GetTextInputManager()->SelectionBoundsChanged(
-        this, anchor_rect, anchor_dir, focus_rect, focus_dir, is_anchor_first);
+        this, anchor_rect, anchor_dir, focus_rect, focus_dir, bounding_box,
+        is_anchor_first);
 #else
   NOTREACHED() << "Selection bounds should be routed through the compositor.";
 #endif
@@ -145,7 +173,7 @@ RenderWidgetHostViewBase* RenderWidgetHostViewBase::GetRootView() {
   return this;
 }
 
-void RenderWidgetHostViewBase::SelectionChanged(const base::string16& text,
+void RenderWidgetHostViewBase::SelectionChanged(const std::u16string& text,
                                                 size_t offset,
                                                 const gfx::Range& range,
                                                 bool user_initiated) {
@@ -197,7 +225,7 @@ void RenderWidgetHostViewBase::CopyMainAndPopupFromSurface(
   if (!main_host || !main_frame_host)
     return;
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   NOTREACHED()
       << "RenderWidgetHostViewAndroid::CopyFromSurface calls "
          "DelegatedFrameHostAndroid::CopyFromCompositingSurface directly, "
@@ -278,13 +306,14 @@ std::unique_ptr<viz::ClientFrameSinkVideoCapturer>
 RenderWidgetHostViewBase::CreateVideoCapturer() {
   std::unique_ptr<viz::ClientFrameSinkVideoCapturer> video_capturer =
       GetHostFrameSinkManager()->CreateVideoCapturer();
-  video_capturer->ChangeTarget(GetFrameSinkId(), viz::SubtreeCaptureId());
+  video_capturer->ChangeTarget(viz::VideoCaptureTarget(GetFrameSinkId()),
+                               /*crop_version=*/0);
   return video_capturer;
 }
 
-base::string16 RenderWidgetHostViewBase::GetSelectedText() {
+std::u16string RenderWidgetHostViewBase::GetSelectedText() {
   if (!GetTextInputManager())
-    return base::string16();
+    return std::u16string();
   return GetTextInputManager()->GetTextSelection(this)->selected_text();
 }
 
@@ -297,27 +326,50 @@ void RenderWidgetHostViewBase::SetBackgroundColor(SkColor color) {
   if (default_background_color_ == color)
     return;
 
-#ifndef TOOLKIT_QT
   bool opaque = default_background_color_
                     ? SkColorGetA(*default_background_color_)
                     : SK_AlphaOPAQUE;
-#endif
   default_background_color_ = color;
   UpdateBackgroundColor();
-#ifndef TOOLKIT_QT
   if (opaque != (SkColorGetA(color) == SK_AlphaOPAQUE)) {
     if (host()->owner_delegate()) {
       host()->owner_delegate()->SetBackgroundOpaque(SkColorGetA(color) ==
                                                     SK_AlphaOPAQUE);
     }
   }
-#endif
 }
 
-base::Optional<SkColor> RenderWidgetHostViewBase::GetBackgroundColor() {
+absl::optional<SkColor> RenderWidgetHostViewBase::GetBackgroundColor() {
   if (content_background_color_)
     return content_background_color_;
   return default_background_color_;
+}
+
+bool RenderWidgetHostViewBase::IsBackgroundColorOpaque() {
+  absl::optional<SkColor> bg_color = GetBackgroundColor();
+  return bg_color ? SkColorGetA(*bg_color) == SK_AlphaOPAQUE : true;
+}
+
+void RenderWidgetHostViewBase::CopyBackgroundColorIfPresentFrom(
+    const RenderWidgetHostView& other) {
+  const RenderWidgetHostViewBase& other_base =
+      static_cast<const RenderWidgetHostViewBase&>(other);
+  if (!other_base.content_background_color_ &&
+      !other_base.default_background_color_) {
+    return;
+  }
+  if (content_background_color_ == other_base.content_background_color_ &&
+      default_background_color_ == other_base.default_background_color_) {
+    return;
+  }
+  bool was_opaque = IsBackgroundColorOpaque();
+  content_background_color_ = other_base.content_background_color_;
+  default_background_color_ = other_base.default_background_color_;
+  UpdateBackgroundColor();
+  bool opaque = IsBackgroundColorOpaque();
+  if (was_opaque != opaque && host()->owner_delegate()) {
+    host()->owner_delegate()->SetBackgroundOpaque(opaque);
+  }
 }
 
 bool RenderWidgetHostViewBase::IsMouseLocked() {
@@ -328,8 +380,12 @@ bool RenderWidgetHostViewBase::GetIsMouseLockedUnadjustedMovementForTesting() {
   return false;
 }
 
+bool RenderWidgetHostViewBase::CanBeMouseLocked() {
+  return HasFocus();
+}
+
 bool RenderWidgetHostViewBase::LockKeyboard(
-    base::Optional<base::flat_set<ui::DomCode>> codes) {
+    absl::optional<base::flat_set<ui::DomCode>> codes) {
   NOTIMPLEMENTED_LOG_ONCE();
   return false;
 }
@@ -459,33 +515,67 @@ void RenderWidgetHostViewBase::ProcessAckedTouchEvent(
   NOTREACHED();
 }
 
-void RenderWidgetHostViewBase::UpdateScreenInfo(gfx::NativeView view) {
-  if (host() && host()->delegate())
-    host()->delegate()->SendScreenRects();
+// Send system cursor size to the renderer via UpdateScreenInfo().
+void RenderWidgetHostViewBase::UpdateSystemCursorSize(
+    const gfx::Size& cursor_size) {
+  system_cursor_size_ = cursor_size;
+  UpdateScreenInfo();
+}
 
-  // TODO(crbug.com/1169312): Unify display info caching and change detection.
-  display::Display::Rotation old_display_rotation = current_display_.rotation();
-  if (HasDisplayPropertyChanged(view) && host()) {
-    OnSynchronizedDisplayPropertiesChanged(old_display_rotation !=
-                                           current_display_.rotation());
+void RenderWidgetHostViewBase::UpdateScreenInfo() {
+  bool force_sync_visual_properties = false;
+  // Delegate, which is usually WebContentsImpl, do not send rect updates for
+  // popups as they are not registered as FrameTreeNodes. Instead, send screen
+  // rects directly to host and force synchronization of visual properties so
+  // that blink knows host changed bounds. This only happens if the change was
+  // instantiated by system server/compositor (for example, Wayland, which
+  // may reposition a popup if part of it is going to be shown outside a
+  // display's work area. Note that Wayland clients cannot know where their
+  // windows are located and cannot adjust bounds).
+  if (widget_type_ == WidgetType::kPopup) {
+    if (host()) {
+      force_sync_visual_properties = true;
+      host()->SendScreenRects();
+    }
+  } else {
+    if (host() && host()->delegate())
+      host()->delegate()->SendScreenRects();
+  }
+
+  auto new_screen_infos = GetNewScreenInfosForUpdate();
+
+  if (screen_infos_ == new_screen_infos && !force_sync_visual_properties)
+    return;
+
+  // We need to look at `orientation_type` which is marked as kUndefined at
+  // startup. Unlike `orientation_angle` that uses 0 degrees as the default.
+  // This accounts for devices which have a default landscape orientation, such
+  // as tablets. We do not want the first UpdateScreenInfo to be treated as a
+  // rotation.
+  const bool has_rotation_changed =
+      screen_infos_.current().orientation_type !=
+          display::mojom::ScreenOrientation::kUndefined &&
+      screen_infos_.current().orientation_type !=
+          new_screen_infos.current().orientation_type;
+  screen_infos_ = std::move(new_screen_infos);
+
+  // Notify the associated RenderWidgetHostImpl when screen info has changed.
+  // That will synchronize visual properties needed for frame tree rendering
+  // and for web platform APIs that expose screen and window info and events.
+  if (host()) {
+    OnSynchronizedDisplayPropertiesChanged(has_rotation_changed);
     host()->NotifyScreenInfoChanged();
   }
 }
 
-bool RenderWidgetHostViewBase::HasDisplayPropertyChanged(gfx::NativeView view) {
-  auto* screen = display::Screen::GetScreen();
-  auto display = screen->GetDisplayNearestView(view);
-  if (current_display_.work_area() == display.work_area() &&
-      current_display_.device_scale_factor() == display.device_scale_factor() &&
-      current_display_.rotation() == display.rotation() &&
-      current_display_.color_spaces() == display.color_spaces() &&
-      current_display_is_extended_ == (screen->GetNumDisplays() > 1)) {
-    return false;
-  }
-
-  current_display_ = display;
-  current_display_is_extended_ = screen->GetNumDisplays() > 1;
-  return true;
+void RenderWidgetHostViewBase::UpdateActiveState(bool active) {
+  // Send active state through the delegate if there is one to make sure
+  // it stays consistent across all widgets in the tab. Not every
+  // RenderWidgetHost has a delegate (for example, drop-down widgets).
+  if (host()->delegate())
+    host()->delegate()->SendActiveState(active);
+  else
+    host()->SetActive(active);
 }
 
 void RenderWidgetHostViewBase::DidUnregisterFromTextInputManager(
@@ -502,9 +592,15 @@ void RenderWidgetHostViewBase::EnableAutoResize(const gfx::Size& min_size,
 }
 
 void RenderWidgetHostViewBase::DisableAutoResize(const gfx::Size& new_size) {
+  // Note that for some subclasses, such as RenderWidgetHostViewAura, setting
+  // the view size may trigger the synchronization on the visual properties. As
+  // a result, it may crete the intermediate status that the view size has
+  // changed while the auto resize status is obsolete, and then brings
+  // unnecessary updates in view layout. Hence we should disable the auto
+  // resize before setting the view size.
+  host()->SetAutoResize(false, gfx::Size(), gfx::Size());
   if (!new_size.IsEmpty())
     SetSize(new_size);
-  host()->SetAutoResize(false, gfx::Size(), gfx::Size());
   host()->SynchronizeVisualProperties();
 }
 
@@ -523,14 +619,16 @@ base::WeakPtr<RenderWidgetHostViewBase> RenderWidgetHostViewBase::GetWeakPtr() {
   return weak_factory_.GetWeakPtr();
 }
 
-void RenderWidgetHostViewBase::GetScreenInfo(blink::ScreenInfo* screen_info) {
-  DisplayUtil::GetNativeViewScreenInfo(screen_info, GetNativeView());
+display::ScreenInfo RenderWidgetHostViewBase::GetScreenInfo() const {
+  return screen_infos_.current();
 }
 
-float RenderWidgetHostViewBase::GetDeviceScaleFactor() {
-  blink::ScreenInfo screen_info;
-  GetScreenInfo(&screen_info);
-  return screen_info.device_scale_factor;
+display::ScreenInfos RenderWidgetHostViewBase::GetScreenInfos() const {
+  return screen_infos_;
+}
+
+float RenderWidgetHostViewBase::GetDeviceScaleFactor() const {
+  return screen_infos_.current().device_scale_factor;
 }
 
 void RenderWidgetHostViewBase::OnAutoscrollStart() {
@@ -640,10 +738,8 @@ bool RenderWidgetHostViewBase::HasSize() const {
   return true;
 }
 
-// RenderWidgetHostViewAura overrides this.
-void RenderWidgetHostViewBase::ShowWithVisibility(
-    content::Visibility web_contents_visibility) {
-  Show();
+void RenderWidgetHostViewBase::Show() {
+  ShowWithVisibility(PageVisibilityState::kVisible);
 }
 
 void RenderWidgetHostViewBase::Destroy() {
@@ -723,34 +819,33 @@ RenderWidgetHostViewBase::GetTouchSelectionControllerClientManager() {
   return nullptr;
 }
 
-void RenderWidgetHostViewBase::SetRecordContentToVisibleTimeRequest(
-    base::TimeTicks start_time,
-    bool destination_is_loaded,
-    bool show_reason_tab_switching,
-    bool show_reason_unoccluded,
-    bool show_reason_bfcache_restore) {
-  auto record_tab_switch_time_request =
-      blink::mojom::RecordContentToVisibleTimeRequest::New(
-          start_time, destination_is_loaded, show_reason_tab_switching,
-          show_reason_unoccluded, show_reason_bfcache_restore);
-
-  if (last_record_tab_switch_time_request_) {
-    blink::UpdateRecordContentToVisibleTimeRequest(
-        *record_tab_switch_time_request, *last_record_tab_switch_time_request_);
-  } else {
-    last_record_tab_switch_time_request_ =
-        std::move(record_tab_switch_time_request);
-  }
-}
-
-blink::mojom::RecordContentToVisibleTimeRequestPtr
-RenderWidgetHostViewBase::TakeRecordContentToVisibleTimeRequest() {
-  return std::move(last_record_tab_switch_time_request_);
-}
-
 void RenderWidgetHostViewBase::SynchronizeVisualProperties() {
   if (host())
     host()->SynchronizeVisualProperties();
+}
+
+display::ScreenInfos RenderWidgetHostViewBase::GetNewScreenInfosForUpdate() {
+  // RWHVChildFrame gets its ScreenInfos from the CrossProcessFrameConnector.
+  DCHECK(!IsRenderWidgetHostViewChildFrame());
+
+  display::ScreenInfos screen_infos;
+
+  if (auto* screen = display::Screen::GetScreen()) {
+    gfx::NativeView native_view = GetNativeView();
+    const auto& display = native_view
+                              ? screen->GetDisplayNearestView(native_view)
+                              : screen->GetPrimaryDisplay();
+    screen_infos = screen->GetScreenInfosNearestDisplay(display.id());
+  } else {
+    // If there is no Screen, create fake ScreenInfos (for tests).
+    screen_infos = display::ScreenInfos(display::ScreenInfo());
+  }
+
+  // Set system cursor size separately as it's not a property of screen or
+  // display.
+  screen_infos.system_cursor_size = system_cursor_size_;
+
+  return screen_infos;
 }
 
 void RenderWidgetHostViewBase::DidNavigate() {
@@ -761,6 +856,11 @@ void RenderWidgetHostViewBase::DidNavigate() {
 WebContentsAccessibility*
 RenderWidgetHostViewBase::GetWebContentsAccessibility() {
   return nullptr;
+}
+
+void RenderWidgetHostViewBase::SetTooltipObserverForTesting(
+    TooltipObserver* observer) {
+  tooltip_observer_for_testing_ = observer;
 }
 
 // TODO(wjmaclean): Would it simplify this function if we re-implemented it
@@ -793,7 +893,8 @@ bool RenderWidgetHostViewBase::TransformPointToTargetCoordSpace(
       return false;
     target_ancestors.push_back(cur_view->GetFrameSinkId());
   }
-  target_ancestors.push_back(root_frame_sink_id);
+  if (target_ancestors.back() != root_frame_sink_id)
+    target_ancestors.push_back(root_frame_sink_id);
 
   float device_scale_factor = original_view->GetDeviceScaleFactor();
   DCHECK_GT(device_scale_factor, 0.0f);
@@ -893,6 +994,84 @@ bool RenderWidgetHostViewBase::TransformPointToLocalCoordSpace(
       router->FindViewFromFrameSinkId(original_frame_sink_id),
       router->FindViewFromFrameSinkId(target_frame_sink_id), point,
       transformed_point);
+}
+
+ui::Compositor* RenderWidgetHostViewBase::GetCompositor() {
+  return nullptr;
+}
+
+VisibleTimeRequestTrigger*
+RenderWidgetHostViewBase::GetVisibleTimeRequestTrigger() {
+  DCHECK(
+      !visible_time_request_trigger_.is_tab_switch_metrics2_feature_enabled());
+  return &visible_time_request_trigger_;
+}
+
+bool RenderWidgetHostViewBase::ShouldVirtualKeyboardOverlayContent() {
+  return false;
+}
+
+bool RenderWidgetHostViewBase::IsHTMLFormPopup() const {
+  return false;
+}
+
+void RenderWidgetHostViewBase::OnShowWithPageVisibility(
+    PageVisibilityState page_visibility) {
+  auto* visible_time_request_trigger = host_->GetVisibleTimeRequestTrigger();
+  // The only way this should be null is if there is no RenderWidgetHostView.
+  DCHECK(visible_time_request_trigger);
+
+  // NB: don't call visible_time_request_trigger->TakeRequest() unless the
+  // request will be used. If it isn't used here it must be left in the trigger
+  // for the next call.
+
+  if (!visible_time_request_trigger->is_tab_switch_metrics2_feature_enabled()) {
+    // Legacy path ignores `page_visibiity` so that the semantic of the older
+    // metric doesn't change.
+    if (host_->is_hidden()) {
+      NotifyHostAndDelegateOnWasShown(
+          visible_time_request_trigger->TakeRequest());
+    }
+    return;
+  }
+
+  const bool web_contents_is_visible =
+      page_visibility == PageVisibilityState::kVisible;
+
+  if (host_->is_hidden()) {
+    // If the WebContents is becoming visible, ask the compositor to report the
+    // visibility time for metrics. Otherwise the widget is being rendered even
+    // though the WebContents is hidden or occluded, for example due to being
+    // captured, so it should not be included in visibility time metrics.
+    NotifyHostAndDelegateOnWasShown(
+        web_contents_is_visible ? visible_time_request_trigger->TakeRequest()
+                                : nullptr);
+    return;
+  }
+
+  // `page_visibility` changed while the widget remains visible (kVisible ->
+  // kHiddenButPainting or vice versa). Nothing to do except update the
+  // visible time request, if any.
+  if (web_contents_is_visible) {
+    // The widget is already rendering, but now the WebContents is becoming
+    // visible, so send any visibility time request to the compositor now.
+    if (auto visible_time_request =
+            visible_time_request_trigger->TakeRequest()) {
+      RequestPresentationTimeFromHostOrDelegate(
+          std::move(visible_time_request));
+    }
+    return;
+  }
+
+  // The widget should keep rendering but the WebContents is no longer
+  // visible. If the compositor didn't already report the visibility time,
+  // it's too late. (For example, if the WebContents is being captured and
+  // was put in the foreground and then quickly hidden again before the
+  // compositor submitted a frame. The compositor will keep submitting
+  // frames for the capture but they should not be included in the
+  // visibility metrics.)
+  CancelPresentationTimeRequestForHostAndDelegate();
+  return;
 }
 
 }  // namespace content

@@ -7,6 +7,7 @@
 #include <memory>
 #include <utility>
 
+#include "base/memory/raw_ptr.h"
 #include "base/path_service.h"
 #include "base/test/values_test_util.h"
 #include "chrome/browser/extensions/api/messaging/native_messaging_test_util.h"
@@ -42,7 +43,7 @@ class MockEventRouter : public EventRouter {
   }
 
  private:
-  const bool* has_listener_result_;
+  raw_ptr<const bool> has_listener_result_;
 };
 
 std::unique_ptr<KeyedService> BuildMockEventRouter(
@@ -106,9 +107,9 @@ class ExtensionSupportsConnectionFromNativeAppTest : public ::testing::Test {
     EXPECT_TRUE(base::PathService::Get(DIR_TEST_DATA, &path));
 
     std::string error;
-    scoped_refptr<Extension> extension(
-        Extension::Create(path, Manifest::INTERNAL, *manifest_builder.Build(),
-                          Extension::NO_FLAGS, &error));
+    scoped_refptr<Extension> extension(Extension::Create(
+        path, mojom::ManifestLocation::kInternal, *manifest_builder.Build(),
+        Extension::NO_FLAGS, &error));
     ASSERT_TRUE(extension.get()) << error;
     ExtensionRegistry::Get(&profile_)->AddEnabled(extension);
     extension_id_ = extension->id();
@@ -143,7 +144,8 @@ TEST_F(ExtensionSupportsConnectionFromNativeAppTest, NoOnConnectNative) {
 }
 
 TEST_F(ExtensionSupportsConnectionFromNativeAppTest, OffTheRecordProfile) {
-  auto* off_the_record_profile = profile_.GetPrimaryOTRProfile();
+  auto* off_the_record_profile =
+      profile_.GetPrimaryOTRProfile(/*create_if_needed=*/true);
   ASSERT_NO_FATAL_FAILURE(RegisterExtension(true, true, true));
 
   EXPECT_FALSE(ExtensionSupportsConnectionFromNativeApp(

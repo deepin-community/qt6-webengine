@@ -2,12 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/memory/raw_ptr.h"
 #include "content/public/browser/browsing_data_remover.h"
 
 #include <memory>
 
 #include "base/bind.h"
+#include "base/containers/contains.h"
 #include "base/files/file_path.h"
+#include "base/strings/stringprintf.h"
 #include "base/test/bind.h"
 #include "base/test/scoped_feature_list.h"
 #include "content/public/browser/browser_context.h"
@@ -33,6 +36,7 @@
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "services/network/public/cpp/features.h"
 #include "services/network/public/cpp/simple_url_loader.h"
+#include "services/network/public/mojom/network_context.mojom.h"
 #include "services/network/public/mojom/network_service.mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
@@ -98,8 +102,7 @@ class BrowsingDataRemoverImplBrowserTest : public ContentBrowserTest {
 
   void RemoveAndWait(uint64_t remove_mask) {
     content::BrowsingDataRemover* remover =
-        content::BrowserContext::GetBrowsingDataRemover(
-            shell()->web_contents()->GetBrowserContext());
+        shell()->web_contents()->GetBrowserContext()->GetBrowsingDataRemover();
     content::BrowsingDataRemoverCompletionObserver completion_observer(remover);
     remover->RemoveAndReply(
         base::Time(), base::Time::Max(), remove_mask,
@@ -112,8 +115,7 @@ class BrowsingDataRemoverImplBrowserTest : public ContentBrowserTest {
       uint64_t remove_mask,
       std::unique_ptr<BrowsingDataFilterBuilder> filter) {
     content::BrowsingDataRemover* remover =
-        content::BrowserContext::GetBrowsingDataRemover(
-            shell()->web_contents()->GetBrowserContext());
+        shell()->web_contents()->GetBrowserContext()->GetBrowsingDataRemover();
     content::BrowsingDataRemoverCompletionObserver completion_observer(remover);
     remover->RemoveWithFilterAndReply(
         base::Time(), base::Time::Max(), remove_mask,
@@ -198,7 +200,9 @@ class BrowsingDataRemoverImplBrowserTest : public ContentBrowserTest {
     bool login_requested = false;
     ShellContentBrowserClient::Get()->set_login_request_callback(
         base::BindLambdaForTesting(
-            [&](bool is_main_frame /* unused */) { login_requested = true; }));
+            [&](bool is_primary_main_frame /* unused */) {
+              login_requested = true;
+            }));
 
     GURL url = ssl_server_.GetURL(kHttpAuthPath);
     bool navigation_suceeded = NavigateToURL(shell(), url);
@@ -212,15 +216,19 @@ class BrowsingDataRemoverImplBrowserTest : public ContentBrowserTest {
   }
 
   network::mojom::URLLoaderFactory* url_loader_factory() {
-    return BrowserContext::GetDefaultStoragePartition(
-               shell()->web_contents()->GetBrowserContext())
+    return shell()
+        ->web_contents()
+        ->GetBrowserContext()
+        ->GetDefaultStoragePartition()
         ->GetURLLoaderFactoryForBrowserProcess()
         .get();
   }
 
   network::mojom::NetworkContext* network_context() {
-    return BrowserContext::GetDefaultStoragePartition(
-               shell()->web_contents()->GetBrowserContext())
+    return shell()
+        ->web_contents()
+        ->GetBrowserContext()
+        ->GetDefaultStoragePartition()
         ->GetNetworkContext();
   }
 
@@ -392,7 +400,7 @@ class TrustTokensTester {
   }
 
  private:
-  network::mojom::NetworkContext* network_context_;
+  raw_ptr<network::mojom::NetworkContext> network_context_;
 };
 
 }  // namespace

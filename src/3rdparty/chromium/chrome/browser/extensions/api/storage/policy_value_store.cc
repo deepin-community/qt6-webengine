@@ -10,9 +10,11 @@
 #include "base/values.h"
 #include "components/policy/core/common/policy_map.h"
 #include "components/policy/core/common/policy_types.h"
+#include "components/value_store/value_store_change.h"
 #include "extensions/browser/api/storage/backend_task_runner.h"
-#include "extensions/browser/value_store/settings_namespace.h"
-#include "extensions/browser/value_store/value_store_change.h"
+#include "extensions/browser/api/storage/storage_area_namespace.h"
+
+using value_store::ValueStore;
 
 namespace extensions {
 
@@ -27,10 +29,10 @@ ValueStore::Status ReadOnlyError() {
 
 PolicyValueStore::PolicyValueStore(
     const std::string& extension_id,
-    scoped_refptr<SettingsObserverList> observers,
+    SequenceBoundSettingsChangedCallback observer,
     std::unique_ptr<ValueStore> delegate)
     : extension_id_(extension_id),
-      observers_(std::move(observers)),
+      observer_(std::move(observer)),
       delegate_(std::move(delegate)) {}
 
 PolicyValueStore::~PolicyValueStore() {}
@@ -40,10 +42,9 @@ void PolicyValueStore::SetCurrentPolicy(const policy::PolicyMap& policy) {
   // Convert |policy| to a dictionary value. Only include mandatory policies
   // for now.
   base::DictionaryValue current_policy;
-  for (auto it = policy.begin(); it != policy.end(); ++it) {
-    if (it->second.level == policy::POLICY_LEVEL_MANDATORY) {
-      current_policy.SetWithoutPathExpansion(
-          it->first, it->second.value()->CreateDeepCopy());
+  for (const auto& it : policy) {
+    if (it.second.level == policy::POLICY_LEVEL_MANDATORY) {
+      current_policy.SetKey(it.first, it.second.value_unsafe()->Clone());
     }
   }
 
@@ -67,33 +68,39 @@ void PolicyValueStore::SetCurrentPolicy(const policy::PolicyMap& policy) {
   // and changes after removing old policies that aren't in |current_policy|
   // anymore.
   std::vector<std::string> removed_keys;
-  for (base::DictionaryValue::Iterator it(previous_policy);
-       !it.IsAtEnd(); it.Advance()) {
-    if (!current_policy.HasKey(it.key()))
-      removed_keys.push_back(it.key());
+  for (auto kv : previous_policy.DictItems()) {
+    if (!current_policy.FindKey(kv.first))
+      removed_keys.push_back(kv.first);
   }
 
-  ValueStoreChangeList changes;
+  value_store::ValueStoreChangeList changes;
 
-  WriteResult result = delegate_->Remove(removed_keys);
-  if (result.status().ok()) {
-    changes.insert(changes.end(), result.changes().begin(),
-                   result.changes().end());
+  {
+    WriteResult result = delegate_->Remove(removed_keys);
+    if (result.status().ok()) {
+      auto new_changes = result.PassChanges();
+      changes.insert(changes.end(),
+                     std::make_move_iterator(new_changes.begin()),
+                     std::make_move_iterator(new_changes.end()));
+    }
   }
 
-  // IGNORE_QUOTA because these settings aren't writable by the extension, and
-  // are configured by the domain administrator.
-  ValueStore::WriteOptions options = ValueStore::IGNORE_QUOTA;
-  result = delegate_->Set(options, current_policy);
-  if (result.status().ok()) {
-    changes.insert(changes.end(), result.changes().begin(),
-                   result.changes().end());
+  {
+    // IGNORE_QUOTA because these settings aren't writable by the extension, and
+    // are configured by the domain administrator.
+    ValueStore::WriteOptions options = ValueStore::IGNORE_QUOTA;
+    WriteResult result = delegate_->Set(options, current_policy);
+    if (result.status().ok()) {
+      auto new_changes = result.PassChanges();
+      changes.insert(changes.end(),
+                     std::make_move_iterator(new_changes.begin()),
+                     std::make_move_iterator(new_changes.end()));
+    }
   }
 
   if (!changes.empty()) {
-    observers_->Notify(FROM_HERE, &SettingsObserver::OnSettingsChanged,
-                       extension_id_, settings_namespace::MANAGED,
-                       ValueStoreChange::ToJson(changes));
+    observer_->Run(extension_id_, StorageAreaNamespace::kManaged,
+                   value_store::ValueStoreChange::ToValue(std::move(changes)));
   }
 }
 

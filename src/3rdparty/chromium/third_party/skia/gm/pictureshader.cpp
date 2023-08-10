@@ -20,6 +20,7 @@
 #include "include/core/SkShader.h"
 #include "include/core/SkSize.h"
 #include "include/core/SkString.h"
+#include "include/core/SkTextBlob.h"
 #include "include/core/SkTileMode.h"
 #include "include/core/SkTypes.h"
 #include "tools/ToolUtils.h"
@@ -35,10 +36,13 @@ static struct {
 
 class PictureShaderGM : public skiagm::GM {
 public:
-    PictureShaderGM(SkScalar tileSize, SkScalar sceneSize, bool useLocalMatrixWrapper = false)
+    PictureShaderGM(SkScalar tileSize, SkScalar sceneSize, bool useLocalMatrixWrapper = false,
+                    float alpha = 1)
         : fTileSize(tileSize)
         , fSceneSize(sceneSize)
-        , fUseLocalMatrixWrapper(useLocalMatrixWrapper) {}
+        , fAlpha(alpha)
+        , fUseLocalMatrixWrapper(useLocalMatrixWrapper)
+    {}
 
  protected:
     void onOnceBeforeDraw() override {
@@ -57,7 +61,9 @@ public:
 
 
     SkString onShortName() override {
-        return SkStringPrintf("pictureshader%s", fUseLocalMatrixWrapper ? "_localwrapper" : "");
+        return SkStringPrintf("pictureshader%s%s",
+                              fUseLocalMatrixWrapper ? "_localwrapper" : "",
+                              fAlpha < 1 ? "_alpha" : "");
     }
 
     SkISize onISize() override {
@@ -161,8 +167,11 @@ private:
         canvas->drawRect(SkRect::MakeWH(fSceneSize, fSceneSize), paint);
         canvas->drawRect(SkRect::MakeXYWH(fSceneSize * 1.1f, 0, fSceneSize, fSceneSize), paint);
 
+        paint.setAlphaf(fAlpha);
+
         auto pictureShader = fPicture->makeShader(kTileConfigs[tileMode].tmx,
                                                   kTileConfigs[tileMode].tmy,
+                                                  SkFilterMode::kNearest,
                                                   fUseLocalMatrixWrapper ? nullptr : &localMatrix,
                                                   nullptr);
         paint.setShader(fUseLocalMatrixWrapper
@@ -184,18 +193,20 @@ private:
         canvas->restore();
     }
 
-    sk_sp<SkPicture> fPicture;
-    SkBitmap fBitmap;
+    const SkScalar   fTileSize;
+    const SkScalar   fSceneSize;
+    const float      fAlpha;
+    const bool       fUseLocalMatrixWrapper;
 
-    SkScalar    fTileSize;
-    SkScalar    fSceneSize;
-    bool        fUseLocalMatrixWrapper;
+    sk_sp<SkPicture> fPicture;
+    SkBitmap         fBitmap;
 
     using INHERITED = GM;
 };
 
 DEF_GM(return new PictureShaderGM(50, 100);)
 DEF_GM(return new PictureShaderGM(50, 100, true);)
+DEF_GM(return new PictureShaderGM(50, 100, false, 0.25f);)
 
 DEF_SIMPLE_GM(tiled_picture_shader, canvas, 400, 400) {
     // https://code.google.com/p/skia/issues/detail?id=3398
@@ -222,70 +233,78 @@ DEF_SIMPLE_GM(tiled_picture_shader, canvas, 400, 400) {
     p.setColor(0xFFB6B6B6);  // gray
     canvas->drawPaint(p);
 
-    p.setShader(picture->makeShader(SkTileMode::kRepeat, SkTileMode::kRepeat));
+    p.setShader(picture->makeShader(SkTileMode::kRepeat, SkTileMode::kRepeat,
+                                    SkFilterMode::kNearest));
     canvas->drawPaint(p);
 }
 
-#ifdef SK_SUPPORT_LEGACY_SETFILTERQUALITY
-/*
-    Test picture-shader's filtering (after the tile is created.
-    The GM draws a 2x2 grid of tiled images (circle, square, X)
+DEF_SIMPLE_GM(pictureshader_persp, canvas, 215, 110) {
+    enum class DrawStrategy {
+        kDirect,
+        kPictureShader,
+    };
 
-    Column 0 should be hard-edged
-    Column 1 should be filtered
+    auto drawPicture = [](SkCanvas* canvas, sk_sp<SkPicture> picture, DrawStrategy strategy) {
+        // Only want local upper 50x50 of 'picture' before we apply decal (or clip)
+        SkRect bounds = {0.f, 0.f, 50.f, 50.f};
+        switch(strategy) {
+            case DrawStrategy::kDirect: {
+                canvas->clipRect(bounds, true);
+                canvas->drawPicture(picture);
+                break; }
+            case DrawStrategy::kPictureShader: {
+                SkPaint paint;
+                paint.setShader(picture->makeShader(SkTileMode::kDecal, SkTileMode::kDecal,
+                                                    SkFilterMode::kLinear, nullptr, &bounds));
+                canvas->drawRect({0.f, 0.f, 50.f, 50.f}, paint);
+                break; }
+        }
+    };
 
-    Row 0 deduces this from the paint (legacy behavior)
-    Row 1 takes this as an explicit parameter (SkFilterMode)
- */
-DEF_SIMPLE_GM(picture_shader_filter, canvas, 230, 230) {
-    auto pic = [&] {
-        SkRect r = SkRect::MakeWH(100, 100);
-        SkPictureRecorder recorder;
-        SkCanvas* c = recorder.beginRecording(r);
+    auto picture = []() {
+        sk_sp<SkTypeface> typeface = SkTypeface::MakeDefault();
+        if (!typeface) {
+            typeface = SkTypeface::MakeFromName("monospace", SkFontStyle());
+        }
+        SkFont font;
+        font.setTypeface(typeface);
+        font.setHinting(SkFontHinting::kNormal);
+        font.setSize(8.f);
+
         SkPaint paint;
-        paint.setStroke(true);
-        c->drawRect({5, 5, 95, 95}, paint);
-        c->drawCircle(50, 50, 30, paint);
-        c->drawLine(5, 1, 95,95, paint);
-        c->drawLine(5,95, 95, 1, paint);
+        paint.setColor(SK_ColorGREEN);
+        SkPictureRecorder recorder;
+        SkCanvas* record_canvas = recorder.beginRecording({0, 0, 100, 100});
+        record_canvas->drawTextBlob(SkTextBlob::MakeFromString("Hamburgefons", font),
+                                    0, 16.f, paint);
         return recorder.finishRecordingAsPicture();
     }();
 
-    struct {
-        SkPoint         fLoc;
-        SkFilterMode    fFilter;
-        bool            fInheritFromPaint;
+    SkM44 m;
+    m.preScale(2.f, 2.f);
+    SkM44 persp = SkM44::Perspective(0.01f, 10.f, SK_ScalarPI / 3.f);
+    persp.preTranslate(0.f, 5.f, -0.1f);
+    persp.preConcat(SkM44::Rotate({0.f, 1.f, 0.f}, 0.008f));
+    m.postConcat(persp);
 
-        void setup(SkPaint* paint, sk_sp<SkPicture> pic) const {
-            SkTileMode tm = SkTileMode::kRepeat;
-            sk_sp<SkShader> sh;
-            if (fInheritFromPaint) {
-                sh = pic->makeShader(tm, tm, nullptr, nullptr);
-                paint->setFilterQuality(fFilter == SkFilterMode::kNearest ? kNone_SkFilterQuality
-                                                                          : kLow_SkFilterQuality);
-            } else {
-                sh = pic->makeShader(tm, tm, fFilter, nullptr, nullptr);
-                // the draw should ignore paint's filterquality,
-                // but we'll set it to something wacky just to be test that
-                paint->setFilterQuality(kHigh_SkFilterQuality);
-            }
-            paint->setShader(sh);
-        }
-    } recs[] = {
-        { {0, 0}, SkFilterMode::kNearest, true },
-        { {1, 0}, SkFilterMode::kLinear,  true },
-        { {0, 1}, SkFilterMode::kNearest, false },
-        { {1, 1}, SkFilterMode::kLinear,  false },
-    };
+    canvas->clear(SK_ColorBLACK);
+    canvas->translate(5.f, 5.f);
+    for (auto strategy : { DrawStrategy::kDirect,
+                           DrawStrategy::kPictureShader }) {
+        canvas->save();
 
-    canvas->translate(10, 10);
-    canvas->scale(1.0f/3, 1.0f/3);
-    for (const auto& r : recs) {
-        SkAutoCanvasRestore acr(canvas, true);
-        canvas->translate(r.fLoc.fX * 330, r.fLoc.fY * 330);
-        SkPaint paint;
-        r.setup(&paint, pic);
-        canvas->drawRect({0, 0, 300, 300}, paint);
+        SkPaint outline;
+        outline.setColor(SK_ColorWHITE);
+        outline.setStyle(SkPaint::kStroke_Style);
+        outline.setStrokeWidth(1.f);
+        canvas->drawRect({-1, -1, 101, 101}, outline);
+
+        canvas->clipRect({0, 0, 100, 100});
+        canvas->concat(m);
+
+        drawPicture(canvas, picture, strategy);
+        canvas->restore();
+
+        canvas->translate(105.f, 0.f);
     }
 }
-#endif

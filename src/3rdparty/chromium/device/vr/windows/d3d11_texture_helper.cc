@@ -3,7 +3,7 @@
 // found in the LICENSE file.
 
 #include "device/vr/windows/d3d11_texture_helper.h"
-#include "base/stl_util.h"
+
 #include "base/trace_event/common/trace_event_common.h"
 #include "base/trace_event/trace_event.h"
 #include "mojo/public/c/system/platform_handle.h"
@@ -330,7 +330,7 @@ bool D3D11TextureHelper::EnsureInputLayout() {
          D3D11_INPUT_PER_VERTEX_DATA, 0},
     };
     HRESULT hr = render_state_.d3d11_device_->CreateInputLayout(
-        vertex_desc, base::size(vertex_desc), g_vertex, _countof(g_vertex),
+        vertex_desc, std::size(vertex_desc), g_vertex, _countof(g_vertex),
         &render_state_.input_layout_);
     if (FAILED(hr)) {
       TraceDXError(ErrorLocation::InputLayout, hr);
@@ -475,7 +475,9 @@ bool D3D11TextureHelper::CompositeLayer(LayerData& layer) {
 
   D3D11_TEXTURE2D_DESC desc;
   render_state_.target_texture_->GetDesc(&desc);
-  D3D11_VIEWPORT viewport = {0, 0, desc.Width, desc.Height, 0, 1};
+  D3D11_VIEWPORT viewport = {
+      0, 0, static_cast<float>(desc.Width), static_cast<float>(desc.Height),
+      0, 1};
   render_state_.d3d11_device_context_->RSSetViewports(1, &viewport);
   render_state_.d3d11_device_context_->IASetPrimitiveTopology(
       D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -633,7 +635,7 @@ bool D3D11TextureHelper::EnsureInitialized() {
   Microsoft::WRL::ComPtr<ID3D11Device> d3d11_device;
   HRESULT hr = D3D11CreateDevice(
       adapter.Get(), D3D_DRIVER_TYPE_UNKNOWN, NULL, flags, feature_levels,
-      base::size(feature_levels), D3D11_SDK_VERSION, &d3d11_device,
+      std::size(feature_levels), D3D11_SDK_VERSION, &d3d11_device,
       &feature_level_out, &(render_state_.d3d11_device_context_));
   if (SUCCEEDED(hr)) {
     hr = d3d11_device.As(&render_state_.d3d11_device_);

@@ -4,7 +4,12 @@
 
 #include "device/vr/openxr/openxr_extension_helper.h"
 
+#include <tuple>
+
 namespace device {
+
+OpenXrExtensionMethods::OpenXrExtensionMethods() = default;
+OpenXrExtensionMethods::~OpenXrExtensionMethods() = default;
 
 OpenXrExtensionEnumeration::OpenXrExtensionEnumeration() {
   uint32_t extension_count;
@@ -38,45 +43,94 @@ OpenXrExtensionHelper::OpenXrExtensionHelper(
   // Failure to query a method results in a nullptr
 
   // D3D11
-  (void)xrGetInstanceProcAddr(
+  std::ignore = xrGetInstanceProcAddr(
       instance, "xrGetD3D11GraphicsRequirementsKHR",
       reinterpret_cast<PFN_xrVoidFunction*>(
           const_cast<PFN_xrGetD3D11GraphicsRequirementsKHR*>(
               &extension_methods_.xrGetD3D11GraphicsRequirementsKHR)));
 
   // Hand tracking methods
-  (void)xrGetInstanceProcAddr(
+  std::ignore = xrGetInstanceProcAddr(
       instance, "xrCreateHandTrackerEXT",
       reinterpret_cast<PFN_xrVoidFunction*>(
           const_cast<PFN_xrCreateHandTrackerEXT*>(
               &extension_methods_.xrCreateHandTrackerEXT)));
-  (void)xrGetInstanceProcAddr(
+  std::ignore = xrGetInstanceProcAddr(
       instance, "xrDestroyHandTrackerEXT",
       reinterpret_cast<PFN_xrVoidFunction*>(
           const_cast<PFN_xrDestroyHandTrackerEXT*>(
               &extension_methods_.xrDestroyHandTrackerEXT)));
-  (void)xrGetInstanceProcAddr(
+  std::ignore = xrGetInstanceProcAddr(
       instance, "xrLocateHandJointsEXT",
       reinterpret_cast<PFN_xrVoidFunction*>(
           const_cast<PFN_xrLocateHandJointsEXT*>(
               &extension_methods_.xrLocateHandJointsEXT)));
 
   // Anchors methods
-  (void)xrGetInstanceProcAddr(
+  std::ignore = xrGetInstanceProcAddr(
       instance, "xrCreateSpatialAnchorMSFT",
       reinterpret_cast<PFN_xrVoidFunction*>(
           const_cast<PFN_xrCreateSpatialAnchorMSFT*>(
               &extension_methods_.xrCreateSpatialAnchorMSFT)));
-  (void)xrGetInstanceProcAddr(
+  std::ignore = xrGetInstanceProcAddr(
       instance, "xrDestroySpatialAnchorMSFT",
       reinterpret_cast<PFN_xrVoidFunction*>(
           const_cast<PFN_xrDestroySpatialAnchorMSFT*>(
               &extension_methods_.xrDestroySpatialAnchorMSFT)));
-  (void)xrGetInstanceProcAddr(
+  std::ignore = xrGetInstanceProcAddr(
       instance, "xrCreateSpatialAnchorSpaceMSFT",
       reinterpret_cast<PFN_xrVoidFunction*>(
           const_cast<PFN_xrCreateSpatialAnchorSpaceMSFT*>(
               &extension_methods_.xrCreateSpatialAnchorSpaceMSFT)));
+
+  std::ignore = xrGetInstanceProcAddr(
+      instance, "xrEnumerateSceneComputeFeaturesMSFT",
+      reinterpret_cast<PFN_xrVoidFunction*>(
+          const_cast<PFN_xrEnumerateSceneComputeFeaturesMSFT*>(
+              &extension_methods_.xrEnumerateSceneComputeFeaturesMSFT)));
+  std::ignore = xrGetInstanceProcAddr(
+      instance, "xrCreateSceneObserverMSFT",
+      reinterpret_cast<PFN_xrVoidFunction*>(
+          const_cast<PFN_xrCreateSceneObserverMSFT*>(
+              &extension_methods_.xrCreateSceneObserverMSFT)));
+  std::ignore = xrGetInstanceProcAddr(
+      instance, "xrDestroySceneObserverMSFT",
+      reinterpret_cast<PFN_xrVoidFunction*>(
+          const_cast<PFN_xrDestroySceneObserverMSFT*>(
+              &extension_methods_.xrDestroySceneObserverMSFT)));
+  std::ignore = xrGetInstanceProcAddr(
+      instance, "xrCreateSceneMSFT",
+      reinterpret_cast<PFN_xrVoidFunction*>(const_cast<PFN_xrCreateSceneMSFT*>(
+          &extension_methods_.xrCreateSceneMSFT)));
+  std::ignore = xrGetInstanceProcAddr(
+      instance, "xrDestroySceneMSFT",
+      reinterpret_cast<PFN_xrVoidFunction*>(const_cast<PFN_xrDestroySceneMSFT*>(
+          &extension_methods_.xrDestroySceneMSFT)));
+  std::ignore = xrGetInstanceProcAddr(
+      instance, "xrComputeNewSceneMSFT",
+      reinterpret_cast<PFN_xrVoidFunction*>(
+          const_cast<PFN_xrComputeNewSceneMSFT*>(
+              &extension_methods_.xrComputeNewSceneMSFT)));
+  std::ignore = xrGetInstanceProcAddr(
+      instance, "xrGetSceneComputeStateMSFT",
+      reinterpret_cast<PFN_xrVoidFunction*>(
+          const_cast<PFN_xrGetSceneComputeStateMSFT*>(
+              &extension_methods_.xrGetSceneComputeStateMSFT)));
+  std::ignore = xrGetInstanceProcAddr(
+      instance, "xrGetSceneComponentsMSFT",
+      reinterpret_cast<PFN_xrVoidFunction*>(
+          const_cast<PFN_xrGetSceneComponentsMSFT*>(
+              &extension_methods_.xrGetSceneComponentsMSFT)));
+  std::ignore = xrGetInstanceProcAddr(
+      instance, "xrLocateSceneComponentsMSFT",
+      reinterpret_cast<PFN_xrVoidFunction*>(
+          const_cast<PFN_xrLocateSceneComponentsMSFT*>(
+              &extension_methods_.xrLocateSceneComponentsMSFT)));
+  std::ignore = xrGetInstanceProcAddr(
+      instance, "xrGetSceneMeshBuffersMSFT",
+      reinterpret_cast<PFN_xrVoidFunction*>(
+          const_cast<PFN_xrGetSceneMeshBuffersMSFT*>(
+              &extension_methods_.xrGetSceneMeshBuffersMSFT)));
 }
 
 }  // namespace device

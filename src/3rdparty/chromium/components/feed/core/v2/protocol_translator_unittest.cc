@@ -4,6 +4,7 @@
 
 #include "components/feed/core/v2/protocol_translator.h"
 
+#include <initializer_list>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -25,8 +26,13 @@ namespace feed {
 namespace {
 
 const char kResponsePbPath[] = "components/test/data/feed/response.binarypb";
-const base::Time kCurrentTime =
-    base::Time::UnixEpoch() + base::TimeDelta::FromDays(123);
+const base::Time kCurrentTime = base::Time::UnixEpoch() + base::Days(123);
+AccountInfo TestAccountInfo() {
+  AccountInfo account_info;
+  account_info.gaia = "gaia";
+  account_info.email = "user@foo.com";
+  return account_info;
+}
 
 feedwire::Response TestWireResponse() {
   // Read and parse response.binarypb.
@@ -64,14 +70,12 @@ feedwire::DataOperation MakeDataOperationWithContent(
   feedwire::DataOperation result = MakeDataOperation(operation);
   result.mutable_feature()->set_renderable_unit(feedwire::Feature::CONTENT);
   result.mutable_feature()
-      ->mutable_content_extension()
+      ->mutable_content()
       ->mutable_xsurface_content()
       ->set_xsurface_output(xsurface_content);
 
-  result.mutable_feature()
-      ->mutable_content_extension()
-      ->add_prefetch_metadata()
-      ->set_uri("http://uri-for-" + xsurface_content);
+  result.mutable_feature()->mutable_content()->add_prefetch_metadata()->set_uri(
+      "http://uri-for-" + xsurface_content);
   return result;
 }
 
@@ -88,16 +92,16 @@ feedwire::DataOperation MakeDataOperationWithRenderData(
 
 // Helpers to add some common params.
 RefreshResponseData TranslateWireResponse(feedwire::Response response,
-                                          bool was_signed_in_request) {
+                                          const AccountInfo& account_info) {
   return TranslateWireResponse(response,
                                StreamModelUpdateRequest::Source::kNetworkUpdate,
-                               was_signed_in_request, kCurrentTime);
+                               account_info, kCurrentTime);
 }
 
 RefreshResponseData TranslateWireResponse(feedwire::Response response) {
-  return TranslateWireResponse(response, true);
+  return TranslateWireResponse(response, TestAccountInfo());
 }
-base::Optional<feedstore::DataOperation> TranslateDataOperation(
+absl::optional<feedstore::DataOperation> TranslateDataOperation(
     feedwire::DataOperation operation) {
   return ::feed::TranslateDataOperation(base::Time(), std::move(operation));
 }
@@ -126,14 +130,36 @@ TEST(ProtocolTranslatorTest, EmptyResponse) {
   EXPECT_TRUE(TranslateWireResponse(response).model_update_request);
 }
 
+TEST(ProtocolTranslatorTest, RootEventIdPresent) {
+  feedwire::Response response = EmptyWireResponse();
+  response.mutable_feed_response()
+      ->mutable_feed_response_metadata()
+      ->mutable_event_id()
+      ->set_time_usec(123);
+  EXPECT_EQ(TranslateWireResponse(response)
+                .model_update_request->stream_data.root_event_id(),
+            response.mutable_feed_response()
+                ->mutable_feed_response_metadata()
+                ->event_id()
+                .SerializeAsString());
+}
+
+TEST(ProtocolTranslatorTest, RootEventIdNotPresent) {
+  feedwire::Response response = EmptyWireResponse();
+  EXPECT_EQ(TranslateWireResponse(response)
+                .model_update_request->stream_data.root_event_id(),
+            "");
+}
+
 TEST(ProtocolTranslatorTest, WasSignedInRequest) {
   feedwire::Response response = EmptyWireResponse();
-  for (bool was_signed_in_request_state : {true, false}) {
-    RefreshResponseData refresh =
-        TranslateWireResponse(response, was_signed_in_request_state);
+
+  for (AccountInfo account_info :
+       std::initializer_list<AccountInfo>{{"gaia", "user@foo.com"}, {}}) {
+    RefreshResponseData refresh = TranslateWireResponse(response, account_info);
     ASSERT_TRUE(refresh.model_update_request);
     EXPECT_EQ(refresh.model_update_request->stream_data.signed_in(),
-              was_signed_in_request_state);
+              !account_info.IsEmpty());
   }
 }
 
@@ -204,7 +230,7 @@ TEST(ProtocolTranslatorTest, MissingResponseVersion) {
 TEST(ProtocolTranslatorTest, TranslateContent) {
   feedwire::DataOperation wire_operation =
       MakeDataOperationWithContent(feedwire::DataOperation::UPDATE_OR_APPEND);
-  base::Optional<feedstore::DataOperation> translated =
+  absl::optional<feedstore::DataOperation> translated =
       TranslateDataOperation(wire_operation);
   EXPECT_TRUE(translated);
   EXPECT_EQ("content", translated->content().frame());
@@ -216,7 +242,7 @@ TEST(ProtocolTranslatorTest, TranslateContent) {
 TEST(ProtocolTranslatorTest, TranslateContentFailsWhenMissingContent) {
   feedwire::DataOperation wire_operation =
       MakeDataOperationWithContent(feedwire::DataOperation::UPDATE_OR_APPEND);
-  wire_operation.mutable_feature()->clear_content_extension();
+  wire_operation.mutable_feature()->clear_content();
   EXPECT_FALSE(TranslateDataOperation(wire_operation));
 }
 
@@ -231,6 +257,28 @@ TEST(ProtocolTranslatorTest, TranslateRenderData) {
   EXPECT_EQ(
       "renderdata",
       translated.model_update_request->shared_states[0].shared_state_data());
+}
+
+TEST(ProtocolTranslatorTest, TranslateContentLifetime) {
+  feedwire::Response wire_response = EmptyWireResponse();
+  feedwire::ContentLifetime* content_lifetime =
+      wire_response.mutable_feed_response()
+          ->mutable_feed_response_metadata()
+          ->mutable_content_lifetime();
+  content_lifetime->set_stale_age_ms(123);
+  content_lifetime->set_invalid_age_ms(456);
+  RefreshResponseData translated = TranslateWireResponse(wire_response);
+  ASSERT_TRUE(translated.content_lifetime.has_value());
+  EXPECT_EQ(translated.content_lifetime->stale_age_ms(),
+            content_lifetime->stale_age_ms());
+  EXPECT_EQ(translated.content_lifetime->invalid_age_ms(),
+            content_lifetime->invalid_age_ms());
+}
+
+TEST(ProtocolTranslatorTest, TranslateMissingContentLifetime) {
+  feedwire::Response wire_response = EmptyWireResponse();
+  RefreshResponseData translated = TranslateWireResponse(wire_response);
+  EXPECT_FALSE(translated.content_lifetime.has_value());
 }
 
 TEST(ProtocolTranslatorTest, TranslateRenderDataFailsWithUnknownType) {
@@ -296,9 +344,8 @@ TEST(ProtocolTranslatorTest, TranslateRealResponse) {
   ASSERT_TRUE(translated.request_schedule);
   EXPECT_EQ(kCurrentTime, translated.request_schedule->anchor_time);
   EXPECT_EQ(std::vector<base::TimeDelta>(
-                {base::TimeDelta::FromSeconds(86308) +
-                     base::TimeDelta::FromNanoseconds(822963644),
-                 base::TimeDelta::FromSeconds(120000)}),
+                {base::Seconds(86308) + base::Nanoseconds(822963644),
+                 base::Seconds(120000)}),
             translated.request_schedule->refresh_offsets);
 
   std::stringstream ss;
@@ -306,10 +353,23 @@ TEST(ProtocolTranslatorTest, TranslateRealResponse) {
 
   const std::string want = R"(source: 0
 stream_data: {
+  root_event_id: )"
+                           "\"\\b\xEF\xBF\xBD\xEF\xBF\xBD\\u0007\""
+                           R"(
   last_added_time_millis: 10627200000
-  shared_state_id {
+  shared_state_ids {
     content_domain: "render_data"
   }
+  content_ids: 3328940074512586021
+  content_ids: 8191455549164721606
+  content_ids: -8109602013173974591
+  content_ids: -8979410608587540000
+  content_ids: -8421826555441408245
+  content_ids: -3490122365494686813
+  content_ids: 2741853109953412745
+  content_ids: 586433679892097787
+  content_ids: 790985792726953756
+  content_ids: 7324025093440047528
 }
 content: {
   content_id {

@@ -19,12 +19,13 @@
 
 #include "perfetto/base/build_config.h"
 #include "perfetto/trace_processor/basic_types.h"
+#include "perfetto/trace_processor/ref_counted.h"
+#include "perfetto/trace_processor/trace_blob_view.h"
 #include "src/trace_processor/importers/fuchsia/fuchsia_record.h"
 #include "src/trace_processor/importers/json/json_utils.h"
 #include "src/trace_processor/importers/proto/packet_sequence_state.h"
 #include "src/trace_processor/importers/systrace/systrace_line.h"
 #include "src/trace_processor/storage/trace_storage.h"
-#include "src/trace_processor/trace_blob_view.h"
 #include "src/trace_processor/types/trace_processor_context.h"
 
 // GCC can't figure out the relationship between TimestampedTracePiece's type
@@ -55,30 +56,40 @@ struct InlineSchedWaking {
 
 struct TracePacketData {
   TraceBlobView packet;
-  std::shared_ptr<PacketSequenceStateGeneration> sequence_state;
+  RefPtr<PacketSequenceStateGeneration> sequence_state;
 };
 
 struct FtraceEventData {
   TraceBlobView event;
-  std::shared_ptr<PacketSequenceStateGeneration> sequence_state;
+  RefPtr<PacketSequenceStateGeneration> sequence_state;
 };
 
 struct TrackEventData : public TracePacketData {
   TrackEventData(TraceBlobView pv,
-                 std::shared_ptr<PacketSequenceStateGeneration> generation)
+                 RefPtr<PacketSequenceStateGeneration> generation)
       : TracePacketData{std::move(pv), std::move(generation)} {}
 
   static constexpr size_t kMaxNumExtraCounters = 8;
 
-  int64_t thread_timestamp = 0;
-  int64_t thread_instruction_count = 0;
+  base::Optional<int64_t> thread_timestamp;
+  base::Optional<int64_t> thread_instruction_count;
   double counter_value = 0;
   std::array<double, kMaxNumExtraCounters> extra_counter_values = {};
 };
 
+// On Windows std::aligned_storage was broken before VS 2017 15.8 and the
+// compiler (even clang-cl) requires -D_ENABLE_EXTENDED_ALIGNED_STORAGE. Given
+// the alignment here is purely a performance enhancment with no other
+// functional requirement, disable it on Win.
+#if !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
+#define PERFETTO_TTS_ALIGNMENT alignas(64)
+#else
+#define PERFETTO_TTS_ALIGNMENT
+#endif
+
 // A TimestampedTracePiece is (usually a reference to) a piece of a trace that
 // is sorted by TraceSorter.
-struct TimestampedTracePiece {
+struct PERFETTO_TTS_ALIGNMENT TimestampedTracePiece {
   enum class Type {
     kInvalid = 0,
     kFtraceEvent,
@@ -91,11 +102,10 @@ struct TimestampedTracePiece {
     kSystraceLine,
   };
 
-  TimestampedTracePiece(
-      int64_t ts,
-      uint64_t idx,
-      TraceBlobView tbv,
-      std::shared_ptr<PacketSequenceStateGeneration> sequence_state)
+  TimestampedTracePiece(int64_t ts,
+                        uint64_t idx,
+                        TraceBlobView tbv,
+                        RefPtr<PacketSequenceStateGeneration> sequence_state)
       : packet_data{std::move(tbv), std::move(sequence_state)},
         timestamp(ts),
         packet_idx(idx),
@@ -107,9 +117,7 @@ struct TimestampedTracePiece {
         packet_idx(idx),
         type(Type::kFtraceEvent) {}
 
-  TimestampedTracePiece(int64_t ts,
-                        uint64_t idx,
-                        std::unique_ptr<Json::Value> value)
+  TimestampedTracePiece(int64_t ts, uint64_t idx, std::string value)
       : json_value(std::move(value)),
         timestamp(ts),
         packet_idx(idx),
@@ -171,8 +179,7 @@ struct TimestampedTracePiece {
         new (&sched_waking) InlineSchedWaking(std::move(ttp.sched_waking));
         break;
       case Type::kJsonValue:
-        new (&json_value)
-            std::unique_ptr<Json::Value>(std::move(ttp.json_value));
+        new (&json_value) std::string(std::move(ttp.json_value));
         break;
       case Type::kFuchsiaRecord:
         new (&fuchsia_record)
@@ -225,7 +232,7 @@ struct TimestampedTracePiece {
         packet_data.~TracePacketData();
         break;
       case Type::kJsonValue:
-        json_value.~unique_ptr();
+        json_value.~basic_string();
         break;
       case Type::kFuchsiaRecord:
         fuchsia_record.~unique_ptr();
@@ -250,6 +257,22 @@ struct TimestampedTracePiece {
            (timestamp == o.timestamp && packet_idx < o.packet_idx);
   }
 
+  // For std::sort(). Without this the compiler will fall back on invoking
+  // move operators on temporary objects.
+  friend void swap(TimestampedTracePiece& a, TimestampedTracePiece& b) {
+    // We know that TimestampedTracePiece is 64-byte aligned (because of the
+    // alignas(64) in the declaration above). We also know that swapping it is
+    // trivial and we can just swap the memory without invoking move operators.
+    // The cast to aligned_storage below allows the compiler to turn this into
+    // a bunch of movaps with large XMM registers (128/256/512 bit depending on
+    // -mavx).
+    using AS =
+        typename std::aligned_storage<sizeof(TimestampedTracePiece),
+                                      alignof(TimestampedTracePiece)>::type;
+    using std::swap;
+    swap(reinterpret_cast<AS&>(a), reinterpret_cast<AS&>(b));
+  }
+
   // Fields ordered for packing.
 
   // Data for different types of TimestampedTracePiece.
@@ -258,7 +281,7 @@ struct TimestampedTracePiece {
     TracePacketData packet_data;
     InlineSchedSwitch sched_switch;
     InlineSchedWaking sched_waking;
-    std::unique_ptr<Json::Value> json_value;
+    std::string json_value;
     std::unique_ptr<FuchsiaRecord> fuchsia_record;
     std::unique_ptr<TrackEventData> track_event_data;
     std::unique_ptr<SystraceLine> systrace_line;
@@ -268,6 +291,14 @@ struct TimestampedTracePiece {
   uint64_t packet_idx;
   Type type;
 };
+
+// std::sort<TTS> is an extremely hot path in TraceProcessor (in trace_sorter.h)
+// When TTS is 512-bit wide, we can leverage SIMD instructions to swap it by
+// declaring it aligned at its own size, without losing any space in the
+// CircularQueue due to fragmentation. This makes a 6% difference in the
+// ingestion time of a large trace. See the comments above in the swap() above.
+static_assert(sizeof(TimestampedTracePiece) <= 64,
+              "TimestampedTracePiece cannot grow beyond 64 bytes");
 
 }  // namespace trace_processor
 }  // namespace perfetto

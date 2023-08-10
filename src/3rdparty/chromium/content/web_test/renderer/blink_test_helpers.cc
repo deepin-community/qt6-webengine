@@ -7,7 +7,6 @@
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/path_service.h"
-#include "base/stl_util.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -19,7 +18,7 @@
 #include "third_party/blink/public/common/web_preferences/web_preferences.h"
 #include "ui/display/display.h"
 
-#if defined(OS_MAC)
+#if BUILDFLAG(IS_MAC)
 #include "base/mac/bundle_locations.h"
 #include "base/mac/foundation_util.h"
 #endif
@@ -53,7 +52,7 @@ WebURL RewriteAbsolutePathInCsswgTest(base::StringPiece utf8_url) {
     return WebURL();
   if (utf8_url.find("/web_tests/") != std::string::npos)
     return WebURL();
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   // +3 for a drive letter, :, and /.
   static constexpr size_t kFileSchemeAndDriveLen = kFileScheme.size() + 3;
   if (utf8_url.size() <= kFileSchemeAndDriveLen)
@@ -95,7 +94,7 @@ void ExportWebTestSpecificPreferences(const TestPreferences& from,
 }
 
 static base::FilePath GetBuildDirectory() {
-#if defined(OS_MAC)
+#if BUILDFLAG(IS_MAC)
   if (base::mac::AmIBundled()) {
     // If this is a bundled Content Shell.app, go up one from the outer bundle
     // directory.
@@ -144,7 +143,7 @@ WebURL RewriteWebTestsURL(base::StringPiece utf8_url, bool is_wpt_mode) {
 WebURL RewriteFileURLToLocalResource(base::StringPiece resource) {
   // Some web tests use file://// which we resolve as a UNC path. Normalize
   // them to just file:///.
-  std::string result = resource.as_string();
+  std::string result(resource);
   static const size_t kFileLen = sizeof("file:///") - 1;
   while (base::StartsWith(base::ToLowerASCII(result), "file:////",
                           base::CompareCase::SENSITIVE)) {

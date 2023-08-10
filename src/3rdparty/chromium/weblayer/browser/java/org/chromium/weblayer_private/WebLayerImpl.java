@@ -4,6 +4,7 @@
 
 package org.chromium.weblayer_private;
 
+import android.annotation.SuppressLint;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
@@ -42,21 +43,29 @@ import org.chromium.base.PathUtils;
 import org.chromium.base.StrictModeContext;
 import org.chromium.base.TraceEvent;
 import org.chromium.base.annotations.CalledByNative;
+import org.chromium.base.annotations.DoNotInline;
 import org.chromium.base.annotations.JNINamespace;
 import org.chromium.base.annotations.NativeMethods;
 import org.chromium.base.compat.ApiHelperForO;
 import org.chromium.base.library_loader.LibraryLoader;
 import org.chromium.base.library_loader.LibraryProcessType;
 import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.base.task.AsyncTask;
+import org.chromium.base.task.BackgroundOnlyAsyncTask;
 import org.chromium.base.task.PostTask;
 import org.chromium.base.task.TaskTraits;
 import org.chromium.components.browser_ui.contacts_picker.ContactsPickerDialog;
 import org.chromium.components.browser_ui.photo_picker.DecoderServiceHost;
 import org.chromium.components.browser_ui.photo_picker.ImageDecoder;
+import org.chromium.components.browser_ui.photo_picker.PhotoPickerDelegateBase;
 import org.chromium.components.browser_ui.photo_picker.PhotoPickerDialog;
+import org.chromium.components.browser_ui.share.ClipboardImageFileProvider;
+import org.chromium.components.browser_ui.share.ShareImageFileUtils;
+import org.chromium.components.component_updater.ComponentLoaderPolicyBridge;
+import org.chromium.components.component_updater.EmbeddedComponentLoader;
 import org.chromium.components.embedder_support.application.ClassLoaderContextWrapperFactory;
 import org.chromium.components.embedder_support.application.FirebaseConfig;
-import org.chromium.components.embedder_support.util.Origin;
+import org.chromium.components.payments.PaymentDetailsUpdateService;
 import org.chromium.content_public.browser.BrowserStartupController;
 import org.chromium.content_public.browser.ChildProcessCreationParams;
 import org.chromium.content_public.browser.ChildProcessLauncherHelper;
@@ -65,8 +74,8 @@ import org.chromium.content_public.browser.ContactsPickerListener;
 import org.chromium.content_public.browser.DeviceUtils;
 import org.chromium.content_public.browser.SelectionPopupController;
 import org.chromium.net.NetworkChangeNotifier;
+import org.chromium.ui.base.Clipboard;
 import org.chromium.ui.base.PhotoPicker;
-import org.chromium.ui.base.PhotoPickerDelegate;
 import org.chromium.ui.base.PhotoPickerListener;
 import org.chromium.ui.base.ResourceBundle;
 import org.chromium.ui.base.SelectFileDialog;
@@ -95,8 +104,10 @@ import org.chromium.weblayer_private.settings.SettingsFragmentImpl;
 import java.io.File;
 import java.io.IOException;
 import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -128,6 +139,9 @@ public final class WebLayerImpl extends IWebLayer.Stub {
     // resources. If this value changes make sure to change _SHARED_LIBRARY_HARDCODED_ID in
     // //build/android/gyp/util/protoresources.py and WebViewChromiumFactoryProvider.java.
     private static final int REQUIRED_PACKAGE_IDENTIFIER = 36;
+
+    // 0 results in using the default value.
+    private static int sMaxNavigationsForInstanceState = 0;
 
     private final ProfileManager mProfileManager = new ProfileManager();
 
@@ -204,6 +218,9 @@ public final class WebLayerImpl extends IWebLayer.Stub {
         NetworkChangeNotifier.init();
         NetworkChangeNotifier.registerToReceiveNotificationsAlways();
 
+        // Native and variations has to be loaded before this.
+        loadComponents();
+
         // This issues JNI calls which require native code to be loaded.
         MetricsServiceClient.init();
 
@@ -245,7 +262,13 @@ public final class WebLayerImpl extends IWebLayer.Stub {
         // Load library in the background since it may be expensive.
         // TODO(crbug.com/1146438): Look into enabling relro sharing in browser process. It seems to
         // crash when WebView is loaded in the same process.
-        new Thread(() -> LibraryLoader.getInstance().loadNow()).start();
+        new BackgroundOnlyAsyncTask<Void>() {
+            @Override
+            protected Void doInBackground() {
+                LibraryLoader.getInstance().loadNow();
+                return null;
+            }
+        }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
 
         PackageInfo packageInfo = WebViewFactory.getLoadedPackageInfo();
 
@@ -318,22 +341,28 @@ public final class WebLayerImpl extends IWebLayer.Stub {
                 });
 
         DecoderServiceHost.setIntentSupplier(() -> { return createImageDecoderServiceIntent(); });
-        SelectFileDialog.setPhotoPickerDelegate(new PhotoPickerDelegate() {
+        SelectFileDialog.setPhotoPickerDelegate(new PhotoPickerDelegateBase() {
             @Override
             public PhotoPicker showPhotoPicker(WindowAndroid windowAndroid,
                     PhotoPickerListener listener, boolean allowMultiple, List<String> mimeTypes) {
                 PhotoPickerDialog dialog = new PhotoPickerDialog(windowAndroid,
                         windowAndroid.getContext().get().getContentResolver(), listener,
-                        allowMultiple, /* animatedThumbnailsSupported = */ false, mimeTypes);
+                        allowMultiple, mimeTypes);
                 dialog.show();
                 return dialog;
             }
-
-            @Override
-            public boolean supportsVideos() {
-                return false;
-            }
         });
+
+        Clipboard.getInstance().setImageFileProvider(new ClipboardImageFileProvider());
+
+        // Clear previously shared images from disk in the background.
+        new BackgroundOnlyAsyncTask<Void>() {
+            @Override
+            protected Void doInBackground() {
+                ShareImageFileUtils.clearSharedImages();
+                return null;
+            }
+        }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
 
         performDexFixIfNecessary(packageInfo);
 
@@ -474,6 +503,12 @@ public final class WebLayerImpl extends IWebLayer.Stub {
     }
 
     @Override
+    public IObjectWrapper createPaymentDetailsUpdateService() {
+        StrictModeWorkaround.apply();
+        return ObjectWrapper.wrap(new PaymentDetailsUpdateService());
+    }
+
+    @Override
     public void enumerateAllProfileNames(IObjectWrapper valueCallback) {
         StrictModeWorkaround.apply();
         final ValueCallback<String[]> callback =
@@ -513,8 +548,24 @@ public final class WebLayerImpl extends IWebLayer.Stub {
     }
 
     @Override
+    public String getXClientDataHeader() {
+        StrictModeWorkaround.apply();
+        return WebLayerImplJni.get().getXClientDataHeader();
+    }
+
+    @Override
     public IObjectWrapper getApplicationContext() {
         return ObjectWrapper.wrap(ContextUtils.getApplicationContext());
+    }
+
+    public static int getMaxNavigationsPerTabForInstanceState() {
+        try {
+            return (WebLayerFactoryImpl.getClientMajorVersion() >= 98)
+                    ? sClient.getMaxNavigationsPerTabForInstanceState()
+                    : 0;
+        } catch (RemoteException e) {
+            throw new APICallException(e);
+        }
     }
 
     public static Intent createIntent() {
@@ -607,13 +658,6 @@ public final class WebLayerImpl extends IWebLayer.Stub {
                 .append(context.getPackageManager().getApplicationLabel(
                         context.getApplicationInfo()))
                 .toString();
-    }
-
-    public static boolean isLocationPermissionManaged(Origin origin) {
-        if (origin == null) {
-            return false;
-        }
-        return WebLayerImplJni.get().isLocationPermissionManaged(origin.toString());
     }
 
     /**
@@ -899,10 +943,22 @@ public final class WebLayerImpl extends IWebLayer.Stub {
         }
     }
 
+    @SuppressLint("DiscouragedPrivateApi")
     private static Context createContextForMode(Context remoteContext, int uiMode) {
         Configuration configuration = new Configuration();
         configuration.uiMode = uiMode;
-        return remoteContext.createConfigurationContext(configuration);
+        Context context = remoteContext.createConfigurationContext(configuration);
+        // DrawableInflater uses the ClassLoader from the Resources object. We need to make sure
+        // this ClassLoader is correct. See crbug.com/1287000 and crbug.com/1293849 for more
+        // details.
+        try {
+            Field classLoaderField = Resources.class.getDeclaredField("mClassLoader");
+            classLoaderField.setAccessible(true);
+            classLoaderField.set(context.getResources(), WebLayerImpl.class.getClassLoader());
+        } catch (ReflectiveOperationException e) {
+            Log.e(TAG, "Error setting Resources ClassLoader.", e);
+        }
+        return context;
     }
 
     @CalledByNative
@@ -949,6 +1005,38 @@ public final class WebLayerImpl extends IWebLayer.Stub {
         });
     }
 
+    /**
+     * Load components files from {@link
+     * org.chromium.android_webview.services.ComponentsProviderService}.
+     */
+    private static void loadComponents() {
+        ComponentLoaderPolicyBridge[] componentPolicies =
+                WebLayerImplJni.get().getComponentLoaderPolicies();
+        // Don't connect to the service if there are no components to load.
+        if (componentPolicies.length == 0) {
+            return;
+        }
+        final Intent intent = new Intent();
+        intent.setClassName(getWebViewFactoryPackageName(),
+                EmbeddedComponentLoader.AW_COMPONENTS_PROVIDER_SERVICE);
+        new EmbeddedComponentLoader(Arrays.asList(componentPolicies)).connect(intent);
+    }
+
+    /**
+     * WebViewFactory is not a public android API so R8 is unable to compute its
+     * API level. This causes R8 to not be able to inline WebLayerImplJni#get
+     * into WebLayerImpl#loadComponents.
+
+     * References to WebViewFactory are in a separate method to avoid this issue
+     * and allow WebLayerImplJni#get to be inlined into WebLayerImpl#loadComponents.
+     * @DoNotInline is to avoid any similar inlining issues whenever this method
+     * is referenced.
+     */
+    @DoNotInline
+    private static String getWebViewFactoryPackageName() {
+        return WebViewFactory.getLoadedPackageInfo().packageName;
+    }
+
     @NativeMethods
     interface Natives {
         void setRemoteDebuggingEnabled(boolean enabled);
@@ -956,6 +1044,7 @@ public final class WebLayerImpl extends IWebLayer.Stub {
         void setIsWebViewCompatMode(boolean value);
         String getUserAgentString();
         void registerExternalExperimentIDs(int[] experimentIDs);
-        boolean isLocationPermissionManaged(String origin);
+        String getXClientDataHeader();
+        ComponentLoaderPolicyBridge[] getComponentLoaderPolicies();
     }
 }

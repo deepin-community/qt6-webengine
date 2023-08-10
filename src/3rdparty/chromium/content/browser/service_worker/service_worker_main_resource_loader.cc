@@ -10,9 +10,9 @@
 
 #include "base/bind.h"
 #include "base/callback_helpers.h"
+#include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/optional.h"
 #include "base/strings/strcat.h"
 #include "base/trace_event/trace_event.h"
 #include "content/browser/service_worker/service_worker_container_host.h"
@@ -21,11 +21,11 @@
 #include "content/browser/service_worker/service_worker_metrics.h"
 #include "content/browser/service_worker/service_worker_version.h"
 #include "content/common/fetch/fetch_request_type_converters.h"
-#include "content/common/service_worker/service_worker_loader_helpers.h"
-#include "content/common/service_worker/service_worker_utils.h"
 #include "content/public/browser/browser_thread.h"
 #include "services/network/public/cpp/features.h"
 #include "services/network/public/mojom/fetch_api.mojom.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "third_party/blink/public/common/service_worker/service_worker_loader_helpers.h"
 
 namespace content {
 
@@ -58,6 +58,9 @@ class ServiceWorkerMainResourceLoader::StreamWaiter
         base::BindOnce(&StreamWaiter::OnAborted, base::Unretained(this)));
   }
 
+  StreamWaiter(const StreamWaiter&) = delete;
+  StreamWaiter& operator=(const StreamWaiter&) = delete;
+
   // Implements mojom::ServiceWorkerStreamCallback.
   void OnCompleted() override {
     // Destroys |this|.
@@ -69,19 +72,17 @@ class ServiceWorkerMainResourceLoader::StreamWaiter
   }
 
  private:
-  ServiceWorkerMainResourceLoader* owner_;
+  raw_ptr<ServiceWorkerMainResourceLoader> owner_;
   mojo::Receiver<blink::mojom::ServiceWorkerStreamCallback> receiver_;
-
-  DISALLOW_COPY_AND_ASSIGN(StreamWaiter);
 };
 
 ServiceWorkerMainResourceLoader::ServiceWorkerMainResourceLoader(
     NavigationLoaderInterceptor::FallbackCallback fallback_callback,
     base::WeakPtr<ServiceWorkerContainerHost> container_host,
-    scoped_refptr<URLLoaderFactoryGetter> url_loader_factory_getter)
+    int frame_tree_node_id)
     : fallback_callback_(std::move(fallback_callback)),
       container_host_(std::move(container_host)),
-      url_loader_factory_getter_(std::move(url_loader_factory_getter)) {
+      frame_tree_node_id_(frame_tree_node_id) {
   TRACE_EVENT_WITH_FLOW0(
       "ServiceWorker",
       "ServiceWorkerMainResourceLoader::ServiceWorkerMainResourceLoader", this,
@@ -119,14 +120,14 @@ void ServiceWorkerMainResourceLoader::StartRequest(
                          "ServiceWorkerMainResourceLoader::StartRequest", this,
                          TRACE_EVENT_FLAG_FLOW_IN | TRACE_EVENT_FLAG_FLOW_OUT,
                          "url", resource_request.url.spec());
-  DCHECK(ServiceWorkerUtils::IsMainRequestDestination(
+  DCHECK(blink::ServiceWorkerLoaderHelpers::IsMainRequestDestination(
       resource_request.destination));
-  DCHECK_CURRENTLY_ON(ServiceWorkerContext::GetCoreThreadId());
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   resource_request_ = resource_request;
   if (container_host_ && container_host_->fetch_request_window_id()) {
     resource_request_.fetch_window_id =
-        base::make_optional(container_host_->fetch_request_window_id());
+        absl::make_optional(container_host_->fetch_request_window_id());
   }
 
   DCHECK(!receiver_.is_bound());
@@ -175,8 +176,7 @@ void ServiceWorkerMainResourceLoader::StartRequest(
 
   if (container_host_->IsContainerForWindowClient()) {
     did_navigation_preload_ = fetch_dispatcher_->MaybeStartNavigationPreload(
-        resource_request_, url_loader_factory_getter_.get(), std::move(context),
-        container_host_->frame_tree_node_id());
+        resource_request_, std::move(context), frame_tree_node_id_);
   }
 
   // Record worker start time here as |fetch_dispatcher_| will start a service
@@ -194,13 +194,22 @@ void ServiceWorkerMainResourceLoader::CommitResponseHeaders() {
       "response_code", response_head_->headers->response_code(), "status_text",
       response_head_->headers->GetStatusText());
   TransitionToStatus(Status::kSentHeader);
-  url_loader_client_->OnReceiveResponse(response_head_.Clone());
+  if (base::FeatureList::IsEnabled(network::features::kCombineResponseBody))
+    return;  // Will be sent in CommitResponseBody.
+
+  url_loader_client_->OnReceiveResponse(response_head_.Clone(),
+                                        mojo::ScopedDataPipeConsumerHandle());
 }
 
 void ServiceWorkerMainResourceLoader::CommitResponseBody(
     mojo::ScopedDataPipeConsumerHandle response_body) {
   TransitionToStatus(Status::kSentBody);
-  url_loader_client_->OnStartLoadingResponseBody(std::move(response_body));
+  if (base::FeatureList::IsEnabled(network::features::kCombineResponseBody)) {
+    url_loader_client_->OnReceiveResponse(response_head_.Clone(),
+                                          std::move(response_body));
+  } else {
+    url_loader_client_->OnStartLoadingResponseBody(std::move(response_body));
+  }
 }
 
 void ServiceWorkerMainResourceLoader::CommitEmptyResponseAndComplete() {
@@ -256,7 +265,7 @@ void ServiceWorkerMainResourceLoader::DidDispatchFetchEvent(
     blink::mojom::ServiceWorkerStreamHandlePtr body_as_stream,
     blink::mojom::ServiceWorkerFetchEventTimingPtr timing,
     scoped_refptr<ServiceWorkerVersion> version) {
-  DCHECK_CURRENTLY_ON(ServiceWorkerContext::GetCoreThreadId());
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
   DCHECK_EQ(status_, Status::kStarted);
 
   TRACE_EVENT_WITH_FLOW2(
@@ -336,13 +345,11 @@ void ServiceWorkerMainResourceLoader::StartResponse(
     blink::mojom::FetchAPIResponsePtr response,
     scoped_refptr<ServiceWorkerVersion> version,
     blink::mojom::ServiceWorkerStreamHandlePtr body_as_stream) {
-  DCHECK_CURRENTLY_ON(ServiceWorkerContext::GetCoreThreadId());
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
   DCHECK_EQ(status_, Status::kStarted);
 
-  ServiceWorkerLoaderHelpers::SaveResponseInfo(*response, response_head_.get());
-  ServiceWorkerLoaderHelpers::SaveResponseHeaders(
-      response->status_code, response->status_text, response->headers,
-      response_head_.get());
+  blink::ServiceWorkerLoaderHelpers::SaveResponseInfo(*response,
+                                                      response_head_.get());
 
   response_head_->did_service_worker_navigation_preload =
       did_navigation_preload_;
@@ -365,9 +372,9 @@ void ServiceWorkerMainResourceLoader::StartResponse(
 
   // Handle a redirect response. ComputeRedirectInfo returns non-null redirect
   // info if the given response is a redirect.
-  base::Optional<net::RedirectInfo> redirect_info =
-      ServiceWorkerLoaderHelpers::ComputeRedirectInfo(resource_request_,
-                                                      *response_head_);
+  absl::optional<net::RedirectInfo> redirect_info =
+      blink::ServiceWorkerLoaderHelpers::ComputeRedirectInfo(resource_request_,
+                                                             *response_head_);
   if (redirect_info) {
     TRACE_EVENT_WITH_FLOW2(
         "ServiceWorker", "ServiceWorkerMainResourceLoader::StartResponse", this,
@@ -404,7 +411,7 @@ void ServiceWorkerMainResourceLoader::StartResponse(
     DCHECK(response->blob->blob.is_valid());
     body_as_blob_.Bind(std::move(response->blob->blob));
     mojo::ScopedDataPipeConsumerHandle data_pipe;
-    int error = ServiceWorkerLoaderHelpers::ReadBlobResponseBody(
+    int error = blink::ServiceWorkerLoaderHelpers::ReadBlobResponseBody(
         &body_as_blob_, response->blob->size,
         base::BindOnce(&ServiceWorkerMainResourceLoader::OnBlobReadingComplete,
                        weak_factory_.GetWeakPtr()),
@@ -437,7 +444,7 @@ void ServiceWorkerMainResourceLoader::FollowRedirect(
     const std::vector<std::string>& removed_headers,
     const net::HttpRequestHeaders& modified_headers,
     const net::HttpRequestHeaders& modified_cors_exempt_headers,
-    const base::Optional<GURL>& new_url) {
+    const absl::optional<GURL>& new_url) {
   NOTIMPLEMENTED();
 }
 
@@ -545,10 +552,11 @@ void ServiceWorkerMainResourceLoader::RecordTimingMetrics(bool handled) {
         completion_time_ - response_head_->load_timing.receive_headers_end);
     // Same as above, breakdown by response source.
     base::UmaHistogramMediumTimes(
-        base::StrCat({"ServiceWorker.LoadTiming.MainFrame.MainResource."
-                      "ResponseReceivedToCompleted2",
-                      ServiceWorkerUtils::FetchResponseSourceToSuffix(
-                          response_source_)}),
+        base::StrCat(
+            {"ServiceWorker.LoadTiming.MainFrame.MainResource."
+             "ResponseReceivedToCompleted2",
+             blink::ServiceWorkerLoaderHelpers::FetchResponseSourceToSuffix(
+                 response_source_)}),
         completion_time_ - response_head_->load_timing.receive_headers_end);
   } else {
     // Renderer -> Browser IPC delay (network fallback case).

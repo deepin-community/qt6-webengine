@@ -6,6 +6,7 @@
 
 [
     Exposed=(Window,DedicatedWorker),
+    SecureContext,
     RuntimeEnabled=WebCodecs,
     ActiveScriptWrappable
 ] interface VideoEncoder {
@@ -14,7 +15,7 @@
 
     // The number of pending encode requests. This does not include requests
     // that have been sent to the underlying codec.
-    readonly attribute long encodeQueueSize;
+    readonly attribute unsigned long encodeQueueSize;
 
     // Enqueues a control message to configure the video encoder for encoding
     // frames as described by config.
@@ -48,4 +49,8 @@
 
     // Which state the encoder is in, indicating which methods can be called.
     readonly attribute CodecState state;
+
+    // Call prior to configure() to determine whether config will be supported.
+    [CallWith=ScriptState, RaisesException]
+    static Promise<VideoEncoderSupport> isConfigSupported(VideoEncoderConfig config);
 };

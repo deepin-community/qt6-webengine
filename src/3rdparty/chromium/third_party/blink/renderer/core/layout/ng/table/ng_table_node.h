@@ -5,6 +5,7 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_NG_TABLE_NG_TABLE_NODE_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_NG_TABLE_NG_TABLE_NODE_H_
 
+#include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/layout/ng/ng_block_node.h"
 
 #include "third_party/blink/renderer/core/layout/ng/table/ng_table_borders.h"
@@ -20,6 +21,8 @@ class CORE_EXPORT NGTableNode final : public NGBlockNode {
   const NGBoxStrut& GetTableBordersStrut() const;
 
   scoped_refptr<const NGTableBorders> GetTableBorders() const;
+
+  LayoutUnit ComputeCaptionBlockSize(const NGConstraintSpace& space) const;
 
   scoped_refptr<const NGTableTypes::Columns> GetColumnConstraints(
       const NGTableGroupedChildren&,
@@ -37,9 +40,6 @@ class CORE_EXPORT NGTableNode final : public NGBlockNode {
   // TODO(layout-dev): This isn't ideal, as we may have a fixed inline-size
   // parent where an "infinite" size would be fine.
   bool AllowColumnPercentages(bool is_layout_pass) const;
-
-  // True if table's intrinsic max size can be infinite.
-  bool AllowsInfiniteMaxInlineSize() const;
 };
 
 template <>

@@ -4,17 +4,18 @@
 
 #include "third_party/blink/renderer/core/script/script.h"
 
-#include "base/optional.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "third_party/blink/renderer/core/script_type_names.h"
 
 namespace blink {
 
-base::Optional<mojom::blink::ScriptType> Script::ParseScriptType(
+absl::optional<mojom::blink::ScriptType> Script::ParseScriptType(
     const String& script_type) {
-  if (script_type == "classic")
+  if (script_type == script_type_names::kClassic)
     return mojom::blink::ScriptType::kClassic;
-  if (script_type == "module")
+  if (script_type == script_type_names::kModule)
     return mojom::blink::ScriptType::kModule;
-  return base::nullopt;
+  return absl::nullopt;
 }
 
 }  // namespace blink

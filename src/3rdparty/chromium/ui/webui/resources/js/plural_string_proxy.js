@@ -7,7 +7,7 @@
  */
 
 // clang-format off
-import {addSingletonGetter, sendWithPromise} from './cr.m.js';
+import {sendWithPromise} from './cr.m.js';
 // clang-format on
 
 /** @interface */
@@ -50,12 +50,13 @@ export class PluralStringProxy {
 
 /** @implements {PluralStringProxy} */
 export class PluralStringProxyImpl {
-  /** @override */
+  // override
+  // Note: Not using @override because it breaks TypeScript.
   getPluralString(messageName, itemCount) {
     return sendWithPromise('getPluralString', messageName, itemCount);
   }
 
-  /** @override */
+  // override
   getPluralStringTupleWithComma(
       messageName1, itemCount1, messageName2, itemCount2) {
     return sendWithPromise(
@@ -63,13 +64,24 @@ export class PluralStringProxyImpl {
         itemCount2);
   }
 
-  /** @override */
+  // override
   getPluralStringTupleWithPeriods(
       messageName1, itemCount1, messageName2, itemCount2) {
     return sendWithPromise(
         'getPluralStringTupleWithPeriods', messageName1, itemCount1,
         messageName2, itemCount2);
   }
+
+  /** @return {!PluralStringProxy} */
+  static getInstance() {
+    return instance || (instance = new PluralStringProxyImpl());
+  }
+
+  /** @param {PluralStringProxy} obj */
+  static setInstance(obj) {
+    instance = obj;
+  }
 }
 
-addSingletonGetter(PluralStringProxyImpl);
+/** @type {?PluralStringProxy} */
+let instance = null;

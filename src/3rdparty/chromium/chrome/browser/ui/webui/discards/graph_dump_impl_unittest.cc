@@ -6,7 +6,9 @@
 
 #include <map>
 #include <set>
+#include <string>
 #include <utility>
+#include <vector>
 
 #include "base/containers/contains.h"
 #include "base/json/json_reader.h"
@@ -310,10 +312,10 @@ TEST_F(DiscardsGraphDumpImplTest, ChangeStream) {
               // Check that the descriptions make sense.
               for (auto kv : node_descriptions_json) {
                 keys_received.push_back(kv.first);
-                base::Optional<base::Value> v =
+                absl::optional<base::Value> v =
                     base::JSONReader::Read(kv.second);
                 EXPECT_TRUE(v->is_dict());
-                std::string* str = v->FindStringKey("test");
+                std::string* str = v->GetDict().FindString("test");
                 EXPECT_TRUE(str);
                 if (str) {
                   EXPECT_TRUE(*str == "frame" || *str == "page" ||

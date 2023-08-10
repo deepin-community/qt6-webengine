@@ -19,7 +19,7 @@
 #include "chrome/browser/ui/simple_message_box.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/feedback/system_logs/system_logs_fetcher.h"
-#include "components/signin/public/identity_manager/consent_level.h"
+#include "components/signin/public/base/consent_level.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/strings/grit/components_strings.h"
 #include "content/public/browser/browser_context.h"
@@ -29,11 +29,11 @@
 #if BUILDFLAG(IS_CHROMEOS_ASH)
 #include "base/strings/string_split.h"
 #include "base/system/sys_info.h"
+#include "chrome/browser/ash/arc/arc_util.h"
+#include "chrome/browser/ash/crosapi/browser_manager.h"
 #include "chrome/browser/ash/system_logs/iwlwifi_dump_log_source.h"
 #include "chrome/browser/ash/system_logs/single_debug_daemon_log_source.h"
 #include "chrome/browser/ash/system_logs/single_log_file_log_source.h"
-#include "chrome/browser/chromeos/arc/arc_util.h"
-#include "chrome/browser/chromeos/crosapi/browser_manager.h"
 #include "chrome/browser/extensions/component_loader.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "components/feedback/system_logs/system_logs_source.h"
@@ -71,7 +71,8 @@ ChromeFeedbackPrivateDelegate::GetStrings(
   std::unique_ptr<base::DictionaryValue> dict =
       std::make_unique<base::DictionaryValue>();
 
-#define SET_STRING(id, idr) dict->SetString(id, l10n_util::GetStringUTF16(idr))
+#define SET_STRING(id, idr) \
+  dict->SetStringKey(id, l10n_util::GetStringUTF16(idr))
   SET_STRING("pageTitle", from_crash
                               ? IDS_FEEDBACK_REPORT_PAGE_TITLE_SAD_TAB_FLOW
                               : IDS_FEEDBACK_REPORT_PAGE_TITLE);
@@ -118,10 +119,13 @@ ChromeFeedbackPrivateDelegate::GetStrings(
   return dict;
 }
 
-system_logs::SystemLogsFetcher*
-ChromeFeedbackPrivateDelegate::CreateSystemLogsFetcher(
-    content::BrowserContext* context) const {
-  return system_logs::BuildChromeSystemLogsFetcher(/*scrub_data=*/true);
+void ChromeFeedbackPrivateDelegate::FetchSystemInformation(
+    content::BrowserContext* context,
+    system_logs::SysLogsFetcherCallback callback) const {
+  // self-deleting object
+  auto* fetcher =
+      system_logs::BuildChromeSystemLogsFetcher(/*scrub_data=*/true);
+  fetcher->Fetch(std::move(callback));
 }
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
@@ -258,8 +262,7 @@ std::string ChromeFeedbackPrivateDelegate::GetSignedInUserEmail(
   if (!identity_manager)
     return std::string();
   // Browser sync consent is not required to use feedback.
-  return identity_manager
-      ->GetPrimaryAccountInfo(signin::ConsentLevel::kNotRequired)
+  return identity_manager->GetPrimaryAccountInfo(signin::ConsentLevel::kSignin)
       .email;
 }
 

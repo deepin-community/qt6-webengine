@@ -8,9 +8,7 @@
 #include <stddef.h>
 
 #include "base/base_export.h"
-#include "base/compiler_specific.h"
 #include "base/containers/queue.h"
-#include "base/optional.h"
 #include "base/sequence_token.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool/pooled_parallel_task_runner.h"
@@ -55,7 +53,7 @@ class BASE_EXPORT Sequence : public TaskSource {
 
     // Returns true if the sequence would need to be queued after receiving a
     // new Task.
-    bool WillPushTask() const WARN_UNUSED_RESULT;
+    [[nodiscard]] bool WillPushTask() const;
 
     // Adds |task| in a new slot at the end of the Sequence. This must only be
     // called after invoking WillPushTask().
@@ -82,7 +80,7 @@ class BASE_EXPORT Sequence : public TaskSource {
 
   // Begins a Transaction. This method cannot be called on a thread which has an
   // active Sequence::Transaction.
-  Transaction BeginTransaction() WARN_UNUSED_RESULT;
+  [[nodiscard]] Transaction BeginTransaction();
 
   // TaskSource:
   ExecutionEnvironment GetExecutionEnvironment() override;

@@ -5,6 +5,8 @@
 #ifndef NET_THIRD_PARTY_QUICHE_OVERRIDES_QUICHE_PLATFORM_IMPL_QUICHE_LOGGING_IMPL_H_
 #define NET_THIRD_PARTY_QUICHE_OVERRIDES_QUICHE_PLATFORM_IMPL_QUICHE_LOGGING_IMPL_H_
 
+#include <vector>
+
 #include "base/check_op.h"
 #include "base/logging.h"
 #include "base/notreached.h"
@@ -59,7 +61,7 @@
 #endif
 #define QUICHE_DLOG_INFO_IS_ON_IMPL() 0
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 // wingdi.h defines ERROR to be 0. When we call QUICHE_DLOG(ERROR), it gets
 // substituted with 0, and it expands to QUICHE_CHROMIUM_DLOG_0. To allow us to
 // keep using this syntax, we define this macro to do the same thing as

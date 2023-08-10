@@ -5,7 +5,6 @@
 #include "components/media_router/browser/media_router_dialog_controller.h"
 
 #include <memory>
-#include <vector>
 
 #include "base/bind.h"
 #include "build/build_config.h"
@@ -13,6 +12,7 @@
 #include "components/media_router/browser/presentation/start_presentation_context.h"
 #include "components/media_router/common/media_route.h"
 #include "components/media_router/common/media_source.h"
+#include "components/media_router/common/mojom/media_router.mojom.h"
 #include "components/media_router/common/route_request_result.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
@@ -21,7 +21,7 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 #include "components/media_router/browser/android/media_router_dialog_controller_android.h"
 #endif
 
@@ -72,10 +72,10 @@ class MediaRouterDialogControllerTest
   void SetUp() override {
     content::RenderViewHostTestHarness::SetUp();
 
-    web_contents_delegate_.reset(new MockWebContentsDelegate());
+    web_contents_delegate_ = std::make_unique<MockWebContentsDelegate>();
     web_contents()->SetDelegate(web_contents_delegate_.get());
-    dialog_controller_.reset(
-        new TestMediaRouterDialogController(web_contents()));
+    dialog_controller_ =
+        std::make_unique<TestMediaRouterDialogController>(web_contents());
   }
 
   void TearDown() override {
@@ -101,7 +101,7 @@ class MediaRouterDialogControllerTest
   std::unique_ptr<MockWebContentsDelegate> web_contents_delegate_;
 };
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 // The non-Android implementation is tested in
 // MediaRouterDialogControllerViewsTest.
 TEST_F(MediaRouterDialogControllerTest, CreateForWebContents) {
@@ -170,7 +170,7 @@ TEST_F(MediaRouterDialogControllerTest, StartPresentationContext) {
                      base::Unretained(this)));
 
   MediaRoute route("routeId", MediaSource::ForTab(1), "sinkId", "Description",
-                   false, false);
+                   false);
   auto result = RouteRequestResult::FromSuccess(route, "presentationId");
 
   EXPECT_CALL(*this, RequestSuccess(_, _, _)).Times(1);

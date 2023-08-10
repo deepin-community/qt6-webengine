@@ -12,6 +12,7 @@
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread_type.h"
+#include "third_party/blink/renderer/platform/wtf/vector.h"
 
 using ::testing::_;
 using ::testing::NiceMock;
@@ -74,6 +75,7 @@ class MockPaintWorkletInput : public cc::PaintWorkletInput {
   MOCK_CONST_METHOD0(WorkletId, int());
   MOCK_CONST_METHOD0(GetPropertyKeys,
                      const std::vector<PaintWorkletInput::PropertyKey>&());
+  MOCK_CONST_METHOD0(IsCSSPaintWorkletInput, bool());
 };
 
 cc::PaintWorkletInput* AddPaintWorkletInputToMap(cc::PaintWorkletJobMap& map,

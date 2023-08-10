@@ -9,25 +9,20 @@
 #include <memory>
 #include <vector>
 
-#include "base/compiler_specific.h"
-#include "base/containers/flat_map.h"
 #include "base/containers/flat_set.h"
-#include "base/macros.h"
-#include "base/optional.h"
 #include "build/build_config.h"
 #include "content/browser/devtools/devtools_agent_host_impl.h"
 #include "content/common/content_export.h"
-#include "content/common/navigation_params.mojom.h"
 #include "content/public/browser/render_process_host_observer.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "net/base/net_errors.h"
-#include "services/network/public/mojom/url_loader_factory.mojom.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 #include "mojo/public/cpp/bindings/remote.h"
 #include "services/device/public/mojom/wake_lock.mojom.h"
 #include "ui/android/view_android.h"
-#endif  // OS_ANDROID
+#endif  // BUILDFLAG(IS_ANDROID)
 
 namespace cc {
 class RenderFrameMetadata;
@@ -37,7 +32,9 @@ namespace content {
 
 class BrowserContext;
 class DevToolsFrameTraceRecorder;
+class FencedFrame;
 class FrameTreeNode;
+class FrameAutoAttacher;
 class NavigationRequest;
 class RenderFrameHostImpl;
 
@@ -66,16 +63,20 @@ class CONTENT_EXPORT RenderFrameDevToolsAgentHost
   // whether DevToolsAgentHost has actually been created.
   static bool ShouldCreateDevToolsForHost(RenderFrameHostImpl* rfh);
 
-  // This method is called when new frame is created for a portal or local root
-  // navigation.
-  static scoped_refptr<DevToolsAgentHost> CreateForLocalRootOrPortalNavigation(
-      NavigationRequest* request);
+  // This method is called when new frame is created for an emebedded page
+  // (portal or fenced frame) or local root navigation.
+  static scoped_refptr<DevToolsAgentHost>
+  CreateForLocalRootOrEmbeddedPageNavigation(NavigationRequest* request);
   static scoped_refptr<DevToolsAgentHost> FindForDangling(
       FrameTreeNode* frame_tree_node);
 
-  static void WebContentsMainFrameCreated(WebContents* web_contents);
+  RenderFrameDevToolsAgentHost(const RenderFrameDevToolsAgentHost&) = delete;
+  RenderFrameDevToolsAgentHost& operator=(const RenderFrameDevToolsAgentHost&) =
+      delete;
 
-#if defined(OS_ANDROID)
+  static void AttachToWebContents(WebContents* web_contents);
+
+#if BUILDFLAG(IS_ANDROID)
   static void SignalSynchronousSwapCompositorFrame(
       RenderFrameHost* frame_host,
       const cc::RenderFrameMetadata& frame_metadata);
@@ -85,6 +86,8 @@ class CONTENT_EXPORT RenderFrameDevToolsAgentHost
 
   void OnNavigationRequestWillBeSent(
       const NavigationRequest& navigation_request);
+  void UpdatePortals();
+  void DidCreateFencedFrame(FencedFrame* fenced_frame);
 
   // DevToolsAgentHost overrides.
   void DisconnectWebContents() override;
@@ -106,9 +109,9 @@ class CONTENT_EXPORT RenderFrameDevToolsAgentHost
   bool Close() override;
   base::TimeTicks GetLastActivityTime() override;
 
-  base::Optional<network::CrossOriginEmbedderPolicy>
+  absl::optional<network::CrossOriginEmbedderPolicy>
   cross_origin_embedder_policy(const std::string& id) override;
-  base::Optional<network::CrossOriginOpenerPolicy> cross_origin_opener_policy(
+  absl::optional<network::CrossOriginOpenerPolicy> cross_origin_opener_policy(
       const std::string& id) override;
 
   RenderFrameHostImpl* GetFrameHostForTesting() { return frame_host_; }
@@ -126,6 +129,7 @@ class CONTENT_EXPORT RenderFrameDevToolsAgentHost
   void DetachSession(DevToolsSession* session) override;
   void InspectElement(RenderFrameHost* frame_host, int x, int y) override;
   void UpdateRendererChannel(bool force) override;
+  protocol::TargetAutoAttacher* auto_attacher() override;
 
   // WebContentsObserver overrides.
   void DidStartNavigation(NavigationHandle* navigation_handle) override;
@@ -133,10 +137,9 @@ class CONTENT_EXPORT RenderFrameDevToolsAgentHost
   void DidFinishNavigation(NavigationHandle* navigation_handle) override;
   void RenderFrameHostChanged(RenderFrameHost* old_host,
                               RenderFrameHost* new_host) override;
-  void FrameDeleted(RenderFrameHost* rfh) override;
+  void FrameDeleted(int frame_tree_node_id) override;
   void RenderFrameDeleted(RenderFrameHost* rfh) override;
   void OnVisibilityChanged(content::Visibility visibility) override;
-  void OnPageScaleFactorChanged(float page_scale_factor) override;
 
   // RenderProcessHostObserver overrides.
   void RenderProcessExited(RenderProcessHost* host,
@@ -152,7 +155,7 @@ class CONTENT_EXPORT RenderFrameDevToolsAgentHost
 
   bool ShouldAllowSession(DevToolsSession* session);
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   device::mojom::WakeLock* GetWakeLock();
   void SynchronousSwapCompositorFrame(
       const cc::RenderFrameMetadata& frame_metadata);
@@ -160,11 +163,12 @@ class CONTENT_EXPORT RenderFrameDevToolsAgentHost
 
   void UpdateResourceLoaderFactories();
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   std::unique_ptr<DevToolsFrameTraceRecorder> frame_trace_recorder_;
   mojo::Remote<device::mojom::WakeLock> wake_lock_;
 #endif
 
+  std::unique_ptr<FrameAutoAttacher> auto_attacher_;
   // The active host we are talking to.
   RenderFrameHostImpl* frame_host_ = nullptr;
   base::flat_set<NavigationRequest*> navigation_requests_;
@@ -173,10 +177,6 @@ class CONTENT_EXPORT RenderFrameDevToolsAgentHost
 
   // The FrameTreeNode associated with this agent.
   FrameTreeNode* frame_tree_node_;
-
-  double page_scale_factor_ = 1;
-
-  DISALLOW_COPY_AND_ASSIGN(RenderFrameDevToolsAgentHost);
 };
 
 // Returns the ancestor FrameTreeNode* for which a RenderFrameDevToolsAgentHost

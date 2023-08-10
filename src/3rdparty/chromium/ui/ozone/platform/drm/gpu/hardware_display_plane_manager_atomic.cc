@@ -30,7 +30,7 @@ namespace ui {
 
 namespace {
 
-std::unique_ptr<gfx::GpuFence> CreateMergedGpuFenceFromFDs(
+gfx::GpuFenceHandle CreateMergedGpuFenceFromFDs(
     std::vector<base::ScopedFD> fence_fds) {
   base::ScopedFD merged_fd;
 
@@ -43,13 +43,11 @@ std::unique_ptr<gfx::GpuFence> CreateMergedGpuFenceFromFDs(
     }
   }
 
-  if (merged_fd.is_valid()) {
-    gfx::GpuFenceHandle handle;
+  gfx::GpuFenceHandle handle;
+  if (merged_fd.is_valid())
     handle.owned_fd = std::move(merged_fd);
-    return std::make_unique<gfx::GpuFence>(std::move(handle));
-  }
 
-  return nullptr;
+  return handle;
 }
 
 std::vector<uint32_t> GetCrtcIdsOfPlanes(
@@ -94,15 +92,24 @@ bool HardwareDisplayPlaneManagerAtomic::SetConnectorProps(
     drmModeAtomicReq* atomic_request,
     uint32_t connector_id,
     uint32_t crtc_id) {
-  int connector_index = LookupConnectorIndex(connector_id);
-  DCHECK_GE(connector_index, 0);
+  auto connector_index = LookupConnectorIndex(connector_id);
+  DCHECK(connector_index.has_value());
   // Only making a copy here to retrieve the the props IDs. The state will be
   // updated only after a successful modeset.
-  ConnectorProperties connector_props = connectors_props_[connector_index];
+  ConnectorProperties connector_props = connectors_props_[*connector_index];
   connector_props.crtc_id.value = crtc_id;
+  // Always set link-status to DRM_MODE_LINK_STATUS_GOOD. In case a link
+  // training has failed and link-status is now BAD, the kernel expects the
+  // userspace to reset it to GOOD; otherwise, it will ignore modeset requests
+  // which have the same mode as the reported bad status.
+  // https://www.kernel.org/doc/html/latest/gpu/drm-kms.html#standard-connector-properties
+  connector_props.link_status.value = DRM_MODE_LINK_STATUS_GOOD;
 
-  return AddPropertyIfValid(atomic_request, connector_id,
-                            connector_props.crtc_id);
+  bool status =
+      AddPropertyIfValid(atomic_request, connector_id, connector_props.crtc_id);
+  status &= AddPropertyIfValid(atomic_request, connector_id,
+                               connector_props.link_status);
+  return status;
 }
 
 bool HardwareDisplayPlaneManagerAtomic::Commit(CommitRequest commit_request,
@@ -215,7 +222,13 @@ void HardwareDisplayPlaneManagerAtomic::SetAtomicPropsForCommit(
   }
 
   for (uint32_t crtc : crtcs) {
-    int idx = LookupCrtcIndex(crtc);
+    // This is actually pretty important, since these CRTC lists are generated
+    // from planes who may or may not have crtcs ids set to 0 when not in use
+    // (or when waiting for vblank).
+    // TODO(b/189073356): See if we can use a DCHECK after we clean things up
+    auto idx = LookupCrtcIndex(crtc);
+    if (!idx)
+      continue;
 
 #if defined(COMMIT_PROPERTIES_ON_PAGE_FLIP)
     // Apply all CRTC properties in the page-flip so we don't block the
@@ -223,14 +236,14 @@ void HardwareDisplayPlaneManagerAtomic::SetAtomicPropsForCommit(
     // TODO(dnicoara): See if we can apply these properties async using
     // DRM_MODE_ATOMIC_ASYNC_UPDATE flag when committing.
     AddPropertyIfValid(atomic_request, crtc,
-                       crtc_state_[idx].properties.degamma_lut);
+                       crtc_state_[*idx].properties.degamma_lut);
     AddPropertyIfValid(atomic_request, crtc,
-                       crtc_state_[idx].properties.gamma_lut);
-    AddPropertyIfValid(atomic_request, crtc, crtc_state_[idx].properties.ctm);
+                       crtc_state_[*idx].properties.gamma_lut);
+    AddPropertyIfValid(atomic_request, crtc, crtc_state_[*idx].properties.ctm);
 #endif
 
     AddPropertyIfValid(atomic_request, crtc,
-                       crtc_state_[idx].properties.background_color);
+                       crtc_state_[*idx].properties.background_color);
   }
 
   if (test_only) {
@@ -248,7 +261,7 @@ void HardwareDisplayPlaneManagerAtomic::SetAtomicPropsForCommit(
 bool HardwareDisplayPlaneManagerAtomic::Commit(
     HardwareDisplayPlaneList* plane_list,
     scoped_refptr<PageFlipRequest> page_flip_request,
-    std::unique_ptr<gfx::GpuFence>* out_fence) {
+    gfx::GpuFenceHandle* release_fence) {
   bool test_only = !page_flip_request;
 
   std::vector<uint32_t> crtcs = GetCrtcIdsOfPlanes(*plane_list);
@@ -266,7 +279,7 @@ bool HardwareDisplayPlaneManagerAtomic::Commit(
   std::vector<base::ScopedFD> out_fence_fds;
   {
     std::vector<base::ScopedFD::Receiver> out_fence_fd_receivers;
-    if (out_fence) {
+    if (release_fence) {
       if (!AddOutFencePtrProperties(plane_list->atomic_property_set.get(),
                                     crtcs, &out_fence_fds,
                                     &out_fence_fd_receivers)) {
@@ -291,8 +304,8 @@ bool HardwareDisplayPlaneManagerAtomic::Commit(
     }
   }
 
-  if (out_fence)
-    *out_fence = CreateMergedGpuFenceFromFDs(std::move(out_fence_fds));
+  if (release_fence)
+    *release_fence = CreateMergedGpuFenceFromFDs(std::move(out_fence_fds));
 
   plane_list->plane_list.clear();
   plane_list->atomic_property_set.reset(drmModeAtomicAlloc());
@@ -331,15 +344,12 @@ bool HardwareDisplayPlaneManagerAtomic::SetColorCorrectionOnAllCrtcPlanes(
   ScopedDrmPropertyBlob property_blob(
       drm_->CreatePropertyBlob(ctm_blob_data.get(), sizeof(drm_color_ctm)));
 
-  const int crtc_index = LookupCrtcIndex(crtc_id);
-  DCHECK_GE(crtc_index, 0);
-
   for (auto& plane : planes_) {
     HardwareDisplayPlaneAtomic* atomic_plane =
         static_cast<HardwareDisplayPlaneAtomic*>(plane.get());
 
     // This assumes planes can only belong to one crtc.
-    if (!atomic_plane->CanUseForCrtc(crtc_index))
+    if (!atomic_plane->CanUseForCrtcId(crtc_id))
       continue;
 
     if (!atomic_plane->SetPlaneCtm(property_set.get(), property_blob->id())) {
@@ -492,9 +502,9 @@ bool HardwareDisplayPlaneManagerAtomic::AddOutFencePtrProperties(
 
   for (uint32_t crtc : crtcs) {
     const auto crtc_index = LookupCrtcIndex(crtc);
-    DCHECK_GE(crtc_index, 0);
+    DCHECK(crtc_index.has_value());
     const auto out_fence_ptr_id =
-        crtc_state_[crtc_index].properties.out_fence_ptr.id;
+        crtc_state_[*crtc_index].properties.out_fence_ptr.id;
 
     if (out_fence_ptr_id > 0) {
       out_fence_fds->push_back(base::ScopedFD());

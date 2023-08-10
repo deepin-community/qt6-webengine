@@ -2,11 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import {assertNotReached} from 'chrome://resources/js/assert.m.js';
+import {$, createElementWithClassName} from 'chrome://resources/js/util.m.js';
 import {Url} from 'chrome://resources/mojo/url/mojom/url.mojom-webui.js';
 
 import {SiteEngagementDetails, SiteEngagementDetailsProvider, SiteEngagementDetailsProviderRemote} from './site_engagement_details.mojom-webui.js';
 
-(function() {
 let resolvePageIsPopulated = null;
 const pageIsPopulatedPromise = new Promise((resolve, reject) => {
   resolvePageIsPopulated = resolve;
@@ -36,7 +37,7 @@ function initialize() {
   for (let i = 0; i < headers.length; i++) {
     headers[i].addEventListener('click', (e) => {
       const newSortKey = e.target.getAttribute('sort-key');
-      if (sortKey == newSortKey) {
+      if (sortKey === newSortKey) {
         sortReverse = !sortReverse;
       } else {
         sortKey = newSortKey;
@@ -157,12 +158,12 @@ function initialize() {
     const val2 = b[sortKey];
 
     // Compare the hosts of the origin ignoring schemes.
-    if (sortKey == 'origin') {
+    if (sortKey === 'origin') {
       return new URL(val1.url).host > new URL(val2.url).host ? 1 : -1;
     }
 
-    if (sortKey == 'baseScore' || sortKey == 'bonusScore' ||
-        sortKey == 'totalScore') {
+    if (sortKey === 'baseScore' || sortKey === 'bonusScore' ||
+        sortKey === 'totalScore') {
       return val1 - val2;
     }
 
@@ -217,4 +218,3 @@ function initialize() {
 }
 
 document.addEventListener('DOMContentLoaded', initialize);
-})();

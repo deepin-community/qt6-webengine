@@ -9,23 +9,27 @@
 #include "services/network/public/mojom/trust_tokens.mojom.h"
 #include "services/network/trust_tokens/pending_trust_token_store.h"
 #include "services/network/trust_tokens/suitable_trust_token_origin.h"
+#include "services/network/trust_tokens/trust_token_key_commitments.h"
 #include "url/url_constants.h"
 
 namespace network {
 
 HasTrustTokensAnswerer::HasTrustTokensAnswerer(
     SuitableTrustTokenOrigin top_frame_origin,
-    PendingTrustTokenStore* pending_trust_token_store)
+    PendingTrustTokenStore* pending_trust_token_store,
+    const SynchronousTrustTokenKeyCommitmentGetter* key_commitment_getter)
     : top_frame_origin_(std::move(top_frame_origin)),
-      pending_trust_token_store_(pending_trust_token_store) {
+      pending_trust_token_store_(pending_trust_token_store),
+      key_commitment_getter_(key_commitment_getter) {
   DCHECK(pending_trust_token_store);
+  DCHECK(key_commitment_getter);
 }
 
 HasTrustTokensAnswerer::~HasTrustTokensAnswerer() = default;
 
 void HasTrustTokensAnswerer::HasTrustTokens(const url::Origin& issuer,
                                             HasTrustTokensCallback callback) {
-  base::Optional<SuitableTrustTokenOrigin> maybe_suitable_issuer =
+  absl::optional<SuitableTrustTokenOrigin> maybe_suitable_issuer =
       SuitableTrustTokenOrigin::Create(issuer);
 
   if (!maybe_suitable_issuer) {
@@ -52,6 +56,12 @@ void HasTrustTokensAnswerer::AnswerQueryWithStore(
         /*has_trust_tokens=*/false));
     return;
   }
+
+  const mojom::TrustTokenKeyCommitmentResultPtr result =
+      key_commitment_getter_->GetSync(issuer.origin());
+
+  if (result)
+    trust_token_store->PruneStaleIssuerState(issuer, result->keys);
 
   bool has_trust_tokens = trust_token_store->CountTokens(issuer);
   std::move(callback).Run(mojom::HasTrustTokensResult::New(

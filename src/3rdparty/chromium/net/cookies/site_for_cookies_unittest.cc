@@ -4,6 +4,7 @@
 
 #include "net/cookies/site_for_cookies.h"
 
+#include <string>
 #include <vector>
 
 #include "base/strings/strcat.h"
@@ -18,10 +19,10 @@
 namespace net {
 namespace {
 
-class SchemefulSiteForCookiesTest : public ::testing::Test {
+class SchemelessSiteForCookiesTest : public ::testing::Test {
  public:
-  SchemefulSiteForCookiesTest() {
-    scope_feature_list_.InitAndEnableFeature(features::kSchemefulSameSite);
+  SchemelessSiteForCookiesTest() {
+    scope_feature_list_.InitAndDisableFeature(features::kSchemefulSameSite);
   }
 
  protected:
@@ -93,7 +94,7 @@ TEST(SiteForCookiesTest, Default) {
             should_match_none.ToDebugString());
 }
 
-TEST(SiteForCookiesTest, Basic) {
+TEST_F(SchemelessSiteForCookiesTest, Basic) {
   std::vector<GURL> equivalent = {
       GURL("https://example.com"),
       GURL("http://sub1.example.com:42/something"),
@@ -108,8 +109,9 @@ TEST(SiteForCookiesTest, Basic) {
   TestEquivalentAndDistinct(equivalent, distinct, "example.com");
 }
 
-// Similar to SiteForCookiesTest_Basic with a focus on testing secure SFCs.
-TEST_F(SchemefulSiteForCookiesTest, BasicSecure) {
+// Similar to SchemelessSiteForCookiesTest_Basic with a focus on testing secure
+// SFCs.
+TEST(SiteForCookiesTest, BasicSecure) {
   std::vector<GURL> equivalent = {GURL("https://example.com"),
                                   GURL("wss://example.com"),
                                   GURL("https://sub1.example.com:42/something"),
@@ -124,8 +126,9 @@ TEST_F(SchemefulSiteForCookiesTest, BasicSecure) {
   TestEquivalentAndDistinct(equivalent, distinct, "example.com");
 }
 
-// Similar to SiteForCookiesTest_Basic with a focus on testing insecure SFCs.
-TEST_F(SchemefulSiteForCookiesTest, BasicInsecure) {
+// Similar to SchemelessSiteForCookiesTest_Basic with a focus on testing
+// insecure SFCs.
+TEST(SiteForCookiesTest, BasicInsecure) {
   std::vector<GURL> equivalent = {GURL("http://example.com"),
                                   GURL("ws://example.com"),
                                   GURL("http://sub1.example.com:42/something"),
@@ -149,7 +152,7 @@ TEST(SiteForCookiesTest, File) {
   TestEquivalentAndDistinct(equivalent, distinct, "");
 }
 
-TEST(SiteForCookiesTest, Extension) {
+TEST_F(SchemelessSiteForCookiesTest, Extension) {
   url::ScopedSchemeRegistryForTests scoped_registry;
   url::AddStandardScheme("chrome-extension", url::SCHEME_WITH_HOST);
   std::vector<GURL> equivalent = {GURL("chrome-extension://abc/"),
@@ -163,9 +166,9 @@ TEST(SiteForCookiesTest, Extension) {
   TestEquivalentAndDistinct(equivalent, distinct, "abc");
 }
 
-// Similar to SiteForCookiesTest_Extension with a focus on ensuring that http(s)
-// schemes are distinct.
-TEST_F(SchemefulSiteForCookiesTest, Extension) {
+// Similar to SchemelessSiteForCookiesTest_Extension with a focus on ensuring
+// that http(s) schemes are distinct.
+TEST(SiteForCookiesTest, Extension) {
   url::ScopedSchemeRegistryForTests scoped_registry;
   url::AddStandardScheme("chrome-extension", url::SCHEME_WITH_HOST);
   std::vector<GURL> equivalent = {
@@ -192,7 +195,7 @@ TEST(SiteForCookiesTest, NonStandard) {
   TestEquivalentAndDistinct(equivalent, distinct, "");
 }
 
-TEST(SiteForCookiesTest, Blob) {
+TEST_F(SchemelessSiteForCookiesTest, Blob) {
   // This case isn't really well-specified and is inconsistent between
   // different user agents; the behavior chosen here was to be more
   // consistent between url and origin handling.
@@ -210,8 +213,8 @@ TEST(SiteForCookiesTest, Blob) {
       SiteForCookies::FromUrl(GURL("http://www.example.org:631"))));
 }
 
-// Similar to SiteForCookiesTest_Blob with a focus on a secure blob.
-TEST_F(SchemefulSiteForCookiesTest, SecureBlob) {
+// Similar to SchemelessSiteForCookiesTest_Blob with a focus on a secure blob.
+TEST(SiteForCookiesTest, SecureBlob) {
   SiteForCookies from_blob = SiteForCookies::FromUrl(
       GURL("blob:https://example.org/9115d58c-bcda-ff47-86e5-083e9a2153041"));
 
@@ -227,8 +230,9 @@ TEST_F(SchemefulSiteForCookiesTest, SecureBlob) {
       SiteForCookies::FromUrl(GURL("http://www.example.org:631"))));
 }
 
-// Similar to SiteForCookiesTest_Blob with a focus on an insecure blob.
-TEST_F(SchemefulSiteForCookiesTest, InsecureBlob) {
+// Similar to SchemelessSiteForCookiesTest_Blob with a focus on an insecure
+// blob.
+TEST(SiteForCookiesTest, InsecureBlob) {
   SiteForCookies from_blob = SiteForCookies::FromUrl(
       GURL("blob:http://example.org/9115d58c-bcda-ff47-86e5-083e9a2153041"));
 
@@ -245,7 +249,7 @@ TEST_F(SchemefulSiteForCookiesTest, InsecureBlob) {
       SiteForCookies::FromUrl(GURL("https://www.example.org:631"))));
 }
 
-TEST(SiteForCookiesTest, Wire) {
+TEST_F(SchemelessSiteForCookiesTest, Wire) {
   SiteForCookies out;
 
   // Empty one.
@@ -295,9 +299,9 @@ TEST(SiteForCookiesTest, Wire) {
             out.ToDebugString());
 }
 
-// Similar to SiteForCookiesTest_Wire except that schemefully_same has an
-// effect (makes IsNull() return true if schemefully_same is false).
-TEST_F(SchemefulSiteForCookiesTest, Wire) {
+// Similar to SchemelessSiteForCookiesTest_Wire except that schemefully_same has
+// an effect (makes IsNull() return true if schemefully_same is false).
+TEST(SiteForCookiesTest, Wire) {
   SiteForCookies out;
 
   // Empty one.
@@ -356,7 +360,7 @@ TEST_F(SchemefulSiteForCookiesTest, Wire) {
       out.ToDebugString());
 }
 
-TEST_F(SchemefulSiteForCookiesTest, SchemefulSite) {
+TEST(SiteForCookiesTest, SchemefulSite) {
   const char* kTestCases[] = {"opaque.com",
                               "http://a.com",
                               "https://sub1.example.com:42/something",
@@ -499,6 +503,29 @@ TEST(SiteForCookiesTest, CompareWithFrameTreeSiteAndReviseOpaque) {
   EXPECT_EQ(candidate4.site(), opaque_site1);
 }
 
+TEST(SiteForCookiesTest, NotSchemefullySameEquivalent) {
+  SiteForCookies first =
+      SiteForCookies::FromUrl(GURL("https://www.example.com"));
+  SiteForCookies second =
+      SiteForCookies::FromUrl(GURL("https://www.example.com"));
+  // Smoke check that two SFCs should match when they're the same.
+  EXPECT_TRUE(first.IsEquivalent(second));
+  EXPECT_TRUE(second.IsEquivalent(first));
+
+  // Two SFC should not be equivalent to each other when one of their
+  // schemefully_same_ flags is false, even if they're otherwise the same, when
+  // Schemeful Same-Site is enabled.
+  second.SetSchemefullySameForTesting(false);
+  EXPECT_FALSE(first.IsEquivalent(second));
+  EXPECT_FALSE(second.IsEquivalent(first));
+
+  // However, they should match if both their schemefully_same_ flags are false.
+  // Because they're both considered null at that point.
+  first.SetSchemefullySameForTesting(false);
+  EXPECT_TRUE(first.IsEquivalent(second));
+  EXPECT_TRUE(second.IsEquivalent(first));
+}
+
 }  // namespace
 
 TEST(SiteForCookiesTest, SameScheme) {
@@ -574,6 +601,32 @@ TEST(SiteForCookiesTest, SameSchemeOpaque) {
     // null SFCs.
     EXPECT_FALSE(nonsecure_sfc.schemefully_same());
   }
+}
+
+// Quick correctness check that the less-than operator works as expected.
+TEST(SiteForCookiesTest, LessThan) {
+  SiteForCookies first = SiteForCookies::FromUrl(GURL("https://example.com"));
+  SiteForCookies second =
+      SiteForCookies::FromUrl(GURL("https://examplelonger.com"));
+  SiteForCookies third =
+      SiteForCookies::FromUrl(GURL("https://examplelongerstill.com"));
+
+  SiteForCookies null1 = SiteForCookies();
+  SiteForCookies null2 =
+      SiteForCookies::FromUrl(GURL("https://examplelongerstillstill.com"));
+  null2.SetSchemefullySameForTesting(false);
+
+  EXPECT_LT(first, second);
+  EXPECT_LT(second, third);
+  EXPECT_LT(first, third);
+  EXPECT_LT(null1, first);
+  EXPECT_LT(null2, first);
+
+  EXPECT_FALSE(second < first);
+  EXPECT_FALSE(first < null1);
+  EXPECT_FALSE(first < null2);
+  EXPECT_FALSE(null1 < null2);
+  EXPECT_FALSE(null2 < null1);
 }
 
 }  // namespace net

@@ -83,9 +83,10 @@ protected:
                     SkRect::MakeWH(fLayerSize.width(), fLayerSize.height()), tile);
 
         const auto tm = fMirrorEdges ? SkTileMode::kMirror : SkTileMode::kRepeat;
-        auto layer_shader = fLayerPicture->makeShader(tm, tm, &layerShaderMatrix);
+        auto layer_shader = fLayerPicture->makeShader(tm, tm, SkFilterMode::kLinear,
+                                                      &layerShaderMatrix, nullptr);
 
-        if (fPhase) {
+        if (fPhase && layer_shader && tile.isFinite()) {
             // To implement AE phase semantics, we construct a mask shader for the pass-through
             // rows/columns.  We then draw the layer content through this mask, and then again
             // through the inverse mask with a phase shift.
@@ -137,6 +138,11 @@ protected:
 
         SkPaint paint;
         paint.setAntiAlias(true);
+
+        if (ctx) {
+            // apply any pending paint effects via the shader paint
+            ctx->modulatePaint(canvas->getLocalToDeviceAs3x3(), &paint);
+        }
 
         paint.setShader(fMainPassShader);
         canvas->drawRect(this->bounds(), paint);

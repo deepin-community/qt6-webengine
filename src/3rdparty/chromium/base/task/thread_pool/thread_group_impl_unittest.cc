@@ -19,6 +19,7 @@
 #include "base/callback.h"
 #include "base/callback_helpers.h"
 #include "base/memory/ptr_util.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/metrics/histogram.h"
 #include "base/metrics/histogram_samples.h"
@@ -27,7 +28,9 @@
 #include "base/synchronization/condition_variable.h"
 #include "base/synchronization/lock.h"
 #include "base/task/task_features.h"
+#include "base/task/task_runner.h"
 #include "base/task/thread_pool/delayed_task_manager.h"
+#include "base/task/thread_pool/environment_config.h"
 #include "base/task/thread_pool/pooled_task_runner_delegate.h"
 #include "base/task/thread_pool/sequence.h"
 #include "base/task/thread_pool/task_source_sort_key.h"
@@ -35,7 +38,6 @@
 #include "base/task/thread_pool/test_task_factory.h"
 #include "base/task/thread_pool/test_utils.h"
 #include "base/task/thread_pool/worker_thread_observer.h"
-#include "base/task_runner.h"
 #include "base/test/bind.h"
 #include "base/test/gtest_util.h"
 #include "base/test/metrics/histogram_tester.h"
@@ -52,6 +54,7 @@
 #include "base/timer/timer.h"
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace base {
 namespace internal {
@@ -63,8 +66,7 @@ constexpr size_t kNumTasksPostedPerThread = 150;
 // This can't be lower because Windows' TestWaitableEvent wakes up too early
 // when a small timeout is used. This results in many spurious wake ups before a
 // worker is allowed to cleanup.
-constexpr TimeDelta kReclaimTimeForCleanupTests =
-    TimeDelta::FromMilliseconds(500);
+constexpr TimeDelta kReclaimTimeForCleanupTests = Milliseconds(500);
 constexpr size_t kLargeNumber = 512;
 
 class ThreadGroupImplImplTestBase : public ThreadGroup::Delegate {
@@ -86,23 +88,24 @@ class ThreadGroupImplImplTestBase : public ThreadGroup::Delegate {
     thread_group_.reset();
   }
 
-  void CreateThreadGroup() {
+  void CreateThreadGroup(ThreadPriority priority = ThreadPriority::NORMAL) {
     ASSERT_FALSE(thread_group_);
     service_thread_.Start();
     delayed_task_manager_.Start(service_thread_.task_runner());
     thread_group_ = std::make_unique<ThreadGroupImpl>(
-        "TestThreadGroup", "A", ThreadPriority::NORMAL,
-        task_tracker_.GetTrackedRef(), tracked_ref_factory_.GetTrackedRef());
+        "TestThreadGroup", "A", priority, task_tracker_.GetTrackedRef(),
+        tracked_ref_factory_.GetTrackedRef());
     ASSERT_TRUE(thread_group_);
 
     mock_pooled_task_runner_delegate_.SetThreadGroup(thread_group_.get());
   }
 
-  void StartThreadGroup(TimeDelta suggested_reclaim_time,
-                        size_t max_tasks,
-                        Optional<int> max_best_effort_tasks = nullopt,
-                        WorkerThreadObserver* worker_observer = nullptr,
-                        Optional<TimeDelta> may_block_threshold = nullopt) {
+  void StartThreadGroup(
+      TimeDelta suggested_reclaim_time,
+      size_t max_tasks,
+      absl::optional<int> max_best_effort_tasks = absl::nullopt,
+      WorkerThreadObserver* worker_observer = nullptr,
+      absl::optional<TimeDelta> may_block_threshold = absl::nullopt) {
     ASSERT_TRUE(thread_group_);
     thread_group_->Start(
         max_tasks,
@@ -115,9 +118,9 @@ class ThreadGroupImplImplTestBase : public ThreadGroup::Delegate {
   void CreateAndStartThreadGroup(
       TimeDelta suggested_reclaim_time = TimeDelta::Max(),
       size_t max_tasks = kMaxTasks,
-      Optional<int> max_best_effort_tasks = nullopt,
+      absl::optional<int> max_best_effort_tasks = absl::nullopt,
       WorkerThreadObserver* worker_observer = nullptr,
-      Optional<TimeDelta> may_block_threshold = nullopt) {
+      absl::optional<TimeDelta> may_block_threshold = absl::nullopt) {
     CreateThreadGroup();
     StartThreadGroup(suggested_reclaim_time, max_tasks, max_best_effort_tasks,
                      worker_observer, may_block_threshold);
@@ -201,7 +204,7 @@ class ThreadPostingTasksWaitIdle : public SimpleThread {
     }
   }
 
-  ThreadGroupImpl* const thread_group_;
+  const raw_ptr<ThreadGroupImpl> thread_group_;
   const scoped_refptr<TaskRunner> task_runner_;
   test::TestTaskFactory factory_;
 };
@@ -523,6 +526,74 @@ TEST_F(ThreadGroupImplImplStartInBodyTest, PostManyTasks) {
 
 namespace {
 
+class BackgroundThreadGroupImplTest : public ThreadGroupImplImplTest {
+ public:
+  void CreateAndStartThreadGroup(
+      TimeDelta suggested_reclaim_time = TimeDelta::Max(),
+      size_t max_tasks = kMaxTasks,
+      absl::optional<int> max_best_effort_tasks = absl::nullopt,
+      WorkerThreadObserver* worker_observer = nullptr,
+      absl::optional<TimeDelta> may_block_threshold = absl::nullopt) {
+    if (!CanUseBackgroundPriorityForWorkerThread())
+      return;
+    CreateThreadGroup(ThreadPriority::BACKGROUND);
+    StartThreadGroup(suggested_reclaim_time, max_tasks, max_best_effort_tasks,
+                     worker_observer, may_block_threshold);
+  }
+
+  void SetUp() override { CreateAndStartThreadGroup(); }
+};
+
+}  // namespace
+
+// Verify that ScopedBlockingCall updates thread priority when necessary per
+// shutdown state.
+TEST_F(BackgroundThreadGroupImplTest, UpdatePriorityBlockingStarted) {
+  if (!CanUseBackgroundPriorityForWorkerThread())
+    return;
+
+  const scoped_refptr<TaskRunner> task_runner = test::CreatePooledTaskRunner(
+      {MayBlock(), WithBaseSyncPrimitives(), TaskPriority::BEST_EFFORT},
+      &mock_pooled_task_runner_delegate_);
+
+  TestWaitableEvent threads_running;
+  RepeatingClosure threads_running_barrier = BarrierClosure(
+      kMaxTasks,
+      BindOnce(&TestWaitableEvent::Signal, Unretained(&threads_running)));
+
+  TestWaitableEvent blocking_threads_continue;
+
+  for (size_t i = 0; i < kMaxTasks; ++i) {
+    task_runner->PostTask(
+        FROM_HERE, BindLambdaForTesting([&]() {
+          EXPECT_EQ(ThreadPriority::BACKGROUND,
+                    PlatformThread::GetCurrentThreadPriority());
+          {
+            // ScopedBlockingCall before shutdown doesn't affect priority.
+            ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                    BlockingType::MAY_BLOCK);
+            EXPECT_EQ(ThreadPriority::BACKGROUND,
+                      PlatformThread::GetCurrentThreadPriority());
+          }
+          threads_running_barrier.Run();
+          blocking_threads_continue.Wait();
+          // This is reached after StartShutdown(), at which point we expect
+          // ScopedBlockingCall to update thread priority.
+          ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                  BlockingType::MAY_BLOCK);
+          EXPECT_EQ(ThreadPriority::NORMAL,
+                    PlatformThread::GetCurrentThreadPriority());
+        }));
+  }
+  threads_running.Wait();
+
+  task_tracker_.StartShutdown();
+  blocking_threads_continue.Signal();
+  task_tracker_.FlushForTesting();
+}
+
+namespace {
+
 constexpr size_t kMagicTlsValue = 42;
 
 class ThreadGroupImplCheckTlsReuse : public ThreadGroupImplImplTest {
@@ -823,8 +894,9 @@ TEST_F(ThreadGroupImplStandbyPolicyTest, InAndOutStandbyThreadIsActive) {
   PlatformThread::Sleep(kReclaimTimeForCleanupTests * 2);
   EXPECT_EQ(2U, thread_group_->NumberOfWorkersForTesting());
 
-  sequenced_task_runner->PostTask(
-      FROM_HERE, BindLambdaForTesting([&]() { recurring_task.Stop(); }));
+  sequenced_task_runner->PostTask(FROM_HERE, BindLambdaForTesting([&]() {
+                                    recurring_task.AbandonAndStop();
+                                  }));
 
   // Stopping the recurring task should let the second worker be reclaimed per
   // not being "the" standby thread for a full reclaim timeout.
@@ -886,8 +958,9 @@ TEST_F(ThreadGroupImplStandbyPolicyTest, OnlyKeepActiveStandbyThreads) {
   EXPECT_EQ(2U, thread_group_->NumberOfWorkersForTesting());
 
   // Stopping the timer should let the number of active threads go down to one.
-  sequenced_task_runner->PostTask(
-      FROM_HERE, BindLambdaForTesting([&]() { recurring_task.Stop(); }));
+  sequenced_task_runner->PostTask(FROM_HERE, BindLambdaForTesting([&]() {
+                                    recurring_task.AbandonAndStop();
+                                  }));
   thread_group_->WaitForWorkersCleanedUpForTesting(1);
   EXPECT_EQ(1U, thread_group_->NumberOfWorkersForTesting());
 }
@@ -991,11 +1064,13 @@ class ThreadGroupImplBlockingTest
   // Saturates the thread group with a task that waits for other tasks without
   // entering a ScopedBlockingCall, then exits.
   void SaturateWithBusyTasks(
-      TaskPriority priority = TaskPriority::USER_BLOCKING) {
+      TaskPriority priority = TaskPriority::USER_BLOCKING,
+      TaskShutdownBehavior shutdown_behavior =
+          TaskShutdownBehavior::SKIP_ON_SHUTDOWN) {
     TestWaitableEvent threads_running;
 
     const scoped_refptr<TaskRunner> task_runner = test::CreatePooledTaskRunner(
-        {MayBlock(), WithBaseSyncPrimitives(), priority},
+        {MayBlock(), WithBaseSyncPrimitives(), priority, shutdown_behavior},
         &mock_pooled_task_runner_delegate_);
 
     RepeatingClosure threads_running_barrier = BarrierClosure(
@@ -1351,7 +1426,7 @@ TEST_F(ThreadGroupImplBlockingTest, ThreadBlockUnblockPremature) {
   // MAY_BLOCK ScopedBlockingCall never increases the max tasks.
   CreateAndStartThreadGroup(TimeDelta::Max(),   // |suggested_reclaim_time|
                             kMaxTasks,          // |max_tasks|
-                            nullopt,            // |max_best_effort_tasks|
+                            absl::nullopt,      // |max_best_effort_tasks|
                             nullptr,            // |worker_observer|
                             TimeDelta::Max());  // |may_block_threshold|
 
@@ -1453,6 +1528,31 @@ TEST_F(ThreadGroupImplBlockingTest, MayBlockIncreaseCapacityNestedWillBlock) {
   can_return.Signal();
   task_tracker_.FlushForTesting();
   EXPECT_EQ(thread_group_->GetMaxTasksForTesting(), kMaxTasks);
+}
+
+// Verify that OnShutdownStarted() causes max tasks to increase and creates a
+// worker if needed. Also verify that UnblockBusyTasks() decreases max tasks
+// after an increase.
+TEST_F(ThreadGroupImplBlockingTest, ThreadBusyShutdown) {
+  CreateAndStartThreadGroup();
+  ASSERT_EQ(thread_group_->GetMaxTasksForTesting(), kMaxTasks);
+
+  SaturateWithBusyTasks(TaskPriority::BEST_EFFORT,
+                        TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN);
+  thread_group_->OnShutdownStarted();
+
+  // Forces |kMaxTasks| extra workers to be instantiated by posting tasks. This
+  // should not block forever.
+  SaturateWithBusyTasks(TaskPriority::BEST_EFFORT,
+                        TaskShutdownBehavior::BLOCK_SHUTDOWN);
+
+  EXPECT_EQ(thread_group_->NumberOfWorkersForTesting(), 2 * kMaxTasks);
+
+  UnblockBusyTasks();
+  task_tracker_.FlushForTesting();
+  thread_group_->JoinForTesting();
+  EXPECT_EQ(thread_group_->GetMaxTasksForTesting(), kMaxTasks);
+  thread_group_.reset();
 }
 
 class ThreadGroupImplOverCapacityTest : public ThreadGroupImplImplTestBase,
@@ -1743,86 +1843,45 @@ TEST_F(ThreadGroupImplImplStartInBodyTest,
   task_tracker_.FlushForTesting();
 }
 
-namespace {
-
-// A WorkerThreadObserver that lets one worker start, then waits until
-// UnblockWorkers() is called before letting any other workers start.
-class HoldWorkersObserver : public WorkerThreadObserver {
- public:
-  HoldWorkersObserver() = default;
-  HoldWorkersObserver(const HoldWorkersObserver&) = delete;
-  HoldWorkersObserver& operator=(const HoldWorkersObserver&) = delete;
-
-  void UnblockWorkers() { unblock_workers_.Signal(); }
-
-  // WorkerThreadObserver:
-  void OnWorkerThreadMainEntry() override {
-    bool expected = false;
-    if (allowed_first_worker_.compare_exchange_strong(expected, true))
-      return;
-    unblock_workers_.Wait();
-  }
-  void OnWorkerThreadMainExit() override {}
-
- private:
-  std::atomic_bool allowed_first_worker_{false};
-  TestWaitableEvent unblock_workers_;
-};
-
-}  // namespace
-
 // Previously, a WILL_BLOCK ScopedBlockingCall unconditionally woke up a worker
 // if the priority queue was non-empty. Sometimes, that caused multiple workers
 // to be woken up for the same sequence. This test verifies that it is no longer
 // the case:
-// 1. Post task A that blocks until an event is signaled.
-// 2. Post task B. It can't be scheduled because the 1st worker is busy and
-//    the 2nd worker is blocked by HoldWorkersObserver.
-// 3. Signal the event so that task A enters a first WILL_BLOCK
-//    ScopedBlockingCall. This should no-op because there are already enough
-//    workers (previously, a worker would be woken up because the priority
-//    queue isn't empty).
-// 4. Task A enters a second WILL_BLOCK ScopedBlockingCall. This should no-op
-//    because there are already enough workers.
-// 5. Unblock HoldWorkersObserver and wait for all tasks to complete.
-// Disabled: https://crbug.com/1140651
+// 1. Post and run task A.
+// 2. Post task B from task A.
+// 3. Task A enters a WILL_BLOCK ScopedBlockingCall. Once the idle thread is
+//    created, this should no-op because there are already enough workers
+//    (previously, a worker would be woken up because the priority queue isn't
+//    empty).
+// 5. Wait for all tasks to complete.
 TEST_F(ThreadGroupImplImplStartInBodyTest,
-       DISABLED_RepeatedWillBlockDoesNotCreateTooManyWorkers) {
+       RepeatedWillBlockDoesNotCreateTooManyWorkers) {
   constexpr size_t kNumWorkers = 2U;
-  HoldWorkersObserver worker_observer;
-  StartThreadGroup(TimeDelta::Max(),   // |suggested_reclaim_time|
-                   kNumWorkers,        // |max_tasks|
-                   nullopt,            // |max_best_effort_tasks|
-                   &worker_observer);  // |worker_observer|
+  StartThreadGroup(TimeDelta::Max(),  // |suggested_reclaim_time|
+                   kNumWorkers,       // |max_tasks|
+                   absl::nullopt);    // |max_best_effort_tasks|
   const scoped_refptr<TaskRunner> runner = test::CreatePooledTaskRunner(
       {MayBlock()}, &mock_pooled_task_runner_delegate_);
 
-  TestWaitableEvent hold_will_block_task;
-  runner->PostTask(FROM_HERE, BindLambdaForTesting([&]() {
-                     hold_will_block_task.Wait();
-                     for (size_t i = 0; i < kLargeNumber; ++i) {
+  for (size_t i = 0; i < kLargeNumber; ++i) {
+    runner->PostTask(FROM_HERE, BindLambdaForTesting([&]() {
+                       runner->PostTask(
+                           FROM_HERE, BindLambdaForTesting([&]() {
+                             EXPECT_LE(
+                                 thread_group_->NumberOfWorkersForTesting(),
+                                 kNumWorkers + 1);
+                           }));
                        // Number of workers should not increase when there is
                        // enough capacity to accommodate queued and running
                        // sequences.
                        ScopedBlockingCall scoped_blocking_call(
                            FROM_HERE, BlockingType::WILL_BLOCK);
-                       EXPECT_LE(kNumWorkers + 1,
+                       EXPECT_EQ(kNumWorkers + 1,
                                  thread_group_->NumberOfWorkersForTesting());
-                     }
-
-                     worker_observer.UnblockWorkers();
-                   }));
-
-  runner->PostTask(FROM_HERE, BindLambdaForTesting([&]() {
-                     EXPECT_LE(thread_group_->NumberOfWorkersForTesting(),
-                               kNumWorkers + 1);
-                   }));
-  hold_will_block_task.Signal();
-
-  // Join the thread group to avoid invalid accesses to |worker_observer|.
-  task_tracker_.FlushForTesting();
-  thread_group_->JoinForTesting();
-  thread_group_.reset();
+                     }));
+    // Wait for all tasks to complete.
+    task_tracker_.FlushForTesting();
+  }
 }
 
 namespace {
@@ -1914,8 +1973,7 @@ INSTANTIATE_TEST_SUITE_P(WillBlock,
 // test for https://crbug.com/810464.
 TEST_F(ThreadGroupImplImplStartInBodyTest, RacyCleanup) {
   constexpr size_t kLocalMaxTasks = 256;
-  constexpr TimeDelta kReclaimTimeForRacyCleanupTest =
-      TimeDelta::FromMilliseconds(10);
+  constexpr TimeDelta kReclaimTimeForRacyCleanupTest = Milliseconds(10);
 
   thread_group_->Start(kLocalMaxTasks, kLocalMaxTasks,
                        kReclaimTimeForRacyCleanupTest,

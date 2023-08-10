@@ -3,11 +3,11 @@
 # found in the LICENSE file.
 
 import("//build/config/chromeos/ui_mode.gni")
-import("//build/config/crypto.gni")
 import("//build/config/features.gni")
 import("//build/config/sysroot.gni")
 import("//chrome/common/features.gni")
 import("//chromeos/assistant/assistant.gni")
+import("//crypto/features.gni")
 import("//extensions/buildflags/buildflags.gni")
 import("//printing/buildflags/buildflags.gni")
 
@@ -35,7 +35,6 @@ static_library("utility") {
     "//chrome:strings",
     "//chrome/common",
     "//chrome/common:mojo_bindings",
-    "//chrome/services/machine_learning",
     "//chrome/services/qrcode_generator",
     "//components/mirroring/service:mirroring_service",
     "//components/paint_preview/buildflags",
@@ -101,11 +100,16 @@ static_library("utility") {
         "importer/safari_importer.h",
         "importer/safari_importer.mm",
       ]
-    } else {
+    }
+    if (!is_mac && !is_fuchsia) {
+      # NSS decryptor depends on system NSS that is not available on MacOS or
+      # Fuchsia.
       sources += [
         "importer/nss_decryptor.cc",
         "importer/nss_decryptor.h",
       ]
+
+      deps += [ "//crypto:buildflags" ]
     }
     if (is_win) {
       sources += [
@@ -118,6 +122,8 @@ static_library("utility") {
         "importer/nss_decryptor_win.cc",
         "importer/nss_decryptor_win.h",
       ]
+
+      deps += [ "//services/proxy_resolver_win" ]
     }
     deps += [
       "//chrome/common:mojo_bindings",
@@ -126,6 +132,10 @@ static_library("utility") {
       "//components/autofill/core/common",
       "//services/proxy_resolver:lib",
     ]
+  }
+
+  if (is_linux || is_chromeos) {
+    deps += [ "//components/services/screen_ai" ]
   }
 
   if (enable_extensions) {
@@ -151,23 +161,20 @@ static_library("utility") {
 
       deps += [ "//chrome/services/util_win:lib" ]
     }
-
-    if (is_win || is_mac) {
-      deps += [ "//components/wifi" ]
-    }
   }
 
   if (is_chromeos_ash) {
     deps += [
+      "//ash/services/ime:lib",
+      "//ash/services/ime/public/mojom",
+      "//ash/services/nearby/public/mojom:mojom",
+      "//ash/services/quick_pair",
       "//ash/services/recording",
       "//chrome/services/file_util",
       "//chrome/services/sharing",
       "//chromeos/assistant:buildflags",
       "//chromeos/components/local_search_service:local_search_service",
       "//chromeos/components/local_search_service/public/mojom",
-      "//chromeos/services/ime:lib",
-      "//chromeos/services/ime/public/mojom",
-      "//chromeos/services/nearby/public/mojom:mojom",
       "//chromeos/services/tts",
       "//chromeos/services/tts/public/mojom",
     ]
@@ -176,8 +183,17 @@ static_library("utility") {
       deps += [
         "//chromeos/services/assistant/audio_decoder:lib",
         "//chromeos/services/assistant/public/mojom",
+        "//chromeos/services/libassistant",
+        "//chromeos/services/libassistant/public/mojom",
       ]
     }
+  }
+
+  if (is_chromeos) {
+    deps += [
+      "//chromeos/components/quick_answers/public/cpp",
+      "//chromeos/components/quick_answers/public/mojom",
+    ]
   }
 
   if (use_nss_certs) {
@@ -197,21 +213,15 @@ static_library("utility") {
       "//components/services/print_compositor/public/mojom",
     ]
 
+    # TODO(crbug.com/1302871): Simplify this. Is `!is_android` sufficient?
+    if (is_win || is_mac || is_linux || is_chromeos || is_fuchsia) {
+      deps += [ "//chrome/services/printing:lib" ]
+    }
+
     if (is_chromeos_ash) {
       deps += [
         "//chrome/services/ipp_parser",
         "//chrome/services/ipp_parser/public/mojom",
-      ]
-    }
-  }
-
-  if (enable_print_preview) {
-    deps += [ "//chrome/services/printing:lib" ]
-
-    if (is_win) {
-      sources += [
-        "printing_handler.cc",
-        "printing_handler.h",
       ]
     }
   }

@@ -2,12 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "net/http/http_util.h"
+
 #include <algorithm>
 #include <limits>
 
-#include "base/stl_util.h"
 #include "base/strings/string_util.h"
-#include "net/http/http_util.h"
+#include "base/time/time.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace net {
@@ -44,7 +45,7 @@ TEST(HttpUtilTest, IsSafeHeader) {
       "user-agent",
       "via",
   };
-  for (size_t i = 0; i < base::size(unsafe_headers); ++i) {
+  for (size_t i = 0; i < std::size(unsafe_headers); ++i) {
     EXPECT_FALSE(HttpUtil::IsSafeHeader(unsafe_headers[i]))
       << unsafe_headers[i];
     EXPECT_FALSE(HttpUtil::IsSafeHeader(base::ToUpperASCII(unsafe_headers[i])))
@@ -91,7 +92,7 @@ TEST(HttpUtilTest, IsSafeHeader) {
       "user_agent",
       "viaa",
   };
-  for (size_t i = 0; i < base::size(safe_headers); ++i) {
+  for (size_t i = 0; i < std::size(safe_headers); ++i) {
     EXPECT_TRUE(HttpUtil::IsSafeHeader(safe_headers[i])) << safe_headers[i];
     EXPECT_TRUE(HttpUtil::IsSafeHeader(base::ToUpperASCII(safe_headers[i])))
         << safe_headers[i];
@@ -338,7 +339,7 @@ TEST(HttpUtilTest, LocateEndOfHeaders) {
       {"foo\nbar\n\r\njunk", 10},
       {"foo\nbar\r\n\njunk", 10},
   };
-  for (size_t i = 0; i < base::size(tests); ++i) {
+  for (size_t i = 0; i < std::size(tests); ++i) {
     size_t input_len = strlen(tests[i].input);
     size_t eoh = HttpUtil::LocateEndOfHeaders(tests[i].input, input_len);
     EXPECT_EQ(tests[i].expected_result, eoh);
@@ -362,7 +363,7 @@ TEST(HttpUtilTest, LocateEndOfAdditionalHeaders) {
       {"foo\nbar\n\r\njunk", 10},
       {"foo\nbar\r\n\njunk", 10},
   };
-  for (size_t i = 0; i < base::size(tests); ++i) {
+  for (size_t i = 0; i < std::size(tests); ++i) {
     size_t input_len = strlen(tests[i].input);
     size_t eoh =
         HttpUtil::LocateEndOfAdditionalHeaders(tests[i].input, input_len);
@@ -685,7 +686,7 @@ TEST(HttpUtilTest, AssembleRawHeaders) {
     },
   };
   // clang-format on
-  for (size_t i = 0; i < base::size(tests); ++i) {
+  for (size_t i = 0; i < std::size(tests); ++i) {
     std::string input = tests[i].input;
     std::replace(input.begin(), input.end(), '|', '\0');
     std::string raw = HttpUtil::AssembleRawHeaders(input);
@@ -725,7 +726,7 @@ TEST(HttpUtilTest, RequestUrlSanitize) {
       "wss://www.google.com:78/foobar?query=1",
     }
   };
-  for (size_t i = 0; i < base::size(tests); ++i) {
+  for (size_t i = 0; i < std::size(tests); ++i) {
     SCOPED_TRACE(i);
 
     GURL url(GURL(tests[i].url));
@@ -975,10 +976,21 @@ TEST(HttpUtilTest, ParseContentType) {
       true,
       ""
     },
+    // Empty subtype should be accepted.
+    { "text/",
+      "text/",
+      "",
+      false,
+      ""
+    },
+    // "*/*" is ignored unless it has params, or is not an exact match.
+    { "*/*", "", "", false, "" },
+    { "*/*; charset=utf-8", "*/*", "utf-8", true, "" },
+    { "*/* ", "*/*", "", false, "" },
     // TODO(abarth): Add more interesting test cases.
   };
   // clang-format on
-  for (size_t i = 0; i < base::size(tests); ++i) {
+  for (size_t i = 0; i < std::size(tests); ++i) {
     std::string mime_type;
     std::string charset;
     bool had_charset = false;
@@ -1076,17 +1088,17 @@ TEST(HttpUtilTest, ParseRetryAfterHeader) {
                {"-1", false, base::TimeDelta()},
                {"+0", false, base::TimeDelta()},
                {"+1", false, base::TimeDelta()},
-               {"0", true, base::TimeDelta::FromSeconds(0)},
-               {"1", true, base::TimeDelta::FromSeconds(1)},
-               {"2", true, base::TimeDelta::FromSeconds(2)},
-               {"3", true, base::TimeDelta::FromSeconds(3)},
-               {"60", true, base::TimeDelta::FromSeconds(60)},
-               {"3600", true, base::TimeDelta::FromSeconds(3600)},
-               {"86400", true, base::TimeDelta::FromSeconds(86400)},
+               {"0", true, base::Seconds(0)},
+               {"1", true, base::Seconds(1)},
+               {"2", true, base::Seconds(2)},
+               {"3", true, base::Seconds(3)},
+               {"60", true, base::Seconds(60)},
+               {"3600", true, base::Seconds(3600)},
+               {"86400", true, base::Seconds(86400)},
                {"Thu, 1 Jan 2015 12:34:56 GMT", true, later - now},
                {"Mon, 1 Jan 1900 12:34:56 GMT", false, base::TimeDelta()}};
 
-  for (size_t i = 0; i < base::size(tests); ++i) {
+  for (size_t i = 0; i < std::size(tests); ++i) {
     base::TimeDelta retry_after;
     bool return_value = HttpUtil::ParseRetryAfterHeader(
         tests[i].retry_after_string, now, &retry_after);
@@ -1531,6 +1543,24 @@ TEST(HttpUtilTest, IsLWS) {
   EXPECT_TRUE(HttpUtil::IsLWS(' '));
 }
 
+TEST(HttpUtilTest, IsControlChar) {
+  EXPECT_FALSE(HttpUtil::IsControlChar('1'));
+  EXPECT_FALSE(HttpUtil::IsControlChar('a'));
+  EXPECT_FALSE(HttpUtil::IsControlChar('.'));
+  EXPECT_FALSE(HttpUtil::IsControlChar('$'));
+  EXPECT_FALSE(HttpUtil::IsControlChar('\x7E'));
+  EXPECT_FALSE(HttpUtil::IsControlChar('\x80'));
+  EXPECT_FALSE(HttpUtil::IsControlChar('\xFF'));
+
+  EXPECT_TRUE(HttpUtil::IsControlChar('\0'));
+  EXPECT_TRUE(HttpUtil::IsControlChar('\v'));
+  EXPECT_TRUE(HttpUtil::IsControlChar('\n'));
+  EXPECT_TRUE(HttpUtil::IsControlChar('\r'));
+  EXPECT_TRUE(HttpUtil::IsControlChar('\t'));
+  EXPECT_TRUE(HttpUtil::IsControlChar('\x01'));
+  EXPECT_TRUE(HttpUtil::IsControlChar('\x7F'));
+}
+
 TEST(HttpUtilTest, ParseAcceptEncoding) {
   const struct {
     const char* const value;
@@ -1564,7 +1594,7 @@ TEST(HttpUtilTest, ParseAcceptEncoding) {
       {"foo,\"bar\"", "INVALID"},
   };
 
-  for (size_t i = 0; i < base::size(tests); ++i) {
+  for (size_t i = 0; i < std::size(tests); ++i) {
     std::string value(tests[i].value);
     std::string reformatted;
     std::set<std::string> allowed_encodings;
@@ -1594,7 +1624,7 @@ TEST(HttpUtilTest, ParseContentEncoding) {
       {"foo,\"bar\"", "INVALID"},
   };
 
-  for (size_t i = 0; i < base::size(tests); ++i) {
+  for (size_t i = 0; i < std::size(tests); ++i) {
     std::string value(tests[i].value);
     std::string reformatted;
     std::set<std::string> used_encodings;

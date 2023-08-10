@@ -4,12 +4,13 @@
 
 #include <utility>
 
-#include "base/macros.h"
 #include "components/autofill/core/common/password_generation_util.h"
+#include "components/device_reauth/biometric_authenticator.h"
 #include "components/password_manager/core/browser/http_auth_manager.h"
 #include "components/password_manager/core/browser/password_form_manager_for_ui.h"
 #include "components/password_manager/core/browser/password_manager_client.h"
 #include "components/signin/public/base/signin_metrics.h"
+#include "components/version_info/channel.h"
 #include "url/origin.h"
 
 namespace password_manager {
@@ -26,15 +27,14 @@ bool PasswordManagerClient::IsFillingFallbackEnabled(const GURL& url) const {
   return true;
 }
 
-bool PasswordManagerClient::RequiresReauthToFill() {
-  return false;
-}
+void PasswordManagerClient::ShowTouchToFill(
+    PasswordManagerDriver* driver,
+    autofill::mojom::SubmissionReadinessState submission_readiness) {}
 
-void PasswordManagerClient::ShowTouchToFill(PasswordManagerDriver* driver) {}
+void PasswordManagerClient::OnPasswordSelected(const std::u16string& text) {}
 
-void PasswordManagerClient::OnPasswordSelected(const base::string16& text) {}
-
-BiometricAuthenticator* PasswordManagerClient::GetBiometricAuthenticator() {
+scoped_refptr<device_reauth::BiometricAuthenticator>
+PasswordManagerClient::GetBiometricAuthenticator() {
   return nullptr;
 }
 
@@ -57,9 +57,8 @@ void PasswordManagerClient::AutofillHttpAuth(
 
 void PasswordManagerClient::NotifyUserCredentialsWereLeaked(
     password_manager::CredentialLeakType leak_type,
-    password_manager::CompromisedSitesCount saved_sites,
     const GURL& origin,
-    const base::string16& username) {}
+    const std::u16string& username) {}
 
 void PasswordManagerClient::TriggerReauthForPrimaryAccount(
     signin_metrics::ReauthAccessPoint access_point,
@@ -70,14 +69,10 @@ void PasswordManagerClient::TriggerReauthForPrimaryAccount(
 void PasswordManagerClient::TriggerSignIn(signin_metrics::AccessPoint) {}
 
 SyncState PasswordManagerClient::GetPasswordSyncState() const {
-  return NOT_SYNCING;
+  return SyncState::kNotSyncing;
 }
 
 bool PasswordManagerClient::WasLastNavigationHTTPError() const {
-  return false;
-}
-
-bool PasswordManagerClient::WasCredentialLeakDialogShown() const {
   return false;
 }
 
@@ -157,7 +152,13 @@ network::mojom::NetworkContext* PasswordManagerClient::GetNetworkContext()
   return nullptr;
 }
 
-bool PasswordManagerClient::IsUnderAdvancedProtection() const {
-  return false;
+WebAuthnCredentialsDelegate*
+PasswordManagerClient::GetWebAuthnCredentialsDelegate() {
+  return nullptr;
 }
+
+version_info::Channel PasswordManagerClient::GetChannel() const {
+  return version_info::Channel::UNKNOWN;
+}
+
 }  // namespace password_manager

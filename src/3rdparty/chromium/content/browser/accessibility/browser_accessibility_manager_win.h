@@ -12,12 +12,15 @@
 #include <set>
 #include <vector>
 
-#include "base/macros.h"
 #include "content/browser/accessibility/browser_accessibility_manager.h"
+#include "content/common/content_export.h"
 #include "ui/accessibility/platform/ax_platform_node_win.h"
 
 namespace content {
 class BrowserAccessibilityWin;
+
+using UiaRaiseActiveTextPositionChangedEventFunction =
+    HRESULT(WINAPI*)(IRawElementProviderSimple*, ITextRangeProvider*);
 
 // Manages a tree of BrowserAccessibilityWin objects.
 class CONTENT_EXPORT BrowserAccessibilityManagerWin
@@ -26,9 +29,15 @@ class CONTENT_EXPORT BrowserAccessibilityManagerWin
   BrowserAccessibilityManagerWin(const ui::AXTreeUpdate& initial_tree,
                                  BrowserAccessibilityDelegate* delegate);
 
+  BrowserAccessibilityManagerWin(const BrowserAccessibilityManagerWin&) =
+      delete;
+  BrowserAccessibilityManagerWin& operator=(
+      const BrowserAccessibilityManagerWin&) = delete;
+
   ~BrowserAccessibilityManagerWin() override;
 
   static ui::AXTreeUpdate GetEmptyDocument();
+  static bool IsUiaActiveTextPositionChangedEventSupported();
 
   // Get the closest containing HWND.
   HWND GetParentHWND();
@@ -38,11 +47,11 @@ class CONTENT_EXPORT BrowserAccessibilityManagerWin
   BrowserAccessibility* GetFocus() const override;
   bool IsIgnoredChangedNode(const BrowserAccessibility* node) const;
   bool CanFireEvents() const override;
-  gfx::Rect GetViewBoundsInScreenCoordinates() const override;
 
   void FireFocusEvent(BrowserAccessibility* node) override;
   void FireBlinkEvent(ax::mojom::Event event_type,
-                      BrowserAccessibility* node) override;
+                      BrowserAccessibility* node,
+                      int action_request_id) override;
   void FireGeneratedEvent(ui::AXEventGenerator::Event event_type,
                           BrowserAccessibility* node) override;
 
@@ -52,6 +61,7 @@ class CONTENT_EXPORT BrowserAccessibilityManagerWin
                                    BrowserAccessibility* node);
   void FireUiaStructureChangedEvent(StructureChangeType change_type,
                                     BrowserAccessibility* node);
+  void FireUiaActiveTextPositionChangedEvent(BrowserAccessibility* node);
 
   // Do event pre-processing
   void BeforeAccessibilityEvents() override;
@@ -70,7 +80,6 @@ class CONTENT_EXPORT BrowserAccessibilityManagerWin
  protected:
   // AXTreeObserver methods.
   void OnSubtreeWillBeDeleted(ui::AXTree* tree, ui::AXNode* node) override;
-  void OnNodeWillBeDeleted(ui::AXTree* tree, ui::AXNode* node) override;
   void OnAtomicUpdateFinished(
       ui::AXTree* tree,
       bool root_changed,
@@ -91,7 +100,6 @@ class CONTENT_EXPORT BrowserAccessibilityManagerWin
       base::RepeatingCallback<void(BrowserAccessibility*,
                                    BrowserAccessibility*,
                                    const SelectionEvents&)>;
-
   static bool IsIA2NodeSelected(BrowserAccessibility* node);
   static bool IsUIANodeSelected(BrowserAccessibility* node);
 
@@ -111,6 +119,10 @@ class CONTENT_EXPORT BrowserAccessibilityManagerWin
       SelectionEventsMap& selection_events_map,
       IsSelectedPredicate is_selected_predicate,
       FirePlatformSelectionEventsCallback fire_platform_events_callback);
+
+  // Retrieve UIA RaiseActiveTextPositionChangedEvent function if supported.
+  static UiaRaiseActiveTextPositionChangedEventFunction
+  GetUiaActiveTextPositionChangedEventFunction();
 
   void HandleAriaPropertiesChangedEvent(BrowserAccessibility& node);
   void EnqueueTextChangedEvent(BrowserAccessibility& node);
@@ -153,8 +165,6 @@ class CONTENT_EXPORT BrowserAccessibilityManagerWin
   // the map is cleared in |FinalizeAccessibilityEvents|.
   SelectionEventsMap ia2_selection_events_;
   SelectionEventsMap uia_selection_events_;
-
-  DISALLOW_COPY_AND_ASSIGN(BrowserAccessibilityManagerWin);
 };
 
 }  // namespace content

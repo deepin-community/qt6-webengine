@@ -25,6 +25,8 @@ namespace base {
 namespace bits {
 
 // Returns true iff |value| is a power of 2.
+//
+// TODO(pkasting): When C++20 is available, replace with std::has_single_bit().
 template <typename T, typename = std::enable_if_t<std::is_integral<T>::value>>
 constexpr bool IsPowerOfTwo(T value) {
   // From "Hacker's Delight": Section 2.1 Manipulating Rightmost Bits.
@@ -37,7 +39,7 @@ constexpr bool IsPowerOfTwo(T value) {
 }
 
 // Round down |size| to a multiple of alignment, which must be a power of two.
-inline size_t AlignDown(size_t size, size_t alignment) {
+inline constexpr size_t AlignDown(size_t size, size_t alignment) {
   DCHECK(IsPowerOfTwo(alignment));
   return size & ~(alignment - 1);
 }
@@ -51,7 +53,7 @@ inline T* AlignDown(T* ptr, size_t alignment) {
 }
 
 // Round up |size| to a multiple of alignment, which must be a power of two.
-inline size_t AlignUp(size_t size, size_t alignment) {
+inline constexpr size_t AlignUp(size_t size, size_t alignment) {
   DCHECK(IsPowerOfTwo(alignment));
   return (size + alignment - 1) & ~(alignment - 1);
 }
@@ -62,17 +64,6 @@ template <typename T, typename = typename std::enable_if<sizeof(T) == 1>::type>
 inline T* AlignUp(T* ptr, size_t alignment) {
   return reinterpret_cast<T*>(
       AlignUp(reinterpret_cast<size_t>(ptr), alignment));
-}
-
-// Deprecated. Use AlignUp() instead.
-inline size_t Align(size_t size, size_t alignment) {
-  return AlignUp(size, alignment);
-}
-
-// Deprecated. Use AlignUp() instead.
-template <typename T, typename = typename std::enable_if<sizeof(T) == 1>::type>
-inline T* Align(T* ptr, size_t alignment) {
-  return AlignUp(ptr, alignment);
 }
 
 // CountLeadingZeroBits(value) returns the number of zero bits following the
@@ -87,27 +78,33 @@ inline T* Align(T* ptr, size_t alignment) {
 //
 // C does not have an operator to do this, but fortunately the various
 // compilers have built-ins that map to fast underlying processor instructions.
-#if defined(COMPILER_MSVC) && !defined(COMPILER_CLANG)
+//
+// Prefer the clang path on Windows, as _BitScanReverse() and friends are not
+// constexpr.
+//
+// TODO(pkasting): When C++20 is available, replace with std::countl_zero() and
+// similar.
+#if defined(COMPILER_MSVC) && !defined(__clang__)
 
 template <typename T, unsigned bits = sizeof(T) * 8>
-ALWAYS_INLINE constexpr
+ALWAYS_INLINE
     typename std::enable_if<std::is_unsigned<T>::value && sizeof(T) <= 4,
                             unsigned>::type
     CountLeadingZeroBits(T x) {
   static_assert(bits > 0, "invalid instantiation");
-  unsigned long index = 0;
+  unsigned long index;
   return LIKELY(_BitScanReverse(&index, static_cast<uint32_t>(x)))
              ? (31 - index - (32 - bits))
              : bits;
 }
 
 template <typename T, unsigned bits = sizeof(T) * 8>
-ALWAYS_INLINE constexpr
+ALWAYS_INLINE
     typename std::enable_if<std::is_unsigned<T>::value && sizeof(T) == 8,
                             unsigned>::type
     CountLeadingZeroBits(T x) {
   static_assert(bits > 0, "invalid instantiation");
-  unsigned long index = 0;
+  unsigned long index;
 // MSVC only supplies _BitScanReverse64 when building for a 64-bit target.
 #if defined(ARCH_CPU_64_BITS)
   return LIKELY(_BitScanReverse64(&index, static_cast<uint64_t>(x)))
@@ -127,23 +124,23 @@ ALWAYS_INLINE constexpr
 }
 
 template <typename T, unsigned bits = sizeof(T) * 8>
-ALWAYS_INLINE constexpr
+ALWAYS_INLINE
     typename std::enable_if<std::is_unsigned<T>::value && sizeof(T) <= 4,
                             unsigned>::type
     CountTrailingZeroBits(T x) {
   static_assert(bits > 0, "invalid instantiation");
-  unsigned long index = 0;
+  unsigned long index;
   return LIKELY(_BitScanForward(&index, static_cast<uint32_t>(x))) ? index
                                                                    : bits;
 }
 
 template <typename T, unsigned bits = sizeof(T) * 8>
-ALWAYS_INLINE constexpr
+ALWAYS_INLINE
     typename std::enable_if<std::is_unsigned<T>::value && sizeof(T) == 8,
                             unsigned>::type
     CountTrailingZeroBits(T x) {
   static_assert(bits > 0, "invalid instantiation");
-  unsigned long index = 0;
+  unsigned long index;
 // MSVC only supplies _BitScanForward64 when building for a 64-bit target.
 #if defined(ARCH_CPU_64_BITS)
   return LIKELY(_BitScanForward64(&index, static_cast<uint64_t>(x))) ? index
@@ -161,15 +158,11 @@ ALWAYS_INLINE constexpr
 #endif
 }
 
-ALWAYS_INLINE uint32_t CountLeadingZeroBits32(uint32_t x) {
-  return CountLeadingZeroBits(x);
-}
+// Used in place of "constexpr" below for things which are conditionally
+// constexpr depending on whether the functions above are constexpr.
+#define BASE_BITOPS_CONSTEXPR
 
-ALWAYS_INLINE uint64_t CountLeadingZeroBits64(uint64_t x) {
-  return CountLeadingZeroBits(x);
-}
-
-#elif defined(COMPILER_GCC) || defined(COMPILER_CLANG)
+#elif defined(COMPILER_GCC) || defined(__clang__)
 
 // __builtin_clz has undefined behaviour for an input of 0, even though there's
 // clearly a return value that makes sense, and even though some processor clz
@@ -199,31 +192,52 @@ ALWAYS_INLINE constexpr
                        : bits;
 }
 
-ALWAYS_INLINE constexpr uint32_t CountLeadingZeroBits32(uint32_t x) {
-  return CountLeadingZeroBits(x);
-}
-
-ALWAYS_INLINE constexpr uint64_t CountLeadingZeroBits64(uint64_t x) {
-  return CountLeadingZeroBits(x);
-}
+#define BASE_BITOPS_CONSTEXPR constexpr
 
 #endif
 
-ALWAYS_INLINE constexpr size_t CountLeadingZeroBitsSizeT(size_t x) {
+ALWAYS_INLINE BASE_BITOPS_CONSTEXPR uint32_t
+CountLeadingZeroBits32(uint32_t x) {
   return CountLeadingZeroBits(x);
 }
 
-ALWAYS_INLINE constexpr size_t CountTrailingZeroBitsSizeT(size_t x) {
+ALWAYS_INLINE BASE_BITOPS_CONSTEXPR uint64_t
+CountLeadingZeroBits64(uint64_t x) {
+  return CountLeadingZeroBits(x);
+}
+
+ALWAYS_INLINE BASE_BITOPS_CONSTEXPR size_t CountLeadingZeroBitsSizeT(size_t x) {
+  return CountLeadingZeroBits(x);
+}
+
+ALWAYS_INLINE BASE_BITOPS_CONSTEXPR size_t
+CountTrailingZeroBitsSizeT(size_t x) {
   return CountTrailingZeroBits(x);
 }
 
-// Returns the integer i such as 2^i <= n < 2^(i+1)
+#undef BASE_BITOPS_CONSTEXPR
+
+// Returns the integer i such as 2^i <= n < 2^(i+1).
+//
+// There is a common `BitLength` function, which returns the number of bits
+// required to represent a value. Rather than implement that function,
+// use `Log2Floor` and add 1 to the result.
+//
+// TODO(pkasting): When C++20 is available, replace with std::bit_xxx().
+#if defined(COMPILER_MSVC) && !defined(__clang__)
+inline int Log2Floor(uint32_t n) {
+#else
 constexpr int Log2Floor(uint32_t n) {
+#endif
   return 31 - CountLeadingZeroBits(n);
 }
 
-// Returns the integer i such as 2^(i-1) < n <= 2^i
+// Returns the integer i such as 2^(i-1) < n <= 2^i.
+#if defined(COMPILER_MSVC) && !defined(__clang__)
+inline int Log2Ceiling(uint32_t n) {
+#else
 constexpr int Log2Ceiling(uint32_t n) {
+#endif
   // When n == 0, we want the function to return -1.
   // When n == 0, (n - 1) will underflow to 0xFFFFFFFF, which is
   // why the statement below starts with (n ? 32 : -1).

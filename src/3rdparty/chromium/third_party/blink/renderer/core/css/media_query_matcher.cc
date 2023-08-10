@@ -62,7 +62,7 @@ bool MediaQueryMatcher::Evaluate(const MediaQuerySet* media) {
     evaluator_ = CreateEvaluator();
 
   if (evaluator_)
-    return evaluator_->Eval(*media);
+    return evaluator_->Eval(*media, {nullptr, nullptr, &unit_flags_});
 
   return false;
 }
@@ -106,6 +106,13 @@ void MediaQueryMatcher::MediaFeaturesChanged() {
   if (!document_)
     return;
 
+  // Update favicon and theme color when a media query value has changed.
+  if (document_->GetFrame()) {
+    document_->GetFrame()->UpdateFaviconURL();
+    document_->GetFrame()->DidChangeThemeColor(
+        /*update_theme_color_cache=*/false);
+  }
+
   HeapVector<Member<MediaQueryListListener>> listeners_to_notify;
   for (const auto& list : media_lists_) {
     if (list->MediaFeaturesChanged(&listeners_to_notify)) {
@@ -126,6 +133,11 @@ void MediaQueryMatcher::ViewportChanged() {
     listeners_to_notify.push_back(listener);
 
   document_->EnqueueMediaQueryChangeListeners(listeners_to_notify);
+}
+
+void MediaQueryMatcher::DynamicViewportChanged() {
+  if (unit_flags_ & MediaQueryExpValue::UnitFlags::kDynamicViewport)
+    ViewportChanged();
 }
 
 void MediaQueryMatcher::Trace(Visitor* visitor) const {

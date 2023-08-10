@@ -91,6 +91,12 @@ Polymer({
     }
 
     const prefix = OncMojo.networkTypeIsMobile(type) ? 'cellular-' : 'wifi-';
+
+    if (this.networkState.type === mojom.NetworkType.kCellular &&
+        this.networkState.typeState.cellular.simLocked) {
+      return prefix + 'locked';
+    }
+
     if (!this.isListItem && !this.networkState.guid) {
       const device = this.deviceState;
       if (!device || device.deviceState === mojom.DeviceStateType.kEnabled ||
@@ -219,8 +225,8 @@ Polymer({
     if (!this.networkState) {
       return false;
     }
-    return OncMojo.connectionStateIsConnected(
-               this.networkState.connectionState) &&
+    return !this.showRoaming_() &&
+        OncMojo.connectionStateIsConnected(this.networkState.connectionState) &&
         this.getTechnology_() !== '' && this.showTechnologyBadge;
   },
 
@@ -269,6 +275,8 @@ Polymer({
         return 'badge-lte-advanced';
       case 'UMTS':
         return 'badge-3g';
+      case '5GNR':
+        return 'badge-5g';
     }
     return '';
   },
@@ -290,4 +298,26 @@ Polymer({
     return this.networkState.type === mojom.NetworkType.kWiFi &&
         this.networkState.typeState.wifi.security !== mojom.SecurityType.kNone;
   },
+
+  /**
+   * @return {boolean}
+   * @private
+   */
+  showRoaming_() {
+    if (!this.networkState) {
+      return false;
+    }
+    const mojom = chromeos.networkConfig.mojom;
+    return this.networkState.type === mojom.NetworkType.kCellular &&
+        this.networkState.typeState.cellular.roaming;
+  },
+
+  /**
+   * @return {boolean}
+   * @private
+   */
+  showIcon_() {
+    return !!this.networkState;
+  },
+
 });

@@ -8,7 +8,7 @@
 #include "base/callback_helpers.h"
 #include "base/files/file.h"
 #include "base/files/file_path.h"
-#include "base/task_runner.h"
+#include "base/task/task_runner.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/file_system_access_entry_factory.h"
 #include "storage/browser/file_system/isolated_context.h"
@@ -67,6 +67,12 @@ class CONTENT_EXPORT FileSystemChooser : public ui::SelectFileDialog::Listener {
                             const Options& options,
                             ResultCallback callback,
                             base::ScopedClosureRunner fullscreen_block);
+
+  // Returns whether the specified extension receives special handling by the
+  // Windows shell. These extensions should be sanitized before being shown in
+  // the "save as" file picker.
+  static bool IsShellIntegratedExtension(
+      const base::FilePath::StringType& extension);
 
   FileSystemChooser(ui::SelectFileDialog::Type type,
                     ResultCallback callback,

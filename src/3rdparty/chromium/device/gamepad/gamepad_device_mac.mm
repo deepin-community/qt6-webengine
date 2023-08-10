@@ -8,7 +8,6 @@
 
 #include "base/mac/foundation_util.h"
 #include "base/mac/scoped_cftyperef.h"
-#include "base/stl_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "device/gamepad/dualshock4_controller.h"
 #include "device/gamepad/gamepad_data_fetcher.h"
@@ -35,6 +34,7 @@ const uint16_t kPowerUsageNumber = 0x30;
 const uint16_t kSearchUsageNumber = 0x0221;
 const uint16_t kHomeUsageNumber = 0x0223;
 const uint16_t kBackUsageNumber = 0x0224;
+const uint16_t kRecordUsageNumber = 0xb2;
 
 const int kRumbleMagnitudeMax = 10000;
 
@@ -52,8 +52,9 @@ struct SpecialUsages {
     // Back.
     {kConsumerUsagePage, kHomeUsageNumber},
     {kConsumerUsagePage, kBackUsageNumber},
+    {kConsumerUsagePage, kRecordUsageNumber},
 };
-const size_t kSpecialUsagesLen = base::size(kSpecialUsages);
+const size_t kSpecialUsagesLen = std::size(kSpecialUsages);
 
 float NormalizeAxis(CFIndex value, CFIndex min, CFIndex max) {
   return (2.f * (value - min) / static_cast<float>(max - min)) - 1.f;

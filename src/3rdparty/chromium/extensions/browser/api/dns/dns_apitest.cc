@@ -5,6 +5,7 @@
 #include <memory>
 
 #include "base/memory/ref_counted.h"
+#include "base/strings/stringprintf.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/values.h"
 #include "content/public/browser/browser_context.h"
@@ -67,9 +68,7 @@ IN_PROC_BROWSER_TEST_F(DnsApiTest, DnsResolveIPLiteral) {
   base::DictionaryValue* dict = NULL;
   ASSERT_TRUE(result->GetAsDictionary(&dict));
 
-  int result_code = 0;
-  EXPECT_TRUE(dict->GetInteger("resultCode", &result_code));
-  EXPECT_EQ(net::OK, result_code);
+  EXPECT_EQ(net::OK, dict->FindIntKey("resultCode"));
 
   std::string address;
   EXPECT_TRUE(dict->GetString("address", &address));
@@ -92,9 +91,7 @@ IN_PROC_BROWSER_TEST_F(DnsApiTest, DnsResolveHostname) {
   base::DictionaryValue* dict = NULL;
   ASSERT_TRUE(result->GetAsDictionary(&dict));
 
-  int result_code = 0;
-  EXPECT_TRUE(dict->GetInteger("resultCode", &result_code));
-  EXPECT_EQ(net::OK, result_code);
+  EXPECT_EQ(net::OK, dict->FindIntKey("resultCode"));
 
   std::string address;
   EXPECT_TRUE(dict->GetString("address", &address));
@@ -103,8 +100,7 @@ IN_PROC_BROWSER_TEST_F(DnsApiTest, DnsResolveHostname) {
   // Make sure the extension's NetworkIsolationKey was used. Do a cache only DNS
   // lookup using the expected NIK, and make sure the IP address is retrieved.
   network::mojom::NetworkContext* network_context =
-      content::BrowserContext::GetDefaultStoragePartition(browser_context())
-          ->GetNetworkContext();
+      browser_context()->GetDefaultStoragePartition()->GetNetworkContext();
   net::HostPortPair host_port_pair(kHostname, 0);
   network::mojom::ResolveHostParametersPtr params =
       network::mojom::ResolveHostParameters::New();

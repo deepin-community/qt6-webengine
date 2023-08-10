@@ -5,21 +5,15 @@
 #ifndef UI_GTK_INPUT_METHOD_CONTEXT_IMPL_GTK_H_
 #define UI_GTK_INPUT_METHOD_CONTEXT_IMPL_GTK_H_
 
-#include "base/macros.h"
-#include "base/strings/string16.h"
+#include <string>
+
 #include "ui/base/glib/glib_integers.h"
 #include "ui/base/glib/glib_signal.h"
 #include "ui/base/ime/linux/linux_input_method_context.h"
 #include "ui/gfx/geometry/rect.h"
-#include "ui/gtk/gtk_buildflags.h"
 
-typedef struct _GtkIMContext GtkIMContext;
-
-#if BUILDFLAG(GTK_VERSION) == 3
+using GtkIMContext = struct _GtkIMContext;
 using GdkWindow = struct _GdkWindow;
-#else
-using GdkWindow = struct _GdkSurface;
-#endif
 
 namespace gtk {
 
@@ -29,16 +23,26 @@ class InputMethodContextImplGtk : public ui::LinuxInputMethodContext {
  public:
   InputMethodContextImplGtk(ui::LinuxInputMethodContextDelegate* delegate,
                             bool is_simple);
+
+  InputMethodContextImplGtk(const InputMethodContextImplGtk&) = delete;
+  InputMethodContextImplGtk& operator=(const InputMethodContextImplGtk&) =
+      delete;
+
   ~InputMethodContextImplGtk() override;
 
   // Overridden from ui::LinuxInputMethodContext
   bool DispatchKeyEvent(const ui::KeyEvent& key_event) override;
+  bool IsPeekKeyEvent(const ui::KeyEvent& key_event) override;
   void SetCursorLocation(const gfx::Rect& rect) override;
   void Reset() override;
   void Focus() override;
   void Blur() override;
-  void SetSurroundingText(const base::string16& text,
+  void SetSurroundingText(const std::u16string& text,
                           const gfx::Range& selection_range) override;
+  void SetContentType(ui::TextInputType input_type,
+                      int input_flags,
+                      bool should_do_learning) override;
+  ui::VirtualKeyboardController* GetVirtualKeyboardController() override;
 
  private:
   // GtkIMContext event handlers.  They are shared among |gtk_context_simple_|
@@ -61,28 +65,28 @@ class InputMethodContextImplGtk : public ui::LinuxInputMethodContext {
                      OnPreeditStart,
                      GtkIMContext*);
 
+  // Only used on GTK3.
   void SetContextClientWindow(GdkWindow* window);
 
   // A set of callback functions.  Must not be nullptr.
-  ui::LinuxInputMethodContextDelegate* delegate_;
+  ui::LinuxInputMethodContextDelegate* const delegate_;
 
   // Input method context type flag.
   //   - true if it supports table-based input methods
   //   - false if it supports multiple, loadable input methods
-  bool is_simple_;
+  const bool is_simple_;
 
   // Keeps track of current focus state.
-  bool has_focus_;
+  bool has_focus_ = false;
 
   // IME's input GTK context.
-  GtkIMContext* gtk_context_;
+  GtkIMContext* gtk_context_ = nullptr;
 
-  gpointer gdk_last_set_client_window_;
+  // Only used on GTK3.
+  gpointer gdk_last_set_client_window_ = nullptr;
 
-  // Last known caret bounds relative to the screen coordinates.
+  // Last known caret bounds relative to the screen coordinates, in DIPs.
   gfx::Rect last_caret_bounds_;
-
-  DISALLOW_COPY_AND_ASSIGN(InputMethodContextImplGtk);
 };
 
 }  // namespace gtk

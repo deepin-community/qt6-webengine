@@ -8,14 +8,15 @@ import android.net.Uri;
 import android.os.RemoteException;
 
 import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 
 import org.chromium.weblayer_private.interfaces.APICallException;
 import org.chromium.weblayer_private.interfaces.IClientNavigation;
 import org.chromium.weblayer_private.interfaces.INavigation;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Information about a navigation. Each time there is a new navigation, a new
@@ -82,6 +83,30 @@ public class Navigation extends IClientNavigation.Stub {
         ThreadCheck.ensureOnUiThread();
         try {
             return mNavigationImpl.getHttpStatusCode();
+        } catch (RemoteException e) {
+            throw new APICallException(e);
+        }
+    }
+
+    /*
+     * Returns the HTTP response headers. Returns an empty map if the navigation hasn't completed
+     * yet or if a response wasn't received.
+     *
+     * @since 91
+     */
+    public Map<String, String> getResponseHeaders() {
+        ThreadCheck.ensureOnUiThread();
+        if (WebLayer.getSupportedMajorVersionInternal() < 91) {
+            throw new UnsupportedOperationException();
+        }
+        try {
+            Map<String, String> headers = new HashMap<String, String>();
+            List<String> array = mNavigationImpl.getResponseHeaders();
+            for (int i = 0; i < array.size(); i += 2) {
+                headers.put(array.get(i), array.get(i + 1));
+            }
+
+            return headers;
         } catch (RemoteException e) {
             throw new APICallException(e);
         }
@@ -280,9 +305,34 @@ public class Navigation extends IClientNavigation.Stub {
     }
 
     /**
+     * Disables intent processing for the lifetime of this navigation (including following
+     * redirects). This method may only be called from
+     * {@link NavigationCallback.onNavigationStarted}.
+     *
+     * @throws IllegalStateException If not called during start.
+     *
+     * @since 97
+     */
+    public void disableIntentProcessing() {
+        ThreadCheck.ensureOnUiThread();
+        if (WebLayer.shouldPerformVersionChecks()
+                && WebLayer.getSupportedMajorVersionInternal() < 97) {
+            throw new UnsupportedOperationException();
+        }
+        try {
+            mNavigationImpl.disableIntentProcessing();
+        } catch (RemoteException e) {
+            throw new APICallException(e);
+        }
+    }
+
+    /**
      * Sets the user-agent string that applies to the current navigation. This user-agent is not
      * sticky, it applies to this navigation only (and any redirects or resources that are loaded).
-     * This method may only be called from {@link NavigationCallback.onNavigationStarted}.
+     * This method may only be called from {@link NavigationCallback.onNavigationStarted}.  Setting
+     * this to a non empty string will cause will cause the User-Agent Client Hint header values and
+     * the values returned by `navigator.userAgentData` to be empty for requests this override is
+     * applied to.
      *
      * Note that this user agent won't be sent again if the frame html is fetched again due to a
      * user reloading the page, navigating back and forth etc... when this fetch couldn't be cached
@@ -311,9 +361,9 @@ public class Navigation extends IClientNavigation.Stub {
      * * changing window.location.href
      * * redirect via the <meta http-equiv="refresh"> tag
      * * using window.history.pushState
+     * * window.history.forward() or window.history.back()
      *
-     * This method returns false for navigations initiated by the WebLayer API, including using
-     *  window.history.forward() or window.history.back().
+     * This method returns false for navigations initiated by the WebLayer API.
      *
      * @return Whether the navigation was initiated by the page.
      */
@@ -365,11 +415,13 @@ public class Navigation extends IClientNavigation.Stub {
     /**
      * Returns true if this navigation was initiated by a form submission.
      *
-     * @since 90
+     * @since 89
      */
     public boolean isFormSubmission() {
         ThreadCheck.ensureOnUiThread();
-        if (WebLayer.getSupportedMajorVersionInternal() < 90) {
+        if (WebLayer.getSupportedMajorVersionInternal() < 89
+                || WebLayer.getVersion().equals("89.0.4389.69")
+                || WebLayer.getVersion().equals("89.0.4389.72")) {
             throw new UnsupportedOperationException();
         }
         try {
@@ -382,12 +434,14 @@ public class Navigation extends IClientNavigation.Stub {
     /**
      * Returns the referrer for this request.
      *
-     * @since 90
+     * @since 89
      */
     @NonNull
     public Uri getReferrer() {
         ThreadCheck.ensureOnUiThread();
-        if (WebLayer.getSupportedMajorVersionInternal() < 90) {
+        if (WebLayer.getSupportedMajorVersionInternal() < 89
+                || WebLayer.getVersion().equals("89.0.4389.69")
+                || WebLayer.getVersion().equals("89.0.4389.72")) {
             throw new UnsupportedOperationException();
         }
         try {
@@ -397,17 +451,17 @@ public class Navigation extends IClientNavigation.Stub {
         }
     }
 
-    /*
+    /**
      * Returns the Page object this navigation is occurring for.
-     * This method may only be called in or after {@link NavigationCallback.onNavigationCompleted}
-     * or {@link NavigationCallback.onNavigationFailed}. It can return null if the navigation didn't
-     * commit (e.g. 204/205 or download).
+     * This method may only be called in (1) {@link NavigationCallback.onNavigationCompleted} or
+     * (2) {@link NavigationCallback.onNavigationFailed} when {@link Navigation#isErrorPage}
+     * returns true. It will return a non-null object in these cases.
      *
-     * @throws IllegalStateException If called before completion or failure.
+     * @throws IllegalStateException if called outside the above circumstances.
      *
      * @since 90
      */
-    @Nullable
+    @NonNull
     public Page getPage() {
         ThreadCheck.ensureOnUiThread();
         if (WebLayer.getSupportedMajorVersionInternal() < 90) {
@@ -415,6 +469,44 @@ public class Navigation extends IClientNavigation.Stub {
         }
         try {
             return (Page) mNavigationImpl.getPage();
+        } catch (RemoteException e) {
+            throw new APICallException(e);
+        }
+    }
+
+    /**
+     * Returns the offset between the indices of the previous last committed and the newly committed
+     * navigation entries, for example -1 for back navigations, 0 for reloads, 1 for forward
+     * navigations or new navigations. Note that the return value can be less than -1 or greater
+     * than 1 if the navigation goes back/forward multiple entries. This may not cover all corner
+     * cases, and can be incorrect in cases like main frame client redirects.
+     *
+     * @since 92
+     */
+    public int getNavigationEntryOffset() {
+        ThreadCheck.ensureOnUiThread();
+        if (WebLayer.getSupportedMajorVersionInternal() < 92) {
+            throw new UnsupportedOperationException();
+        }
+        try {
+            return mNavigationImpl.getNavigationEntryOffset();
+        } catch (RemoteException e) {
+            throw new APICallException(e);
+        }
+    }
+
+    /**
+     * Returns true if the navigation response was fetched from the cache.
+     *
+     * @since 102
+     */
+    public boolean wasFetchedFromCache() {
+        ThreadCheck.ensureOnUiThread();
+        if (WebLayer.getSupportedMajorVersionInternal() < 102) {
+            throw new UnsupportedOperationException();
+        }
+        try {
+            return mNavigationImpl.wasFetchedFromCache();
         } catch (RemoteException e) {
             throw new APICallException(e);
         }

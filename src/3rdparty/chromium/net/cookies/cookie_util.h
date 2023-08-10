@@ -6,7 +6,6 @@
 #define NET_COOKIES_COOKIE_UTIL_H_
 
 #include <string>
-#include <utility>
 #include <vector>
 
 #include "base/callback_forward.h"
@@ -14,8 +13,11 @@
 #include "net/base/net_export.h"
 #include "net/cookies/canonical_cookie.h"
 #include "net/cookies/cookie_access_result.h"
+#include "net/cookies/cookie_constants.h"
 #include "net/cookies/cookie_options.h"
+#include "net/cookies/first_party_set_metadata.h"
 #include "net/cookies/site_for_cookies.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/origin.h"
 
 class GURL;
@@ -140,11 +142,17 @@ NET_EXPORT void ParseRequestCookieLine(const std::string& header_value,
 NET_EXPORT std::string SerializeRequestCookieLine(
     const ParsedRequestCookies& parsed_cookies);
 
-// Determines which of the cookies for `url` can be accessed, with respect to
-// the SameSite attribute. This applies to looking up existing cookies for HTTP
-// requests. For looking up cookies for non-HTTP APIs (i.e., JavaScript), see
-// ComputeSameSiteContextForScriptGet. For setting new cookies, see
-// ComputeSameSiteContextForResponse and ComputeSameSiteContextForScriptSet.
+// Determines which of the cookies for the request URL can be accessed, with
+// respect to the SameSite attribute. This applies to looking up existing
+// cookies for HTTP requests. For looking up cookies for non-HTTP APIs (i.e.,
+// JavaScript), see ComputeSameSiteContextForScriptGet. For setting new cookies,
+// see ComputeSameSiteContextForResponse and ComputeSameSiteContextForScriptSet.
+//
+// `url_chain` is a non-empty vector of URLs, the last of which is the current
+// request URL. It represents the redirect chain of the current request. The
+// redirect chain is used to calculate whether there has been a cross-site
+// redirect. In order for a context to be deemed strictly same-site, there must
+// not have been any cross-site redirects.
 //
 // `site_for_cookies` is the currently navigated to site that should be
 // considered "first-party" for cookies.
@@ -152,7 +160,7 @@ NET_EXPORT std::string SerializeRequestCookieLine(
 // `initiator` is the origin ultimately responsible for getting the request
 // issued. It may be different from `site_for_cookies`.
 //
-// base::nullopt for `initiator` denotes that the navigation was initiated by
+// absl::nullopt for `initiator` denotes that the navigation was initiated by
 // the user directly interacting with the browser UI, e.g. entering a URL
 // or selecting a bookmark.
 //
@@ -175,9 +183,9 @@ NET_EXPORT std::string SerializeRequestCookieLine(
 // when the method is "safe" in the RFC7231 section 4.2.1 sense.
 NET_EXPORT CookieOptions::SameSiteCookieContext
 ComputeSameSiteContextForRequest(const std::string& http_method,
-                                 const GURL& url,
+                                 const std::vector<GURL>& url_chain,
                                  const SiteForCookies& site_for_cookies,
-                                 const base::Optional<url::Origin>& initiator,
+                                 const absl::optional<url::Origin>& initiator,
                                  bool is_main_frame_navigation,
                                  bool force_ignore_site_for_cookies);
 
@@ -187,21 +195,25 @@ ComputeSameSiteContextForRequest(const std::string& http_method,
 NET_EXPORT CookieOptions::SameSiteCookieContext
 ComputeSameSiteContextForScriptGet(const GURL& url,
                                    const SiteForCookies& site_for_cookies,
-                                   const base::Optional<url::Origin>& initiator,
+                                   const absl::optional<url::Origin>& initiator,
                                    bool force_ignore_site_for_cookies);
 
-// Determines which of the cookies for `url` can be set from a network response,
-// with respect to the SameSite attribute. This will only return CROSS_SITE or
-// SAME_SITE_LAX (cookie sets of SameSite=strict cookies are permitted in same
-// contexts that sets of SameSite=lax cookies are).
+// Determines which of the cookies for the request URL can be set from a network
+// response, with respect to the SameSite attribute. This will only return
+// CROSS_SITE or SAME_SITE_LAX (cookie sets of SameSite=strict cookies are
+// permitted in same contexts that sets of SameSite=lax cookies are).
+// `url_chain` is a non-empty vector of URLs, the last of which is the current
+// request URL. It represents the redirect chain of the current request. The
+// redirect chain is used to calculate whether there has been a cross-site
+// redirect.
 // `is_main_frame_navigation` is whether the request was for a navigation that
 // targets the main frame or top-level browsing context. Both SameSite=Lax and
 // SameSite=Strict cookies may be set by any main frame navigation.
 // If `force_ignore_site_for_cookies` is true, this returns SAME_SITE_LAX.
 NET_EXPORT CookieOptions::SameSiteCookieContext
-ComputeSameSiteContextForResponse(const GURL& url,
+ComputeSameSiteContextForResponse(const std::vector<GURL>& url_chain,
                                   const SiteForCookies& site_for_cookies,
-                                  const base::Optional<url::Origin>& initiator,
+                                  const absl::optional<url::Origin>& initiator,
                                   bool is_main_frame_navigation,
                                   bool force_ignore_site_for_cookies);
 
@@ -224,28 +236,34 @@ ComputeSameSiteContextForSubresource(const GURL& url,
                                      const SiteForCookies& site_for_cookies,
                                      bool force_ignore_site_for_cookies);
 
-// Returns whether the respective SameSite feature is enabled.
-NET_EXPORT bool IsSameSiteByDefaultCookiesEnabled();
-NET_EXPORT bool IsCookiesWithoutSameSiteMustBeSecureEnabled();
+// Returns whether the respective feature is enabled.
 NET_EXPORT bool IsSchemefulSameSiteEnabled();
 
-NET_EXPORT bool IsFirstPartySetsEnabled();
-
-// Compute SameParty context, determines which of the cookies for `request_url`
-// can be accessed. Returns either kCrossParty or kSameParty. `isolation_info`
-// must be fully populated. In Chrome, all requests with credentials enabled
-// have a fully populated IsolationInfo.  But that might not be true for other
-// embedders yet (including cast, WebView, etc).  Also not sure about iOS.
-NET_EXPORT CookieOptions::SamePartyCookieContextType ComputeSamePartyContext(
-    const net::SchemefulSite& request_url,
+// Computes the First-Party Sets metadata, determining which of the cookies for
+// `request_site` can be accessed. `isolation_info` must be fully populated.  If
+// `force_ignore_top_frame_party` is true, the top frame from `isolation_info`
+// will be assumed to be same-party with `request_site`, regardless of what it
+// is.
+//
+// The result may be returned synchronously, or `callback` may be invoked
+// asynchronously with the result. The callback will be invoked iff the return
+// value is nullopt; i.e. a result will be provided via return value or
+// callback, but not both, and not neither.
+[[nodiscard]] NET_EXPORT absl::optional<FirstPartySetMetadata>
+ComputeFirstPartySetMetadataMaybeAsync(
+    const SchemefulSite& request_site,
     const IsolationInfo& isolation_info,
-    const CookieAccessDelegate* cookie_access_delegate);
+    const CookieAccessDelegate* cookie_access_delegate,
+    bool force_ignore_top_frame_party,
+    base::OnceCallback<void(FirstPartySetMetadata)> callback);
 
 // Get the SameParty inclusion status. If the cookie is not SameParty, returns
 // kNoSamePartyEnforcement; if the cookie is SameParty but does not have a
 // valid context, returns kEnforceSamePartyExclude.
 NET_EXPORT CookieSamePartyStatus
-GetSamePartyStatus(const CanonicalCookie& cookie, const CookieOptions& options);
+GetSamePartyStatus(const CanonicalCookie& cookie,
+                   const CookieOptions& options,
+                   bool first_party_sets_enabled);
 
 // Takes a callback accepting a CookieAccessResult and returns a callback
 // that accepts a bool, setting the bool to true if the CookieInclusionStatus
@@ -263,6 +281,15 @@ StripAccessResults(const CookieAccessResultList& cookie_access_result_list);
 
 // Records port related metrics from Omnibox navigations.
 NET_EXPORT void RecordCookiePortOmniboxHistograms(const GURL& url);
+
+// Checks invariants that should be upheld w.r.t. the included and excluded
+// cookies. Namely: the included cookies should be elements of
+// `included_cookies`; excluded cookies should be elements of
+// `excluded_cookies`; and included cookies should be in the correct sorted
+// order.
+NET_EXPORT void DCheckIncludedAndExcludedCookieLists(
+    const CookieAccessResultList& included_cookies,
+    const CookieAccessResultList& excluded_cookies);
 
 }  // namespace cookie_util
 

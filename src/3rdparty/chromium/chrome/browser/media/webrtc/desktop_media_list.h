@@ -5,14 +5,20 @@
 #ifndef CHROME_BROWSER_MEDIA_WEBRTC_DESKTOP_MEDIA_LIST_H_
 #define CHROME_BROWSER_MEDIA_WEBRTC_DESKTOP_MEDIA_LIST_H_
 
+#include <string>
 #include <vector>
 
-#include "base/strings/string16.h"
+#include "base/callback_forward.h"
 #include "base/time/time.h"
 #include "content/public/browser/desktop_media_id.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/gfx/image/image_skia.h"
 
 class DesktopMediaListObserver;
+
+namespace content {
+class WebContents;
+}
 
 // DesktopMediaList provides the list of desktop media source (screens, windows,
 // tabs), and their thumbnails, to the desktop media picker dialog. It
@@ -33,22 +39,33 @@ class DesktopMediaList {
     kCurrentTab,   // TYPE_WEB_CONTENTS of the current tab.
   };
 
+  // A WebContents filter can be applied to DesktopMediaList::Type::kWebContents
+  // MediaList object in order to provide a way to filter out any WebContents
+  // that shouldn't be included.
+  using WebContentsFilter =
+      base::RepeatingCallback<bool(content::WebContents*)>;
+
   // Struct used to represent each entry in the list.
   struct Source {
+    Source();
+    Source(const Source& other_source);
+    ~Source();
+
     // Id of the source.
     content::DesktopMediaID id;
 
     // Name of the source that should be shown to the user.
-    base::string16 name;
+    std::u16string name;
 
     // The thumbnail for the source.
     gfx::ImageSkia thumbnail;
+
+    // A preview for this source, used when both a thumbnail and preview are
+    // used. Currently only the case in the tab_desktop_media_list.
+    gfx::ImageSkia preview;
   };
 
   using UpdateCallback = base::OnceClosure;
-
-  // TODO(crbug.com/1136942): Add support for this flow.
-  static constexpr bool kConfirmationOnlyDialogSupported = false;
 
   virtual ~DesktopMediaList() {}
 
@@ -85,6 +102,11 @@ class DesktopMediaList {
   virtual const Source& GetSource(int index) const = 0;
 
   virtual Type GetMediaListType() const = 0;
+
+  // Set or clear the id of a single source which needs a preview image
+  // generating in addition to its thumbnail.
+  virtual void SetPreviewedSource(
+      const absl::optional<content::DesktopMediaID>& id) = 0;
 };
 
 #endif  // CHROME_BROWSER_MEDIA_WEBRTC_DESKTOP_MEDIA_LIST_H_

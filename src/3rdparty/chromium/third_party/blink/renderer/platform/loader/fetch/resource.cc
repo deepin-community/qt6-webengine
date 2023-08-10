@@ -30,13 +30,15 @@
 #include <cassert>
 #include <memory>
 
-#include "base/single_thread_task_runner.h"
-#include "base/stl_util.h"
+#include "base/debug/crash_logging.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/time/default_clock.h"
 #include "build/build_config.h"
 #include "services/network/public/mojom/fetch_api.mojom-blink.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/platform/web_security_origin.h"
+#include "third_party/blink/renderer/platform/heap/collection_support/heap_vector.h"
 #include "third_party/blink/renderer/platform/instrumentation/histogram.h"
 #include "third_party/blink/renderer/platform/instrumentation/instance_counters.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
@@ -113,11 +115,11 @@ const char* const kHeaderPrefixesToIgnoreAfterRevalidation[] = {
 
 static inline bool ShouldUpdateHeaderAfterRevalidation(
     const AtomicString& header) {
-  for (size_t i = 0; i < base::size(kHeadersToIgnoreAfterRevalidation); i++) {
+  for (size_t i = 0; i < std::size(kHeadersToIgnoreAfterRevalidation); i++) {
     if (EqualIgnoringASCIICase(header, kHeadersToIgnoreAfterRevalidation[i]))
       return false;
   }
-  for (size_t i = 0; i < base::size(kHeaderPrefixesToIgnoreAfterRevalidation);
+  for (size_t i = 0; i < std::size(kHeaderPrefixesToIgnoreAfterRevalidation);
        i++) {
     if (header.StartsWithIgnoringASCIICase(
             kHeaderPrefixesToIgnoreAfterRevalidation[i]))
@@ -253,10 +255,14 @@ void Resource::AppendData(const char* data, size_t length) {
   DCHECK(!is_revalidating_);
   DCHECK(!ErrorOccurred());
   if (options_.data_buffering_policy == kBufferData) {
-    if (data_)
+    if (data_) {
       data_->Append(data, length);
-    else
+    } else {
+      // TODO(crbug.com/1302204): Remove this once the crash is fixed.
+      SCOPED_CRASH_KEY_STRING32("Resource", "append_data_length",
+                                base::NumberToString(length));
       data_ = SharedBuffer::Create(data, length);
+    }
     SetEncodedSize(data_->size());
   }
   NotifyDataReceived(data, length);
@@ -398,11 +404,11 @@ static base::TimeDelta CurrentAge(const ResourceResponse& response,
                                   base::Time response_timestamp) {
   // RFC2616 13.2.3
   // No compensation for latency as that is not terribly important in practice
-  base::Optional<base::Time> date_value = response.Date();
+  absl::optional<base::Time> date_value = response.Date();
   base::TimeDelta apparent_age;
   if (date_value && response_timestamp >= date_value.value())
     apparent_age = response_timestamp - date_value.value();
-  base::Optional<base::TimeDelta> age_value = response.Age();
+  absl::optional<base::TimeDelta> age_value = response.Age();
   base::TimeDelta corrected_received_age =
       age_value ? std::max(apparent_age, age_value.value()) : apparent_age;
   base::TimeDelta resident_time = Now() - response_timestamp;
@@ -411,7 +417,7 @@ static base::TimeDelta CurrentAge(const ResourceResponse& response,
 
 static base::TimeDelta FreshnessLifetime(const ResourceResponse& response,
                                          base::Time response_timestamp) {
-#if !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
   // On desktop, local files should be reloaded in case they change.
   if (response.CurrentRequestUrl().IsLocalFile())
     return base::TimeDelta();
@@ -423,15 +429,15 @@ static base::TimeDelta FreshnessLifetime(const ResourceResponse& response,
     return base::TimeDelta::Max();
 
   // RFC2616 13.2.4
-  base::Optional<base::TimeDelta> max_age_value = response.CacheControlMaxAge();
+  absl::optional<base::TimeDelta> max_age_value = response.CacheControlMaxAge();
   if (max_age_value)
     return max_age_value.value();
-  base::Optional<base::Time> expires = response.Expires();
-  base::Optional<base::Time> date = response.Date();
+  absl::optional<base::Time> expires = response.Expires();
+  absl::optional<base::Time> date = response.Date();
   base::Time creation_time = date ? date.value() : response_timestamp;
   if (expires)
     return expires.value() - creation_time;
-  base::Optional<base::Time> last_modified = response.LastModified();
+  absl::optional<base::Time> last_modified = response.LastModified();
   if (last_modified)
     return (creation_time - last_modified.value()) * 0.1;
   // If no cache headers are present, the specification leaves the decision to
@@ -456,8 +462,8 @@ static bool CanUseResponse(const ResourceResponse& response,
 
   if (response.HttpStatusCode() == 302 || response.HttpStatusCode() == 307) {
     // Default to not cacheable unless explicitly allowed.
-    bool has_max_age = response.CacheControlMaxAge() != base::nullopt;
-    bool has_expires = response.Expires() != base::nullopt;
+    bool has_max_age = response.CacheControlMaxAge() != absl::nullopt;
+    bool has_expires = response.Expires() != absl::nullopt;
     // TODO: consider catching Cache-Control "private" and "public" here.
     if (!has_max_age && !has_expires)
       return false;
@@ -525,7 +531,10 @@ void Resource::ResponseReceived(const ResourceResponse& response) {
 
 void Resource::SetSerializedCachedMetadata(mojo_base::BigBuffer data) {
   DCHECK(!is_revalidating_);
-  DCHECK(!GetResponse().IsNull());
+}
+
+bool Resource::CodeCacheHashRequired() const {
+  return false;
 }
 
 String Resource::ReasonNotDeletable() const {
@@ -614,9 +623,6 @@ void Resource::AddClient(ResourceClient* client,
 
 void Resource::RemoveClient(ResourceClient* client) {
   CHECK(!is_add_remove_client_prohibited_);
-
-  // This code may be called in a pre-finalizer, where weak members in the
-  // HashCountedSet are already swept out.
 
   if (finished_clients_.Contains(client))
     finished_clients_.erase(client);
@@ -918,10 +924,6 @@ void Resource::SetCachePolicyBypassingCache() {
   resource_request_.SetCacheMode(mojom::FetchCacheMode::kBypassCache);
 }
 
-void Resource::SetPreviewsState(PreviewsState previews_state) {
-  resource_request_.SetPreviewsState(previews_state);
-}
-
 void Resource::ClearRangeRequestHeader() {
   resource_request_.ClearHttpHeaderField("range");
 }
@@ -1093,6 +1095,8 @@ static const char* InitiatorTypeNameToString(
     const AtomicString& initiator_type_name) {
   if (initiator_type_name == fetch_initiator_type_names::kAudio)
     return "Audio";
+  if (initiator_type_name == fetch_initiator_type_names::kAttributionsrc)
+    return "Attribution resource";
   if (initiator_type_name == fetch_initiator_type_names::kCSS)
     return "CSS resource";
   if (initiator_type_name == fetch_initiator_type_names::kDocument)
@@ -1121,7 +1125,7 @@ static const char* InitiatorTypeNameToString(
     return "XMLHttpRequest";
 
   static_assert(
-      fetch_initiator_type_names::kNamesCount == 17,
+      fetch_initiator_type_names::kNamesCount == 18,
       "New FetchInitiatorTypeNames should be handled correctly here.");
 
   return "Resource";
@@ -1149,8 +1153,6 @@ const char* Resource::ResourceTypeToString(
       return "Link prefetch resource";
     case ResourceType::kTextTrack:
       return "Text track";
-    case ResourceType::kImportResource:
-      return "Imported resource";
     case ResourceType::kAudio:
       return "Audio";
     case ResourceType::kVideo:
@@ -1172,7 +1174,6 @@ bool Resource::IsLoadEventBlockingResourceType() const {
     case ResourceType::kFont:
     case ResourceType::kSVGDocument:
     case ResourceType::kXSLStyleSheet:
-    case ResourceType::kImportResource:
       return true;
     case ResourceType::kRaw:
     case ResourceType::kLinkPrefetch:

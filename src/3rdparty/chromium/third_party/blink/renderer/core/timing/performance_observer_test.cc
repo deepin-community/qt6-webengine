@@ -5,6 +5,7 @@
 #include "third_party/blink/renderer/core/timing/performance_observer.h"
 
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_testing.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_performance_mark_options.h"
@@ -22,6 +23,8 @@ class MockPerformance : public Performance {
  public:
   explicit MockPerformance(ScriptState* script_state)
       : Performance(base::TimeTicks(),
+                    ExecutionContext::From(script_state)
+                        ->CrossOriginIsolatedCapability(),
                     ExecutionContext::From(script_state)
                         ->GetTaskRunner(TaskType::kPerformanceTimeline)) {}
   ~MockPerformance() override = default;
@@ -42,7 +45,7 @@ class PerformanceObserverTest : public testing::Test {
 
   bool IsRegistered() { return observer_->is_registered_; }
   int NumPerformanceEntries() { return observer_->performance_entries_.size(); }
-  void Deliver() { observer_->Deliver(); }
+  void Deliver() { observer_->Deliver(absl::nullopt); }
 
   Persistent<MockPerformance> base_;
   Persistent<V8PerformanceObserverCallback> cb_;

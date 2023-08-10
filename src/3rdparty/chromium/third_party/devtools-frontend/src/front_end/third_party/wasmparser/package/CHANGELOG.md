@@ -1,3 +1,77 @@
+# [5.4.0](https://github.com/wasdk/wasmparser/compare/v5.3.0...v5.4.0) (2021-10-12)
+
+
+### Bug Fixes
+
+* prevent negative name subsection entry length ([c9eeec7](https://github.com/wasdk/wasmparser/commit/c9eeec7a26d45cf436422a0f20c16dcf14c511bd))
+
+
+### Features
+
+* add tests for negative name subsection length ([b5d8d83](https://github.com/wasdk/wasmparser/commit/b5d8d83811785c8b3a0877e5e52c01cad4b4951e))
+
+# [5.3.0](https://github.com/wasdk/wasmparser/compare/v5.2.0...v5.3.0) (2021-09-20)
+
+
+### Bug Fixes
+
+* escape export name strings §6.3.3 ([1c0d874](https://github.com/wasdk/wasmparser/commit/1c0d874bde1544c03661ccfa63575be321eb6f73))
+
+
+### Features
+
+* add tests for escaped export name strings ([8c27bdf](https://github.com/wasdk/wasmparser/commit/8c27bdf516ab91d63595d0b283e57a9e7762d4fc))
+* update GC proposal support to "milestone 4" ([5d63bb6](https://github.com/wasdk/wasmparser/commit/5d63bb6b441ff064abf13559ca308b16c222c18f))
+
+# [5.2.0](https://github.com/wasdk/wasmparser/compare/v5.1.1...v5.2.0) (2021-05-31)
+
+
+### Features
+
+* implement br_on_non_null too ([e5415ae](https://github.com/wasdk/wasmparser/commit/e5415aed971a6fa1919498dbce5ac537dbf00582))
+* implement more instructions ([08c1f87](https://github.com/wasdk/wasmparser/commit/08c1f877d81cb2b7d603b8998e22840deebd1072))
+
+## [5.1.1](https://github.com/wasdk/wasmparser/compare/v5.1.0...v5.1.1) (2021-04-26)
+
+
+### Bug Fixes
+
+* missing initializer in devtools name generator for exceptions ([a35948b](https://github.com/wasdk/wasmparser/commit/a35948b999aaa375da426714c54e6c86febe4854))
+
+# [5.1.0](https://github.com/wasdk/wasmparser/compare/v5.0.2...v5.1.0) (2021-04-15)
+
+
+### Features
+
+* add support for "exception handling" proposal ([8dbd8c8](https://github.com/wasdk/wasmparser/commit/8dbd8c8964eae722f011851b35914c1c5b61f9f5))
+
+## [5.0.2](https://github.com/wasdk/wasmparser/compare/v5.0.1...v5.0.2) (2021-03-25)
+
+
+### Bug Fixes
+
+* **simd:** update wabt.js and remove/unskip simd tests ([#95](https://github.com/wasdk/wasmparser/issues/95)) ([ce582b7](https://github.com/wasdk/wasmparser/commit/ce582b7bfcce15812ac7dd37bcf5aa03933622d5))
+
+## [5.0.1](https://github.com/wasdk/wasmparser/compare/v5.0.0...v5.0.1) (2021-03-04)
+
+
+### Bug Fixes
+
+* **simd:** update SIMD opcodes ([648fff5](https://github.com/wasdk/wasmparser/commit/648fff52d2a186fb6bee97dc1f37b97640e26fbf))
+
+# [5.0.0](https://github.com/wasdk/wasmparser/compare/v4.0.0...v5.0.0) (2021-02-24)
+
+
+### Features
+
+* add support for WasmGC proposal ([5d4e5a0](https://github.com/wasdk/wasmparser/commit/5d4e5a0a21f9fc4958c8c1a834c2af49dafd8641))
+
+
+### BREAKING CHANGES
+
+* IFunctionType is replaced by the more general ITypeEntry.
+* Type is now a class; the former enum is now called TypeKind. Several other interfaces now use Type instances instead of numbers to describe types.
+
 # [4.0.0](https://github.com/wasdk/wasmparser/compare/v3.3.1...v4.0.0) (2020-11-03)
 
 

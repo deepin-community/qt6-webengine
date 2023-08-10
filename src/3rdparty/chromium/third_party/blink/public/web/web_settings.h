@@ -39,7 +39,6 @@
 #include "third_party/blink/public/mojom/webpreferences/web_preferences.mojom-forward.h"
 #include "third_party/blink/public/platform/web_common.h"
 #include "third_party/blink/public/platform/web_effective_connection_type.h"
-#include "third_party/blink/public/platform/web_size.h"
 
 namespace blink {
 
@@ -164,7 +163,6 @@ class WebSettings {
   virtual void SetMainFrameResizesAreOrientationChanges(bool) = 0;
   virtual void SetMaxTouchPoints(int) = 0;
   virtual void SetPictureInPictureEnabled(bool) = 0;
-  virtual void SetDataSaverHoldbackWebApi(bool) = 0;
   virtual void SetWebAppScope(const WebString&) = 0;
   virtual void SetPresentationRequiresUserGesture(bool) = 0;
   virtual void SetEmbeddedMediaExperienceEnabled(bool) = 0;
@@ -172,12 +170,8 @@ class WebSettings {
   virtual void SetMinimumFontSize(int) = 0;
   virtual void SetMinimumLogicalFontSize(int) = 0;
   virtual void SetHideScrollbars(bool) = 0;
-  virtual void SetOfflineWebApplicationCacheEnabled(bool) = 0;
-  virtual void SetPassiveEventListenerDefault(PassiveEventListenerDefault) = 0;
   virtual void SetPasswordEchoDurationInSeconds(double) = 0;
   virtual void SetPasswordEchoEnabled(bool) = 0;
-  virtual void SetPictographFontFamily(const WebString&,
-                                       UScriptCode = USCRIPT_COMMON) = 0;
   virtual void SetPluginsEnabled(bool) = 0;
   virtual void SetPresentationReceiver(bool) = 0;
   virtual void SetAvailablePointerTypes(int) = 0;
@@ -272,11 +266,6 @@ class WebSettings {
   virtual void SetLazyImageLoadingDistanceThresholdPx2G(int) = 0;
   virtual void SetLazyImageLoadingDistanceThresholdPx3G(int) = 0;
   virtual void SetLazyImageLoadingDistanceThresholdPx4G(int) = 0;
-  virtual void SetLazyImageFirstKFullyLoadUnknown(int) = 0;
-  virtual void SetLazyImageFirstKFullyLoadSlow2G(int) = 0;
-  virtual void SetLazyImageFirstKFullyLoad2G(int) = 0;
-  virtual void SetLazyImageFirstKFullyLoad3G(int) = 0;
-  virtual void SetLazyImageFirstKFullyLoad4G(int) = 0;
   virtual void SetForceDarkModeEnabled(bool) = 0;
   virtual void SetPreferredColorScheme(blink::mojom::PreferredColorScheme) = 0;
   virtual void SetPreferredContrast(mojom::PreferredContrast) = 0;
@@ -286,6 +275,7 @@ class WebSettings {
   virtual void SetSelectionClipboardBufferAvailable(bool) = 0;
   virtual void SetAccessibilityIncludeSvgGElement(bool) = 0;
   virtual void SetWebXRImmersiveArAllowed(bool) = 0;
+  virtual void SetLitePageSubresourceRedirectOrigin(const WebString&) = 0;
 
  protected:
   ~WebSettings() = default;
@@ -293,4 +283,4 @@ class WebSettings {
 
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_PUBLIC_WEB_WEB_SETTINGS_H_

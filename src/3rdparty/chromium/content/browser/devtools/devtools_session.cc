@@ -10,11 +10,11 @@
 #include "base/bind.h"
 #include "base/containers/flat_set.h"
 #include "base/debug/stack_trace.h"
+#include "base/trace_event/trace_event.h"
 #include "content/browser/devtools/devtools_manager.h"
 #include "content/browser/devtools/protocol/devtools_domain_handler.h"
 #include "content/browser/devtools/protocol/protocol.h"
 #include "content/browser/devtools/render_frame_devtools_agent_host.h"
-#include "content/browser/renderer_host/render_frame_host_impl.h"
 #include "content/public/browser/devtools_external_agent_proxy_delegate.h"
 #include "content/public/browser/devtools_manager_delegate.h"
 #include "third_party/inspector_protocol/crdtp/cbor.h"
@@ -419,7 +419,7 @@ void DevToolsSession::ResumeSendingMessagesToAgent() {
   }
 }
 
-void DevToolsSession::ClearPendingMessages() {
+void DevToolsSession::ClearPendingMessages(bool did_crash) {
   for (auto it = pending_messages_.begin(); it != pending_messages_.end();) {
     const PendingMessage& message = *it;
     if (SpanEquals(crdtp::SpanFrom("Page.reload"),
@@ -428,11 +428,13 @@ void DevToolsSession::ClearPendingMessages() {
       continue;
     }
     // Send error to the client and remove the message from pending.
+    std::string error_message =
+        did_crash ? kTargetCrashedMessage : kTargetClosedMessage;
     SendProtocolResponse(
         message.call_id,
         crdtp::CreateErrorResponse(
             message.call_id,
-            crdtp::DispatchResponse::ServerError(kTargetCrashedMessage)));
+            crdtp::DispatchResponse::ServerError(error_message)));
     it = pending_messages_.erase(it);
   }
 }

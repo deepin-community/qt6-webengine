@@ -7,8 +7,9 @@
 #include <stddef.h>
 
 #include "base/command_line.h"
+#include "base/containers/span.h"
+#include "base/cxx17_backports.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/stl_util.h"
 #include "base/strings/pattern.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
@@ -27,7 +28,7 @@
 #include "media/formats/webm/webm_stream_parser.h"
 #include "media/media_buildflags.h"
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 #include "media/base/android/media_codec_util.h"
 #endif
 
@@ -46,7 +47,7 @@ typedef bool (*CodecIDValidatorFunction)(const std::string& codecs_id,
 struct CodecInfo {
   enum Type { UNKNOWN, AUDIO, VIDEO };
 
-  // Update tools/metrics/histograms/histograms.xml if new values are added.
+  // Update tools/metrics/histograms/enums.xml if new values are added.
   enum HistogramTag {
     HISTOGRAM_UNKNOWN,
     HISTOGRAM_VP8,
@@ -64,8 +65,9 @@ struct CodecInfo {
     HISTOGRAM_FLAC,
     HISTOGRAM_AV1,
     HISTOGRAM_MPEG_H_AUDIO,
-    HISTOGRAM_MAX =
-        HISTOGRAM_MPEG_H_AUDIO  // Must be equal to largest logged entry.
+    HISTOGRAM_DTS,
+    HISTOGRAM_DTSXP2,
+    HISTOGRAM_MAX = HISTOGRAM_DTSXP2  // Must be equal to largest logged entry.
   };
 
   const char* pattern;
@@ -75,7 +77,7 @@ struct CodecInfo {
 };
 
 typedef StreamParser* (*ParserFactoryFunction)(
-    const std::vector<std::string>& codecs,
+    base::span<const std::string> codecs,
     MediaLog* media_log);
 
 struct SupportedTypeInfo {
@@ -112,7 +114,7 @@ static const CodecInfo* const kVideoWebMCodecs[] = {
 static const CodecInfo* const kAudioWebMCodecs[] = {&kVorbisCodecInfo,
                                                     &kOpusCodecInfo, nullptr};
 
-static StreamParser* BuildWebMParser(const std::vector<std::string>& codecs,
+static StreamParser* BuildWebMParser(base::span<const std::string> codecs,
                                      MediaLog* media_log) {
   return new WebMStreamParser();
 }
@@ -213,6 +215,27 @@ static const CodecInfo kEAC3CodecInfo3 = {"mp4a.A6", CodecInfo::AUDIO, nullptr,
                                           CodecInfo::HISTOGRAM_EAC3};
 #endif  // BUILDFLAG(ENABLE_PLATFORM_AC3_EAC3_AUDIO)
 
+#if BUILDFLAG(ENABLE_PLATFORM_DTS_AUDIO)
+// The 'dtsc' and 'dtsx' are mime codec ids for DTS and DTSX according to
+// http://mp4ra.org/#/codecs
+// The object types for DTS and DTSX in MP4 container are 0xa9 and 0xb2, so
+// according to RFC 6381 this corresponds to codec ids 'mp4a.A9' and 'mp4a.B2'.
+// Codec ids with lower case oti (mp4a.a9 and mp4a.b2) are supported for
+// backward compatibility.
+static const CodecInfo kDTSCodecInfo1 = {"dtsc", CodecInfo::AUDIO, nullptr,
+                                         CodecInfo::HISTOGRAM_DTS};
+static const CodecInfo kDTSCodecInfo2 = {"mp4a.a9", CodecInfo::AUDIO, nullptr,
+                                         CodecInfo::HISTOGRAM_DTS};
+static const CodecInfo kDTSCodecInfo3 = {"mp4a.A9", CodecInfo::AUDIO, nullptr,
+                                         CodecInfo::HISTOGRAM_DTS};
+static const CodecInfo kDTSXCodecInfo1 = {"dtsx", CodecInfo::AUDIO, nullptr,
+                                          CodecInfo::HISTOGRAM_DTSXP2};
+static const CodecInfo kDTSXCodecInfo2 = {"mp4a.b2", CodecInfo::AUDIO, nullptr,
+                                          CodecInfo::HISTOGRAM_DTSXP2};
+static const CodecInfo kDTSXCodecInfo3 = {"mp4a.B2", CodecInfo::AUDIO, nullptr,
+                                          CodecInfo::HISTOGRAM_DTSXP2};
+#endif  // BUILDFLAG(ENABLE_PLATFORM_DTS_AUDIO)
+
 #if BUILDFLAG(ENABLE_PLATFORM_MPEG_H_AUDIO)
 static const CodecInfo kMpegHAudioCodecInfo1 = {
     "mhm1.*", CodecInfo::AUDIO, nullptr, CodecInfo::HISTOGRAM_MPEG_H_AUDIO};
@@ -226,7 +249,7 @@ static const CodecInfo kMP3CodecInfo = {nullptr, CodecInfo::AUDIO, nullptr,
                                         CodecInfo::HISTOGRAM_MP3};
 static const CodecInfo* const kAudioMP3Codecs[] = {&kMP3CodecInfo, nullptr};
 
-static StreamParser* BuildMP3Parser(const std::vector<std::string>& codecs,
+static StreamParser* BuildMP3Parser(base::span<const std::string> codecs,
                                     MediaLog* media_log) {
   return new MPEG1AudioStreamParser();
 }
@@ -283,10 +306,18 @@ static const CodecInfo* const kAudioMP4Codecs[] = {&kMPEG4FLACCodecInfo,
                                                    &kEAC3CodecInfo2,
                                                    &kEAC3CodecInfo3,
 #endif  // BUILDFLAG(ENABLE_PLATFORM_AC3_EAC3_AUDIO)
+#if BUILDFLAG(ENABLE_PLATFORM_DTS_AUDIO)
+                                                   &kDTSCodecInfo1,
+                                                   &kDTSCodecInfo2,
+                                                   &kDTSCodecInfo3,
+                                                   &kDTSXCodecInfo1,
+                                                   &kDTSXCodecInfo2,
+                                                   &kDTSXCodecInfo3,
+#endif  // BUILDFLAG(ENABLE_PLATFORM_DTS_AUDIO)
 #endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
                                                    nullptr};
 
-static StreamParser* BuildMP4Parser(const std::vector<std::string>& codecs,
+static StreamParser* BuildMP4Parser(base::span<const std::string> codecs,
                                     MediaLog* media_log) {
   std::set<int> audio_object_types;
   bool has_sbr = false;
@@ -299,8 +330,7 @@ static StreamParser* BuildMP4Parser(const std::vector<std::string>& codecs,
   // conditionally expect a FLAC stream, hence |has_flac|.
   bool has_flac = false;
 
-  for (size_t i = 0; i < codecs.size(); ++i) {
-    std::string codec_id = codecs[i];
+  for (const auto& codec_id : codecs) {
     if (base::MatchPattern(codec_id, kMPEG4FLACCodecInfo.pattern)) {
       has_flac = true;
 #if BUILDFLAG(USE_PROPRIETARY_CODECS)
@@ -327,6 +357,16 @@ static StreamParser* BuildMP4Parser(const std::vector<std::string>& codecs,
                base::MatchPattern(codec_id, kEAC3CodecInfo3.pattern)) {
       audio_object_types.insert(mp4::kEAC3);
 #endif  // BUILDFLAG(ENABLE_PLATFORM_AC3_EAC3_AUDIO)
+#if BUILDFLAG(ENABLE_PLATFORM_DTS_AUDIO)
+    } else if (base::MatchPattern(codec_id, kDTSCodecInfo1.pattern) ||
+               base::MatchPattern(codec_id, kDTSCodecInfo2.pattern) ||
+               base::MatchPattern(codec_id, kDTSCodecInfo3.pattern)) {
+      audio_object_types.insert(mp4::kDTS);
+    } else if (base::MatchPattern(codec_id, kDTSXCodecInfo1.pattern) ||
+               base::MatchPattern(codec_id, kDTSXCodecInfo2.pattern) ||
+               base::MatchPattern(codec_id, kDTSXCodecInfo3.pattern)) {
+      audio_object_types.insert(mp4::kDTSX);
+#endif  // BUILDFLAG(ENABLE_PLATFORM_DTS_AUDIO)
 #endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
     }
   }
@@ -338,7 +378,7 @@ static const CodecInfo kADTSCodecInfo = {nullptr, CodecInfo::AUDIO, nullptr,
                                          CodecInfo::HISTOGRAM_MPEG4AAC};
 static const CodecInfo* const kAudioADTSCodecs[] = {&kADTSCodecInfo, nullptr};
 
-static StreamParser* BuildADTSParser(const std::vector<std::string>& codecs,
+static StreamParser* BuildADTSParser(base::span<const std::string> codecs,
                                      MediaLog* media_log) {
   return new ADTSStreamParser();
 }
@@ -362,11 +402,10 @@ static const CodecInfo* const kVideoMP2TCodecs[] = {&kH264AVC1CodecInfo,
                                                     &kMPEG2AACLCCodecInfo,
                                                     nullptr};
 
-static StreamParser* BuildMP2TParser(const std::vector<std::string>& codecs,
+static StreamParser* BuildMP2TParser(base::span<const std::string> codecs,
                                      MediaLog* media_log) {
   bool has_sbr = false;
-  for (size_t i = 0; i < codecs.size(); ++i) {
-    std::string codec_id = codecs[i];
+  for (const auto& codec_id : codecs) {
     if (base::MatchPattern(codec_id, kMPEG4AACCodecInfo.pattern)) {
       int audio_object_type = GetMP4AudioObjectType(codec_id, media_log);
       if (audio_object_type == kAACSBRObjectType ||
@@ -414,15 +453,6 @@ static bool VerifyCodec(const CodecInfo* codec_info,
         audio_codecs->push_back(codec_info->tag);
       return true;
     case CodecInfo::VIDEO:
-#if defined(OS_ANDROID)
-      // TODO(wolenetz, dalecurtis): This should instead use MimeUtil() to avoid
-      // duplication of subtle Android behavior.  http://crbug.com/587303.
-      if (codec_info->tag == CodecInfo::HISTOGRAM_H264 &&
-          !media::HasPlatformDecoderSupport()) {
-        return false;
-      }
-#endif
-
       if (video_codecs)
         video_codecs->push_back(codec_info->tag);
       return true;
@@ -452,14 +482,13 @@ static bool VerifyCodec(const CodecInfo* codec_info,
 // not updated if it was nullptr initially.
 static SupportsType CheckTypeAndCodecs(
     const std::string& type,
-    const std::vector<std::string>& codecs,
+    base::span<const std::string> codecs,
     MediaLog* media_log,
     ParserFactoryFunction* factory_function,
     std::vector<CodecInfo::HistogramTag>* audio_codecs,
     std::vector<CodecInfo::HistogramTag>* video_codecs) {
   // Search for the SupportedTypeInfo for |type|.
-  for (size_t i = 0; i < base::size(kSupportedTypeInfo); ++i) {
-    const SupportedTypeInfo& type_info = kSupportedTypeInfo[i];
+  for (const auto& type_info : kSupportedTypeInfo) {
     if (type == type_info.type) {
       if (codecs.empty()) {
         const CodecInfo* codec_info = type_info.codecs[0];
@@ -483,16 +512,27 @@ static SupportsType CheckTypeAndCodecs(
 
       // Make sure all the codecs specified in |codecs| are
       // in the supported type info.
-      for (size_t j = 0; j < codecs.size(); ++j) {
+      for (const auto& codec_id : codecs) {
         // Search the type info for a match.
         bool found_codec = false;
-        std::string codec_id = codecs[j];
-        for (int k = 0; type_info.codecs[k]; ++k) {
-          if (base::MatchPattern(codec_id, type_info.codecs[k]->pattern) &&
-              (!type_info.codecs[k]->validator ||
-               type_info.codecs[k]->validator(codec_id, media_log))) {
+        for (int i = 0; type_info.codecs[i]; ++i) {
+          // Only check a codec pattern if there is one to check. Some types,
+          // like audio/mpeg and audio/aac require there be no codecs parameter,
+          // and instead have implicit codec. If a codec is provided for such a
+          // type then it is not supported by MSE. We don't check any other
+          // potential matches because none should be configured.
+          if (!type_info.codecs[i]->pattern) {
+            DCHECK(i == 0 && !type_info.codecs[1])
+                << "For a type with implicit codec, then only one codec must "
+                   "be configured";
+            break;
+          }
+
+          if (base::MatchPattern(codec_id, type_info.codecs[i]->pattern) &&
+              (!type_info.codecs[i]->validator ||
+               type_info.codecs[i]->validator(codec_id, media_log))) {
             found_codec =
-                VerifyCodec(type_info.codecs[k], audio_codecs, video_codecs);
+                VerifyCodec(type_info.codecs[i], audio_codecs, video_codecs);
             break;  // Since only 1 pattern will match, no need to check others.
           }
         }
@@ -523,7 +563,7 @@ static SupportsType CheckTypeAndCodecs(
 // static
 SupportsType StreamParserFactory::IsTypeSupported(
     const std::string& type,
-    const std::vector<std::string>& codecs) {
+    base::span<const std::string> codecs) {
   // TODO(wolenetz): Questionable MediaLog usage, http://crbug.com/712310
   NullMediaLog media_log;
   return CheckTypeAndCodecs(type, codecs, &media_log, nullptr, nullptr,
@@ -533,7 +573,7 @@ SupportsType StreamParserFactory::IsTypeSupported(
 // static
 std::unique_ptr<StreamParser> StreamParserFactory::Create(
     const std::string& type,
-    const std::vector<std::string>& codecs,
+    base::span<const std::string> codecs,
     MediaLog* media_log) {
   std::unique_ptr<StreamParser> stream_parser;
   ParserFactoryFunction factory_function;

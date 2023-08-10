@@ -1,7 +1,6 @@
 import re
 import os
 import itertools
-from six import ensure_binary, itervalues, iteritems
 from collections import defaultdict
 
 MYPY = False
@@ -28,7 +27,7 @@ end_space = re.compile(r"([^\\]\s)*$")
 def fnmatch_translate(pat):
     # type: (bytes) -> Tuple[bool, Pattern[bytes]]
     parts = []
-    seq = None
+    seq = None  # type: Optional[int]
     i = 0
     any_char = b"[^/]"
     if pat[0:1] == b"/":
@@ -61,10 +60,10 @@ def fnmatch_translate(pat):
             # TODO: this doesn't really handle invalid sequences in the right way
             if c == b"]":
                 seq = None
-                if parts[-1:] == b"[":
+                if parts[-1] == b"[":
                     parts = parts[:-1]
-                elif parts[-1:] == b"^" and parts[-2:-1] == b"[":
-                    parts = parts[:-2]
+                elif parts[-1] == b"^" and parts[-2] == b"[":
+                    raise ValueError
                 else:
                     parts.append(c)
             elif c == b"-":
@@ -139,7 +138,7 @@ def parse_line(line):
     return invert, dir_only, literal, pattern
 
 
-class PathFilter(object):
+class PathFilter:
     def __init__(self, root, extras=None, cache=None):
         # type: (bytes, Optional[List[bytes]], Optional[MutableMapping[bytes, bool]]) -> None
         if root:
@@ -194,13 +193,13 @@ class PathFilter(object):
                 rule = cast(Tuple[bool, Pattern[bytes]], rule)
             if not dir_only:
                 rules_iter = itertools.chain(
-                    itertools.chain(*(iteritems(item) for item in itervalues(self.literals_dir))),
-                    itertools.chain(*(iteritems(item) for item in itervalues(self.literals_file))),
+                    itertools.chain(*(item.items() for item in self.literals_dir.values())),
+                    itertools.chain(*(item.items() for item in self.literals_file.values())),
                     self.patterns_dir,
                     self.patterns_file)  # type: Iterable[Tuple[Any, List[Tuple[bool, Pattern[bytes]]]]]
             else:
                 rules_iter = itertools.chain(
-                    itertools.chain(*(iteritems(item) for item in itervalues(self.literals_dir))),
+                    itertools.chain(*(item.items() for item in self.literals_dir.values())),
                     self.patterns_dir)
 
             for rules in rules_iter:
@@ -230,8 +229,9 @@ class PathFilter(object):
         empty = {}  # type: Dict[Any, Any]
         for dirpath, dirnames, filenames in iterator:
             orig_dirpath = dirpath
-            if ensure_binary(os.path.sep) != b"/":
-                dirpath = dirpath.replace(ensure_binary(os.path.sep), b"/")
+            path_sep = os.path.sep.encode()
+            if path_sep != b"/":
+                dirpath = dirpath.replace(path_sep, b"/")
 
             keep_dirs = []  # type: List[Tuple[bytes, T]]
             keep_files = []  # type: List[Tuple[bytes, T]]

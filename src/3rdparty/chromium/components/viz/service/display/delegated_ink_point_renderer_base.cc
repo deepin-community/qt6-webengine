@@ -5,8 +5,8 @@
 #include "components/viz/service/display/delegated_ink_point_renderer_base.h"
 
 #include "base/trace_event/trace_event.h"
-#include "components/viz/common/delegated_ink_metadata.h"
 #include "components/viz/service/display/delegated_ink_trail_data.h"
+#include "ui/gfx/delegated_ink_metadata.h"
 
 namespace viz {
 
@@ -14,7 +14,7 @@ DelegatedInkPointRendererBase::DelegatedInkPointRendererBase() = default;
 DelegatedInkPointRendererBase::~DelegatedInkPointRendererBase() = default;
 
 void DelegatedInkPointRendererBase::InitMessagePipeline(
-    mojo::PendingReceiver<mojom::DelegatedInkPointRenderer> receiver) {
+    mojo::PendingReceiver<gfx::mojom::DelegatedInkPointRenderer> receiver) {
   // The remote end of this pipeline exists on a per-tab basis, so if tab A
   // is using the feature and then tab B starts trying to use it, a new
   // PendingReceiver will arrive here while |receiver_| is still bound to the
@@ -29,11 +29,17 @@ void DelegatedInkPointRendererBase::InitMessagePipeline(
 }
 
 void DelegatedInkPointRendererBase::SetDelegatedInkMetadata(
-    std::unique_ptr<DelegatedInkMetadata> metadata) {
+    std::unique_ptr<gfx::DelegatedInkMetadata> metadata) {
   // Frame time is set later than everything else due to what is available
   // at time of creation, so confirm that it was actually set.
   DCHECK_NE(metadata->frame_time(), base::TimeTicks());
   metadata_ = std::move(metadata);
+
+  TRACE_EVENT_WITH_FLOW1(
+      "delegated_ink_trails",
+      "DelegatedInkPointRendererBase::SetDelegatedInkMetadata",
+      TRACE_ID_GLOBAL(metadata_->trace_id()), TRACE_EVENT_FLAG_FLOW_IN,
+      "metadata", metadata_->ToString());
 
   // If we already have a cached pointer ID, check if the same pointer ID
   // matches the new metadata.
@@ -53,10 +59,11 @@ void DelegatedInkPointRendererBase::SetDelegatedInkMetadata(
 
   // If we aren't able to find any matching point, set the pointer ID to null
   // so that FilterPoints and PredictPoints can early out.
-  pointer_id_ = base::nullopt;
+  pointer_id_ = absl::nullopt;
 }
 
-std::vector<DelegatedInkPoint> DelegatedInkPointRendererBase::FilterPoints() {
+std::vector<gfx::DelegatedInkPoint>
+DelegatedInkPointRendererBase::FilterPoints() {
   if (pointer_ids_.size() == 0)
     return {};
 
@@ -99,70 +106,48 @@ std::vector<DelegatedInkPoint> DelegatedInkPointRendererBase::FilterPoints() {
 
   // Any remaining points must be the points that should be part of the
   // delegated ink trail
-  std::vector<DelegatedInkPoint> points_to_draw;
-  for (auto it : trail_data.GetPoints())
-    points_to_draw.emplace_back(it.second, it.first, pointer_id_.value());
+  std::vector<gfx::DelegatedInkPoint> points_to_draw;
+  for (auto it : trail_data.GetPoints()) {
+    gfx::DelegatedInkPoint point{it.second, it.first, pointer_id_.value()};
+    points_to_draw.emplace_back(point);
+    TRACE_EVENT_WITH_FLOW1("delegated_ink_trails", "Filtering to draw point",
+                           TRACE_ID_GLOBAL(point.trace_id()),
+                           TRACE_EVENT_FLAG_FLOW_IN, "point", point.ToString());
+  }
 
-  DCHECK(points_to_draw.front().point() == metadata_->point() &&
-         points_to_draw.front().timestamp() == metadata_->timestamp());
+  DCHECK(points_to_draw.front().MatchesDelegatedInkMetadata(metadata_.get()));
 
   return points_to_draw;
 }
 
 void DelegatedInkPointRendererBase::PredictPoints(
-    std::vector<DelegatedInkPoint>* ink_points_to_draw) {
+    std::vector<gfx::DelegatedInkPoint>* ink_points_to_draw) {
   DCHECK(metadata_);
 
-  if (!pointer_id_.has_value())
+  if (!pointer_id_.has_value() ||
+      static_cast<int>(ink_points_to_draw->size()) == 0)
     return;
 
-  DelegatedInkTrailData& trail_data = pointer_ids_[pointer_id_.value()];
-  int points_predicted = 0;
-
-  // |ink_points_to_draw| needs to have at least one point in it already as a
-  // reference to know what timestamp to start predicting points at. This single
-  // point may just match |metadata_|.
-  if (trail_data.HasPrediction() && ink_points_to_draw->size() > 0) {
-    for (int i = 0; i < kNumberOfPointsToPredict; ++i) {
-      base::TimeTicks timestamp =
-          ink_points_to_draw->back().timestamp() +
-          base::TimeDelta::FromMilliseconds(
-              kNumberOfMillisecondsIntoFutureToPredictPerPoint);
-      base::Optional<DelegatedInkPoint> predicted_point =
-          trail_data.GetPredictedPoint(timestamp, metadata_->frame_time());
-      if (predicted_point.has_value()) {
-        ink_points_to_draw->push_back(predicted_point.value());
-        points_predicted++;
-      } else {
-        // HasPrediction() can return true while GeneratePrediction() fails to
-        // produce a prediction if the predicted point would go in to the
-        // opposite direction of most recently stored points. If this happens,
-        // don't continue trying to generate more predicted points.
-        break;
-      }
-    }
-  }
-
-  TRACE_EVENT_INSTANT1("viz", "DelegatedInkPointRendererBase::PredictPoints",
-                       TRACE_EVENT_SCOPE_THREAD, "predicted points",
-                       points_predicted);
-
-  if (points_predicted > 0)
-    trail_data.EvaluatePrediction();
+  pointer_ids_[pointer_id_.value()].PredictPoints(ink_points_to_draw,
+                                                  metadata_.get());
 }
 
 void DelegatedInkPointRendererBase::ResetPrediction() {
   for (auto& it : pointer_ids_)
     it.second.Reset();
-  TRACE_EVENT_INSTANT0("viz", "Delegated ink prediction reset.",
+  TRACE_EVENT_INSTANT0("delegated_ink_trails",
+                       "Delegated ink prediction reset.",
                        TRACE_EVENT_SCOPE_THREAD);
 }
 
 void DelegatedInkPointRendererBase::StoreDelegatedInkPoint(
-    const DelegatedInkPoint& point) {
-  TRACE_EVENT_INSTANT1("viz",
-                       "DelegatedInkPointRendererImpl::StoreDelegatedInkPoint",
-                       TRACE_EVENT_SCOPE_THREAD, "point", point.ToString());
+    const gfx::DelegatedInkPoint& point) {
+  TRACE_EVENT_WITH_FLOW1(
+      "delegated_ink_trails",
+      "DelegatedInkPointRendererImpl::StoreDelegatedInkPoint",
+      TRACE_ID_GLOBAL(point.trace_id()),
+      TRACE_EVENT_FLAG_FLOW_IN | TRACE_EVENT_FLAG_FLOW_OUT, "point",
+      point.ToString());
 
   pointer_ids_[point.pointer_id()].AddPoint(point);
 }

@@ -14,6 +14,7 @@ namespace blink {
 struct BLINK_COMMON_EXPORT MobileFriendliness {
   MobileFriendliness() = default;
   MobileFriendliness(const MobileFriendliness&) = default;
+  MobileFriendliness& operator=(const MobileFriendliness&) = default;
 
   bool operator==(const MobileFriendliness& other) const;
   bool operator!=(const MobileFriendliness& other) const {
@@ -26,18 +27,33 @@ struct BLINK_COMMON_EXPORT MobileFriendliness {
 
   // The value specified in meta tag like <meta name="viewport"
   // content="initial-scale=1.0">.
-  double viewport_initial_scale = 1.0;
+  // Default -1 means "Unknown" and should not be sent as UKM.
+  int viewport_initial_scale_x10 = -1;
 
   // The value specified in meta tag like <meta name="viewport"
   // content="width=500">.
-  int viewport_hardcoded_width = 0;
+  // Default -1 means "Unknown" and should not be sent as UKM.
+  int viewport_hardcoded_width = -1;
 
   // Whether the page allows user to zoom in/out.
   // It is specified like <meta name="viewport" content="user-scalable=no">.
   bool allow_user_zoom = true;
 
   // Percentage of small font size text area in all text area.
-  int small_text_ratio = 0;
+  // Default -1 means "Unknown" and should not be sent as UKM.
+  int small_text_ratio = -1;
+
+  // Percentage of pixels of text and images horizontally outside the viewport,
+  // relative to the frame width.
+  // Default -1 means "Unknown" and should not be sent as UKM.
+  int text_content_outside_viewport_percentage = -1;
+
+  // Percentage of tap targets whose center position is within another tap
+  // target (expanded by a margin).  The detail of the algorithm is
+  // go/bad-tap-target-ukm
+  // Default -1 means "Unknown" and should not be sent as UKM.
+  // If evaluation time budget exceeded, this will be -2.
+  int bad_tap_targets_ratio = -1;
 };
 
 }  // namespace blink

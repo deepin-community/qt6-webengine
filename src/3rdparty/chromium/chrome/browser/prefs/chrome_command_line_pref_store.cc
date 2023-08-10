@@ -13,8 +13,8 @@
 
 #include "base/files/file_path.h"
 #include "base/logging.h"
-#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_piece.h"
 #include "base/strings/string_split.h"
 #include "base/values.h"
 #include "build/build_config.h"
@@ -25,6 +25,7 @@
 #include "components/proxy_config/proxy_config_pref_names.h"
 #include "components/spellcheck/spellcheck_buildflags.h"
 #include "content/public/common/content_switches.h"
+#include "net/base/port_util.h"
 #include "services/network/public/cpp/network_switches.h"
 #include "ui/base/ui_base_switches.h"
 #include "ui/display/display_switches.h"
@@ -35,35 +36,34 @@
 
 #if !defined(TOOLKIT_QT)
 #include "components/browser_sync/browser_sync_switches.h"
-#include "components/data_reduction_proxy/core/common/data_reduction_proxy_pref_names.h"
-#include "components/data_reduction_proxy/core/common/data_reduction_proxy_switches.h"
+#include "components/language/core/browser/pref_names.h"
 #include "components/safe_browsing/core/common/safe_browsing_prefs.h"
 #include "components/safe_browsing/core/common/safebrowsing_switches.h"
-#include "components/sync/base/pref_names.h"
 #endif
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
 #include "ash/constants/ash_switches.h"
+#include "chrome/browser/ash/borealis/borealis_prefs.h"
+#include "chrome/browser/ash/borealis/borealis_switches.h"
 #endif
 
 const CommandLinePrefStore::SwitchToPreferenceMapEntry
     ChromeCommandLinePrefStore::string_switch_map_[] = {
 #if BUILDFLAG(ENABLE_SPELLCHECK)
         {switches::kLang, language::prefs::kApplicationLocale},
-#endif
-#if !defined(TOOLKIT_QT)
-        {data_reduction_proxy::switches::kDataReductionProxy,
-         data_reduction_proxy::prefs::kDataReductionProxy},
+        {switches::kAcceptLang, language::prefs::kSelectedLanguages},
 #endif
         {switches::kAuthServerAllowlist, prefs::kAuthServerAllowlist},
         {switches::kSSLVersionMin, prefs::kSSLVersionMin},
         {switches::kSSLVersionMax, prefs::kSSLVersionMax},
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
         {switches::kAuthAndroidNegotiateAccountType,
          prefs::kAuthAndroidNegotiateAccountType},
 #endif
 #if BUILDFLAG(IS_CHROMEOS_ASH)
         {switches::kSchedulerConfiguration, prefs::kSchedulerConfiguration},
+        {borealis::switches::kLaunchOptions,
+         borealis::prefs::kExtraLaunchOptions},
 #endif
 };
 
@@ -91,18 +91,17 @@ const CommandLinePrefStore::BooleanSwitchToPreferenceMapEntry
          prefs::kSafeBrowsingEnhanced, true},
 #endif
 #if BUILDFLAG(IS_CHROMEOS_ASH)
-        {chromeos::switches::kEnableTouchpadThreeFingerClick,
+        {ash::switches::kEnableTouchpadThreeFingerClick,
          prefs::kEnableTouchpadThreeFingerClick, true},
         {switches::kEnableUnifiedDesktop,
          prefs::kUnifiedDesktopEnabledByDefault, true},
-        {chromeos::switches::kEnableCastReceiver, prefs::kCastReceiverEnabled,
-         true},
+        {ash::switches::kEnableCastReceiver, prefs::kCastReceiverEnabled, true},
 #endif
 #if !defined(TOOLKIT_QT)
         {switches::kEnableLocalSyncBackend,
          syncer::prefs::kEnableLocalSyncBackend, true},
 #endif
-#if !BUILDFLAG(IS_CHROMEOS_ASH) && !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_CHROMEOS_ASH) && !BUILDFLAG(IS_ANDROID)
         {switches::kUseSystemDefaultPrinter,
          prefs::kPrintPreviewUseSystemDefaultPrinter, true},
 #endif
@@ -121,6 +120,7 @@ ChromeCommandLinePrefStore::ChromeCommandLinePrefStore(
   ValidateProxySwitches();
   ApplySSLSwitches();
   ApplyBackgroundModeSwitches();
+  ApplyExplicitlyAllowedPortSwitch();
 }
 
 ChromeCommandLinePrefStore::~ChromeCommandLinePrefStore() {}
@@ -140,10 +140,10 @@ bool ChromeCommandLinePrefStore::ValidateProxySwitches() {
 
 void ChromeCommandLinePrefStore::ApplySimpleSwitches() {
   // Look for each switch we know about and set its preference accordingly.
-  ApplyStringSwitches(string_switch_map_, base::size(string_switch_map_));
-  ApplyPathSwitches(path_switch_map_, base::size(path_switch_map_));
-  ApplyIntegerSwitches(integer_switch_map_, base::size(integer_switch_map_));
-  ApplyBooleanSwitches(boolean_switch_map_, base::size(boolean_switch_map_));
+  ApplyStringSwitches(string_switch_map_, std::size(string_switch_map_));
+  ApplyPathSwitches(path_switch_map_, std::size(path_switch_map_));
+  ApplyIntegerSwitches(integer_switch_map_, std::size(integer_switch_map_));
+  ApplyBooleanSwitches(boolean_switch_map_, std::size(boolean_switch_map_));
 }
 
 void ChromeCommandLinePrefStore::ApplyProxyMode() {
@@ -180,9 +180,12 @@ void ChromeCommandLinePrefStore::ApplyProxyMode() {
 void ChromeCommandLinePrefStore::ApplySSLSwitches() {
   if (command_line()->HasSwitch(switches::kCipherSuiteBlacklist)) {
     std::unique_ptr<base::ListValue> list_value(new base::ListValue());
-    list_value->AppendStrings(base::SplitString(
+    const std::vector<std::string> str_list = base::SplitString(
         command_line()->GetSwitchValueASCII(switches::kCipherSuiteBlacklist),
-        ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL));
+        ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
+    for (const std::string& str : str_list) {
+      list_value->Append(str);
+    }
     SetValue(prefs::kCipherSuiteBlacklist, std::move(list_value),
              WriteablePrefStore::DEFAULT_PREF_WRITE_FLAGS);
   }
@@ -194,4 +197,27 @@ void ChromeCommandLinePrefStore::ApplyBackgroundModeSwitches() {
              std::make_unique<base::Value>(false),
              WriteablePrefStore::DEFAULT_PREF_WRITE_FLAGS);
   }
+}
+
+void ChromeCommandLinePrefStore::ApplyExplicitlyAllowedPortSwitch() {
+  if (!command_line()->HasSwitch(switches::kExplicitlyAllowedPorts)) {
+    return;
+  }
+
+  base::Value integer_list(base::Value::Type::LIST);
+  std::string switch_value =
+      command_line()->GetSwitchValueASCII(switches::kExplicitlyAllowedPorts);
+  const auto& split = base::SplitStringPiece(
+      switch_value, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
+  for (const auto& piece : split) {
+    int port;
+    if (!base::StringToInt(piece, &port))
+      continue;
+    if (!net::IsPortValid(port))
+      continue;
+    integer_list.Append(base::Value(port));
+  }
+  SetValue(prefs::kExplicitlyAllowedNetworkPorts,
+           base::Value::ToUniquePtrValue(std::move(integer_list)),
+           WriteablePrefStore::DEFAULT_PREF_WRITE_FLAGS);
 }

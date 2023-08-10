@@ -32,6 +32,8 @@
 #include "perfetto/test/traced_value_test_support.h"
 #include "perfetto/tracing/debug_annotation.h"
 #include "perfetto/tracing/track_event.h"
+#include "protos/perfetto/trace/test_event.pb.h"
+#include "protos/perfetto/trace/test_event.pbzero.h"
 #include "protos/perfetto/trace/track_event/debug_annotation.gen.h"
 #include "protos/perfetto/trace/track_event/debug_annotation.pb.h"
 #include "test/gtest_and_gmock.h"
@@ -91,7 +93,7 @@ ASSERT_TYPE_SUPPORTED(int*);
 ASSERT_TYPE_SUPPORTED(const int*);
 ASSERT_TYPE_SUPPORTED(void*);
 ASSERT_TYPE_SUPPORTED(const void*);
-ASSERT_TYPE_SUPPORTED(nullptr_t);
+ASSERT_TYPE_SUPPORTED(std::nullptr_t);
 ASSERT_TYPE_NOT_SUPPORTED(NonSupportedType*);
 ASSERT_TYPE_NOT_SUPPORTED(const NonSupportedType*);
 
@@ -147,11 +149,9 @@ TEST(TracedValueTest, FlatDictionary_Explicit) {
     dict.AddItem("truncated_string").WriteString("truncated_string", 9);
     dict.AddItem("ptr").WritePointer(reinterpret_cast<void*>(0x1234));
   }
-  // TODO(altimin): Nested pointers are recorded as ints due to proto
-  // limitation. Fix after sorting out the NestedValue.
   EXPECT_EQ(
       "{bool:true,double:0,int:2014,string:string,truncated_string:truncated,"
-      "ptr:4660}",
+      "ptr:0x1234}",
       internal::DebugAnnotationToString(message.SerializeAsString()));
 }
 
@@ -166,9 +166,7 @@ TEST(TracedValueTest, FlatDictionary_Short) {
     dict.Add("string", "string");
     dict.Add("ptr", reinterpret_cast<void*>(0x1234));
   }
-  // TODO(altimin): Nested pointers are recorded as ints due to proto
-  // limitation. Fix after sorting out the NestedValue.
-  EXPECT_EQ("{bool:true,double:0,int:2014,string:string,ptr:4660}",
+  EXPECT_EQ("{bool:true,double:0,int:2014,string:string,ptr:0x1234}",
             internal::DebugAnnotationToString(message.SerializeAsString()));
 }
 
@@ -254,7 +252,7 @@ TEST(TracedValueTest, Hierarchy_Short) {
 
 namespace {
 
-class HasConvertorMember {
+class HasWriteIntoTracedValueConvertorMember {
  public:
   void WriteIntoTracedValue(TracedValue context) const {
     auto dict = std::move(context).WriteDictionary();
@@ -263,7 +261,17 @@ class HasConvertorMember {
   }
 };
 
-class HasExternalConvertor {};
+class HasWriteIntoTraceConvertorMember {
+ public:
+  void WriteIntoTrace(TracedValue context) const {
+    auto dict = std::move(context).WriteDictionary();
+    dict.Add("int", 42);
+    dict.Add("bool", false);
+  }
+};
+
+class HasExternalWriteIntoTraceConvertor {};
+class HasExternalWriteIntoTracedValueConvertor {};
 
 class HasAllConversionMethods {
  public:
@@ -306,9 +314,18 @@ class HasConstAndNonConstWriteMember {
 }  // namespace
 
 template <>
-struct TraceFormatTraits<HasExternalConvertor> {
-  static void WriteIntoTracedValue(TracedValue context,
-                                   const HasExternalConvertor&) {
+struct TraceFormatTraits<HasExternalWriteIntoTraceConvertor> {
+  static void WriteIntoTrace(TracedValue context,
+                             const HasExternalWriteIntoTraceConvertor&) {
+    std::move(context).WriteString("TraceFormatTraits::WriteIntoTrace");
+  }
+};
+
+template <>
+struct TraceFormatTraits<HasExternalWriteIntoTracedValueConvertor> {
+  static void WriteIntoTracedValue(
+      TracedValue context,
+      const HasExternalWriteIntoTracedValueConvertor&) {
     std::move(context).WriteString("TraceFormatTraits::WriteIntoTracedValue");
   }
 };
@@ -330,8 +347,10 @@ std::string ToStringWithFallback(T&& value, const std::string& fallback) {
   return internal::DebugAnnotationToString(message.SerializeAsString());
 }
 
-ASSERT_TYPE_SUPPORTED(HasConvertorMember);
-ASSERT_TYPE_SUPPORTED(HasExternalConvertor);
+ASSERT_TYPE_SUPPORTED(HasWriteIntoTraceConvertorMember);
+ASSERT_TYPE_SUPPORTED(HasWriteIntoTracedValueConvertorMember);
+ASSERT_TYPE_SUPPORTED(HasExternalWriteIntoTraceConvertor);
+ASSERT_TYPE_SUPPORTED(HasExternalWriteIntoTracedValueConvertor);
 ASSERT_TYPE_SUPPORTED(HasAllConversionMethods);
 
 ASSERT_TYPE_SUPPORTED(HasConstWriteMember);
@@ -368,19 +387,27 @@ ASSERT_TYPE_SUPPORTED(const HasConstAndNonConstWriteMember*);
 ASSERT_TYPE_SUPPORTED(std::unique_ptr<const HasConstAndNonConstWriteMember*>);
 
 TEST(TracedValueTest, UserDefinedConvertors) {
-  HasConvertorMember value1;
+  HasWriteIntoTraceConvertorMember value1;
   EXPECT_EQ(TracedValueToString(value1), "{int:42,bool:false}");
   EXPECT_EQ(TracedValueToString(&value1), "{int:42,bool:false}");
 
-  HasExternalConvertor value2;
-  EXPECT_EQ(TracedValueToString(value2),
+  HasWriteIntoTracedValueConvertorMember value2;
+  EXPECT_EQ(TracedValueToString(value2), "{int:42,bool:false}");
+  EXPECT_EQ(TracedValueToString(&value2), "{int:42,bool:false}");
+
+  HasExternalWriteIntoTracedValueConvertor value3;
+  EXPECT_EQ(TracedValueToString(value3),
             "TraceFormatTraits::WriteIntoTracedValue");
-  EXPECT_EQ(TracedValueToString(&value2),
+  EXPECT_EQ(TracedValueToString(&value3),
             "TraceFormatTraits::WriteIntoTracedValue");
 
-  HasAllConversionMethods value3;
-  EXPECT_EQ(TracedValueToString(value3), "T::WriteIntoTracedValue");
-  EXPECT_EQ(TracedValueToString(&value3), "T::WriteIntoTracedValue");
+  HasExternalWriteIntoTraceConvertor value4;
+  EXPECT_EQ(TracedValueToString(value4), "TraceFormatTraits::WriteIntoTrace");
+  EXPECT_EQ(TracedValueToString(&value4), "TraceFormatTraits::WriteIntoTrace");
+
+  HasAllConversionMethods value5;
+  EXPECT_EQ(TracedValueToString(value5), "T::WriteIntoTracedValue");
+  EXPECT_EQ(TracedValueToString(&value5), "T::WriteIntoTracedValue");
 }
 
 TEST(TracedValueTest, WriteAsLambda) {
@@ -545,6 +572,172 @@ TEST(TracedValueTest, ConstAndNotConstSupport) {
     const std::vector<HasConstAndNonConstWriteMember> arr(1, value);
     EXPECT_EQ("[T::WriteIntoTracedValue const]", TracedValueToString(arr));
   }
+}
+
+// Note: interning of the dictionary keys is not implemented yet, so there is no
+// difference in behaviour for StaticString and DynamicString yet.
+TEST(TracedValueTest, DictionaryKeys) {
+  EXPECT_EQ("{literal:1}", TracedValueToString([&](TracedValue context) {
+              auto dict = std::move(context).WriteDictionary();
+              dict.Add("literal", 1);
+            }));
+
+  EXPECT_EQ("{static:1}", TracedValueToString([&](TracedValue context) {
+              auto dict = std::move(context).WriteDictionary();
+              const char* key = "static";
+              dict.Add(StaticString{key}, 1);
+            }));
+
+  EXPECT_EQ("{dynamic:1}", TracedValueToString([&](TracedValue context) {
+              auto dict = std::move(context).WriteDictionary();
+              std::string key = "dynamic";
+              dict.Add(DynamicString{key.data()}, 1);
+            }));
+
+  EXPECT_EQ("{dynamic:1}", TracedValueToString([&](TracedValue context) {
+              auto dict = std::move(context).WriteDictionary();
+              std::string key = "dynamic";
+              dict.Add(DynamicString{key.data(), key.length()}, 1);
+            }));
+
+  EXPECT_EQ("{dynamic:1}", TracedValueToString([&](TracedValue context) {
+              auto dict = std::move(context).WriteDictionary();
+              std::string key = "dynamic";
+              dict.Add(DynamicString{key}, 1);
+            }));
+}
+
+TEST(TracedValueTest, EmptyDict) {
+  EXPECT_EQ("{}", TracedValueToString([&](TracedValue context) {
+              auto dict = std::move(context).WriteDictionary();
+            }));
+}
+
+TEST(TracedValueTest, EmptyArray) {
+  // For now we do not distinguish between empty arrays and empty dicts on proto
+  // level as trace processor ignores them anyway.
+  EXPECT_EQ("{}", TracedValueToString([&](TracedValue context) {
+              auto array = std::move(context).WriteArray();
+            }));
+}
+
+TEST(TracedValueTest, WriteTypedProto_Explicit) {
+  protozero::HeapBuffered<protos::pbzero::DebugAnnotation> message;
+  WriteIntoTracedValue(
+      internal::CreateTracedValueFromProto(message.get()),
+      [](perfetto::TracedValue context) {
+        perfetto::TracedProto<protos::pbzero::TestEvent::TestPayload> proto =
+            std::move(context)
+                .WriteProto<protos::pbzero::TestEvent::TestPayload>();
+        proto->set_single_string("payload");
+      });
+
+  protos::DebugAnnotation annotation;
+  annotation.ParseFromString(message.SerializeAsString());
+  EXPECT_EQ(annotation.proto_type_name(),
+            ".perfetto.protos.TestEvent.TestPayload");
+
+  protos::TestEvent::TestPayload payload;
+  payload.ParseFromString(annotation.proto_value());
+  EXPECT_EQ(payload.single_string(), "payload");
+}
+
+TEST(TracedValueTest, WriteTypedProto_Implicit) {
+  protozero::HeapBuffered<protos::pbzero::DebugAnnotation> message;
+  WriteIntoTracedValue(
+      internal::CreateTracedValueFromProto(message.get()),
+      [](perfetto::TracedProto<protos::pbzero::TestEvent::TestPayload> proto) {
+        proto->set_single_string("payload");
+      });
+
+  protos::DebugAnnotation annotation;
+  annotation.ParseFromString(message.SerializeAsString());
+  EXPECT_EQ(annotation.proto_type_name(),
+            ".perfetto.protos.TestEvent.TestPayload");
+
+  protos::TestEvent::TestPayload payload;
+  payload.ParseFromString(annotation.proto_value());
+  EXPECT_EQ(payload.single_string(), "payload");
+}
+
+TEST(TracedValueTest, ImplicitTracedDictionary) {
+  EXPECT_EQ("{key:value}", TracedValueToString([&](TracedDictionary dict) {
+              dict.Add("key", "value");
+            }));
+}
+
+TEST(TracedValueTest, ImplicitTracedArray) {
+  EXPECT_EQ("[1]",
+            TracedValueToString([&](TracedArray array) { array.Append(1); }));
+}
+
+TEST(TracedValueTest, TracedProtoInDict) {
+  struct Foo {
+    void WriteIntoTrace(
+        perfetto::TracedProto<protos::pbzero::TestEvent::TestPayload> message) {
+      message->set_single_int(42);
+    }
+  };
+  Foo foo;
+  protozero::HeapBuffered<protos::pbzero::DebugAnnotation> message;
+  WriteIntoTracedValue(internal::CreateTracedValueFromProto(message.get()),
+                       [&](TracedDictionary dict) { dict.Add("foo", foo); });
+  protos::DebugAnnotation annotation;
+  annotation.ParseFromString(message.SerializeAsString());
+  EXPECT_EQ(annotation.dict_entries_size(), 1);
+  EXPECT_EQ(annotation.dict_entries(0).name(), "foo");
+  EXPECT_EQ(annotation.dict_entries(0).proto_type_name(),
+            ".perfetto.protos.TestEvent.TestPayload");
+
+  protos::TestEvent::TestPayload payload;
+  payload.ParseFromString(annotation.dict_entries(0).proto_value());
+  EXPECT_EQ(payload.single_int(), 42);
+}
+
+TEST(TracedValueTest, PointerToTracedProtoInDict) {
+  struct Foo {
+    void WriteIntoTrace(
+        perfetto::TracedProto<protos::pbzero::TestEvent::TestPayload> message) {
+      message->set_single_int(42);
+    }
+  };
+  Foo foo;
+  protozero::HeapBuffered<protos::pbzero::DebugAnnotation> message;
+  WriteIntoTracedValue(internal::CreateTracedValueFromProto(message.get()),
+                       [&](TracedDictionary dict) { dict.Add("foo", &foo); });
+  protos::DebugAnnotation annotation;
+  annotation.ParseFromString(message.SerializeAsString());
+  EXPECT_EQ(annotation.dict_entries_size(), 1);
+  EXPECT_EQ(annotation.dict_entries(0).name(), "foo");
+  EXPECT_EQ(annotation.dict_entries(0).proto_type_name(),
+            ".perfetto.protos.TestEvent.TestPayload");
+
+  protos::TestEvent::TestPayload payload;
+  payload.ParseFromString(annotation.dict_entries(0).proto_value());
+  EXPECT_EQ(payload.single_int(), 42);
+}
+
+TEST(TracedValueTest, UniquePointerToTracedProtoInDict) {
+  struct Foo {
+    void WriteIntoTrace(
+        perfetto::TracedProto<protos::pbzero::TestEvent::TestPayload> message) {
+      message->set_single_int(42);
+    }
+  };
+  std::unique_ptr<Foo> foo(new Foo());
+  protozero::HeapBuffered<protos::pbzero::DebugAnnotation> message;
+  WriteIntoTracedValue(internal::CreateTracedValueFromProto(message.get()),
+                       [&](TracedDictionary dict) { dict.Add("foo", foo); });
+  protos::DebugAnnotation annotation;
+  annotation.ParseFromString(message.SerializeAsString());
+  EXPECT_EQ(annotation.dict_entries_size(), 1);
+  EXPECT_EQ(annotation.dict_entries(0).name(), "foo");
+  EXPECT_EQ(annotation.dict_entries(0).proto_type_name(),
+            ".perfetto.protos.TestEvent.TestPayload");
+
+  protos::TestEvent::TestPayload payload;
+  payload.ParseFromString(annotation.dict_entries(0).proto_value());
+  EXPECT_EQ(payload.single_int(), 42);
 }
 
 }  // namespace perfetto

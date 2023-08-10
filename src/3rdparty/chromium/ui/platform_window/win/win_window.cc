@@ -4,18 +4,21 @@
 
 #include "ui/platform_window/win/win_window.h"
 
+#include <windows.h>
+
 #include <algorithm>
 #include <memory>
+#include <string>
 
-#include "base/strings/string16.h"
+#include "base/memory/scoped_refptr.h"
+#include "base/notreached.h"
 #include "base/strings/string_util_win.h"
-#include "ui/base/cursor/win/win_cursor.h"
+#include "ui/base/cursor/platform_cursor.h"
 #include "ui/base/win/shell.h"
+#include "ui/base/win/win_cursor.h"
 #include "ui/events/event.h"
 #include "ui/events/event_utils.h"
 #include "ui/gfx/win/msg_util.h"
-
-#include <windows.h>
 
 namespace ui {
 
@@ -101,7 +104,7 @@ gfx::Rect WinWindow::GetBounds() const {
   return gfx::Rect(cr);
 }
 
-void WinWindow::SetTitle(const base::string16& title) {
+void WinWindow::SetTitle(const std::u16string& title) {
   SetWindowText(hwnd(), base::as_wcstr(title));
 }
 
@@ -146,9 +149,15 @@ bool WinWindow::ShouldUseNativeFrame() const {
   return false;
 }
 
-void WinWindow::SetCursor(PlatformCursor cursor) {
-  DCHECK(cursor);
-  ::SetCursor(static_cast<WinCursor*>(cursor)->hcursor());
+void WinWindow::SetCursor(scoped_refptr<PlatformCursor> platform_cursor) {
+  DCHECK(platform_cursor);
+
+  auto cursor = WinCursor::FromPlatformCursor(platform_cursor);
+  ::SetCursor(cursor->hcursor());
+
+  // The new cursor needs to be stored last to avoid deleting the old cursor
+  // while it's still in use.
+  cursor_ = cursor;
 }
 
 void WinWindow::MoveCursorTo(const gfx::Point& location) {
@@ -231,12 +240,12 @@ bool WinWindow::IsFullscreen() const {
 }
 
 LRESULT WinWindow::OnMouseRange(UINT message, WPARAM w_param, LPARAM l_param) {
-  MSG msg = {hwnd(),
-             message,
-             w_param,
-             l_param,
-             static_cast<DWORD>(GetMessageTime()),
-             {CR_GET_X_LPARAM(l_param), CR_GET_Y_LPARAM(l_param)}};
+  CHROME_MSG msg = {hwnd(),
+                    message,
+                    w_param,
+                    l_param,
+                    static_cast<DWORD>(GetMessageTime()),
+                    {CR_GET_X_LPARAM(l_param), CR_GET_Y_LPARAM(l_param)}};
   std::unique_ptr<Event> event = EventFromNative(msg);
   if (IsMouseEventFromTouch(message))
     event->set_flags(event->flags() | EF_FROM_TOUCH);
@@ -254,7 +263,7 @@ LRESULT WinWindow::OnCaptureChanged(UINT message,
 }
 
 LRESULT WinWindow::OnKeyEvent(UINT message, WPARAM w_param, LPARAM l_param) {
-  MSG msg = {hwnd(), message, w_param, l_param};
+  CHROME_MSG msg = {hwnd(), message, w_param, l_param};
   KeyEvent event(msg);
   delegate_->DispatchEvent(&event);
   SetMsgHandled(event.handled());

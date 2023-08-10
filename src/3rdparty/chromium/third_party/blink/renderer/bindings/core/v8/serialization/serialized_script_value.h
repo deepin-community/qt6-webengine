@@ -34,7 +34,7 @@
 #include <memory>
 
 #include "base/containers/span.h"
-#include "base/optional.h"
+#include "base/dcheck_is_on.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "third_party/blink/public/common/messaging/message_port_channel.h"
 #include "third_party/blink/public/common/messaging/message_port_descriptor.h"
@@ -46,7 +46,6 @@
 #include "third_party/blink/renderer/core/streams/readable_stream_transferring_optimizer.h"
 #include "third_party/blink/renderer/core/streams/writable_stream_transferring_optimizer.h"
 #include "third_party/blink/renderer/core/typed_arrays/array_buffer/array_buffer_contents.h"
-#include "third_party/blink/renderer/platform/weborigin/security_origin.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/partitions.h"
 #include "third_party/blink/renderer/platform/wtf/hash_map.h"
@@ -229,11 +228,6 @@ class CORE_EXPORT SerializedScriptValue
   // Returns true if the array was filled, or false if the passed value was not
   // of an appropriate type.
   static bool ExtractTransferables(v8::Isolate*,
-                                   v8::Local<v8::Value>,
-                                   int,
-                                   Transferables&,
-                                   ExceptionState&);
-  static bool ExtractTransferables(v8::Isolate*,
                                    const HeapVector<ScriptValue>&,
                                    Transferables&,
                                    ExceptionState&);
@@ -272,13 +266,6 @@ class CORE_EXPORT SerializedScriptValue
   size_t DataLengthInBytes() const { return data_buffer_size_; }
 
   TransferredWasmModulesArray& WasmModules() { return wasm_modules_; }
-
-  const SecurityOrigin* origin() { return origin_.get(); }
-
-  void set_origin(const SecurityOrigin* origin) {
-    origin_ = origin->IsolatedCopy();
-  }
-
   SharedArrayBufferContentsArray& SharedArrayBuffersContents() {
     return shared_array_buffers_contents_;
   }
@@ -301,13 +288,12 @@ class CORE_EXPORT SerializedScriptValue
   StreamArray& GetStreams() { return streams_; }
 
   bool IsLockedToAgentCluster() const {
-    if (!wasm_modules_.IsEmpty() || !shared_array_buffers_contents_.IsEmpty())
-      return true;
-    for (const auto& entry : attachments_) {
-      if (entry.value->IsLockedToAgentCluster())
-        return true;
-    }
-    return false;
+    return !wasm_modules_.IsEmpty() ||
+           !shared_array_buffers_contents_.IsEmpty() ||
+           std::any_of(attachments_.begin(), attachments_.end(),
+                       [](const auto& entry) {
+                         return entry.value->IsLockedToAgentCluster();
+                       });
   }
 
   // Returns true after serializing script values that remote origins cannot
@@ -402,10 +388,6 @@ class CORE_EXPORT SerializedScriptValue
 
   // These do not have one-use transferred contents, like the above.
   TransferredWasmModulesArray wasm_modules_;
-  // To count how often WebAssembly modules get transferred cross-origin, we
-  // allow to store the |SecurityOrigin| in the |V8SerializedScriptValue|. The
-  // |SecurityOrigin| has to be set explicitly with |set_origin()|.
-  scoped_refptr<SecurityOrigin> origin_;
   BlobDataHandleMap blob_data_handles_;
   MojoScopedHandleArray mojo_handles_;
   SharedArrayBufferContentsArray shared_array_buffers_contents_;

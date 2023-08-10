@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "gpu/command_buffer/service/shared_image_backing_factory_gl_texture.h"
+#include "gpu/command_buffer/service/shared_image_backing_factory_gl_image.h"
 
 #include <memory>
 #include <utility>
@@ -20,6 +20,7 @@
 #include "gpu/config/gpu_test_config.h"
 #include "gpu/ipc/service/gpu_memory_buffer_factory_io_surface.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/skia/include/core/SkColorSpace.h"
 #include "third_party/skia/include/core/SkImage.h"
 #include "third_party/skia/include/core/SkPromiseImageTexture.h"
 #include "third_party/skia/include/core/SkSurface.h"
@@ -32,8 +33,8 @@
 
 #if BUILDFLAG(USE_DAWN)
 #include <dawn/dawn_proc.h>
+#include <dawn/native/DawnNative.h>
 #include <dawn/webgpu_cpp.h>
-#include <dawn_native/DawnNative.h>
 #endif  // BUILDFLAG(USE_DAWN)
 
 namespace gpu {
@@ -65,10 +66,9 @@ class SharedImageBackingFactoryIOSurfaceTest : public testing::Test {
         base::MakeRefCounted<gles2::FeatureInfo>(workarounds, GpuFeatureInfo());
     context_state_->InitializeGL(preferences, std::move(feature_info));
 
-    backing_factory_ = std::make_unique<SharedImageBackingFactoryGLTexture>(
+    backing_factory_ = std::make_unique<SharedImageBackingFactoryGLImage>(
         preferences, workarounds, GpuFeatureInfo(), &image_factory_,
-        shared_image_manager_.batch_access_manager(),
-        /*progress_reporter=*/nullptr);
+        /*progress_reporter=*/nullptr, /*for_shared_memory_gmbs=*/false);
 
     memory_type_tracker_ = std::make_unique<MemoryTypeTracker>(nullptr);
     shared_image_representation_factory_ =
@@ -82,7 +82,7 @@ class SharedImageBackingFactoryIOSurfaceTest : public testing::Test {
   scoped_refptr<gl::GLSurface> surface_;
   scoped_refptr<gl::GLContext> context_;
   scoped_refptr<SharedContextState> context_state_;
-  std::unique_ptr<SharedImageBackingFactoryGLTexture> backing_factory_;
+  std::unique_ptr<SharedImageBackingFactoryGLImage> backing_factory_;
   gles2::MailboxManagerImpl mailbox_manager_;
   SharedImageManager shared_image_manager_;
   std::unique_ptr<MemoryTypeTracker> memory_type_tracker_;
@@ -373,18 +373,26 @@ TEST_F(SharedImageBackingFactoryIOSurfaceTest, LegacyClearing) {
 // Test to check interaction between Dawn and skia GL representations.
 TEST_F(SharedImageBackingFactoryIOSurfaceTest, Dawn_SkiaGL) {
   // Create a Dawn Metal device
-  dawn_native::Instance instance;
+  dawn::native::Instance instance;
   instance.DiscoverDefaultAdapters();
 
-  std::vector<dawn_native::Adapter> adapters = instance.GetAdapters();
+  std::vector<dawn::native::Adapter> adapters = instance.GetAdapters();
   auto adapter_it = std::find_if(
-      adapters.begin(), adapters.end(), [](dawn_native::Adapter adapter) {
-        return adapter.GetBackendType() == dawn_native::BackendType::Metal;
+      adapters.begin(), adapters.end(), [](dawn::native::Adapter adapter) {
+        wgpu::AdapterProperties properties;
+        adapter.GetProperties(&properties);
+        return properties.backendType == wgpu::BackendType::Metal;
       });
   ASSERT_NE(adapter_it, adapters.end());
 
-  wgpu::Device device = wgpu::Device::Acquire(adapter_it->CreateDevice());
-  DawnProcTable procs = dawn_native::GetProcs();
+  dawn::native::DawnDeviceDescriptor device_descriptor;
+  // We need to request internal usage to be able to do operations with
+  // internal methods that would need specific usages.
+  device_descriptor.requiredFeatures.push_back("dawn-internal-usages");
+
+  wgpu::Device device =
+      wgpu::Device::Acquire(adapter_it->CreateDevice(&device_descriptor));
+  DawnProcTable procs = dawn::native::GetProcs();
   dawnProcSetProcs(&procs);
 
   // Create a backing using mailbox.
@@ -406,20 +414,20 @@ TEST_F(SharedImageBackingFactoryIOSurfaceTest, Dawn_SkiaGL) {
                                      memory_type_tracker_.get());
 
   // Create a SharedImageRepresentationDawn.
-  auto dawn_representation =
-      shared_image_representation_factory_->ProduceDawn(mailbox, device.Get());
+  auto dawn_representation = shared_image_representation_factory_->ProduceDawn(
+      mailbox, device.Get(), WGPUBackendType_Metal);
   EXPECT_TRUE(dawn_representation);
 
   // Clear the shared image to green using Dawn.
   {
     auto scoped_access = dawn_representation->BeginScopedAccess(
-        WGPUTextureUsage_OutputAttachment,
+        WGPUTextureUsage_RenderAttachment,
         SharedImageRepresentation::AllowUnclearedAccess::kYes);
     ASSERT_TRUE(scoped_access);
     wgpu::Texture texture(scoped_access->texture());
 
-    wgpu::RenderPassColorAttachmentDescriptor color_desc;
-    color_desc.attachment = texture.CreateView();
+    wgpu::RenderPassColorAttachment color_desc;
+    color_desc.view = texture.CreateView();
     color_desc.resolveTarget = nullptr;
     color_desc.loadOp = wgpu::LoadOp::Clear;
     color_desc.storeOp = wgpu::StoreOp::Store;
@@ -435,7 +443,7 @@ TEST_F(SharedImageBackingFactoryIOSurfaceTest, Dawn_SkiaGL) {
     pass.EndPass();
     wgpu::CommandBuffer commands = encoder.Finish();
 
-    wgpu::Queue queue = device.GetDefaultQueue();
+    wgpu::Queue queue = device.GetQueue();
     queue.Submit(1, &commands);
   }
 
@@ -516,33 +524,41 @@ TEST_F(SharedImageBackingFactoryIOSurfaceTest, GL_Dawn_Skia_UnclearTexture) {
   }
 
   // Create a Dawn Metal device
-  dawn_native::Instance instance;
+  dawn::native::Instance instance;
   instance.DiscoverDefaultAdapters();
 
-  std::vector<dawn_native::Adapter> adapters = instance.GetAdapters();
+  std::vector<dawn::native::Adapter> adapters = instance.GetAdapters();
   auto adapter_it = std::find_if(
-      adapters.begin(), adapters.end(), [](dawn_native::Adapter adapter) {
-        return adapter.GetBackendType() == dawn_native::BackendType::Metal;
+      adapters.begin(), adapters.end(), [](dawn::native::Adapter adapter) {
+        wgpu::AdapterProperties properties;
+        adapter.GetProperties(&properties);
+        return properties.backendType == wgpu::BackendType::Metal;
       });
   ASSERT_NE(adapter_it, adapters.end());
 
-  wgpu::Device device = wgpu::Device::Acquire(adapter_it->CreateDevice());
-  DawnProcTable procs = dawn_native::GetProcs();
+  dawn::native::DawnDeviceDescriptor device_descriptor;
+  // We need to request internal usage to be able to do operations with
+  // internal methods that would need specific usages.
+  device_descriptor.requiredFeatures.push_back("dawn-internal-usages");
+
+  wgpu::Device device =
+      wgpu::Device::Acquire(adapter_it->CreateDevice(&device_descriptor));
+  DawnProcTable procs = dawn::native::GetProcs();
   dawnProcSetProcs(&procs);
   {
     auto dawn_representation =
-        shared_image_representation_factory_->ProduceDawn(mailbox,
-                                                          device.Get());
+        shared_image_representation_factory_->ProduceDawn(
+            mailbox, device.Get(), WGPUBackendType_Metal);
     ASSERT_TRUE(dawn_representation);
 
     auto dawn_scoped_access = dawn_representation->BeginScopedAccess(
-        WGPUTextureUsage_OutputAttachment,
+        WGPUTextureUsage_RenderAttachment,
         SharedImageRepresentation::AllowUnclearedAccess::kYes);
     ASSERT_TRUE(dawn_scoped_access);
 
     wgpu::Texture texture(dawn_scoped_access->texture());
-    wgpu::RenderPassColorAttachmentDescriptor color_desc;
-    color_desc.attachment = texture.CreateView();
+    wgpu::RenderPassColorAttachment color_desc;
+    color_desc.view = texture.CreateView();
     color_desc.resolveTarget = nullptr;
     color_desc.loadOp = wgpu::LoadOp::Load;
     color_desc.storeOp = wgpu::StoreOp::Store;
@@ -557,7 +573,7 @@ TEST_F(SharedImageBackingFactoryIOSurfaceTest, GL_Dawn_Skia_UnclearTexture) {
     pass.EndPass();
     wgpu::CommandBuffer commands = encoder.Finish();
 
-    wgpu::Queue queue = device.GetDefaultQueue();
+    wgpu::Queue queue = device.GetQueue();
     queue.Submit(1, &commands);
   }
 
@@ -598,36 +614,44 @@ TEST_F(SharedImageBackingFactoryIOSurfaceTest, UnclearDawn_SkiaFails) {
                                      memory_type_tracker_.get());
 
   // Create dawn device
-  dawn_native::Instance instance;
+  dawn::native::Instance instance;
   instance.DiscoverDefaultAdapters();
 
-  std::vector<dawn_native::Adapter> adapters = instance.GetAdapters();
+  std::vector<dawn::native::Adapter> adapters = instance.GetAdapters();
   auto adapter_it = std::find_if(
-      adapters.begin(), adapters.end(), [](dawn_native::Adapter adapter) {
-        return adapter.GetBackendType() == dawn_native::BackendType::Metal;
+      adapters.begin(), adapters.end(), [](dawn::native::Adapter adapter) {
+        wgpu::AdapterProperties properties;
+        adapter.GetProperties(&properties);
+        return properties.backendType == wgpu::BackendType::Metal;
       });
   ASSERT_NE(adapter_it, adapters.end());
 
-  wgpu::Device device = wgpu::Device::Acquire(adapter_it->CreateDevice());
-  DawnProcTable procs = dawn_native::GetProcs();
+  dawn::native::DawnDeviceDescriptor device_descriptor;
+  // We need to request internal usage to be able to do operations with
+  // internal methods that would need specific usages.
+  device_descriptor.requiredFeatures.push_back("dawn-internal-usages");
+
+  wgpu::Device device =
+      wgpu::Device::Acquire(adapter_it->CreateDevice(&device_descriptor));
+  DawnProcTable procs = dawn::native::GetProcs();
   dawnProcSetProcs(&procs);
   {
     auto dawn_representation =
-        shared_image_representation_factory_->ProduceDawn(mailbox,
-                                                          device.Get());
+        shared_image_representation_factory_->ProduceDawn(
+            mailbox, device.Get(), WGPUBackendType_Metal);
     ASSERT_TRUE(dawn_representation);
 
     auto dawn_scoped_access = dawn_representation->BeginScopedAccess(
-        WGPUTextureUsage_OutputAttachment,
+        WGPUTextureUsage_RenderAttachment,
         SharedImageRepresentation::AllowUnclearedAccess::kYes);
     ASSERT_TRUE(dawn_scoped_access);
 
     wgpu::Texture texture(dawn_scoped_access->texture());
-    wgpu::RenderPassColorAttachmentDescriptor color_desc;
-    color_desc.attachment = texture.CreateView();
+    wgpu::RenderPassColorAttachment color_desc;
+    color_desc.view = texture.CreateView();
     color_desc.resolveTarget = nullptr;
     color_desc.loadOp = wgpu::LoadOp::Clear;
-    color_desc.storeOp = wgpu::StoreOp::Clear;
+    color_desc.storeOp = wgpu::StoreOp::Discard;
     color_desc.clearColor = {0, 255, 0, 255};
 
     wgpu::RenderPassDescriptor renderPassDesc = {};
@@ -640,7 +664,7 @@ TEST_F(SharedImageBackingFactoryIOSurfaceTest, UnclearDawn_SkiaFails) {
     pass.EndPass();
     wgpu::CommandBuffer commands = encoder.Finish();
 
-    wgpu::Queue queue = device.GetDefaultQueue();
+    wgpu::Queue queue = device.GetQueue();
     queue.Submit(1, &commands);
   }
 

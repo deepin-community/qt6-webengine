@@ -8,12 +8,12 @@
 #include <string>
 
 #include "base/containers/flat_map.h"
+#include "base/gtest_prod_util.h"
 #include "base/memory/scoped_refptr.h"
-#include "base/optional.h"
 #include "base/scoped_observation.h"
 #include "ui/base/cursor/cursor_theme_manager.h"
 #include "ui/base/cursor/cursor_theme_manager_observer.h"
-#include "ui/base/cursor/ozone/bitmap_cursor_factory_ozone.h"
+#include "ui/ozone/common/bitmap_cursor_factory.h"
 #include "ui/ozone/platform/wayland/common/wayland_object.h"
 #include "ui/ozone/platform/wayland/host/wayland_cursor.h"
 
@@ -21,10 +21,11 @@ struct wl_cursor_theme;
 
 namespace ui {
 
+class BitmapCursor;
 class WaylandConnection;
 
 // CursorFactory implementation for Wayland.
-class WaylandCursorFactory : public BitmapCursorFactoryOzone,
+class WaylandCursorFactory : public BitmapCursorFactory,
                              public CursorThemeManagerObserver,
                              public WaylandCursorBufferListener {
  public:
@@ -36,9 +37,10 @@ class WaylandCursorFactory : public BitmapCursorFactoryOzone,
   // CursorFactory:
   void ObserveThemeChanges() override;
 
-  // CursorFactoryOzone:
-  base::Optional<PlatformCursor> GetDefaultCursor(
+  // CursorFactory:
+  scoped_refptr<PlatformCursor> GetDefaultCursor(
       mojom::CursorType type) override;
+  void SetDeviceScaleFactor(float scale) override;
 
  protected:
   // Returns the actual wl_cursor record from the currently loaded theme.
@@ -53,7 +55,7 @@ class WaylandCursorFactory : public BitmapCursorFactoryOzone,
     ThemeData();
     ~ThemeData();
     wl::Object<wl_cursor_theme> theme;
-    base::flat_map<mojom::CursorType, scoped_refptr<BitmapCursorOzone>> cache;
+    base::flat_map<mojom::CursorType, scoped_refptr<BitmapCursor>> cache;
   };
 
   // CusorThemeManagerObserver:
@@ -77,6 +79,9 @@ class WaylandCursorFactory : public BitmapCursorFactoryOzone,
   std::string name_;
   // Current size of cursors
   int size_ = 24;
+
+  // The current scale of the mouse cursor icon.
+  float scale_ = 1.0f;
 
   std::unique_ptr<ThemeData> current_theme_;
   // Holds the reference on the unloaded theme until the cursor is released.

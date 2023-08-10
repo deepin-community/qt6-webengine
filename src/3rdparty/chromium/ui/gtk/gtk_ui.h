@@ -9,40 +9,40 @@
 #include <memory>
 #include <vector>
 
-#include "base/compiler_specific.h"
-#include "base/component_export.h"
-#include "base/macros.h"
 #include "base/observer_list.h"
-#include "build/buildflag.h"
 #include "ui/base/glib/glib_signal.h"
 #include "ui/gfx/color_utils.h"
-#include "ui/gtk/gtk_ui_delegate.h"
+#include "ui/gtk/gtk_ui_platform.h"
 #include "ui/views/linux_ui/linux_ui.h"
+#include "ui/views/linux_ui/window_frame_provider.h"
 #include "ui/views/window/frame_buttons.h"
 
 typedef struct _GParamSpec GParamSpec;
 typedef struct _GtkParamSpec GtkParamSpec;
 typedef struct _GtkSettings GtkSettings;
 typedef struct _GtkStyle GtkStyle;
-typedef struct _GtkWidget GtkWidget;
 
 namespace gtk {
 using ColorMap = std::map<int, SkColor>;
 
-class GtkKeyBindingsHandler;
 class DeviceScaleFactorObserver;
+class GtkKeyBindingsHandler;
 class NativeThemeGtk;
 class SettingsProvider;
 
 // Interface to GTK desktop features.
 class GtkUi : public views::LinuxUI {
  public:
-  explicit GtkUi(ui::GtkUiDelegate* delegate);
+  GtkUi();
+
+  GtkUi(const GtkUi&) = delete;
+  GtkUi& operator=(const GtkUi&) = delete;
+
   ~GtkUi() override;
 
   // Static delegate getter, used by different objects (created by GtkUi), e.g:
   // Dialogs, IME Context, when platform-specific functionality is required.
-  static ui::GtkUiDelegate* GetDelegate();
+  static GtkUiPlatform* GetPlatform();
 
   // Setters used by SettingsProvider:
   void SetWindowButtonOrdering(
@@ -82,10 +82,12 @@ class GtkUi : public views::LinuxUI {
   SkColor GetInactiveSelectionFgColor() const override;
   base::TimeDelta GetCursorBlinkInterval() const override;
   ui::NativeTheme* GetNativeTheme(aura::Window* window) const override;
+  ui::NativeTheme* GetNativeTheme(bool use_system_theme) const override;
   void SetUseSystemThemeCallback(UseSystemThemeCallback callback) override;
   bool GetDefaultUsesSystemTheme() const override;
   gfx::Image GetIconForContentType(const std::string& content_type,
-                                   int size) const override;
+                                   int size,
+                                   float scale) const override;
   std::unique_ptr<views::Border> CreateNativeBorder(
       views::LabelButton* owning_button,
       std::unique_ptr<views::LabelButtonBorder> border) override;
@@ -105,6 +107,7 @@ class GtkUi : public views::LinuxUI {
   bool PreferDarkTheme() const override;
   bool AnimationsEnabled() const override;
   std::unique_ptr<views::NavButtonProvider> CreateNavButtonProvider() override;
+  views::WindowFrameProvider* GetWindowFrameProvider(bool solid_frame) override;
   base::flat_map<std::string, std::string> GetKeyboardLayoutMap() override;
   std::string GetCursorThemeName() override;
   int GetCursorThemeSize() override;
@@ -148,13 +151,9 @@ class GtkUi : public views::LinuxUI {
 
   float GetRawDeviceScaleFactor();
 
-  // Not owned by GtkUi.
-  ui::GtkUiDelegate* const delegate_;
+  std::unique_ptr<GtkUiPlatform> platform_;
 
   NativeThemeGtk* native_theme_;
-
-  // A regular GtkWindow.
-  GtkWidget* fake_window_;
 
   // Colors calculated by LoadGtkValues() that are given to the
   // caller while |use_gtk_| is true.
@@ -192,6 +191,7 @@ class GtkUi : public views::LinuxUI {
   std::vector<views::FrameButton> leading_buttons_;
   std::vector<views::FrameButton> trailing_buttons_;
 
+  // This is only used on GTK3.
   std::unique_ptr<GtkKeyBindingsHandler> key_bindings_handler_;
 
   // Objects to notify when the window frame button order changes.
@@ -213,13 +213,13 @@ class GtkUi : public views::LinuxUI {
 
   float device_scale_factor_ = 1.0f;
 
-  DISALLOW_COPY_AND_ASSIGN(GtkUi);
+  // Paints a native window frame.  Typically only one of these will be
+  // non-null.  The exception is when the user starts or stops their compositor
+  // while Chrome is running.
+  std::unique_ptr<views::WindowFrameProvider> solid_frame_provider_;
+  std::unique_ptr<views::WindowFrameProvider> transparent_frame_provider_;
 };
 
 }  // namespace gtk
-
-// Access point to the GTK desktop system.
-COMPONENT_EXPORT(GTK)
-views::LinuxUI* BuildGtkUi(ui::GtkUiDelegate* delegate);
 
 #endif  // UI_GTK_GTK_UI_H_

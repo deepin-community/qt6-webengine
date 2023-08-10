@@ -3,6 +3,7 @@
 # found in the LICENSE file.
 
 import optparse
+import six
 
 from blinkpy.common.system.executive_mock import MockExecutive
 from blinkpy.common.system.output_capture import OutputCapture
@@ -16,15 +17,18 @@ class TestRebaselineTest(BaseTestCase):
     @staticmethod
     def options(**kwargs):
         return optparse.Values(
-            dict({
-                'builder': 'MOCK Mac10.11',
-                'port_name': None,
-                'test': 'userscripts/another-test.html',
-                'suffixes': 'txt',
-                'results_directory': None,
-                'build_number': None,
-                'step_name': None,
-            }, **kwargs))
+            dict(
+                {
+                    'builder': 'MOCK Mac10.11',
+                    'port_name': None,
+                    'test': 'userscripts/another-test.html',
+                    'suffixes': 'txt',
+                    'results_directory': None,
+                    'build_number': None,
+                    'step_name': None,
+                    'flag_specific': None,
+                    'resultDB': None,
+                }, **kwargs))
 
     def test_rebaseline_test_internal_with_port_that_lacks_buildbot(self):
         self.tool.executive = MockExecutive()
@@ -37,7 +41,7 @@ class TestRebaselineTest(BaseTestCase):
         actual_result_url = (
             'https://test-results.appspot.com/data/layout_results/MOCK_Win10/'
             + 'results/layout-test-results/failures/expected/image-actual.txt')
-        self.tool.web.urls[actual_result_url] = 'new win10 result'
+        self.tool.web.urls[actual_result_url] = b'new win10 result'
 
         oc = OutputCapture()
         try:
@@ -51,13 +55,16 @@ class TestRebaselineTest(BaseTestCase):
                 'results_directory': None,
                 'build_number': None,
                 'step_name': None,
+                'flag_specific': None,
+                'resultDB': None,
             })
             oc.capture_output()
             self.command.execute(options, [], self.tool)
         finally:
             out, _, _ = oc.restore_output()
 
-        self.assertItemsEqual(self.tool.web.urls_fetched, [actual_result_url])
+        six.assertCountEqual(self, self.tool.web.urls_fetched,
+                             [actual_result_url])
         self.assertMultiLineEqual(
             self._read(baseline_local_absolute_path), 'new win10 result')
         self.assertFalse(
@@ -100,7 +107,7 @@ class TestRebaselineTest(BaseTestCase):
         self.command._rebaseline_test_and_update_expectations(
             self.options(suffixes='png,wav,txt'))
 
-        self.assertItemsEqual(self.tool.web.urls_fetched, [
+        six.assertCountEqual(self, self.tool.web.urls_fetched, [
             self.WEB_PREFIX + '/userscripts/another-test-actual.png',
             self.WEB_PREFIX + '/userscripts/another-test-actual.wav',
             self.WEB_PREFIX + '/userscripts/another-test-actual.txt'
@@ -114,11 +121,13 @@ class TestRebaselineTest(BaseTestCase):
     def test_rebaseline_test(self):
         # pylint: disable=protected-access
         actual_result_url = self.WEB_PREFIX + '/userscripts/another-test-actual.txt'
-        self.tool.web.urls[actual_result_url] = 'new result'
+        self.tool.web.urls[actual_result_url] = b'new result'
         self.command._rebaseline_test('test-linux-trusty',
                                       'userscripts/another-test.html', 'txt',
                                       self.WEB_PREFIX)
-        self.assertItemsEqual(self.tool.web.urls_fetched, [actual_result_url])
+
+        six.assertCountEqual(self, self.tool.web.urls_fetched,
+                             [actual_result_url])
         port = self.tool.port_factory.get('test-linux-trusty')
         self.assertMultiLineEqual(
             self._read(
@@ -129,11 +138,13 @@ class TestRebaselineTest(BaseTestCase):
     def test_rebaseline_test_empty_result(self):
         # pylint: disable=protected-access
         actual_result_url = self.WEB_PREFIX + '/userscripts/another-test-actual.txt'
-        self.tool.web.urls[actual_result_url] = ''
+        self.tool.web.urls[actual_result_url] = b''
         self.command._rebaseline_test('test-linux-trusty',
                                       'userscripts/another-test.html', 'txt',
                                       self.WEB_PREFIX)
-        self.assertItemsEqual(self.tool.web.urls_fetched, [actual_result_url])
+
+        six.assertCountEqual(self, self.tool.web.urls_fetched,
+                             [actual_result_url])
         port = self.tool.port_factory.get('test-linux-trusty')
         self.assertMultiLineEqual(
             self._read(
@@ -147,7 +158,9 @@ class TestRebaselineTest(BaseTestCase):
         self.command._rebaseline_test('test-linux-trusty',
                                       'userscripts/another-test.html', 'txt',
                                       self.WEB_PREFIX)
-        self.assertItemsEqual(self.tool.web.urls_fetched, [actual_result_url])
+
+        six.assertCountEqual(self, self.tool.web.urls_fetched,
+                             [actual_result_url])
         port = self.tool.port_factory.get('test-linux-trusty')
         self.assertMultiLineEqual(
             self._read(
@@ -164,8 +177,9 @@ class TestRebaselineTest(BaseTestCase):
              'bug(z) [ Linux ] userscripts/another-test.html [ Failure ]\n'))
         self.command._rebaseline_test_and_update_expectations(
             self.options(results_directory='/tmp'))
-        self.assertItemsEqual(
-            self.tool.web.urls_fetched,
+
+        six.assertCountEqual(
+            self, self.tool.web.urls_fetched,
             ['file:///tmp/userscripts/another-test-actual.txt'])
 
     def test_rebaseline_reftest(self):
@@ -194,8 +208,9 @@ class TestRebaselineTest(BaseTestCase):
             expected_logs=
             'Cannot rebaseline image result for reftest: userscripts/another-test.html\n'
         )
-        self.assertItemsEqual(
-            self.tool.web.urls_fetched,
+
+        six.assertCountEqual(
+            self, self.tool.web.urls_fetched,
             [self.WEB_PREFIX + '/userscripts/another-test-actual.txt'])
         self.assertDictEqual(self.command.expectation_line_changes.to_dict(),
                              {'remove-lines': []})

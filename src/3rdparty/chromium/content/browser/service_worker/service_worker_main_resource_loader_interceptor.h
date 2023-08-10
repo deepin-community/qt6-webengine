@@ -9,7 +9,6 @@
 
 #include "base/gtest_prod_util.h"
 #include "base/memory/weak_ptr.h"
-#include "base/optional.h"
 #include "content/browser/loader/navigation_loader_interceptor.h"
 #include "content/browser/loader/single_request_url_loader_factory.h"
 #include "content/browser/navigation_subresource_loader_params.h"
@@ -20,7 +19,9 @@
 #include "content/public/common/child_process_host.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
+#include "net/base/isolation_info.h"
 #include "services/network/public/mojom/fetch_api.mojom.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/common/tokens/tokens.h"
 #include "third_party/blink/public/mojom/service_worker/service_worker_provider.mojom.h"
 
@@ -52,9 +53,15 @@ class CONTENT_EXPORT ServiceWorkerMainResourceLoaderInterceptor final
   // worker.
   static std::unique_ptr<NavigationLoaderInterceptor> CreateForWorker(
       const network::ResourceRequest& resource_request,
+      const net::IsolationInfo& isolation_info,
       int process_id,
       const DedicatedOrSharedWorkerToken& worker_token,
       base::WeakPtr<ServiceWorkerMainResourceHandle> navigation_handle);
+
+  ServiceWorkerMainResourceLoaderInterceptor(
+      const ServiceWorkerMainResourceLoaderInterceptor&) = delete;
+  ServiceWorkerMainResourceLoaderInterceptor& operator=(
+      const ServiceWorkerMainResourceLoaderInterceptor&) = delete;
 
   ~ServiceWorkerMainResourceLoaderInterceptor() override;
 
@@ -69,8 +76,8 @@ class CONTENT_EXPORT ServiceWorkerMainResourceLoaderInterceptor final
                          FallbackCallback fallback_callback) override;
   // Returns params with the ControllerServiceWorkerInfoPtr if we have found
   // a matching controller service worker for the |request| that is given
-  // to MaybeCreateLoader(). Otherwise this returns base::nullopt.
-  base::Optional<SubresourceLoaderParams> MaybeCreateSubresourceLoaderParams()
+  // to MaybeCreateLoader(). Otherwise this returns absl::nullopt.
+  absl::optional<SubresourceLoaderParams> MaybeCreateSubresourceLoaderParams()
       override;
 
  private:
@@ -83,7 +90,8 @@ class CONTENT_EXPORT ServiceWorkerMainResourceLoaderInterceptor final
       bool are_ancestors_secure,
       int frame_tree_node_id,
       int process_id,
-      const DedicatedOrSharedWorkerToken* worker_token);
+      const DedicatedOrSharedWorkerToken* worker_token,
+      const net::IsolationInfo& isolation_info);
 
   // Returns true if a ServiceWorkerMainResourceLoaderInterceptor should be
   // created for a navigation to |url|.
@@ -111,13 +119,16 @@ class CONTENT_EXPORT ServiceWorkerMainResourceLoaderInterceptor final
   const network::mojom::RequestDestination request_destination_;
   const bool skip_service_worker_;
 
+  // Updated on redirects.
+  net::IsolationInfo isolation_info_;
+
   // For window clients:
   // Whether all ancestor frames of the frame that is navigating have a secure
   // origin. True for main frames.
   const bool are_ancestors_secure_;
   // If the intercepted resource load is on behalf
   // of a window, the |frame_tree_node_id_| will be set, |worker_token_| will be
-  // base::nullopt, and |process_id_| will be invalid.
+  // absl::nullopt, and |process_id_| will be invalid.
   const int frame_tree_node_id_;
 
   // For web worker clients:
@@ -125,12 +136,10 @@ class CONTENT_EXPORT ServiceWorkerMainResourceLoaderInterceptor final
   // |frame_tree_node_id_| will be invalid, and both |process_id_| and
   // |worker_token_| will be set.
   const int process_id_;
-  const base::Optional<DedicatedOrSharedWorkerToken> worker_token_;
+  const absl::optional<DedicatedOrSharedWorkerToken> worker_token_;
 
   // Handles a single request. Set to a new instance on redirects.
   std::unique_ptr<ServiceWorkerControlleeRequestHandler> request_handler_;
-
-  DISALLOW_COPY_AND_ASSIGN(ServiceWorkerMainResourceLoaderInterceptor);
 };
 
 }  // namespace content

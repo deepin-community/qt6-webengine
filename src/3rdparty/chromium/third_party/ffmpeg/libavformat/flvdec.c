@@ -24,22 +24,24 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include "libavutil/avassert.h"
 #include "libavutil/avstring.h"
 #include "libavutil/channel_layout.h"
 #include "libavutil/dict.h"
 #include "libavutil/opt.h"
+#include "libavutil/internal.h"
 #include "libavutil/intfloat.h"
+#include "libavutil/intreadwrite.h"
 #include "libavutil/mathematics.h"
-#include "libavutil/time_internal.h"
-#include "libavcodec/bytestream.h"
 #include "avformat.h"
 #include "internal.h"
-#include "avio_internal.h"
 #include "flv.h"
 
 #define VALIDATE_INDEX_TS_THRESH 2500
 
 #define RESYNC_BUFFER_SIZE (1<<20)
+
+#define MAX_DEPTH 16      ///< arbitrary limit to prevent unbounded recursion
 
 typedef struct FLVContext {
     const AVClass *class; ///< Class for private options.
@@ -140,7 +142,7 @@ static void add_keyframes_index(AVFormatContext *s)
     av_assert0(flv->last_keyframe_stream_index <= s->nb_streams);
     stream = s->streams[flv->last_keyframe_stream_index];
 
-    if (stream->internal->nb_index_entries == 0) {
+    if (ffstream(stream)->nb_index_entries == 0) {
         for (i = 0; i < flv->keyframe_count; i++) {
             av_log(s, AV_LOG_TRACE, "keyframe filepositions = %"PRId64" times = %"PRId64"\n",
                    flv->keyframe_filepositions[i], flv->keyframe_times[i] * 1000);
@@ -269,7 +271,7 @@ static void flv_set_audio_codec(AVFormatContext *s, AVStream *astream,
         break;
     case FLV_CODECID_MP3:
         apar->codec_id      = AV_CODEC_ID_MP3;
-        astream->need_parsing = AVSTREAM_PARSE_FULL;
+        ffstream(astream)->need_parsing = AVSTREAM_PARSE_FULL;
         break;
     case FLV_CODECID_NELLYMOSER_8KHZ_MONO:
         // in case metadata does not otherwise declare samplerate
@@ -326,6 +328,7 @@ static int flv_same_video_codec(AVCodecParameters *vpar, int flags)
 static int flv_set_video_codec(AVFormatContext *s, AVStream *vstream,
                                int flv_codecid, int read)
 {
+    FFStream *const vstreami = ffstream(vstream);
     int ret = 0;
     AVCodecParameters *par = vstream->codecpar;
     enum AVCodecID old_codec_id = vstream->codecpar->codec_id;
@@ -360,7 +363,7 @@ static int flv_set_video_codec(AVFormatContext *s, AVStream *vstream,
         break;
     case FLV_CODECID_H264:
         par->codec_id = AV_CODEC_ID_H264;
-        vstream->need_parsing = AVSTREAM_PARSE_HEADERS;
+        vstreami->need_parsing = AVSTREAM_PARSE_HEADERS;
         ret = 3;     // not 4, reading packet type will consume one byte
         break;
     case FLV_CODECID_MPEG4:
@@ -372,7 +375,7 @@ static int flv_set_video_codec(AVFormatContext *s, AVStream *vstream,
         par->codec_tag = flv_codecid;
     }
 
-    if (!vstream->internal->need_context_update && par->codec_id != old_codec_id) {
+    if (!vstreami->need_context_update && par->codec_id != old_codec_id) {
         avpriv_request_sample(s, "Changing the codec id midstream");
         return AVERROR_PATCHWELCOME;
     }
@@ -382,13 +385,18 @@ static int flv_set_video_codec(AVFormatContext *s, AVStream *vstream,
 
 static int amf_get_string(AVIOContext *ioc, char *buffer, int buffsize)
 {
+    int ret;
     int length = avio_rb16(ioc);
     if (length >= buffsize) {
         avio_skip(ioc, length);
         return -1;
     }
 
-    avio_read(ioc, buffer, length);
+    ret = avio_read(ioc, buffer, length);
+    if (ret < 0)
+        return ret;
+    if (ret < length)
+        return AVERROR_INVALIDDATA;
 
     buffer[length] = '\0';
 
@@ -446,9 +454,15 @@ static int parse_keyframes_index(AVFormatContext *s, AVIOContext *ioc, int64_t m
         }
 
         for (i = 0; i < arraylen && avio_tell(ioc) < max_pos - 1; i++) {
+            double d;
             if (avio_r8(ioc) != AMF_DATA_TYPE_NUMBER)
                 goto invalid;
-            current_array[0][i] = av_int2double(avio_rb64(ioc));
+            d = av_int2double(avio_rb64(ioc));
+            if (isnan(d) || d < INT64_MIN || d > INT64_MAX)
+                goto invalid;
+            if (current_array == &times && (d <= INT64_MIN / 1000 || d >= INT64_MAX / 1000))
+                goto invalid;
+            current_array[0][i] = d;
         }
         if (times && filepositions) {
             // All done, exiting at a position allowing amf_parse_object
@@ -492,6 +506,9 @@ static int amf_parse_object(AVFormatContext *s, AVStream *astream,
     char str_val[1024];
     double num_val;
     amf_date date;
+
+    if (depth > MAX_DEPTH)
+        return AVERROR_PATCHWELCOME;
 
     num_val  = 0;
     ioc      = s->pb;
@@ -611,10 +628,7 @@ static int amf_parse_object(AVFormatContext *s, AVStream *astream,
                     } else if (!strcmp(key, "audiosamplesize") && apar) {
                         apar->bits_per_coded_sample = num_val;
                     } else if (!strcmp(key, "stereo") && apar) {
-                        apar->channels       = num_val + 1;
-                        apar->channel_layout = apar->channels == 2 ?
-                                               AV_CH_LAYOUT_STEREO :
-                                               AV_CH_LAYOUT_MONO;
+                        av_channel_layout_default(&apar->ch_layout, num_val + 1);
                     } else if (!strcmp(key, "width") && vpar) {
                         vpar->width = num_val;
                     } else if (!strcmp(key, "height") && vpar) {
@@ -667,15 +681,14 @@ static int amf_parse_object(AVFormatContext *s, AVStream *astream,
             av_dict_set(&s->metadata, key, str_val, 0);
         } else if (amf_type == AMF_DATA_TYPE_STRING) {
             av_dict_set(&s->metadata, key, str_val, 0);
-        } else if (amf_type == AMF_DATA_TYPE_DATE) {
-            time_t time;
-            struct tm t;
-            char datestr[128];
-            time =  date.milliseconds / 1000; // to seconds
-            localtime_r(&time, &t);
-            strftime(datestr, sizeof(datestr), "%a, %d %b %Y %H:%M:%S %z", &t);
-
-            av_dict_set(&s->metadata, key, datestr, 0);
+        } else if (   amf_type == AMF_DATA_TYPE_DATE
+                   && isfinite(date.milliseconds)
+                   && date.milliseconds > INT64_MIN/1000
+                   && date.milliseconds < INT64_MAX/1000
+                  ) {
+            // timezone is ignored, since there is no easy way to offset the UTC
+            // timestamp into the specified timezone
+            avpriv_dict_set_timestamp(&s->metadata, key, 1000 * (int64_t)date.milliseconds);
         }
     }
 
@@ -801,7 +814,7 @@ static int flv_get_extradata(AVFormatContext *s, AVStream *st, int size)
 
     if ((ret = ff_get_extradata(s, st->codecpar, s->pb, size)) < 0)
         return ret;
-    st->internal->need_context_update = 1;
+    ffstream(st)->need_context_update = 1;
     return 0;
 }
 
@@ -823,23 +836,28 @@ static int flv_queue_extradata(FLVContext *flv, AVIOContext *pb, int stream,
 
 static void clear_index_entries(AVFormatContext *s, int64_t pos)
 {
-    int i, j, out;
     av_log(s, AV_LOG_WARNING,
            "Found invalid index entries, clearing the index.\n");
-    for (i = 0; i < s->nb_streams; i++) {
-        AVStream *st = s->streams[i];
+    for (unsigned i = 0; i < s->nb_streams; i++) {
+        FFStream *const sti = ffstream(s->streams[i]);
+        int out = 0;
         /* Remove all index entries that point to >= pos */
-        out = 0;
-        for (j = 0; j < st->internal->nb_index_entries; j++)
-            if (st->internal->index_entries[j].pos < pos)
-                st->internal->index_entries[out++] = st->internal->index_entries[j];
-        st->internal->nb_index_entries = out;
+        for (int j = 0; j < sti->nb_index_entries; j++)
+            if (sti->index_entries[j].pos < pos)
+                sti->index_entries[out++] = sti->index_entries[j];
+        sti->nb_index_entries = out;
     }
 }
 
-static int amf_skip_tag(AVIOContext *pb, AMFDataType type)
+static int amf_skip_tag(AVIOContext *pb, AMFDataType type, int depth)
 {
     int nb = -1, ret, parse_name = 1;
+
+    if (depth > MAX_DEPTH)
+        return AVERROR_PATCHWELCOME;
+
+    if (avio_feof(pb))
+        return AVERROR_EOF;
 
     switch (type) {
     case AMF_DATA_TYPE_NUMBER:
@@ -855,6 +873,8 @@ static int amf_skip_tag(AVIOContext *pb, AMFDataType type)
         parse_name = 0;
     case AMF_DATA_TYPE_MIXEDARRAY:
         nb = avio_rb32(pb);
+        if (nb < 0)
+            return AVERROR_INVALIDDATA;
     case AMF_DATA_TYPE_OBJECT:
         while(!pb->eof_reached && (nb-- > 0 || type != AMF_DATA_TYPE_ARRAY)) {
             if (parse_name) {
@@ -865,7 +885,7 @@ static int amf_skip_tag(AVIOContext *pb, AMFDataType type)
                 }
                 avio_skip(pb, size);
             }
-            if ((ret = amf_skip_tag(pb, avio_r8(pb))) < 0)
+            if ((ret = amf_skip_tag(pb, avio_r8(pb), depth + 1)) < 0)
                 return ret;
         }
         break;
@@ -909,7 +929,7 @@ static int flv_data_packet(AVFormatContext *s, AVPacket *pkt,
             else
                 break;
         } else {
-            if ((ret = amf_skip_tag(pb, type)) < 0)
+            if ((ret = amf_skip_tag(pb, type, 0)) < 0)
                 goto skip;
         }
     }
@@ -1158,7 +1178,7 @@ retry_duration:
             avio_seek(s->pb, fsize - 3 - size, SEEK_SET);
             if (size == avio_rb24(s->pb) + 11) {
                 uint32_t ts = avio_rb24(s->pb);
-                ts         |= avio_r8(s->pb) << 24;
+                ts         |= (unsigned)avio_r8(s->pb) << 24;
                 if (ts)
                     s->duration = ts * (int64_t)AV_TIME_BASE / 1000;
                 else if (fsize >= 8 && fsize - 8 >= size) {
@@ -1178,12 +1198,10 @@ retry_duration:
         sample_rate = 44100 << ((flags & FLV_AUDIO_SAMPLERATE_MASK) >>
                                 FLV_AUDIO_SAMPLERATE_OFFSET) >> 3;
         bits_per_coded_sample = (flags & FLV_AUDIO_SAMPLESIZE_MASK) ? 16 : 8;
-        if (!st->codecpar->channels || !st->codecpar->sample_rate ||
+        if (!av_channel_layout_check(&st->codecpar->ch_layout) ||
+            !st->codecpar->sample_rate ||
             !st->codecpar->bits_per_coded_sample) {
-            st->codecpar->channels              = channels;
-            st->codecpar->channel_layout        = channels == 1
-                                               ? AV_CH_LAYOUT_MONO
-                                               : AV_CH_LAYOUT_STEREO;
+            av_channel_layout_default(&st->codecpar->ch_layout, channels);
             st->codecpar->sample_rate           = sample_rate;
             st->codecpar->bits_per_coded_sample = bits_per_coded_sample;
         }
@@ -1193,7 +1211,7 @@ retry_duration:
             flv->last_sample_rate =
             sample_rate           = st->codecpar->sample_rate;
             flv->last_channels    =
-            channels              = st->codecpar->channels;
+            channels              = st->codecpar->ch_layout.nb_channels;
         } else {
             AVCodecParameters *par = avcodec_parameters_alloc();
             if (!par) {
@@ -1231,7 +1249,7 @@ retry_duration:
         if (st->codecpar->codec_id == AV_CODEC_ID_H264 || st->codecpar->codec_id == AV_CODEC_ID_MPEG4) {
             // sign extension
             int32_t cts = (avio_rb24(s->pb) + 0xff800000) ^ 0xff800000;
-            pts = dts + cts;
+            pts = av_sat_add64(dts, cts);
             if (cts < 0) { // dts might be wrong
                 if (!flv->wrong_dts)
                     av_log(s, AV_LOG_WARNING,
@@ -1343,14 +1361,14 @@ static const AVOption options[] = {
     { NULL }
 };
 
-static const AVClass flv_class = {
-    .class_name = "flvdec",
+static const AVClass flv_kux_class = {
+    .class_name = "(live) flv/kux demuxer",
     .item_name  = av_default_item_name,
     .option     = options,
     .version    = LIBAVUTIL_VERSION_INT,
 };
 
-AVInputFormat ff_flv_demuxer = {
+const AVInputFormat ff_flv_demuxer = {
     .name           = "flv",
     .long_name      = NULL_IF_CONFIG_SMALL("FLV (Flash Video)"),
     .priv_data_size = sizeof(FLVContext),
@@ -1360,17 +1378,10 @@ AVInputFormat ff_flv_demuxer = {
     .read_seek      = flv_read_seek,
     .read_close     = flv_read_close,
     .extensions     = "flv",
-    .priv_class     = &flv_class,
+    .priv_class     = &flv_kux_class,
 };
 
-static const AVClass live_flv_class = {
-    .class_name = "live_flvdec",
-    .item_name  = av_default_item_name,
-    .option     = options,
-    .version    = LIBAVUTIL_VERSION_INT,
-};
-
-AVInputFormat ff_live_flv_demuxer = {
+const AVInputFormat ff_live_flv_demuxer = {
     .name           = "live_flv",
     .long_name      = NULL_IF_CONFIG_SMALL("live RTMP FLV (Flash Video)"),
     .priv_data_size = sizeof(FLVContext),
@@ -1380,18 +1391,11 @@ AVInputFormat ff_live_flv_demuxer = {
     .read_seek      = flv_read_seek,
     .read_close     = flv_read_close,
     .extensions     = "flv",
-    .priv_class     = &live_flv_class,
+    .priv_class     = &flv_kux_class,
     .flags          = AVFMT_TS_DISCONT
 };
 
-static const AVClass kux_class = {
-    .class_name = "kuxdec",
-    .item_name  = av_default_item_name,
-    .option     = options,
-    .version    = LIBAVUTIL_VERSION_INT,
-};
-
-AVInputFormat ff_kux_demuxer = {
+const AVInputFormat ff_kux_demuxer = {
     .name           = "kux",
     .long_name      = NULL_IF_CONFIG_SMALL("KUX (YouKu)"),
     .priv_data_size = sizeof(FLVContext),
@@ -1401,5 +1405,5 @@ AVInputFormat ff_kux_demuxer = {
     .read_seek      = flv_read_seek,
     .read_close     = flv_read_close,
     .extensions     = "kux",
-    .priv_class     = &kux_class,
+    .priv_class     = &flv_kux_class,
 };

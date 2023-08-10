@@ -68,7 +68,10 @@ template("generate_wrapper") {
     if (!defined(data)) {
       data = []
     }
-    data += [ _wrapper_script ]
+    data += [
+      _wrapper_script,
+      "//.vpython3",
+    ]
     outputs = [ _wrapper_script ]
 
     _rebased_executable_to_wrap =
@@ -88,8 +91,9 @@ template("generate_wrapper") {
       rebase_path(root_build_dir, root_build_dir),
       "--script-language",
       _script_language,
-      "--",
     ]
+
+    args += [ "--" ]
     args += _wrapped_arguments
 
     if (defined(invoker.write_runtime_deps)) {

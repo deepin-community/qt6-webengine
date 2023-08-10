@@ -9,146 +9,182 @@
 #define SkSLAnalysis_DEFINED
 
 #include "include/private/SkSLSampleUsage.h"
-#include "src/sksl/SkSLDefines.h"
 
+#include <stdint.h>
 #include <memory>
+#include <set>
 
 namespace SkSL {
 
 class ErrorReporter;
 class Expression;
-class ForStatement;
 class FunctionDeclaration;
 class FunctionDefinition;
-struct LoadedModule;
-struct Program;
+class Position;
 class ProgramElement;
 class ProgramUsage;
 class Statement;
 class Variable;
 class VariableReference;
 enum class VariableRefKind : int8_t;
+struct LoadedModule;
+struct LoopUnrollInfo;
+struct Program;
 
 /**
  * Provides utilities for analyzing SkSL statically before it's composed into a full program.
  */
-struct Analysis {
-    static SampleUsage GetSampleUsage(const Program& program, const Variable& fp);
-
-    static bool ReferencesBuiltin(const Program& program, int builtin);
-
-    static bool ReferencesSampleCoords(const Program& program);
-    static bool ReferencesFragCoords(const Program& program);
-
-    static int NodeCountUpToLimit(const FunctionDefinition& function, int limit);
-
-    /**
-     * Finds unconditional exits from a switch-case. Returns true if this statement unconditionally
-     * causes an exit from this switch (via continue, break or return).
-     */
-    static bool SwitchCaseContainsUnconditionalExit(Statement& stmt);
-
-    /**
-     * Finds conditional exits from a switch-case. Returns true if this statement contains a
-     * conditional that wraps a potential exit from the switch (via continue, break or return).
-     */
-    static bool SwitchCaseContainsConditionalExit(Statement& stmt);
-
-    static std::unique_ptr<ProgramUsage> GetUsage(const Program& program);
-    static std::unique_ptr<ProgramUsage> GetUsage(const LoadedModule& module);
-
-    static bool StatementWritesToVariable(const Statement& stmt, const Variable& var);
-
-    struct AssignmentInfo {
-        VariableReference* fAssignedVar = nullptr;
-    };
-    static bool IsAssignable(Expression& expr, AssignmentInfo* info,
-                             ErrorReporter* errors = nullptr);
-
-    // Updates the `refKind` field of every VariableReference found within `expr`.
-    static void UpdateRefKind(Expression* expr, VariableRefKind refKind);
-
-    // A "trivial" expression is one where we'd feel comfortable cloning it multiple times in
-    // the code, without worrying about incurring a performance penalty. Examples:
-    // - true
-    // - 3.14159265
-    // - myIntVariable
-    // - myColor.rgb
-    // - myArray[123]
-    // - myStruct.myField
-    // - half4(0)
-    //
-    // Trivial-ness is stackable. Somewhat large expressions can occasionally make the cut:
-    // - half4(myColor.a)
-    // - myStruct.myArrayField[7].xyz
-    static bool IsTrivialExpression(const Expression& expr);
-
-    struct UnrollableLoopInfo {
-        const Variable* fIndex;
-        double fStart;
-        double fDelta;
-        int fCount;
-    };
-
-    // Ensures that 'loop' meets the strict requirements of The OpenGL ES Shading Language 1.00,
-    // Appendix A, Section 4.
-    // Information about the loop's structure are placed in outLoopInfo (if not nullptr).
-    // If the function returns false, specific reasons are reported via errors (if not nullptr).
-    static bool ForLoopIsValidForES2(const ForStatement& loop,
-                                     UnrollableLoopInfo* outLoopInfo,
-                                     ErrorReporter* errors);
-
-    static void ValidateIndexingForES2(const ProgramElement& pe, ErrorReporter& errors);
-};
+namespace Analysis {
 
 /**
- * Utility class to visit every element, statement, and expression in an SkSL program IR.
- * This is intended for simple analysis and accumulation, where custom visitation behavior is only
- * needed for a limited set of expression kinds.
- *
- * Subclasses should override visitExpression/visitStatement/visitProgramElement as needed and
- * intercept elements of interest. They can then invoke the base class's function to visit all
- * sub expressions. They can also choose not to call the base function to arrest recursion, or
- * implement custom recursion.
- *
- * The visit functions return a bool that determines how the default implementation recurses. Once
- * any visit call returns true, the default behavior stops recursing and propagates true up the
- * stack.
+ * Determines how `program` samples `child`. By default, assumes that the sample coords
+ * (SK_MAIN_COORDS_BUILTIN) might be modified, so `child.eval(sampleCoords)` is treated as
+ * Explicit. If writesToSampleCoords is false, treats that as PassThrough, instead.
+ * If elidedSampleCoordCount is provided, the pointed to value will be incremented by the
+ * number of sample calls where the above rewrite was performed.
  */
+SampleUsage GetSampleUsage(const Program& program,
+                           const Variable& child,
+                           bool writesToSampleCoords = true,
+                           int* elidedSampleCoordCount = nullptr);
 
-template <typename PROG, typename EXPR, typename STMT, typename ELEM>
-class TProgramVisitor {
-public:
-    virtual ~TProgramVisitor() = default;
+bool ReferencesBuiltin(const Program& program, int builtin);
 
-protected:
-    virtual bool visitExpression(EXPR expression);
-    virtual bool visitStatement(STMT statement);
-    virtual bool visitProgramElement(ELEM programElement);
+bool ReferencesSampleCoords(const Program& program);
+bool ReferencesFragCoords(const Program& program);
+
+bool CallsSampleOutsideMain(const Program& program);
+
+bool CallsColorTransformIntrinsics(const Program& program);
+
+/**
+ * Determines if `function` always returns an opaque color (a vec4 where the last component is known
+ * to be 1). This is conservative, and based on constant expression analysis.
+ */
+bool ReturnsOpaqueColor(const FunctionDefinition& function);
+
+/**
+ * Computes the size of the program in a completely flattened state--loops fully unrolled,
+ * function calls inlined--and rejects programs that exceed an arbitrary upper bound. This is
+ * intended to prevent absurdly large programs from overwhemling SkVM. Only strict-ES2 mode is
+ * supported; complex control flow is not SkVM-compatible (and this becomes the halting problem)
+ */
+bool CheckProgramUnrolledSize(const Program& program);
+
+/**
+ * Detect an orphaned variable declaration outside of a scope, e.g. if (true) int a;. Returns
+ * true if an error was reported.
+ */
+bool DetectVarDeclarationWithoutScope(const Statement& stmt, ErrorReporter* errors = nullptr);
+
+int NodeCountUpToLimit(const FunctionDefinition& function, int limit);
+
+/**
+ * Finds unconditional exits from a switch-case. Returns true if this statement unconditionally
+ * causes an exit from this switch (via continue, break or return).
+ */
+bool SwitchCaseContainsUnconditionalExit(Statement& stmt);
+
+/**
+ * Finds conditional exits from a switch-case. Returns true if this statement contains a
+ * conditional that wraps a potential exit from the switch (via continue, break or return).
+ */
+bool SwitchCaseContainsConditionalExit(Statement& stmt);
+
+std::unique_ptr<ProgramUsage> GetUsage(const Program& program);
+std::unique_ptr<ProgramUsage> GetUsage(const LoadedModule& module);
+
+bool StatementWritesToVariable(const Statement& stmt, const Variable& var);
+
+struct AssignmentInfo {
+    VariableReference* fAssignedVar = nullptr;
 };
+bool IsAssignable(Expression& expr, AssignmentInfo* info = nullptr,
+                  ErrorReporter* errors = nullptr);
 
-// Squelch bogus Clang warning about template vtables: https://bugs.llvm.org/show_bug.cgi?id=18733
-#if defined(__clang__)
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wweak-template-vtables"
-#endif
-extern template class TProgramVisitor<const Program&, const Expression&,
-                                      const Statement&, const ProgramElement&>;
-extern template class TProgramVisitor<Program&, Expression&, Statement&, ProgramElement&>;
-#if defined(__clang__)
-#pragma clang diagnostic pop
-#endif
+/**
+ * Updates the `refKind` field of the VariableReference at the top level of `expr`.
+ * If `expr` can be assigned to (`IsAssignable`), true is returned and no errors are reported.
+ * If not, false is returned. and an error is reported if `errors` is non-null.
+ */
+bool UpdateVariableRefKind(Expression* expr, VariableRefKind kind, ErrorReporter* errors = nullptr);
 
-class ProgramVisitor : public TProgramVisitor<const Program&,
-                                              const Expression&,
-                                              const Statement&,
-                                              const ProgramElement&> {
-public:
-    bool visit(const Program& program);
-};
+/**
+ * A "trivial" expression is one where we'd feel comfortable cloning it multiple times in
+ * the code, without worrying about incurring a performance penalty. Examples:
+ * - true
+ * - 3.14159265
+ * - myIntVariable
+ * - myColor.rgb
+ * - myArray[123]
+ * - myStruct.myField
+ * - half4(0)
+ *
+ * Trivial-ness is stackable. Somewhat large expressions can occasionally make the cut:
+ * - half4(myColor.a)
+ * - myStruct.myArrayField[7].xyz
+ */
+bool IsTrivialExpression(const Expression& expr);
 
-using ProgramWriter = TProgramVisitor<Program&, Expression&, Statement&, ProgramElement&>;
+/**
+ * Returns true if both expression trees are the same. Used by the optimizer to look for self-
+ * assignment or self-comparison; won't necessarily catch complex cases. Rejects expressions
+ * that may cause side effects.
+ */
+bool IsSameExpressionTree(const Expression& left, const Expression& right);
 
+/**
+ * Returns true if expr is a constant-expression, as defined by GLSL 1.0, section 5.10.
+ * A constant expression is one of:
+ * - A literal value
+ * - A global or local variable qualified as 'const', excluding function parameters
+ * - An expression formed by an operator on operands that are constant expressions, including
+ *   getting an element of a constant vector or a constant matrix, or a field of a constant
+ *   structure
+ * - A constructor whose arguments are all constant expressions
+ * - A built-in function call whose arguments are all constant expressions, with the exception
+ *   of the texture lookup functions
+ */
+bool IsConstantExpression(const Expression& expr);
+
+/**
+ * Returns true if expr is a valid constant-index-expression, as defined by GLSL 1.0, Appendix A,
+ * Section 5. A constant-index-expression is:
+ * - A constant-expression
+ * - Loop indices (as defined in Appendix A, Section 4)
+ * - Expressions composed of both of the above
+ */
+bool IsConstantIndexExpression(const Expression& expr,
+                               const std::set<const Variable*>* loopIndices);
+
+/**
+ * Ensures that a for-loop meets the strict requirements of The OpenGL ES Shading Language 1.00,
+ * Appendix A, Section 4.
+ * If the requirements are met, information about the loop's structure is returned.
+ * If the requirements are not met, the problem is reported via `errors` (if not nullptr), and
+ * null is returned.
+ */
+std::unique_ptr<LoopUnrollInfo> GetLoopUnrollInfo(Position pos,
+                                                  const Statement* loopInitializer,
+                                                  const Expression* loopTest,
+                                                  const Expression* loopNext,
+                                                  const Statement* loopStatement,
+                                                  ErrorReporter* errors);
+
+void ValidateIndexingForES2(const ProgramElement& pe, ErrorReporter& errors);
+
+/** Detects functions that fail to return a value on at least one path. */
+bool CanExitWithoutReturningValue(const FunctionDeclaration& funcDecl, const Statement& body);
+
+/**
+ * Runs at finalization time to perform any last-minute correctness checks:
+ * - Reports @if/@switch statements that didn't optimize away
+ * - Reports dangling FunctionReference or TypeReference expressions
+ * - Reports function `out` params which are never written to (structs are currently exempt)
+ */
+void DoFinalizationChecks(const Program& program);
+
+}  // namespace Analysis
 }  // namespace SkSL
 
 #endif

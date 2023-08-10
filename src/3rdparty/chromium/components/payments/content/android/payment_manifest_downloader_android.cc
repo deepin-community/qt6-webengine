@@ -28,6 +28,9 @@ class DownloadCallback {
       const base::android::JavaParamRef<jobject>& jcallback)
       : jcallback_(jcallback) {}
 
+  DownloadCallback(const DownloadCallback&) = delete;
+  DownloadCallback& operator=(const DownloadCallback&) = delete;
+
   ~DownloadCallback() {}
 
   void OnPaymentMethodManifestDownload(const GURL& url_after_redirects,
@@ -66,8 +69,6 @@ class DownloadCallback {
 
  private:
   base::android::ScopedJavaGlobalRef<jobject> jcallback_;
-
-  DISALLOW_COPY_AND_ASSIGN(DownloadCallback);
 };
 
 }  // namespace
@@ -123,8 +124,8 @@ static jlong JNI_PaymentManifestDownloader_Init(
 
   return reinterpret_cast<jlong>(new PaymentManifestDownloaderAndroid(
       std::make_unique<DeveloperConsoleLogger>(web_contents),
-      content::BrowserContext::GetDefaultStoragePartition(
-          web_contents->GetBrowserContext())
+      web_contents->GetBrowserContext()
+          ->GetDefaultStoragePartition()
           ->GetURLLoaderFactoryForBrowserProcess()));
 }
 

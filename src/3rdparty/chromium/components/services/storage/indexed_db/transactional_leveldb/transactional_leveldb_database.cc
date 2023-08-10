@@ -15,10 +15,8 @@
 #include "base/check_op.h"
 #include "base/compiler_specific.h"
 #include "base/files/file.h"
-#include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/stringprintf.h"
@@ -55,7 +53,7 @@ namespace {
 //
 // Sync writes are necessary on Windows for quota calculations; POSIX
 // calculates file sizes correctly even when not synced to disk.
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 const bool kSyncWrites = true;
 #else
 // TODO(dgrogan): Either remove the #if block or change this back to false.

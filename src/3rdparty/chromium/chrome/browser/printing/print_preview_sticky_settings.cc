@@ -36,7 +36,7 @@ const std::string* PrintPreviewStickySettings::printer_app_state() const {
 }
 
 void PrintPreviewStickySettings::StoreAppState(const std::string& data) {
-  printer_app_state_ = base::make_optional(data);
+  printer_app_state_ = absl::make_optional(data);
 }
 
 void PrintPreviewStickySettings::SaveInPrefs(PrefService* prefs) const {
@@ -47,7 +47,7 @@ void PrintPreviewStickySettings::SaveInPrefs(PrefService* prefs) const {
 }
 
 void PrintPreviewStickySettings::RestoreFromPrefs(PrefService* prefs) {
-  const base::DictionaryValue* value =
+  const base::Value* value =
       prefs->GetDictionary(prefs::kPrintPreviewStickySettings);
   const base::Value* app_state =
       value->FindKeyOfType(kSettingAppState, base::Value::Type::STRING);
@@ -71,7 +71,7 @@ std::vector<std::string> PrintPreviewStickySettings::GetRecentlyUsedPrinters() {
   if (!sticky_settings_state)
     return {};
 
-  base::Optional<base::Value> sticky_settings_state_value =
+  absl::optional<base::Value> sticky_settings_state_value =
       base::JSONReader::Read(*sticky_settings_state);
   if (!sticky_settings_state_value || !sticky_settings_state_value->is_dict())
     return {};
@@ -82,8 +82,9 @@ std::vector<std::string> PrintPreviewStickySettings::GetRecentlyUsedPrinters() {
     return {};
 
   std::vector<std::string> printers;
-  printers.reserve(recent_destinations->GetList().size());
-  for (const auto& recent_destination : recent_destinations->GetList()) {
+  printers.reserve(recent_destinations->GetListDeprecated().size());
+  for (const auto& recent_destination :
+       recent_destinations->GetListDeprecated()) {
     const std::string* printer_id = recent_destination.FindStringKey(kId);
     if (!printer_id)
       continue;

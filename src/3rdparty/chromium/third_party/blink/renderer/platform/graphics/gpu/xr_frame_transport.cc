@@ -4,6 +4,7 @@
 
 #include "third_party/blink/renderer/platform/graphics/gpu/xr_frame_transport.h"
 
+#include "base/logging.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "device/vr/public/mojom/vr_service.mojom-blink.h"
@@ -103,7 +104,7 @@ void XRFrameTransport::FrameSubmit(
   if (transport_options_->transport_method ==
       device::mojom::blink::XRPresentationTransportMethod::
           SUBMIT_AS_TEXTURE_HANDLE) {
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
     TRACE_EVENT0("gpu", "XRFrameTransport::CopyImage");
     // Update last_transfer_succeeded_ value. This should usually complete
     // without waiting.

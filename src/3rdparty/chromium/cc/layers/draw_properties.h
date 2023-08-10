@@ -7,12 +7,10 @@
 
 #include <stddef.h>
 
-#include <memory>
-
 #include "cc/trees/occlusion.h"
+#include "ui/gfx/geometry/mask_filter_info.h"
 #include "ui/gfx/geometry/rect.h"
-#include "ui/gfx/mask_filter_info.h"
-#include "ui/gfx/transform.h"
+#include "ui/gfx/geometry/transform.h"
 
 namespace cc {
 

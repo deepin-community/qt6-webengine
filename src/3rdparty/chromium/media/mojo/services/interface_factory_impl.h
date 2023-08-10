@@ -7,7 +7,7 @@
 
 #include <memory>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/unguessable_token.h"
 #include "build/build_config.h"
@@ -15,10 +15,12 @@
 #include "media/media_buildflags.h"
 #include "media/mojo/buildflags.h"
 #include "media/mojo/mojom/audio_decoder.mojom.h"
+#include "media/mojo/mojom/audio_encoder.mojom.h"
 #include "media/mojo/mojom/content_decryption_module.mojom.h"
 #include "media/mojo/mojom/decryptor.mojom.h"
 #include "media/mojo/mojom/frame_interface_factory.mojom.h"
 #include "media/mojo/mojom/interface_factory.mojom.h"
+#include "media/mojo/mojom/media_log.mojom.h"
 #include "media/mojo/mojom/renderer.mojom.h"
 #include "media/mojo/mojom/video_decoder.mojom.h"
 #include "media/mojo/services/deferred_destroy_unique_receiver_set.h"
@@ -33,6 +35,7 @@ namespace media {
 
 class CdmFactory;
 class MojoMediaClient;
+class Renderer;
 
 class InterfaceFactoryImpl final
     : public DeferredDestroy<mojom::InterfaceFactory> {
@@ -40,22 +43,32 @@ class InterfaceFactoryImpl final
   InterfaceFactoryImpl(
       mojo::PendingRemote<mojom::FrameInterfaceFactory> frame_interfaces,
       MojoMediaClient* mojo_media_client);
+
+  InterfaceFactoryImpl(const InterfaceFactoryImpl&) = delete;
+  InterfaceFactoryImpl& operator=(const InterfaceFactoryImpl&) = delete;
+
   ~InterfaceFactoryImpl() final;
 
   // mojom::InterfaceFactory implementation.
   void CreateAudioDecoder(
       mojo::PendingReceiver<mojom::AudioDecoder> receiver) final;
   void CreateVideoDecoder(
-      mojo::PendingReceiver<mojom::VideoDecoder> receiver) final;
+      mojo::PendingReceiver<mojom::VideoDecoder> receiver,
+      mojo::PendingRemote<media::stable::mojom::StableVideoDecoder>
+          dst_video_decoder) final;
+
+  void CreateAudioEncoder(
+      mojo::PendingReceiver<mojom::AudioEncoder> receiver) final;
+
   void CreateDefaultRenderer(
       const std::string& audio_device_id,
       mojo::PendingReceiver<mojom::Renderer> receiver) final;
 #if BUILDFLAG(ENABLE_CAST_RENDERER)
   void CreateCastRenderer(
       const base::UnguessableToken& overlay_plane_id,
-      mojo::PendingReceiver<media::mojom::Renderer> receiver) final;
+      mojo::PendingReceiver<mojom::Renderer> receiver) final;
 #endif
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   void CreateMediaPlayerRenderer(
       mojo::PendingRemote<mojom::MediaPlayerRendererClientExtension>
           client_extension_remote,
@@ -67,17 +80,18 @@ class InterfaceFactoryImpl final
       mojo::PendingRemote<mojom::FlingingRendererClientExtension>
           client_extension,
       mojo::PendingReceiver<mojom::Renderer> receiver) final;
-#endif  // defined(OS_ANDROID)
-#if defined(OS_WIN)
+#endif  // BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(IS_WIN)
   void CreateMediaFoundationRenderer(
-      mojo::PendingReceiver<media::mojom::Renderer> receiver,
-      mojo::PendingReceiver<media::mojom::MediaFoundationRendererExtension>
-          renderer_extension_receiver) final;
-#endif  // defined(OS_WIN)
+      mojo::PendingRemote<mojom::MediaLog> media_log_remote,
+      mojo::PendingReceiver<mojom::Renderer> receiver,
+      mojo::PendingReceiver<mojom::MediaFoundationRendererExtension>
+          renderer_extension_receiver,
+      mojo::PendingRemote<media::mojom::MediaFoundationRendererClientExtension>
+          client_extension_remote) final;
+#endif  // BUILDFLAG(IS_WIN)
 
-  void CreateCdm(const std::string& key_system,
-                 const CdmConfig& cdm_config,
-                 CreateCdmCallback callback) final;
+  void CreateCdm(const CdmConfig& cdm_config, CreateCdmCallback callback) final;
 
   // DeferredDestroy<mojom::InterfaceFactory> implemenation.
   void OnDestroyPending(base::OnceClosure destroy_cb) final;
@@ -90,21 +104,21 @@ class InterfaceFactoryImpl final
   void SetReceiverDisconnectHandler();
   void OnReceiverDisconnect();
 
+#if BUILDFLAG(ENABLE_MOJO_RENDERER) || BUILDFLAG(ENABLE_CAST_RENDERER) || \
+    BUILDFLAG(IS_WIN)
+  // Creates MojoRendererService for `renderer`, bind it to `receiver` and add
+  // them to `renderer_receivers_`.
+  void AddRenderer(std::unique_ptr<media::Renderer> renderer,
+                   mojo::PendingReceiver<mojom::Renderer> receiver);
+#endif
+
 #if BUILDFLAG(ENABLE_MOJO_CDM)
   CdmFactory* GetCdmFactory();
-  void OnCdmServiceCreated(CreateCdmCallback callback,
-                           std::unique_ptr<MojoCdmService> cdm_service,
-                           mojo::PendingRemote<mojom::Decryptor> decryptor,
-                           const std::string& error_message);
+  void OnCdmServiceInitialized(MojoCdmService* raw_mojo_cdm_service,
+                               CreateCdmCallback callback,
+                               mojom::CdmContextPtr cdm_context,
+                               const std::string& error_message);
 #endif  // BUILDFLAG(ENABLE_MOJO_CDM)
-
-#if defined(OS_WIN)
-  void CreateMediaFoundationRendererOnTaskRunner(
-      scoped_refptr<base::SingleThreadTaskRunner> task_runner,
-      mojo::PendingReceiver<media::mojom::Renderer> receiver,
-      mojo::PendingReceiver<media::mojom::MediaFoundationRendererExtension>
-          renderer_extension_receiver);
-#endif  // defined(OS_WIN)
 
   // Must be declared before the receivers below because the bound objects might
   // take a raw pointer of |cdm_service_context_| and assume it's always
@@ -119,28 +133,35 @@ class InterfaceFactoryImpl final
   mojo::UniqueReceiverSet<mojom::VideoDecoder> video_decoder_receivers_;
 #endif  // BUILDFLAG(ENABLE_MOJO_VIDEO_DECODER)
 
-#if BUILDFLAG(ENABLE_MOJO_RENDERER) || BUILDFLAG(ENABLE_CAST_RENDERER)
+#if BUILDFLAG(ENABLE_MOJO_AUDIO_ENCODER)
+  mojo::UniqueReceiverSet<mojom::AudioEncoder> audio_encoder_receivers_;
+#endif  // BUILDFLAG(ENABLE_MOJO_VIDEO_ENCODER)
+
+#if BUILDFLAG(ENABLE_MOJO_RENDERER) || BUILDFLAG(ENABLE_CAST_RENDERER) || \
+    BUILDFLAG(IS_WIN)
   // TODO(xhwang): Use MojoMediaLog for Renderer.
   NullMediaLog media_log_;
   mojo::UniqueReceiverSet<mojom::Renderer> renderer_receivers_;
-#endif  // BUILDFLAG(ENABLE_MOJO_RENDERER) || BUILDFLAG(ENABLE_CAST_RENDERER)
+#endif
 
 #if BUILDFLAG(ENABLE_MOJO_CDM)
   std::unique_ptr<CdmFactory> cdm_factory_;
   mojo::UniqueReceiverSet<mojom::ContentDecryptionModule> cdm_receivers_;
+
+  // MojoCdmServices pending initialization.
+  std::map<MojoCdmService*, std::unique_ptr<MojoCdmService>>
+      pending_mojo_cdm_services_;
 #endif  // BUILDFLAG(ENABLE_MOJO_CDM)
 
   mojo::Remote<mojom::FrameInterfaceFactory> frame_interfaces_;
 
   mojo::UniqueReceiverSet<mojom::Decryptor> decryptor_receivers_;
 
-  MojoMediaClient* mojo_media_client_;
+  raw_ptr<MojoMediaClient> mojo_media_client_;
   base::OnceClosure destroy_cb_;
 
   // NOTE: Weak pointers must be invalidated before all other member variables.
   base::WeakPtrFactory<InterfaceFactoryImpl> weak_ptr_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(InterfaceFactoryImpl);
 };
 
 }  // namespace media

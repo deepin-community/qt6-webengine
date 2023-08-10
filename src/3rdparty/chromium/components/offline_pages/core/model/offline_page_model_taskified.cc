@@ -4,6 +4,7 @@
 
 #include "components/offline_pages/core/model/offline_page_model_taskified.h"
 
+#include <string>
 #include <utility>
 
 #include "base/bind.h"
@@ -13,8 +14,7 @@
 #include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/strings/string16.h"
-#include "base/task/post_task.h"
+#include "base/observer_list.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "components/offline_pages/core/archive_manager.h"
@@ -406,7 +406,7 @@ void OfflinePageModelTaskified::OnCreateArchiveDone(
     ArchiverResult archiver_result,
     const GURL& saved_url,
     const base::FilePath& file_path,
-    const base::string16& title,
+    const std::u16string& title,
     int64_t file_size,
     const std::string& digest) {
   if (archiver_result != ArchiverResult::SUCCESSFULLY_CREATED) {
@@ -681,8 +681,7 @@ void OfflinePageModelTaskified::RemovePagesMatchingUrlAndNamespace(
   auto task = DeletePageTask::CreateTaskDeletingForPageLimit(
       store_.get(),
       base::BindOnce(&OfflinePageModelTaskified::OnDeleteDone,
-                     weak_ptr_factory_.GetWeakPtr(),
-                     base::DoNothing::Once<DeletePageResult>()),
+                     weak_ptr_factory_.GetWeakPtr(), base::DoNothing()),
       page);
   task_queue_.AddTask(std::move(task));
 }

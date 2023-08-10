@@ -8,10 +8,10 @@
 #include <string>
 #include <vector>
 
-#include "base/compiler_specific.h"
-#include "base/macros.h"
-#include "base/scoped_observer.h"
+#include "base/memory/raw_ptr.h"
+#include "base/scoped_observation.h"
 #include "base/task/cancelable_task_tracker.h"
+#include "base/values.h"
 #include "chrome/common/extensions/api/history.h"
 #include "components/history/core/browser/history_service.h"
 #include "components/history/core/browser/history_service_observer.h"
@@ -21,10 +21,6 @@
 
 class Profile;
 
-namespace base {
-class ListValue;
-}
-
 namespace extensions {
 
 // Observes History service and routes the notifications as events to the
@@ -33,6 +29,10 @@ class HistoryEventRouter : public history::HistoryServiceObserver {
  public:
   HistoryEventRouter(Profile* profile,
                      history::HistoryService* history_service);
+
+  HistoryEventRouter(const HistoryEventRouter&) = delete;
+  HistoryEventRouter& operator=(const HistoryEventRouter&) = delete;
+
   ~HistoryEventRouter() override;
 
  private:
@@ -48,13 +48,12 @@ class HistoryEventRouter : public history::HistoryServiceObserver {
   void DispatchEvent(Profile* profile,
                      events::HistogramValue histogram_value,
                      const std::string& event_name,
-                     std::unique_ptr<base::ListValue> event_args);
+                     std::vector<base::Value> event_args);
 
-  Profile* profile_;
-  ScopedObserver<history::HistoryService, history::HistoryServiceObserver>
-      history_service_observer_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(HistoryEventRouter);
+  raw_ptr<Profile> profile_;
+  base::ScopedObservation<history::HistoryService,
+                          history::HistoryServiceObserver>
+      history_service_observation_{this};
 };
 
 class HistoryAPI : public BrowserContextKeyedAPI, public EventRouter::Observer {
@@ -74,7 +73,7 @@ class HistoryAPI : public BrowserContextKeyedAPI, public EventRouter::Observer {
  private:
   friend class BrowserContextKeyedAPIFactory<HistoryAPI>;
 
-  content::BrowserContext* browser_context_;
+  raw_ptr<content::BrowserContext> browser_context_;
 
   // BrowserContextKeyedAPI implementation.
   static const char* service_name() {

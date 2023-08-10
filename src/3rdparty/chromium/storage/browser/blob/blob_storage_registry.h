@@ -13,9 +13,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include "base/callback_forward.h"
 #include "base/component_export.h"
-#include "base/macros.h"
 #include "storage/browser/blob/blob_storage_constants.h"
 
 namespace storage {
@@ -28,6 +26,10 @@ class BlobEntry;
 class COMPONENT_EXPORT(STORAGE_BROWSER) BlobStorageRegistry {
  public:
   BlobStorageRegistry();
+
+  BlobStorageRegistry(const BlobStorageRegistry&) = delete;
+  BlobStorageRegistry& operator=(const BlobStorageRegistry&) = delete;
+
   ~BlobStorageRegistry();
 
   // Creates the blob entry with a refcount of 1 and a state of PENDING. If
@@ -53,8 +55,6 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) BlobStorageRegistry {
   friend class ViewBlobInternalsJob;
 
   std::unordered_map<std::string, std::unique_ptr<BlobEntry>> blob_map_;
-
-  DISALLOW_COPY_AND_ASSIGN(BlobStorageRegistry);
 };
 
 }  // namespace storage

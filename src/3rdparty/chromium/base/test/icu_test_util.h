@@ -8,7 +8,6 @@
 #include <memory>
 #include <string>
 
-#include "base/macros.h"
 #include "third_party/icu/source/common/unicode/uversion.h"
 
 U_NAMESPACE_BEGIN
@@ -25,14 +24,13 @@ class ScopedRestoreICUDefaultLocale {
  public:
   ScopedRestoreICUDefaultLocale();
   explicit ScopedRestoreICUDefaultLocale(const std::string& locale);
+  ScopedRestoreICUDefaultLocale(const ScopedRestoreICUDefaultLocale&) = delete;
+  ScopedRestoreICUDefaultLocale& operator=(
+      const ScopedRestoreICUDefaultLocale&) = delete;
   ~ScopedRestoreICUDefaultLocale();
 
  private:
   const std::string default_locale_;
-
-  ScopedRestoreICUDefaultLocale(const ScopedRestoreICUDefaultLocale&) = delete;
-  ScopedRestoreICUDefaultLocale& operator=(
-      const ScopedRestoreICUDefaultLocale&) = delete;
 };
 
 // In unit tests, prefer ScopedRestoreDefaultTimezone over

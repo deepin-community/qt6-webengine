@@ -7,9 +7,8 @@
 
 #include <memory>
 
-#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "components/subresource_filter/content/mojom/subresource_filter_agent.mojom.h"
+#include "components/subresource_filter/content/mojom/subresource_filter.mojom.h"
 #include "components/subresource_filter/content/renderer/ad_resource_tracker.h"
 #include "components/subresource_filter/core/mojom/subresource_filter.mojom.h"
 #include "content/public/renderer/render_frame_observer.h"
@@ -45,6 +44,10 @@ class SubresourceFilterAgent
       content::RenderFrame* render_frame,
       UnverifiedRulesetDealer* ruleset_dealer,
       std::unique_ptr<AdResourceTracker> ad_resource_tracker);
+
+  SubresourceFilterAgent(const SubresourceFilterAgent&) = delete;
+  SubresourceFilterAgent& operator=(const SubresourceFilterAgent&) = delete;
+
   ~SubresourceFilterAgent() override;
 
   // Unit tests don't have a RenderFrame so the construction relies on virtual
@@ -58,12 +61,16 @@ class SubresourceFilterAgent
   // Returns the URL of the currently committed document.
   virtual GURL GetDocumentURL();
 
-  virtual bool IsMainFrame();
+  // Returns true if this agent is attached to a frame that is a subresource
+  // filter child. See content_subresource_filter_throttle_manager.h for
+  // details.
+  virtual bool IsSubresourceFilterChild();
   virtual bool IsParentAdSubframe();
   virtual bool IsProvisional();
+  // This is only called by non-main frames since a child main frames (e.g.
+  // Fenced Frame) will not be initialized on the same stack as the script that
+  // created it.
   virtual bool IsSubframeCreatedByAdScript();
-
-  virtual bool HasDocumentLoader();
 
   // Injects the provided subresource |filter| into the DocumentLoader
   // orchestrating the most recently created document.
@@ -84,23 +91,27 @@ class SubresourceFilterAgent
   virtual void SendFrameIsAdSubframe();
 
   // Tells the browser that the frame is a subframe that was created by ad
-  // script.
+  // script. Fenced frame roots do not call this as they're tagged via
+  // DidCreateFencedFrame.
   virtual void SendSubframeWasCreatedByAdScript();
 
   // True if the frame has been heuristically determined to be an ad subframe.
   virtual bool IsAdSubframe();
-  virtual void SetIsAdSubframe(blink::mojom::AdFrameType ad_frame_type);
 
-  // If the browser has not yet informed the renderer of the frame's ad status
-  // (i.e. due to an initial synchronous commit to about:blank), calculates
-  // whether the frame should be an ad by populating a temporary FrameAdEvidence
-  // object.
-  void SetIsAdSubframeIfNecessary();
+  virtual const absl::optional<blink::FrameAdEvidence>& AdEvidence();
+  virtual void SetAdEvidence(const blink::FrameAdEvidence& ad_evidence);
+
+  // The browser will not inform the renderer of the (sub)frame's ad status and
+  // evidence in the case of an initial synchronous commit to about:blank. We
+  // thus fill in the frame's ad evidence and, if necessary, tag it as an ad.
+  // Fenced frame roots do not call this as their ad evidence is initialized
+  // via DidCreateFencedFrame.
+  void SetAdEvidenceForInitialEmptySubframe();
 
   // mojom::SubresourceFilterAgent:
   void ActivateForNextCommittedLoad(
       mojom::ActivationStatePtr activation_state,
-      blink::mojom::AdFrameType ad_frame_type) override;
+      const absl::optional<blink::FrameAdEvidence>& ad_evidence) override;
 
  private:
   // Returns the activation state for the `render_frame` to inherit. Main frames
@@ -133,6 +144,8 @@ class SubresourceFilterAgent
   void WillCreateWorkerFetchContext(blink::WebWorkerFetchContext*) override;
   void OnOverlayPopupAdDetected() override;
   void OnLargeStickyAdDetected() override;
+  void DidCreateFencedFrame(
+      const blink::RemoteFrameToken& placeholder_token) override;
 
   // Owned by the ChromeContentRendererClient and outlives us.
   UnverifiedRulesetDealer* ruleset_dealer_;
@@ -150,8 +163,6 @@ class SubresourceFilterAgent
 
   base::WeakPtr<WebDocumentSubresourceFilterImpl>
       filter_for_last_created_document_;
-
-  DISALLOW_COPY_AND_ASSIGN(SubresourceFilterAgent);
 };
 
 }  // namespace subresource_filter

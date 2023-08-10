@@ -22,7 +22,12 @@ Polymer({
   behaviors: [I18nBehavior, CrPolicyNetworkBehaviorMojo],
 
   properties: {
-    /** @private {!chromeos.networkConfig.mojom.ManagedProperties|undefined} */
+    disabled: {
+      type: Boolean,
+      value: false,
+    },
+
+    /** @type {!chromeos.networkConfig.mojom.ManagedProperties|undefined} */
     managedProperties: {
       type: Object,
       observer: 'managedPropertiesChanged_',
@@ -185,7 +190,9 @@ Polymer({
 
     // Update the 'nameservers' property.
     let nameservers = [];
-    const ipv4 = OncMojo.getIPConfigForType(this.managedProperties, 'IPv4');
+    const ipv4 = OncMojo.getIPConfigForType(
+        this.managedProperties,
+        chromeos.networkConfig.mojom.IPConfigType.kIPv4);
     if (ipv4 && ipv4.nameServers) {
       nameservers = ipv4.nameServers.slice();
     }

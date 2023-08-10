@@ -31,15 +31,14 @@ content::WebUIDataSource* CreateInternalsHTMLSource(
       content::WebUIDataSource::Create(source_name);
   source->AddResourcePath("autofill_and_password_manager_internals.js",
                           IDR_AUTOFILL_AND_PASSWORD_MANAGER_INTERNALS_JS);
-  source->AddResourcePath("autofill_and_password_manager_internals.css",
-                          IDR_AUTOFILL_AND_PASSWORD_MANAGER_INTERNALS_CSS);
   source->SetDefaultResource(IDR_AUTOFILL_AND_PASSWORD_MANAGER_INTERNALS_HTML);
   // Data strings:
   source->AddString(version_ui::kVersion, version_info::GetVersionNumber());
   source->AddString(version_ui::kOfficial, version_info::IsOfficialBuild()
                                                ? "official"
                                                : "Developer build");
-  source->AddString(version_ui::kVersionModifier, chrome::GetChannelName());
+  source->AddString(version_ui::kVersionModifier,
+                    chrome::GetChannelName(chrome::WithExtendedStable(true)));
   source->AddString(version_ui::kCL, version_info::GetLastChange());
   source->AddString(version_ui::kUserAgent, embedder_support::GetUserAgent());
   source->AddString("app_locale", g_browser_process->GetApplicationLocale());
@@ -48,8 +47,7 @@ content::WebUIDataSource* CreateInternalsHTMLSource(
 
 AutofillCacheResetter::AutofillCacheResetter(
     content::BrowserContext* browser_context)
-    : remover_(
-          content::BrowserContext::GetBrowsingDataRemover(browser_context)) {
+    : remover_(browser_context->GetBrowsingDataRemover()) {
   remover_->AddObserver(this);
 }
 
@@ -93,10 +91,10 @@ InternalsUIHandler::~InternalsUIHandler() {
 }
 
 void InternalsUIHandler::RegisterMessages() {
-  web_ui()->RegisterMessageCallback(
+  web_ui()->RegisterDeprecatedMessageCallback(
       "loaded", base::BindRepeating(&InternalsUIHandler::OnLoaded,
                                     base::Unretained(this)));
-  web_ui()->RegisterMessageCallback(
+  web_ui()->RegisterDeprecatedMessageCallback(
       "resetCache", base::BindRepeating(&InternalsUIHandler::OnResetCache,
                                         base::Unretained(this)));
 }
@@ -111,16 +109,15 @@ void InternalsUIHandler::OnJavascriptDisallowed() {
 
 void InternalsUIHandler::OnLoaded(const base::ListValue* args) {
   AllowJavascript();
-  CallJavascriptFunction(call_on_load_);
+  FireWebUIListener(call_on_load_, base::Value());
   // This is only available in contents, because the iOS BrowsingDataRemover
   // does not allow selectively deleting data per origin and we don't want to
   // wipe the entire cache.
-  CallJavascriptFunction("enableResetCacheButton");
-  CallJavascriptFunction(
-      "notifyAboutIncognito",
+  FireWebUIListener("enable-reset-cache-button", base::Value());
+  FireWebUIListener(
+      "notify-about-incognito",
       base::Value(Profile::FromWebUI(web_ui())->IsIncognitoProfile()));
-  CallJavascriptFunction("notifyAboutVariations",
-                         *version_ui::GetVariationsList());
+  FireWebUIListener("notify-about-variations", version_ui::GetVariationsList());
 }
 
 void InternalsUIHandler::OnResetCache(const base::ListValue* args) {
@@ -133,7 +130,7 @@ void InternalsUIHandler::OnResetCache(const base::ListValue* args) {
 }
 
 void InternalsUIHandler::OnResetCacheDone(const std::string& message) {
-  CallJavascriptFunction("notifyResetDone", base::Value(message));
+  FireWebUIListener("notify-reset-done", base::Value(message));
 }
 
 void InternalsUIHandler::StartSubscription() {
@@ -162,7 +159,7 @@ void InternalsUIHandler::EndSubscription() {
 void InternalsUIHandler::LogEntry(const base::Value& entry) {
   if (!registered_with_log_router_ || entry.is_none())
     return;
-  CallJavascriptFunction("addRawLog", entry);
+  FireWebUIListener("add-structured-log", entry);
 }
 
 }  // namespace autofill

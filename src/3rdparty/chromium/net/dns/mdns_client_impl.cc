@@ -5,12 +5,14 @@
 #include "net/dns/mdns_client_impl.h"
 
 #include <algorithm>
+#include <memory>
 #include <utility>
 
 #include "base/bind.h"
 #include "base/location.h"
-#include "base/single_thread_task_runner.h"
+#include "base/observer_list.h"
 #include "base/strings/string_util.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/clock.h"
 #include "base/time/default_clock.h"
@@ -451,7 +453,7 @@ MDnsClientImpl::~MDnsClientImpl() {
 
 int MDnsClientImpl::StartListening(MDnsSocketFactory* socket_factory) {
   DCHECK(!core_.get());
-  core_.reset(new Core(clock_, cleanup_timer_.get()));
+  core_ = std::make_unique<Core>(clock_, cleanup_timer_.get());
   int rv = core_->Init(socket_factory);
   if (rv != OK) {
     DCHECK_NE(ERR_IO_PENDING, rv);
@@ -595,13 +597,15 @@ void MDnsListenerImpl::ScheduleNextRefresh() {
   // Schedule refreshes at both 85% and 95% of the original TTL. These will both
   // be canceled and rescheduled if the record's TTL is updated due to a
   // response being received.
-  base::Time next_refresh1 = last_update_ + base::TimeDelta::FromMilliseconds(
-      static_cast<int>(base::Time::kMillisecondsPerSecond *
-                       kListenerRefreshRatio1 * ttl_));
+  base::Time next_refresh1 =
+      last_update_ +
+      base::Milliseconds(static_cast<int>(base::Time::kMillisecondsPerSecond *
+                                          kListenerRefreshRatio1 * ttl_));
 
-  base::Time next_refresh2 = last_update_ + base::TimeDelta::FromMilliseconds(
-      static_cast<int>(base::Time::kMillisecondsPerSecond *
-                       kListenerRefreshRatio2 * ttl_));
+  base::Time next_refresh2 =
+      last_update_ +
+      base::Milliseconds(static_cast<int>(base::Time::kMillisecondsPerSecond *
+                                          kListenerRefreshRatio2 * ttl_));
 
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
       FROM_HERE, next_refresh_.callback(), next_refresh1 - clock_->Now());

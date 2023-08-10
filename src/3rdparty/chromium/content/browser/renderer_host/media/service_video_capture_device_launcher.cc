@@ -9,6 +9,7 @@
 #include "base/bind.h"
 #include "base/callback_helpers.h"
 #include "base/command_line.h"
+#include "build/build_config.h"
 #include "content/browser/renderer_host/media/service_launched_video_capture_device.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
@@ -19,6 +20,10 @@
 #include "mojo/public/cpp/bindings/self_owned_receiver.h"
 #include "services/video_capture/public/cpp/receiver_media_to_mojo_adapter.h"
 #include "services/video_capture/public/mojom/video_frame_handler.mojom.h"
+
+#if BUILDFLAG(IS_WIN)
+#include "media/base/media_switches.h"
+#endif
 
 namespace content {
 
@@ -140,13 +145,20 @@ void ServiceVideoCaptureDeviceLauncher::LaunchDeviceAsync(
       media::VideoCaptureDevice::GetPowerLineFrequency(params);
 
   // GpuMemoryBuffer-based VideoCapture buffer works only on the Chrome OS
-  // VideoCaptureDevice implementation.
+  // and Windows VideoCaptureDevice implementations.
+#if BUILDFLAG(IS_WIN)
+  if (media::IsMediaFoundationD3D11VideoCaptureEnabled() &&
+      params.requested_format.pixel_format == media::PIXEL_FORMAT_NV12) {
+    new_params.buffer_type = media::VideoCaptureBufferType::kGpuMemoryBuffer;
+  }
+#else
   if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kDisableVideoCaptureUseGpuMemoryBuffer) &&
       base::CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kVideoCaptureUseGpuMemoryBuffer)) {
     new_params.buffer_type = media::VideoCaptureBufferType::kGpuMemoryBuffer;
   }
+#endif
 
   // Note that we set |force_reopen_with_new_settings| to true in order
   // to avoid the situation that a requests to open (or reopen) a device
@@ -179,7 +191,7 @@ void ServiceVideoCaptureDeviceLauncher::OnCreatePushSubscriptionCallback(
     mojo::Remote<video_capture::mojom::PushVideoStreamSubscription>
         subscription,
     base::OnceClosure connection_lost_cb,
-    video_capture::mojom::CreatePushSubscriptionResultCode result_code,
+    video_capture::mojom::CreatePushSubscriptionResultCodePtr result_code,
     const media::VideoCaptureParams& params) {
   DCHECK(sequence_checker_.CalledOnValidSequence());
   DCHECK(callbacks_);
@@ -189,11 +201,9 @@ void ServiceVideoCaptureDeviceLauncher::OnCreatePushSubscriptionCallback(
   state_ = State::READY_TO_LAUNCH;
   Callbacks* callbacks = callbacks_;
   callbacks_ = nullptr;
-  switch (result_code) {
-    case video_capture::mojom::CreatePushSubscriptionResultCode::
-        kCreatedWithRequestedSettings:  // Fall through.
-    case video_capture::mojom::CreatePushSubscriptionResultCode::
-        kCreatedWithDifferentSettings:
+  switch (result_code->which()) {
+    case video_capture::mojom::CreatePushSubscriptionResultCode::Tag::
+        SUCCESS_CODE:
       if (abort_requested) {
         subscription.reset();
         source.reset();
@@ -206,12 +216,13 @@ void ServiceVideoCaptureDeviceLauncher::OnCreatePushSubscriptionCallback(
           std::move(source), std::move(subscription),
           std::move(connection_lost_cb), callbacks, std::move(done_cb_));
       return;
-    case video_capture::mojom::CreatePushSubscriptionResultCode::kFailed:
-      ConcludeLaunchDeviceWithFailure(
-          abort_requested,
-          media::VideoCaptureError::
-              kServiceDeviceLauncherServiceRespondedWithDeviceNotFound,
-          std::move(service_connection_), callbacks, std::move(done_cb_));
+    case video_capture::mojom::CreatePushSubscriptionResultCode::Tag::
+        ERROR_CODE:
+      media::VideoCaptureError error = result_code->get_error_code();
+      DCHECK_NE(error, media::VideoCaptureError::kNone);
+      ConcludeLaunchDeviceWithFailure(abort_requested, error,
+                                      std::move(service_connection_), callbacks,
+                                      std::move(done_cb_));
       return;
   }
 }

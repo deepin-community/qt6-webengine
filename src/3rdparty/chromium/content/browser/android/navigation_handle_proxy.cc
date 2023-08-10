@@ -9,13 +9,12 @@
 #include "base/android/scoped_java_ref.h"
 #include "content/public/android/content_jni_headers/NavigationHandle_jni.h"
 #include "content/public/browser/navigation_handle.h"
+#include "net/http/http_response_headers.h"
 #include "url/android/gurl_android.h"
 #include "url/gurl.h"
 
 using base::android::AttachCurrentThread;
-using base::android::ConvertUTF8ToJavaString;
 using base::android::JavaParamRef;
-using base::android::ScopedJavaLocalRef;
 
 namespace content {
 
@@ -23,12 +22,27 @@ NavigationHandleProxy::NavigationHandleProxy(
     NavigationHandle* cpp_navigation_handle)
     : cpp_navigation_handle_(cpp_navigation_handle) {
   JNIEnv* env = AttachCurrentThread();
+
   java_navigation_handle_ = Java_NavigationHandle_Constructor(
       env, reinterpret_cast<jlong>(this),
       url::GURLAndroid::FromNativeGURL(env, cpp_navigation_handle_->GetURL()),
-      cpp_navigation_handle_->IsInMainFrame(),
+      url::GURLAndroid::FromNativeGURL(
+          env, cpp_navigation_handle_->GetReferrer().url),
+      url::GURLAndroid::FromNativeGURL(
+          env, cpp_navigation_handle_->GetBaseURLForDataURL()),
+      cpp_navigation_handle_->IsInPrimaryMainFrame(),
       cpp_navigation_handle_->IsSameDocument(),
-      cpp_navigation_handle_->IsRendererInitiated());
+      cpp_navigation_handle_->IsRendererInitiated(),
+      cpp_navigation_handle_->GetInitiatorOrigin()
+          ? cpp_navigation_handle_->GetInitiatorOrigin()->CreateJavaObject()
+          : nullptr,
+      cpp_navigation_handle_->GetPageTransition(),
+      cpp_navigation_handle_->IsPost(),
+      cpp_navigation_handle_->HasUserGesture(),
+      cpp_navigation_handle_->WasServerRedirect(),
+      cpp_navigation_handle_->IsExternalProtocol(),
+      cpp_navigation_handle_->GetNavigationId(),
+      cpp_navigation_handle_->IsPageActivation());
 }
 
 void NavigationHandleProxy::DidRedirect() {
@@ -50,7 +64,7 @@ void NavigationHandleProxy::DidFinish() {
 
   if (cpp_navigation_handle_->HasCommitted()) {
     // See http://crbug.com/251330 for why it's determined this way.
-    url::Replacements<char> replacements;
+    GURL::Replacements replacements;
     replacements.ClearRef();
     bool urls_same_ignoring_fragment =
         cpp_navigation_handle_->GetURL().ReplaceComponents(replacements) ==
@@ -69,9 +83,7 @@ void NavigationHandleProxy::DidFinish() {
       cpp_navigation_handle_->IsErrorPage(),
       cpp_navigation_handle_->HasCommitted(), is_fragment_navigation,
       cpp_navigation_handle_->IsDownload(), is_valid_search_form_url,
-      cpp_navigation_handle_->HasCommitted()
-          ? cpp_navigation_handle_->GetPageTransition()
-          : -1,
+      cpp_navigation_handle_->GetPageTransition(),
       cpp_navigation_handle_->GetNetErrorCode(),
       // TODO(shaktisahu): Change default status to -1 after fixing
       // crbug/690041.

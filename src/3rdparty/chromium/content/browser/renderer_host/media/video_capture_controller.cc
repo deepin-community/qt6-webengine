@@ -11,9 +11,13 @@
 #include <set>
 
 #include "base/bind.h"
+#include "base/callback_forward.h"
 #include "base/command_line.h"
+#include "base/containers/contains.h"
+#include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/token.h"
 #include "build/build_config.h"
 #include "content/browser/renderer_host/media/media_stream_manager.h"
 #include "content/browser/renderer_host/media/video_capture_manager.h"
@@ -26,7 +30,7 @@
 #include "media/capture/video/video_capture_device_client.h"
 #include "mojo/public/cpp/system/platform_handle.h"
 
-#if !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
 #include "content/browser/compositor/image_transport_factory.h"
 #endif
 
@@ -153,7 +157,7 @@ struct VideoCaptureController::ControllerClient {
 
   // ID used for identifying this object.
   const VideoCaptureControllerID controller_id;
-  VideoCaptureControllerEventHandler* const event_handler;
+  const raw_ptr<VideoCaptureControllerEventHandler> event_handler;
 
   const media::VideoCaptureSessionId session_id;
   const media::VideoCaptureParams parameters;
@@ -201,7 +205,7 @@ VideoCaptureController::BufferContext& VideoCaptureController::BufferContext::
 operator=(BufferContext&& other) = default;
 
 void VideoCaptureController::BufferContext::RecordConsumerUtilization(
-    const media::VideoFrameFeedback& feedback) {
+    const media::VideoCaptureFeedback& feedback) {
   combined_consumer_feedback_.Combine(feedback);
 }
 
@@ -214,11 +218,13 @@ void VideoCaptureController::BufferContext::DecreaseConsumerCount() {
   if (consumer_hold_count_ == 0) {
     if (consumer_feedback_observer_ != nullptr &&
         !combined_consumer_feedback_.Empty()) {
+      // We set this now since frame_feedback_id_ may be updated at anytime.
+      combined_consumer_feedback_.frame_id = frame_feedback_id_;
       consumer_feedback_observer_->OnUtilizationReport(
-          frame_feedback_id_, combined_consumer_feedback_);
+          combined_consumer_feedback_);
     }
     buffer_read_permission_.reset();
-    combined_consumer_feedback_ = media::VideoFrameFeedback();
+    combined_consumer_feedback_ = media::VideoCaptureFeedback();
   }
 }
 
@@ -362,7 +368,7 @@ base::UnguessableToken VideoCaptureController::RemoveClient(
 
   for (const auto& buffer_id : client->buffers_in_use) {
     OnClientFinishedConsumingBuffer(client, buffer_id,
-                                    media::VideoFrameFeedback());
+                                    media::VideoCaptureFeedback());
   }
   client->buffers_in_use.clear();
 
@@ -452,7 +458,7 @@ void VideoCaptureController::ReturnBuffer(
     const VideoCaptureControllerID& id,
     VideoCaptureControllerEventHandler* event_handler,
     int buffer_id,
-    const media::VideoFrameFeedback& feedback) {
+    const media::VideoCaptureFeedback& feedback) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
   ControllerClient* client = FindClient(id, event_handler, controller_clients_);
@@ -475,7 +481,7 @@ void VideoCaptureController::ReturnBuffer(
   OnClientFinishedConsumingBuffer(client, buffer_id, feedback);
 }
 
-const base::Optional<media::VideoCaptureFormat>
+const absl::optional<media::VideoCaptureFormat>
 VideoCaptureController::GetVideoCaptureFormat() const {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   return video_capture_format_;
@@ -654,6 +660,17 @@ void VideoCaptureController::OnFrameDropped(
   LogVideoFrameDrop(reason, stream_type_);
 }
 
+void VideoCaptureController::OnFrameWithEmptyRegionCapture() {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  EmitLogMessage(__func__, 3);
+  for (const auto& client : controller_clients_) {
+    if (client->session_closed) {
+      continue;
+    }
+    client->event_handler->OnFrameWithEmptyRegionCapture(client->controller_id);
+  }
+}
+
 void VideoCaptureController::OnLog(const std::string& message) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   EmitLogMessage(message, 3);
@@ -807,6 +824,16 @@ void VideoCaptureController::Resume() {
   launched_device_->ResumeDevice();
 }
 
+void VideoCaptureController::Crop(
+    const base::Token& crop_id,
+    uint32_t crop_version,
+    base::OnceCallback<void(media::mojom::CropRequestResult)> callback) {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  DCHECK(launched_device_);
+  EmitLogMessage(__func__, 3);
+  launched_device_->Crop(crop_id, crop_version, std::move(callback));
+}
+
 void VideoCaptureController::RequestRefreshFrame() {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   DCHECK(launched_device_);
@@ -864,7 +891,7 @@ VideoCaptureController::FindUnretiredBufferContextFromBufferId(int buffer_id) {
 void VideoCaptureController::OnClientFinishedConsumingBuffer(
     ControllerClient* client,
     int buffer_context_id,
-    const media::VideoFrameFeedback& feedback) {
+    const media::VideoCaptureFeedback& feedback) {
   auto buffer_context_iter =
       FindBufferContextFromBufferContextId(buffer_context_id);
   DCHECK(buffer_context_iter != buffer_contexts_.end());
@@ -900,7 +927,7 @@ void VideoCaptureController::PerformForClientsWithOpenSession(
   for (const auto& client : controller_clients_) {
     if (client->session_closed)
       continue;
-    action.Run(client->event_handler, client->controller_id);
+    action.Run(client->event_handler.get(), client->controller_id);
   }
 }
 

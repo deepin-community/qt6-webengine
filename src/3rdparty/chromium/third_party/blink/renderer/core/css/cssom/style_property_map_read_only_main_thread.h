@@ -5,6 +5,7 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_CSS_CSSOM_STYLE_PROPERTY_MAP_READ_ONLY_MAIN_THREAD_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_CSS_CSSOM_STYLE_PROPERTY_MAP_READ_ONLY_MAIN_THREAD_H_
 
+#include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/css/cssom/style_property_map_read_only.h"
 
 namespace blink {
@@ -39,7 +40,7 @@ class CORE_EXPORT StylePropertyMapReadOnlyMainThread
   StylePropertyMapReadOnlyMainThread() = default;
 
   virtual const CSSValue* GetProperty(CSSPropertyID) const = 0;
-  virtual const CSSValue* GetCustomProperty(AtomicString) const = 0;
+  virtual const CSSValue* GetCustomProperty(const AtomicString&) const = 0;
 
   using IterationCallback =
       std::function<void(const CSSPropertyName&, const CSSValue&)>;
@@ -50,9 +51,9 @@ class CORE_EXPORT StylePropertyMapReadOnlyMainThread
  private:
   IterationSource* StartIteration(ScriptState*, ExceptionState&) override;
 
-  CSSStyleValue* GetShorthandProperty(const CSSProperty&) const;
+  CSSStyleValue* GetShorthandProperty(const CSSPropertyName&) const;
 };
 
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_RENDERER_CORE_CSS_CSSOM_STYLE_PROPERTY_MAP_READ_ONLY_MAIN_THREAD_H_

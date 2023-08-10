@@ -34,9 +34,9 @@ bool GetMediaDeviceIDForHMAC(blink::mojom::MediaStreamType stream_type,
   content::MediaStreamManager* manager =
       content::BrowserMainLoop::GetInstance()->media_stream_manager();
 
-  return manager->TranslateSourceIdToDeviceId(
+  return manager->TranslateSourceIdToDeviceIdAndGroupId(
       blink::mojom::MediaStreamType::DEVICE_VIDEO_CAPTURE, salt,
-      security_origin, source_id, device_id);
+      security_origin, source_id, device_id, /*group_id=*/nullptr);
 }
 
 void GetMediaDeviceIDForHMAC(
@@ -44,7 +44,7 @@ void GetMediaDeviceIDForHMAC(
     std::string salt,
     url::Origin security_origin,
     std::string hmac_device_id,
-    base::OnceCallback<void(const base::Optional<std::string>&)> callback) {
+    base::OnceCallback<void(const absl::optional<std::string>&)> callback) {
   MediaStreamManager::GetMediaDeviceIDForHMAC(
       stream_type, std::move(salt), std::move(security_origin),
       std::move(hmac_device_id), base::SequencedTaskRunnerHandle::Get(),

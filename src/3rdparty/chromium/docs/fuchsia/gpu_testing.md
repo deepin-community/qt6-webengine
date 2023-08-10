@@ -3,10 +3,11 @@
 General instruction on running and debugging GPU integration tests can be
 found [here](../gpu/gpu_testing.md).
 
-Fuchsia uses [web_engine_shell](../../fuchsia/engine/test/README.md) to run GPU
-integration tests. For the sake of this example, we will be using `gpu_process`
-as the test suite we wish to execute. Build the target
-`fuchsia_telemetry_gpu_integration_test` and run the appropriate commands:
+Fuchsia uses either [web_engine_shell](../../fuchsia/engine/test/README.md)
+or the Chrome browser to run GPU integration tests. For the sake of this
+example, we will be using `web_engine_shell` as the target browser and
+`gpu_process` as the test suite we wish to execute. Build the target
+`telemetry_gpu_integration_test_fuchsia` and run the appropriate commands:
 
 ## Hermetic emulation
 
@@ -32,6 +33,9 @@ $ content/test/gpu/run_gpu_integration_test_fuchsia.py gpu_process
 --browser=web-engine-shell --out-dir=/path/to/outdir -d
 --fuchsia-out-dir=/path/to/fuchsia/outdir
 ```
+
+Note that `fx serve` must be running for communication with the device to
+succeed.
 
 ## Run on a device the host is connected to remotely via ssh
 

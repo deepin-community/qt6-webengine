@@ -13,10 +13,10 @@
 #include "third_party/blink/renderer/core/frame/navigator.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_set.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/mojo/heap_mojo_remote.h"
 #include "third_party/blink/renderer/platform/supplementable.h"
-#include "third_party/blink/renderer/platform/wtf/hash_set.h"
 
 namespace blink {
 
@@ -30,7 +30,7 @@ class MODULES_EXPORT NavigatorShare final
  public:
   static const char kSupplementName[];
 
-  NavigatorShare() = default;
+  NavigatorShare() : Supplement(nullptr) {}
   ~NavigatorShare() = default;
 
   // Gets, or creates, NavigatorShare supplement on Navigator.
@@ -57,7 +57,10 @@ class MODULES_EXPORT NavigatorShare final
   HeapMojoRemote<blink::mojom::blink::ShareService> service_remote_{nullptr};
 
   // Represents a user's current intent to share some data.
-  Member<ShareClientImpl> client_ = nullptr;
+  // This set must have at most 1 element on non-Android platforms. This is a
+  // set, and not just and object in order to work around an Android specific
+  // bug in opposition to the web-share spec.
+  HeapHashSet<Member<ShareClientImpl>> clients_;
 };
 
 }  // namespace blink

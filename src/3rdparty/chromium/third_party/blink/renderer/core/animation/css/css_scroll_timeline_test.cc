@@ -4,6 +4,7 @@
 
 #include "third_party/blink/renderer/core/animation/css/css_scroll_timeline.h"
 
+#include "third_party/blink/renderer/core/animation/animation_clock.h"
 #include "third_party/blink/renderer/core/animation/document_animations.h"
 #include "third_party/blink/renderer/core/dom/id_target_observer.h"
 #include "third_party/blink/renderer/core/dom/id_target_observer_registry.h"
@@ -11,6 +12,7 @@
 #include "third_party/blink/renderer/core/html/html_div_element.h"
 #include "third_party/blink/renderer/core/html/html_element.h"
 #include "third_party/blink/renderer/core/html/html_style_element.h"
+#include "third_party/blink/renderer/core/page/page_animator.h"
 #include "third_party/blink/renderer/core/resize_observer/resize_observer.h"
 #include "third_party/blink/renderer/core/resize_observer/resize_observer_entry.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
@@ -32,6 +34,11 @@ class CSSScrollTimelineTest : public PageTestBase,
   DocumentAnimations& GetDocumentAnimations() const {
     return GetDocument().GetDocumentAnimations();
   }
+
+  void SimulateFrame() {
+    auto new_time = GetAnimationClock().CurrentTime() + base::Milliseconds(100);
+    GetPage().Animator().ServiceScriptedAnimations(new_time);
+  }
 };
 
 TEST_F(CSSScrollTimelineTest, IdObserverElementRemoval) {
@@ -45,7 +52,6 @@ TEST_F(CSSScrollTimelineTest, IdObserverElementRemoval) {
       }
       @scroll-timeline timeline {
         source: selector(#scroller);
-        time-range: 10s;
       }
       div {
         animation: anim 10s;
@@ -64,11 +70,13 @@ TEST_F(CSSScrollTimelineTest, IdObserverElementRemoval) {
   ASSERT_TRUE(element2);
 
   element1->remove();
+  SimulateFrame();
   UpdateAllLifecyclePhasesForTest();
   ThreadState::Current()->CollectAllGarbageForTesting();
   EXPECT_TRUE(HasObservers("scroller"));
 
   element2->remove();
+  SimulateFrame();
   UpdateAllLifecyclePhasesForTest();
   ThreadState::Current()->CollectAllGarbageForTesting();
   EXPECT_FALSE(HasObservers("scroller"));
@@ -90,11 +98,9 @@ TEST_F(CSSScrollTimelineTest, IdObserverRuleInsertion) {
       }
       @scroll-timeline timeline1 {
         source: selector(#scroller1);
-        time-range: 10s;
       }
       @scroll-timeline timeline2 {
         source: selector(#scroller2);
-        time-range: 10s;
         start: selector(#offset1);
       }
       div {
@@ -128,12 +134,10 @@ TEST_F(CSSScrollTimelineTest, IdObserverRuleInsertion) {
   style_element->setTextContent(R"CSS(
       @scroll-timeline timeline2 {
         source: selector(#redefined);
-        time-range: 10s;
         start: selector(#offset2);
       }
       @scroll-timeline timeline3 {
         source: selector(#scroller3);
-        time-range: 10s;
       }
       #element3 {
         animation-timeline: timeline3;
@@ -169,11 +173,9 @@ TEST_F(CSSScrollTimelineTest, SharedTimelines) {
       @keyframes anim3 { to { right: 200px; } }
       @scroll-timeline timeline1 {
         source: selector(#scroller);
-        time-range: 10s;
       }
       @scroll-timeline timeline2 {
         source: selector(#scroller);
-        time-range: 10s;
       }
       #scroller {
         height: 100px;
@@ -236,7 +238,6 @@ TEST_F(CSSScrollTimelineTest, MultipleLifecyclePasses) {
       }
       @scroll-timeline timeline {
         source: selector(#scroller);
-        time-range: 10s;
         start: auto;
         end: auto;
       }
@@ -282,20 +283,25 @@ namespace {
 
 class AnimationTriggeringDelegate : public ResizeObserver::Delegate {
  public:
-  explicit AnimationTriggeringDelegate(Element* element) : element_(element) {}
+  explicit AnimationTriggeringDelegate(Element* style_element)
+      : style_element_(style_element) {}
 
   void OnResize(
       const HeapVector<Member<ResizeObserverEntry>>& entries) override {
-    element_->setAttribute(blink::html_names::kClassAttr, "animate");
+    style_element_->setTextContent(R"CSS(
+      @scroll-timeline timeline {
+        source: selector(#scroller);
+      }
+    )CSS");
   }
 
   void Trace(Visitor* visitor) const override {
     ResizeObserver::Delegate::Trace(visitor);
-    visitor->Trace(element_);
+    visitor->Trace(style_element_);
   }
 
  private:
-  Member<Element> element_;
+  Member<Element> style_element_;
 };
 
 }  // namespace
@@ -307,10 +313,6 @@ TEST_F(CSSScrollTimelineTest, ResizeObserverTriggeredTimelines) {
         from { width: 100px; }
         to { width: 100px; }
       }
-      @scroll-timeline timeline {
-        source: selector(#scroller);
-        time-range: 10s;
-      }
       #scroller {
         height: 100px;
         overflow: scroll;
@@ -320,8 +322,6 @@ TEST_F(CSSScrollTimelineTest, ResizeObserverTriggeredTimelines) {
       }
       #element {
         width: 1px;
-      }
-      #element.animate {
         animation: anim 10s timeline;
       }
     </style>
@@ -338,12 +338,16 @@ TEST_F(CSSScrollTimelineTest, ResizeObserverTriggeredTimelines) {
   scroller->setAttribute(blink::html_names::kIdAttr, "scroller");
   scroller->AppendChild(MakeGarbageCollected<HTMLDivElement>(GetDocument()));
 
+  Element* style = MakeGarbageCollected<HTMLStyleElement>(GetDocument(),
+                                                          CreateElementFlags());
+
   Element* main = GetDocument().getElementById("main");
   ASSERT_TRUE(main);
+  main->AppendChild(style);
   main->AppendChild(element);
   main->AppendChild(scroller);
 
-  auto* delegate = MakeGarbageCollected<AnimationTriggeringDelegate>(element);
+  auto* delegate = MakeGarbageCollected<AnimationTriggeringDelegate>(style);
   ResizeObserver* observer =
       ResizeObserver::Create(GetDocument().domWindow(), delegate);
   observer->observe(element);
@@ -351,6 +355,32 @@ TEST_F(CSSScrollTimelineTest, ResizeObserverTriggeredTimelines) {
   UpdateAllLifecyclePhasesForTest();
   EXPECT_EQ(1u,
             GetDocumentAnimations().GetUnvalidatedTimelinesForTesting().size());
+}
+
+TEST_F(CSSScrollTimelineTest, DocumentScrollerInQuirksMode) {
+  GetDocument().SetCompatibilityMode(Document::kQuirksMode);
+
+  SetBodyInnerHTML(R"HTML(
+    <style>
+    @keyframes anim {
+      from { z-index: 100; }
+      to { z-index: 100; }
+    }
+    @scroll-timeline timeline {
+      source: auto;
+    }
+    #element {
+      animation: anim 10s timeline forwards;
+    }
+    </style>
+    <div id=element></div>
+  )HTML");
+
+  Element* element = GetDocument().getElementById("element");
+  ASSERT_TRUE(element);
+
+  EXPECT_EQ(100, element->GetComputedStyle()->ZIndex());
+  // Don't crash.
 }
 
 }  // namespace blink

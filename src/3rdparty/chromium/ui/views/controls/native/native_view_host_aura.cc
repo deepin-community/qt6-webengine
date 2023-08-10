@@ -8,8 +8,9 @@
 #include <utility>
 
 #include "base/check.h"
-#include "base/optional.h"
+#include "base/memory/raw_ptr.h"
 #include "build/build_config.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/client/focus_client.h"
 #include "ui/aura/window.h"
@@ -18,6 +19,7 @@
 #include "ui/aura/window_targeter.h"
 #include "ui/base/cursor/cursor.h"
 #include "ui/base/hit_test.h"
+#include "ui/compositor/layer.h"
 #include "ui/compositor/paint_recorder.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/views/controls/native/native_view_host.h"
@@ -70,7 +72,7 @@ class NativeViewHostAura::ClippingWindowDelegate : public aura::WindowDelegate {
   void GetHitTestMask(SkPath* mask) const override {}
 
  private:
-  aura::Window* native_view_ = nullptr;
+  raw_ptr<aura::Window> native_view_ = nullptr;
 };
 
 NativeViewHostAura::NativeViewHostAura(NativeViewHost* host) : host_(host) {}
@@ -120,7 +122,7 @@ void NativeViewHostAura::NativeViewDetaching(bool destroyed) {
   // This method causes a succession of window tree changes. ScopedPause ensures
   // that occlusion is recomputed at the end of the method instead of after each
   // change.
-  base::Optional<aura::WindowOcclusionTracker::ScopedPause> pause_occlusion;
+  absl::optional<aura::WindowOcclusionTracker::ScopedPause> pause_occlusion;
   if (clipping_window_)
     pause_occlusion.emplace();
 
@@ -383,7 +385,8 @@ void NativeViewHostAura::UpdateInsets() {
       clipping_window_->SetEventTargeter(
           std::make_unique<aura::WindowTargeter>());
     }
-    clipping_window_->targeter()->SetInsets(gfx::Insets(top_inset_, 0, 0, 0));
+    clipping_window_->targeter()->SetInsets(
+        gfx::Insets::TLBR(top_inset_, 0, 0, 0));
   }
 }
 

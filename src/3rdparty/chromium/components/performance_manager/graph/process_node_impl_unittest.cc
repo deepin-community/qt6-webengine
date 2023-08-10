@@ -4,6 +4,8 @@
 
 #include "components/performance_manager/graph/process_node_impl.h"
 
+#include "base/containers/contains.h"
+#include "base/memory/raw_ptr.h"
 #include "base/process/process.h"
 #include "base/test/bind.h"
 #include "components/performance_manager/graph/frame_node_impl.h"
@@ -11,6 +13,8 @@
 #include "components/performance_manager/public/render_process_host_proxy.h"
 #include "components/performance_manager/test_support/graph_test_harness.h"
 #include "components/performance_manager/test_support/mock_graphs.h"
+#include "content/public/browser/background_tracing_config.h"
+#include "content/public/browser/background_tracing_manager.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -80,7 +84,7 @@ TEST_F(ProcessNodeImplTest, ProcessLifeCycle) {
 
   // Resurrect again and verify the launch time and measurements
   // are cleared.
-  const base::Time launch2_time = launch_time + base::TimeDelta::FromSeconds(1);
+  const base::Time launch2_time = launch_time + base::Seconds(1);
   process_node->SetProcess(self.Duplicate(), launch2_time);
 
   EXPECT_EQ(launch2_time, process_node->launch_time());
@@ -137,13 +141,14 @@ class LenientMockObserver : public ProcessNodeImpl::Observer {
   }
 
  private:
-  const ProcessNode* notified_process_node_ = nullptr;
+  raw_ptr<const ProcessNode> notified_process_node_ = nullptr;
 };
 
 using MockObserver = ::testing::StrictMock<LenientMockObserver>;
 
 using testing::_;
 using testing::Invoke;
+using testing::Return;
 
 }  // namespace
 
@@ -262,6 +267,99 @@ TEST_F(ProcessNodeImplTest, PublicInterface) {
   process_node->set_resident_set_kb(398);
   EXPECT_EQ(process_node->resident_set_kb(),
             public_process_node->GetResidentSetKb());
+}
+
+namespace {
+
+class LenientFakeBackgroundTracingManager
+    : public content::BackgroundTracingManager {
+ public:
+  LenientFakeBackgroundTracingManager() = default;
+  ~LenientFakeBackgroundTracingManager() override = default;
+
+  // Functions we want to intercept.
+  MOCK_METHOD(TriggerHandle,
+              RegisterTriggerType,
+              (base::StringPiece trigger_name),
+              (override));
+  MOCK_METHOD(bool, HasActiveScenario, (), (override));
+  MOCK_METHOD(void,
+              TriggerNamedEvent,
+              (TriggerHandle trigger_handle,
+               StartedFinalizingCallback started_callback),
+              (override));
+
+  // Functions we don't care about.
+  bool SetActiveScenario(
+      std::unique_ptr<content::BackgroundTracingConfig> config,
+      DataFiltering data_filtering) override {
+    return true;
+  }
+  bool SetActiveScenarioWithReceiveCallback(
+      std::unique_ptr<content::BackgroundTracingConfig> config,
+      ReceiveCallback receive_callback,
+      DataFiltering data_filtering) override {
+    return true;
+  }
+
+  void WhenIdle(IdleCallback idle_callback) override {}
+  const std::string& GetTriggerNameFromHandle(
+      TriggerHandle trigger_handle) override {
+    static std::string name;
+    return name;
+  }
+  bool HasTraceToUpload() override { return false; }
+  std::string GetLatestTraceToUpload() override { return std::string(); }
+  std::string GetBackgroundTracingUploadUrl(
+      const std::string& trial_name) override {
+    return std::string();
+  }
+  std::unique_ptr<content::BackgroundTracingConfig> GetBackgroundTracingConfig(
+      const std::string& trial_name) override {
+    return nullptr;
+  }
+  void AbortScenarioForTesting() override {}
+  void SetTraceToUploadForTesting(
+      std::unique_ptr<std::string> trace_data) override {}
+  void SetConfigTextFilterForTesting(
+      ConfigTextFilterForTesting predicate) override {}
+};
+
+using FakeBackgroundTracingManager =
+    ::testing::StrictMock<LenientFakeBackgroundTracingManager>;
+
+}  // namespace
+
+TEST_F(ProcessNodeImplTest, FireBackgroundTracingTriggerOnUI) {
+  const std::string kTrigger1("trigger1");
+  const std::string kTrigger2("trigger2");
+  constexpr content::BackgroundTracingManager::TriggerHandle kHandle1 = 1;
+
+  FakeBackgroundTracingManager manager;
+
+  // Don't expect any other functions exception HasActiveScenario to be called
+  // it that function returns false.
+  EXPECT_CALL(manager, HasActiveScenario()).WillOnce(Return(false));
+  ProcessNodeImpl::FireBackgroundTracingTriggerOnUIForTesting(kTrigger1,
+                                                              &manager);
+  testing::Mock::VerifyAndClear(&manager);
+
+  // If HasActiveScenario returns true, expect a new trigger to be registered
+  // and triggered.
+  EXPECT_CALL(manager, HasActiveScenario()).WillOnce(Return(true));
+  EXPECT_CALL(manager, RegisterTriggerType(_)).WillOnce(Return(kHandle1));
+  EXPECT_CALL(manager, TriggerNamedEvent(_, _));
+  ProcessNodeImpl::FireBackgroundTracingTriggerOnUIForTesting(kTrigger1,
+                                                              &manager);
+  testing::Mock::VerifyAndClear(&manager);
+
+  // Now that a trigger is registered, expect the trigger to be validated, and
+  // triggered again.
+  EXPECT_CALL(manager, HasActiveScenario()).WillOnce(Return(true));
+  EXPECT_CALL(manager, TriggerNamedEvent(_, _));
+  ProcessNodeImpl::FireBackgroundTracingTriggerOnUIForTesting(kTrigger1,
+                                                              &manager);
+  testing::Mock::VerifyAndClear(&manager);
 }
 
 }  // namespace performance_manager

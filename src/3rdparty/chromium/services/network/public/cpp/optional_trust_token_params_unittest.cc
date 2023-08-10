@@ -4,12 +4,14 @@
 
 #include "services/network/public/cpp/optional_trust_token_params.h"
 
-#include "base/optional.h"
+#include <tuple>
+
 #include "base/test/gtest_util.h"
 #include "mojo/public/cpp/bindings/struct_traits.h"
 #include "mojo/public/cpp/test_support/test_utils.h"
 #include "services/network/public/mojom/trust_tokens.mojom-shared.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/gurl.h"
 #include "url/mojom/origin_mojom_traits.h"
 #include "url/origin.h"
@@ -36,9 +38,9 @@ OptionalTrustTokenParams NonemptyTrustTokenParams() {
 TEST(OptionalTrustTokenParams, Empty) {
   EXPECT_EQ(OptionalTrustTokenParams(), OptionalTrustTokenParams());
   EXPECT_FALSE(OptionalTrustTokenParams().has_value());
-  EXPECT_FALSE(OptionalTrustTokenParams(base::nullopt).has_value());
+  EXPECT_FALSE(OptionalTrustTokenParams(absl::nullopt).has_value());
 
-  EXPECT_EQ(OptionalTrustTokenParams(base::nullopt),
+  EXPECT_EQ(OptionalTrustTokenParams(absl::nullopt),
             OptionalTrustTokenParams());
   EXPECT_NE(OptionalTrustTokenParams(), NonemptyTrustTokenParams());
 }
@@ -83,9 +85,9 @@ TEST(OptionalTrustTokenParams, Dereference) {
 }
 
 TEST(OptionalTrustTokenParams, DereferenceEmpty) {
-  OptionalTrustTokenParams in = base::nullopt;
-  EXPECT_CHECK_DEATH(ignore_result(in->type));
-  EXPECT_CHECK_DEATH(ignore_result(in.value()));
+  OptionalTrustTokenParams in = absl::nullopt;
+  EXPECT_CHECK_DEATH(std::ignore = in->type);
+  EXPECT_CHECK_DEATH(std::ignore = in.value());
   EXPECT_EQ(in.as_ptr(), mojom::TrustTokenParamsPtr());
 }
 

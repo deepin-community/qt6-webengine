@@ -31,6 +31,7 @@
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/network/public/cpp/simple_url_loader.h"
+#include "services/network/public/mojom/url_response_head.mojom.h"
 #include "third_party/icu/source/common/unicode/uloc.h"
 #include "third_party/icu/source/common/unicode/utypes.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -100,8 +101,8 @@ std::string ISO639FromPosixLocale(const std::string& locale) {
 void AppendLanguageInfoToList(base::ListValue* list,
                               const UrlLanguageHistogram::LanguageInfo& info) {
   auto lang = std::make_unique<base::DictionaryValue>();
-  lang->SetString("language", info.language_code);
-  lang->SetDouble("frequency", info.frequency);
+  lang->SetStringKey("language", info.language_code);
+  lang->SetDoubleKey("frequency", info.frequency);
   list->Append(std::move(lang));
 }
 
@@ -121,7 +122,7 @@ std::string GetUserClassString(UserClassifier::UserClass user_class) {
 }  // namespace
 
 JsonRequest::JsonRequest(
-    base::Optional<Category> exclusive_category,
+    absl::optional<Category> exclusive_category,
     const base::Clock* clock,  // Needed until destruction of the request.
     const ParseJSONCallback& callback)
     : exclusive_category_(exclusive_category),
@@ -308,25 +309,25 @@ std::string JsonRequest::Builder::BuildBody() const {
   auto request = std::make_unique<base::DictionaryValue>();
   std::string user_locale = PosixLocaleFromBCP47Language(params_.language_code);
   if (!user_locale.empty()) {
-    request->SetString("uiLanguage", user_locale);
+    request->SetStringKey("uiLanguage", user_locale);
   }
 
-  request->SetString("priority", params_.interactive_request
-                                     ? "USER_ACTION"
-                                     : "BACKGROUND_PREFETCH");
+  request->SetStringKey("priority", params_.interactive_request
+                                        ? "USER_ACTION"
+                                        : "BACKGROUND_PREFETCH");
 
   auto excluded = std::make_unique<base::ListValue>();
   for (const auto& id : params_.excluded_ids) {
-    excluded->AppendString(id);
+    excluded->Append(id);
   }
   request->Set("excludedSuggestionIds", std::move(excluded));
 
   if (!user_class_.empty()) {
-    request->SetString("userActivenessClass", user_class_);
+    request->SetStringKey("userActivenessClass", user_class_);
   }
 
   if (!display_capability_.empty()) {
-    request->SetString("displayCapability", display_capability_);
+    request->SetStringKey("displayCapability", display_capability_);
   }
 
   language::UrlLanguageHistogram::LanguageInfo ui_language;
@@ -347,10 +348,10 @@ std::string JsonRequest::Builder::BuildBody() const {
   // |exclusive_category|.
   if (params_.exclusive_category.has_value()) {
     base::DictionaryValue exclusive_category_parameters;
-    exclusive_category_parameters.SetInteger(
+    exclusive_category_parameters.SetIntKey(
         "id", params_.exclusive_category->remote_id());
-    exclusive_category_parameters.SetInteger("numSuggestions",
-                                             params_.count_to_fetch);
+    exclusive_category_parameters.SetIntKey("numSuggestions",
+                                            params_.count_to_fetch);
     base::ListValue category_parameters;
     category_parameters.Append(std::move(exclusive_category_parameters));
     request->SetKey("categoryParameters", std::move(category_parameters));

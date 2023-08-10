@@ -25,6 +25,7 @@
 #include "net/http/http_util.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
+#include "services/network/public/mojom/early_hints.mojom.h"
 #include "services/network/public/mojom/url_loader_factory.mojom.h"
 #include "services/network/public/mojom/url_response_head.mojom.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -49,6 +50,9 @@ class SignedExchangeLoaderTest : public testing::TestWithParam<bool> {
     }
   }
 
+  SignedExchangeLoaderTest(const SignedExchangeLoaderTest&) = delete;
+  SignedExchangeLoaderTest& operator=(const SignedExchangeLoaderTest&) = delete;
+
   ~SignedExchangeLoaderTest() override = default;
 
  protected:
@@ -57,11 +61,18 @@ class SignedExchangeLoaderTest : public testing::TestWithParam<bool> {
     explicit MockURLLoaderClient(
         mojo::PendingReceiver<network::mojom::URLLoaderClient> receiver)
         : loader_client_receiver_(this, std::move(receiver)) {}
+
+    MockURLLoaderClient(const MockURLLoaderClient&) = delete;
+    MockURLLoaderClient& operator=(const MockURLLoaderClient&) = delete;
+
     ~MockURLLoaderClient() override {}
 
     // network::mojom::URLLoaderClient overrides:
-    MOCK_METHOD1(OnReceiveResponse,
-                 void(const network::mojom::URLResponseHeadPtr));
+    MOCK_METHOD1(OnReceiveEarlyHints,
+                 void(const network::mojom::EarlyHintsPtr));
+    MOCK_METHOD2(OnReceiveResponse,
+                 void(const network::mojom::URLResponseHeadPtr,
+                      mojo::ScopedDataPipeConsumerHandle));
     MOCK_METHOD2(OnReceiveRedirect,
                  void(const net::RedirectInfo&,
                       network::mojom::URLResponseHeadPtr));
@@ -75,7 +86,6 @@ class SignedExchangeLoaderTest : public testing::TestWithParam<bool> {
 
    private:
     mojo::Receiver<network::mojom::URLLoaderClient> loader_client_receiver_;
-    DISALLOW_COPY_AND_ASSIGN(MockURLLoaderClient);
   };
 
   class MockURLLoader final : public network::mojom::URLLoader {
@@ -83,6 +93,10 @@ class SignedExchangeLoaderTest : public testing::TestWithParam<bool> {
     explicit MockURLLoader(
         mojo::PendingReceiver<network::mojom::URLLoader> url_loader_receiver)
         : receiver_(this, std::move(url_loader_receiver)) {}
+
+    MockURLLoader(const MockURLLoader&) = delete;
+    MockURLLoader& operator=(const MockURLLoader&) = delete;
+
     ~MockURLLoader() override = default;
 
     // network::mojom::URLLoader overrides:
@@ -90,7 +104,7 @@ class SignedExchangeLoaderTest : public testing::TestWithParam<bool> {
                  void(const std::vector<std::string>&,
                       const net::HttpRequestHeaders&,
                       const net::HttpRequestHeaders&,
-                      const base::Optional<GURL>&));
+                      const absl::optional<GURL>&));
     MOCK_METHOD2(SetPriority,
                  void(net::RequestPriority priority,
                       int32_t intra_priority_value));
@@ -99,8 +113,6 @@ class SignedExchangeLoaderTest : public testing::TestWithParam<bool> {
 
    private:
     mojo::Receiver<network::mojom::URLLoader> receiver_;
-
-    DISALLOW_COPY_AND_ASSIGN(MockURLLoader);
   };
 
   // Used only when kSignedHTTPExchangePingValidity is enabled.
@@ -112,7 +124,6 @@ class SignedExchangeLoaderTest : public testing::TestWithParam<bool> {
 
     void CreateLoaderAndStart(
         mojo::PendingReceiver<network::mojom::URLLoader> receiver,
-        int32_t routing_id,
         int32_t request_id,
         uint32_t options,
         const network::ResourceRequest& url_request,
@@ -149,8 +160,6 @@ class SignedExchangeLoaderTest : public testing::TestWithParam<bool> {
   base::test::ScopedFeatureList feature_list_;
 
   MockValidityPingURLLoaderFactory ping_loader_factory_;
-
-  DISALLOW_COPY_AND_ASSIGN(SignedExchangeLoaderTest);
 };
 
 TEST_P(SignedExchangeLoaderTest, Simple) {
@@ -231,7 +240,7 @@ TEST_P(SignedExchangeLoaderTest, Simple) {
   mojo::PendingRemote<network::mojom::URLLoaderClient> client_after_redirect;
   MockURLLoaderClient mock_client_after_redirect(
       client_after_redirect.InitWithNewPipeAndPassReceiver());
-  EXPECT_CALL(mock_client_after_redirect, OnReceiveResponse(_));
+  EXPECT_CALL(mock_client_after_redirect, OnReceiveResponse(_, _));
 
   if (!base::FeatureList::IsEnabled(
           features::kSignedHTTPExchangePingValidity)) {
@@ -251,7 +260,8 @@ TEST_P(SignedExchangeLoaderTest, Simple) {
     EXPECT_CALL(mock_client_after_redirect, OnStartLoadingResponseBody(_));
     EXPECT_CALL(mock_client_after_redirect, OnComplete(_));
     ping_loader_client()->OnReceiveResponse(
-        network::mojom::URLResponseHead::New());
+        network::mojom::URLResponseHead::New(),
+        mojo::ScopedDataPipeConsumerHandle());
     ping_loader_client()->OnComplete(
         network::URLLoaderCompletionStatus(net::OK));
     run_loop.Run();

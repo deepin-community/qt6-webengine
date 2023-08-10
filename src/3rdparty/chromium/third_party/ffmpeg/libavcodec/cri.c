@@ -31,12 +31,14 @@
 #include "libavutil/display.h"
 #include "avcodec.h"
 #include "bytestream.h"
+#include "codec_internal.h"
 #include "get_bits.h"
 #include "internal.h"
 #include "thread.h"
 
 typedef struct CRIContext {
     AVCodecContext *jpeg_avctx;   // wrapper context for MJPEG
+    AVPacket *jpkt;               // encoded JPEG tile
     AVFrame *jpgframe;            // decoded JPEG tile
 
     GetByteContext gb;
@@ -54,6 +56,10 @@ static av_cold int cri_decode_init(AVCodecContext *avctx)
 
     s->jpgframe = av_frame_alloc();
     if (!s->jpgframe)
+        return AVERROR(ENOMEM);
+
+    s->jpkt = av_packet_alloc();
+    if (!s->jpkt)
         return AVERROR(ENOMEM);
 
     codec = avcodec_find_decoder(AV_CODEC_ID_MJPEG);
@@ -80,10 +86,13 @@ static void unpack_10bit(GetByteContext *gb, uint16_t *dst, int shift,
     int pos = 0;
 
     while (count > 0) {
-        uint32_t a0 = bytestream2_get_le32(gb);
-        uint32_t a1 = bytestream2_get_le32(gb);
-        uint32_t a2 = bytestream2_get_le32(gb);
-        uint32_t a3 = bytestream2_get_le32(gb);
+        uint32_t a0, a1, a2, a3;
+        if (bytestream2_get_bytes_left(gb) < 4)
+            break;
+        a0 = bytestream2_get_le32(gb);
+        a1 = bytestream2_get_le32(gb);
+        a2 = bytestream2_get_le32(gb);
+        a3 = bytestream2_get_le32(gb);
         dst[pos] = (((a0 >> 1) & 0xE00) | (a0 & 0x1FF)) << shift;
         pos++;
         if (pos >= w) {
@@ -166,7 +175,6 @@ static int cri_decode_frame(AVCodecContext *avctx, void *data,
 {
     CRIContext *s = avctx->priv_data;
     GetByteContext *gb = &s->gb;
-    ThreadFrame frame = { .f = data };
     int ret, bps, hflip = 0, vflip = 0;
     AVFrameSideData *rotation;
     int compressed = 0;
@@ -181,6 +189,7 @@ static int cri_decode_frame(AVCodecContext *avctx, void *data,
         char codec_name[1024];
         uint32_t key, length;
         float framerate;
+        int width, height;
 
         key    = bytestream2_get_le32(gb);
         length = bytestream2_get_le32(gb);
@@ -196,11 +205,14 @@ static int cri_decode_frame(AVCodecContext *avctx, void *data,
         case 100:
             if (length < 16)
                 return AVERROR_INVALIDDATA;
-            avctx->width   = bytestream2_get_le32(gb);
-            avctx->height  = bytestream2_get_le32(gb);
+            width   = bytestream2_get_le32(gb);
+            height  = bytestream2_get_le32(gb);
             s->color_model = bytestream2_get_le32(gb);
             if (bytestream2_get_le32(gb) != 1)
                 return AVERROR_INVALIDDATA;
+            ret = ff_set_dimensions(avctx, width, height);
+            if (ret < 0)
+                return ret;
             length -= 16;
             goto skip;
         case 101:
@@ -306,7 +318,7 @@ skip:
     if (!s->data || !s->data_size)
         return AVERROR_INVALIDDATA;
 
-    if ((ret = ff_thread_get_buffer(avctx, &frame, 0)) < 0)
+    if ((ret = ff_thread_get_buffer(avctx, p, 0)) < 0)
         return ret;
 
     avctx->bits_per_raw_sample = bps;
@@ -328,6 +340,9 @@ skip:
         for (int y = 0; y < avctx->height; y++) {
             uint16_t *dst = (uint16_t *)(p->data[0] + y * p->linesize[0]);
 
+            if (get_bits_left(&gbit) < avctx->width * bps)
+                break;
+
             for (int x = 0; x < avctx->width; x++)
                 dst[x] = get_bits(&gbit, bps) << shift;
         }
@@ -335,13 +350,11 @@ skip:
         unsigned offset = 0;
 
         for (int tile = 0; tile < 4; tile++) {
-            AVPacket jpkt;
+            av_packet_unref(s->jpkt);
+            s->jpkt->data = (uint8_t *)s->data + offset;
+            s->jpkt->size = s->tile_size[tile];
 
-            av_init_packet(&jpkt);
-            jpkt.data = (uint8_t *)s->data + offset;
-            jpkt.size = s->tile_size[tile];
-
-            ret = avcodec_send_packet(s->jpeg_avctx, &jpkt);
+            ret = avcodec_send_packet(s->jpeg_avctx, s->jpkt);
             if (ret < 0) {
                 av_log(avctx, AV_LOG_ERROR, "Error submitting a packet for decoding\n");
                 return ret;
@@ -405,20 +418,21 @@ static av_cold int cri_decode_close(AVCodecContext *avctx)
     CRIContext *s = avctx->priv_data;
 
     av_frame_free(&s->jpgframe);
+    av_packet_free(&s->jpkt);
     avcodec_free_context(&s->jpeg_avctx);
 
     return 0;
 }
 
-AVCodec ff_cri_decoder = {
-    .name           = "cri",
-    .type           = AVMEDIA_TYPE_VIDEO,
-    .id             = AV_CODEC_ID_CRI,
+const FFCodec ff_cri_decoder = {
+    .p.name         = "cri",
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_CRI,
     .priv_data_size = sizeof(CRIContext),
     .init           = cri_decode_init,
     .decode         = cri_decode_frame,
     .close          = cri_decode_close,
-    .capabilities   = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_FRAME_THREADS,
+    .p.capabilities = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_FRAME_THREADS,
     .caps_internal  = FF_CODEC_CAP_INIT_THREADSAFE | FF_CODEC_CAP_INIT_CLEANUP,
-    .long_name      = NULL_IF_CONFIG_SMALL("Cintel RAW"),
+    .p.long_name    = NULL_IF_CONFIG_SMALL("Cintel RAW"),
 };

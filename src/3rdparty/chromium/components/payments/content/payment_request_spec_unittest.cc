@@ -9,7 +9,9 @@
 
 #include "base/memory/weak_ptr.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/scoped_feature_list.h"
 #include "components/strings/grit/components_strings.h"
+#include "content/public/common/content_features.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/mojom/payments/payment_request.mojom.h"
@@ -20,10 +22,10 @@ namespace payments {
 using ::testing::ElementsAre;
 using ::testing::UnorderedElementsAre;
 
-class PaymentRequestSpecTest : public testing::Test,
-                               public PaymentRequestSpec::Observer {
+class PaymentRequestSpecTestBase : public testing::Test,
+                                   public PaymentRequestSpec::Observer {
  protected:
-  ~PaymentRequestSpecTest() override {}
+  ~PaymentRequestSpecTestBase() override = default;
 
   void OnSpecUpdated() override { on_spec_updated_called_ = true; }
 
@@ -49,11 +51,28 @@ class PaymentRequestSpecTest : public testing::Test,
  private:
   std::unique_ptr<PaymentRequestSpec> spec_;
   bool on_spec_updated_called_ = false;
-  base::WeakPtrFactory<PaymentRequestSpecTest> weak_ptr_factory_{this};
+  base::WeakPtrFactory<PaymentRequestSpecTestBase> weak_ptr_factory_{this};
+};
+
+class PaymentRequestSpecBasiCardEnabledTest
+    : public PaymentRequestSpecTestBase {
+ public:
+  PaymentRequestSpecBasiCardEnabledTest(
+      const PaymentRequestSpecBasiCardEnabledTest&) = delete;
+  PaymentRequestSpecBasiCardEnabledTest& operator=(
+      const PaymentRequestSpecBasiCardEnabledTest&) = delete;
+
+ protected:
+  PaymentRequestSpecBasiCardEnabledTest() {
+    feature_list_.InitAndEnableFeature(::features::kPaymentRequestBasicCard);
+  }
+
+ private:
+  base::test::ScopedFeatureList feature_list_;
 };
 
 // Test that empty method data is parsed correctly.
-TEST_F(PaymentRequestSpecTest, EmptyMethodData) {
+TEST_F(PaymentRequestSpecBasiCardEnabledTest, EmptyMethodData) {
   std::vector<mojom::PaymentMethodDataPtr> method_data;
   RecreateSpecWithMethodData(std::move(method_data));
 
@@ -61,7 +80,8 @@ TEST_F(PaymentRequestSpecTest, EmptyMethodData) {
   EXPECT_EQ(0u, spec()->supported_card_networks().size());
 }
 
-TEST_F(PaymentRequestSpecTest, IsMethodSupportedThroughBasicCard) {
+TEST_F(PaymentRequestSpecBasiCardEnabledTest,
+       IsMethodSupportedThroughBasicCard) {
   mojom::PaymentMethodDataPtr entry1 = mojom::PaymentMethodData::New();
   entry1->supported_method = "visa";
   mojom::PaymentMethodDataPtr entry2 = mojom::PaymentMethodData::New();
@@ -97,7 +117,7 @@ TEST_F(PaymentRequestSpecTest, IsMethodSupportedThroughBasicCard) {
 }
 
 // Order matters when parsing the supportedMethods and basic card networks.
-TEST_F(PaymentRequestSpecTest,
+TEST_F(PaymentRequestSpecBasiCardEnabledTest,
        IsMethodSupportedThroughBasicCard_DifferentOrder) {
   mojom::PaymentMethodDataPtr entry1 = mojom::PaymentMethodData::New();
   entry1->supported_method = "basic-card";
@@ -129,7 +149,7 @@ TEST_F(PaymentRequestSpecTest,
 
 // Test that parsing supported methods (with invalid values and duplicates)
 // works as expected.
-TEST_F(PaymentRequestSpecTest, SupportedMethods) {
+TEST_F(PaymentRequestSpecBasiCardEnabledTest, SupportedMethods) {
   mojom::PaymentMethodDataPtr entry1 = mojom::PaymentMethodData::New();
   entry1->supported_method = "basic-card";
   entry1->supported_networks.push_back(mojom::BasicCardNetwork::VISA);
@@ -157,7 +177,8 @@ TEST_F(PaymentRequestSpecTest, SupportedMethods) {
 
 // Test that parsing supported methods in different method data entries fails as
 // soon as one entry doesn't specify anything in supported_methods.
-TEST_F(PaymentRequestSpecTest, SupportedMethods_MultipleEntries_OneEmpty) {
+TEST_F(PaymentRequestSpecBasiCardEnabledTest,
+       SupportedMethods_MultipleEntries_OneEmpty) {
   // First entry is valid.
   mojom::PaymentMethodDataPtr entry = mojom::PaymentMethodData::New();
   entry->supported_method = "basic-card";
@@ -181,7 +202,7 @@ TEST_F(PaymentRequestSpecTest, SupportedMethods_MultipleEntries_OneEmpty) {
 }
 
 // Test that only specifying basic-card means that all are supported.
-TEST_F(PaymentRequestSpecTest, SupportedMethods_OnlyBasicCard) {
+TEST_F(PaymentRequestSpecBasiCardEnabledTest, SupportedMethods_OnlyBasicCard) {
   mojom::PaymentMethodDataPtr entry = mojom::PaymentMethodData::New();
   entry->supported_method = "basic-card";
   std::vector<mojom::PaymentMethodDataPtr> method_data;
@@ -203,7 +224,8 @@ TEST_F(PaymentRequestSpecTest, SupportedMethods_OnlyBasicCard) {
 
 // Test that specifying a method AND basic-card means that all are supported,
 // but with the method as first.
-TEST_F(PaymentRequestSpecTest, SupportedMethods_BasicCard_WithSpecificMethod) {
+TEST_F(PaymentRequestSpecBasiCardEnabledTest,
+       SupportedMethods_BasicCard_WithSpecificMethod) {
   mojom::PaymentMethodDataPtr entry1 = mojom::PaymentMethodData::New();
   entry1->supported_method = "jcb";
   mojom::PaymentMethodDataPtr entry2 = mojom::PaymentMethodData::New();
@@ -224,7 +246,8 @@ TEST_F(PaymentRequestSpecTest, SupportedMethods_BasicCard_WithSpecificMethod) {
 
 // Test that specifying basic-card with a supported network (with previous
 // supported methods) will work as expected
-TEST_F(PaymentRequestSpecTest, SupportedMethods_BasicCard_Overlap) {
+TEST_F(PaymentRequestSpecBasiCardEnabledTest,
+       SupportedMethods_BasicCard_Overlap) {
   mojom::PaymentMethodDataPtr entry1 = mojom::PaymentMethodData::New();
   entry1->supported_method = "mastercard";
   mojom::PaymentMethodDataPtr entry2 = mojom::PaymentMethodData::New();
@@ -249,7 +272,7 @@ TEST_F(PaymentRequestSpecTest, SupportedMethods_BasicCard_Overlap) {
 
 // Test that specifying basic-card with supported networks after specifying
 // some methods
-TEST_F(PaymentRequestSpecTest,
+TEST_F(PaymentRequestSpecBasiCardEnabledTest,
        SupportedMethods_BasicCard_WithSupportedNetworks) {
   mojom::PaymentMethodDataPtr entry = mojom::PaymentMethodData::New();
   entry->supported_method = "basic-card";
@@ -268,7 +291,7 @@ TEST_F(PaymentRequestSpecTest,
 
 // Test that the last shipping option is selected, even in the case of
 // updateWith.
-TEST_F(PaymentRequestSpecTest, ShippingOptionsSelection) {
+TEST_F(PaymentRequestSpecBasiCardEnabledTest, ShippingOptionsSelection) {
   std::vector<mojom::PaymentShippingOptionPtr> shipping_options;
   mojom::PaymentShippingOptionPtr option = mojom::PaymentShippingOption::New();
   option->id = "option:1";
@@ -311,7 +334,8 @@ TEST_F(PaymentRequestSpecTest, ShippingOptionsSelection) {
 
 // Test that the last shipping option is selected, even in the case of
 // updateWith.
-TEST_F(PaymentRequestSpecTest, ShippingOptionsSelection_NoOptionsAtAll) {
+TEST_F(PaymentRequestSpecBasiCardEnabledTest,
+       ShippingOptionsSelection_NoOptionsAtAll) {
   // No options are provided at first.
   mojom::PaymentOptionsPtr options = mojom::PaymentOptions::New();
   options->request_shipping = true;
@@ -345,13 +369,12 @@ TEST_F(PaymentRequestSpecTest, ShippingOptionsSelection_NoOptionsAtAll) {
 
   // No option selected, but there is an error provided by the mercahnt.
   EXPECT_EQ(nullptr, spec()->selected_shipping_option());
-  EXPECT_EQ(base::ASCIIToUTF16("No can do shipping."),
-            spec()->selected_shipping_option_error());
+  EXPECT_EQ(u"No can do shipping.", spec()->selected_shipping_option_error());
 }
 
 // Test that the last shipping option is selected, even in the case of
 // updateWith.
-TEST_F(PaymentRequestSpecTest, UpdateWithNoShippingOptions) {
+TEST_F(PaymentRequestSpecBasiCardEnabledTest, UpdateWithNoShippingOptions) {
   std::vector<mojom::PaymentShippingOptionPtr> shipping_options;
   mojom::PaymentShippingOptionPtr option = mojom::PaymentShippingOption::New();
   option->id = "option:1";
@@ -378,7 +401,8 @@ TEST_F(PaymentRequestSpecTest, UpdateWithNoShippingOptions) {
   EXPECT_TRUE(spec()->selected_shipping_option_error().empty());
 }
 
-TEST_F(PaymentRequestSpecTest, SingleCurrencyWithoutDisplayItems) {
+TEST_F(PaymentRequestSpecBasiCardEnabledTest,
+       SingleCurrencyWithoutDisplayItems) {
   mojom::PaymentDetailsPtr details = mojom::PaymentDetails::New();
   mojom::PaymentItemPtr total = mojom::PaymentItem::New();
   mojom::PaymentCurrencyAmountPtr amount = mojom::PaymentCurrencyAmount::New();
@@ -392,7 +416,7 @@ TEST_F(PaymentRequestSpecTest, SingleCurrencyWithoutDisplayItems) {
   EXPECT_FALSE(spec()->IsMixedCurrency());
 }
 
-TEST_F(PaymentRequestSpecTest, SingleCurrencyWithDisplayItems) {
+TEST_F(PaymentRequestSpecBasiCardEnabledTest, SingleCurrencyWithDisplayItems) {
   mojom::PaymentDetailsPtr details = mojom::PaymentDetails::New();
   mojom::PaymentItemPtr total = mojom::PaymentItem::New();
   mojom::PaymentCurrencyAmountPtr amount = mojom::PaymentCurrencyAmount::New();
@@ -415,7 +439,8 @@ TEST_F(PaymentRequestSpecTest, SingleCurrencyWithDisplayItems) {
   EXPECT_FALSE(spec()->IsMixedCurrency());
 }
 
-TEST_F(PaymentRequestSpecTest, MultipleCurrenciesWithOneDisplayItem) {
+TEST_F(PaymentRequestSpecBasiCardEnabledTest,
+       MultipleCurrenciesWithOneDisplayItem) {
   mojom::PaymentDetailsPtr details = mojom::PaymentDetails::New();
   mojom::PaymentItemPtr total = mojom::PaymentItem::New();
   mojom::PaymentCurrencyAmountPtr amount = mojom::PaymentCurrencyAmount::New();
@@ -439,7 +464,8 @@ TEST_F(PaymentRequestSpecTest, MultipleCurrenciesWithOneDisplayItem) {
   EXPECT_TRUE(spec()->IsMixedCurrency());
 }
 
-TEST_F(PaymentRequestSpecTest, MultipleCurrenciesWithTwoDisplayItem) {
+TEST_F(PaymentRequestSpecBasiCardEnabledTest,
+       MultipleCurrenciesWithTwoDisplayItem) {
   mojom::PaymentDetailsPtr details = mojom::PaymentDetails::New();
   mojom::PaymentItemPtr total = mojom::PaymentItem::New();
   mojom::PaymentCurrencyAmountPtr amount = mojom::PaymentCurrencyAmount::New();
@@ -470,7 +496,7 @@ TEST_F(PaymentRequestSpecTest, MultipleCurrenciesWithTwoDisplayItem) {
   EXPECT_TRUE(spec()->IsMixedCurrency());
 }
 
-TEST_F(PaymentRequestSpecTest, RetryWithShippingAddressErrors) {
+TEST_F(PaymentRequestSpecBasiCardEnabledTest, RetryWithShippingAddressErrors) {
   mojom::PaymentOptionsPtr options = mojom::PaymentOptions::New();
   options->request_shipping = true;
   RecreateSpecWithOptionsAndDetails(std::move(options),
@@ -488,16 +514,16 @@ TEST_F(PaymentRequestSpecTest, RetryWithShippingAddressErrors) {
 
   spec()->Retry(std::move(errors));
 
-  EXPECT_EQ(base::UTF8ToUTF16("Invalid city"),
+  EXPECT_EQ(u"Invalid city",
             spec()->GetShippingAddressError(autofill::ADDRESS_HOME_CITY));
   EXPECT_EQ(
-      base::UTF8ToUTF16("Invalid address line"),
+      u"Invalid address line",
       spec()->GetShippingAddressError(autofill::ADDRESS_HOME_STREET_ADDRESS));
 
   EXPECT_TRUE(spec()->has_shipping_address_error());
 }
 
-TEST_F(PaymentRequestSpecTest, RetryWithPayerErrors) {
+TEST_F(PaymentRequestSpecBasiCardEnabledTest, RetryWithPayerErrors) {
   mojom::PaymentOptionsPtr options = mojom::PaymentOptions::New();
   options->request_payer_email = true;
   options->request_payer_name = true;
@@ -518,14 +544,11 @@ TEST_F(PaymentRequestSpecTest, RetryWithPayerErrors) {
 
   spec()->Retry(std::move(errors));
 
-  EXPECT_EQ(base::UTF8ToUTF16("Invalid email"),
-            spec()->GetPayerError(autofill::EMAIL_ADDRESS));
-  EXPECT_EQ(base::UTF8ToUTF16("Invalid name"),
-            spec()->GetPayerError(autofill::NAME_FULL));
-  EXPECT_EQ(base::UTF8ToUTF16("Invalid phone"),
+  EXPECT_EQ(u"Invalid email", spec()->GetPayerError(autofill::EMAIL_ADDRESS));
+  EXPECT_EQ(u"Invalid name", spec()->GetPayerError(autofill::NAME_FULL));
+  EXPECT_EQ(u"Invalid phone",
             spec()->GetPayerError(autofill::PHONE_HOME_WHOLE_NUMBER));
 
   EXPECT_TRUE(spec()->has_payer_error());
 }
-
 }  // namespace payments

@@ -12,14 +12,12 @@
 #include "base/files/file_util.h"
 #include "base/location.h"
 #include "base/memory/ref_counted_memory.h"
-#include "base/sequenced_task_runner.h"
-#include "base/single_thread_task_runner.h"
-#include "base/stl_util.h"
-#include "base/task/post_task.h"
+#include "base/task/sequenced_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/task/thread_pool.h"
 #include "base/task/thread_pool/thread_pool_instance.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "chrome/browser/chromeos/login/users/avatar/user_image_loader.h"
+#include "chrome/browser/ash/login/users/avatar/user_image_loader.h"
 #include "chrome/common/url_constants.h"
 #include "components/user_manager/user_image/user_image.h"
 #include "net/base/mime_util.h"
@@ -101,12 +99,11 @@ bool ImageSource::IsAllowlisted(const std::string& path) const {
     return false;
 
   // Check if the path starts with a allowlisted directory.
-  std::vector<std::string> components;
-  file_path.GetComponents(&components);
+  std::vector<std::string> components = file_path.GetComponents();
   if (components.empty())
     return false;
 
-  for (size_t i = 0; i < base::size(kAllowlistedDirectories); i++) {
+  for (size_t i = 0; i < std::size(kAllowlistedDirectories); i++) {
     if (components[0] == kAllowlistedDirectories[i])
       return true;
   }

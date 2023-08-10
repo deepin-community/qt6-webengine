@@ -109,6 +109,8 @@ test("snapshot_unittests") {
     "//ui/gl",
   ]
 
+  data_deps = [ "//testing/buildbot/filters:snapshot_unittests_filters" ]
+
   if (use_aura) {
     sources += [ "snapshot_aura_unittest.cc" ]
     deps += [
@@ -116,6 +118,16 @@ test("snapshot_unittests") {
       "//ui/compositor",
       "//ui/compositor:test_support",
       "//ui/wm",
+    ]
+  }
+
+  if (is_fuchsia) {
+    use_cfv2 = false
+    additional_manifest_fragments = [
+      # TODO(crbug.com/1185811): Figure out why jit_capabilities is needed.
+      "//build/config/fuchsia/test/jit_capabilities.test-cmx",
+
+      "//build/config/fuchsia/test/present_view_capabilities.test-cmx",
     ]
   }
 }

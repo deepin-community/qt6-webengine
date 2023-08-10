@@ -28,11 +28,15 @@
 
 #include <memory>
 
+#include "base/trace_event/trace_event.h"
 #include "mojo/public/cpp/base/big_buffer_mojom_traits.h"
+#include "third_party/blink/public/mojom/blob/blob.mojom-blink.h"
+#include "third_party/blink/public/mojom/messaging/transferable_message.mojom-blink.h"
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/public/platform/web_string.h"
 #include "third_party/blink/renderer/bindings/core/v8/serialization/post_message_helper.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_post_message_options.h"
+#include "third_party/blink/renderer/core/event_target_names.h"
 #include "third_party/blink/renderer/core/events/message_event.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
@@ -119,7 +123,7 @@ void MessagePort::postMessage(ScriptState* script_state,
   if (msg.message->IsLockedToAgentCluster()) {
     msg.locked_agent_cluster_id = GetExecutionContext()->GetAgentClusterID();
   } else {
-    msg.locked_agent_cluster_id = base::nullopt;
+    msg.locked_agent_cluster_id = absl::nullopt;
   }
 
   mojo::Message mojo_message =
@@ -144,7 +148,7 @@ void MessagePort::start() {
     return;
 
   started_ = true;
-  connector_->ResumeIncomingMethodCallProcessing();
+  connector_->StartReceiving(task_runner_);
 }
 
 void MessagePort::close() {
@@ -167,8 +171,7 @@ void MessagePort::Entangle(MessagePortDescriptor port) {
   port_ = std::move(port);
   connector_ = std::make_unique<mojo::Connector>(
       port_.TakeHandleToEntangle(GetExecutionContext()),
-      mojo::Connector::SINGLE_THREADED_SEND, task_runner_);
-  connector_->PauseIncomingMethodCallProcessing();
+      mojo::Connector::SINGLE_THREADED_SEND);
   connector_->set_incoming_receiver(this);
   connector_->set_connection_error_handler(
       WTF::Bind(&MessagePort::close, WrapWeakPersistent(this)));

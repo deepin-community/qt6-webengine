@@ -5,12 +5,10 @@
 #ifndef BASE_THREADING_THREAD_COLLISION_WARNER_H_
 #define BASE_THREADING_THREAD_COLLISION_WARNER_H_
 
-#include <memory>
-
 #include "base/atomicops.h"
 #include "base/base_export.h"
 #include "base/compiler_specific.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 
 // A helper class alongside macros to be used to verify assumptions about thread
 // safety of a class.
@@ -98,7 +96,6 @@
 //   DFAKE_MUTEX(shareable_section_);
 // };
 
-
 #if !defined(NDEBUG)
 
 #define DFAKE_UNIQUE_VARIABLE_CONCAT(a, b) a##b
@@ -157,6 +154,9 @@ class BASE_EXPORT ThreadCollisionWarner {
         counter_(0),
         asserter_(asserter) {}
 
+  ThreadCollisionWarner(const ThreadCollisionWarner&) = delete;
+  ThreadCollisionWarner& operator=(const ThreadCollisionWarner&) = delete;
+
   ~ThreadCollisionWarner() {
     delete asserter_;
   }
@@ -173,12 +173,13 @@ class BASE_EXPORT ThreadCollisionWarner {
       warner_->EnterSelf();
     }
 
+    Check(const Check&) = delete;
+    Check& operator=(const Check&) = delete;
+
     ~Check() = default;
 
    private:
-    ThreadCollisionWarner* warner_;
-
-    DISALLOW_COPY_AND_ASSIGN(Check);
+    raw_ptr<ThreadCollisionWarner> warner_;
   };
 
   // This class is meant to be used through the macro
@@ -190,14 +191,15 @@ class BASE_EXPORT ThreadCollisionWarner {
       warner_->Enter();
     }
 
+    ScopedCheck(const ScopedCheck&) = delete;
+    ScopedCheck& operator=(const ScopedCheck&) = delete;
+
     ~ScopedCheck() {
       warner_->Leave();
     }
 
    private:
-    ThreadCollisionWarner* warner_;
-
-    DISALLOW_COPY_AND_ASSIGN(ScopedCheck);
+    raw_ptr<ThreadCollisionWarner> warner_;
   };
 
   // This class is meant to be used through the macro
@@ -209,14 +211,15 @@ class BASE_EXPORT ThreadCollisionWarner {
       warner_->EnterSelf();
     }
 
+    ScopedRecursiveCheck(const ScopedRecursiveCheck&) = delete;
+    ScopedRecursiveCheck& operator=(const ScopedRecursiveCheck&) = delete;
+
     ~ScopedRecursiveCheck() {
       warner_->Leave();
     }
 
    private:
-    ThreadCollisionWarner* warner_;
-
-    DISALLOW_COPY_AND_ASSIGN(ScopedRecursiveCheck);
+    raw_ptr<ThreadCollisionWarner> warner_;
   };
 
  private:
@@ -242,9 +245,7 @@ class BASE_EXPORT ThreadCollisionWarner {
 
   // Here only for class unit tests purpose, during the test I need to not
   // DCHECK but notify the collision with something else.
-  AsserterBase* asserter_;
-
-  DISALLOW_COPY_AND_ASSIGN(ThreadCollisionWarner);
+  raw_ptr<AsserterBase> asserter_;
 };
 
 }  // namespace base

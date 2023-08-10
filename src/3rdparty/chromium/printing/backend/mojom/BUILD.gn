@@ -4,6 +4,7 @@
 
 import("//build/config/chromeos/ui_mode.gni")
 import("//mojo/public/tools/bindings/mojom.gni")
+import("//printing/buildflags/buildflags.gni")
 
 mojom("mojom") {
   sources = [ "print_backend.mojom" ]
@@ -32,13 +33,14 @@ mojom("mojom") {
       traits_sources = [ "print_backend_mojom_traits.cc" ]
       traits_headers = [ "print_backend_mojom_traits.h" ]
       traits_deps = [
+        "//base",
         "//build:chromeos_buildflags",
-        "//printing:printing",
+        "//printing/backend",
       ]
     },
   ]
 
-  if (is_chromeos_ash) {
+  if (is_chromeos) {
     cpp_typemaps += [
       {
         types = [

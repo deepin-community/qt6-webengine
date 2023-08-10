@@ -6,9 +6,8 @@
 #define MOJO_PUBLIC_CPP_BINDINGS_LIB_MAY_AUTO_LOCK_H_
 
 #include "base/component_export.h"
-#include "base/macros.h"
-#include "base/optional.h"
 #include "base/synchronization/lock.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace mojo {
 namespace internal {
@@ -17,11 +16,14 @@ namespace internal {
 // the constructor is null.
 class COMPONENT_EXPORT(MOJO_CPP_BINDINGS_BASE) MayAutoLock {
  public:
-  explicit MayAutoLock(base::Optional<base::Lock>* lock)
+  explicit MayAutoLock(absl::optional<base::Lock>* lock)
       : lock_(lock->has_value() ? &lock->value() : nullptr) {
     if (lock_)
       lock_->Acquire();
   }
+
+  MayAutoLock(const MayAutoLock&) = delete;
+  MayAutoLock& operator=(const MayAutoLock&) = delete;
 
   ~MayAutoLock() {
     if (lock_) {
@@ -31,15 +33,16 @@ class COMPONENT_EXPORT(MOJO_CPP_BINDINGS_BASE) MayAutoLock {
   }
 
  private:
+  // `lock_` is not a raw_ptr<...> for performance reasons: on-stack pointer +
+  // based on analysis of sampling profiler data.
   base::Lock* lock_;
-  DISALLOW_COPY_AND_ASSIGN(MayAutoLock);
 };
 
 // Similar to base::AutoUnlock, except that it does nothing if |lock| passed
 // into the constructor is null.
 class COMPONENT_EXPORT(MOJO_CPP_BINDINGS_BASE) MayAutoUnlock {
  public:
-  explicit MayAutoUnlock(base::Optional<base::Lock>* lock)
+  explicit MayAutoUnlock(absl::optional<base::Lock>* lock)
       : lock_(lock->has_value() ? &lock->value() : nullptr) {
     if (lock_) {
       lock_->AssertAcquired();
@@ -47,14 +50,18 @@ class COMPONENT_EXPORT(MOJO_CPP_BINDINGS_BASE) MayAutoUnlock {
     }
   }
 
+  MayAutoUnlock(const MayAutoUnlock&) = delete;
+  MayAutoUnlock& operator=(const MayAutoUnlock&) = delete;
+
   ~MayAutoUnlock() {
     if (lock_)
       lock_->Acquire();
   }
 
  private:
+  // `lock_` is not a raw_ptr<...> for performance reasons: on-stack pointer +
+  // based on analysis of sampling profiler data.
   base::Lock* lock_;
-  DISALLOW_COPY_AND_ASSIGN(MayAutoUnlock);
 };
 
 }  // namespace internal

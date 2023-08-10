@@ -2,7 +2,7 @@
 // have a member `s.z`.
 
 struct goo {
-  s : vec2<i32>;
+  s : vec2<i32>
 };
 
 fn Foo() -> goo {
@@ -12,8 +12,8 @@ fn Foo() -> goo {
   return a;
 }
 
-[[stage(vertex)]]
-fn main() -> void {
+@stage(fragment)
+fn main() {
   var r : i32 = Foo().s.z;
   return;
 }

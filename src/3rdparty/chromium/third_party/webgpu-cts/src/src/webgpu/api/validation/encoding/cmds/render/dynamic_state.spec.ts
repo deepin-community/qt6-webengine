@@ -14,7 +14,7 @@ TODO: ensure existing tests cover these notes. Note many of these may be operati
 > - setScissorRect
 >     - {width, height} = 0
 >     - {x+width, y+height} = attachment size + 1
-> - setBlendColor
+> - setBlendConstant
 >     - color {slightly, very} out of range
 >     - used with a simple pipeline that {does, doesn't} use it
 > - setStencilReference
@@ -22,7 +22,6 @@ TODO: ensure existing tests cover these notes. Note many of these may be operati
 >     - used with a simple pipeline that {does, doesn't} use it
 `;
 
-import { params } from '../../../../../../common/framework/params_builder.js';
 import { makeTestGroup } from '../../../../../../common/framework/test_group.js';
 import { ValidationTest } from '../../../validation_test.js';
 
@@ -46,25 +45,26 @@ class F extends ValidationTest {
   testViewportCall(
     success: boolean,
     v: ViewportCall,
-    attachmentSize: GPUExtent3D = { width: 1, height: 1, depth: 1 }
+    attachmentSize: GPUExtent3D = { width: 1, height: 1, depthOrArrayLayers: 1 }
   ) {
     const attachment = this.device.createTexture({
       format: 'rgba8unorm',
       size: attachmentSize,
-      usage: GPUTextureUsage.OUTPUT_ATTACHMENT,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT,
     });
 
     const encoder = this.device.createCommandEncoder();
     const pass = encoder.beginRenderPass({
       colorAttachments: [
         {
-          attachment: attachment.createView(),
-          loadValue: 'load',
+          view: attachment.createView(),
+          loadOp: 'load',
+          storeOp: 'store',
         },
       ],
     });
     pass.setViewport(v.x, v.y, v.w, v.h, v.minDepth, v.maxDepth);
-    pass.endPass();
+    pass.end();
 
     this.expectValidationError(() => {
       encoder.finish();
@@ -74,20 +74,21 @@ class F extends ValidationTest {
   testScissorCall(
     success: boolean | 'type-error',
     s: ScissorCall,
-    attachmentSize: GPUExtent3D = { width: 1, height: 1, depth: 1 }
+    attachmentSize: GPUExtent3D = { width: 1, height: 1, depthOrArrayLayers: 1 }
   ) {
     const attachment = this.device.createTexture({
       format: 'rgba8unorm',
       size: attachmentSize,
-      usage: GPUTextureUsage.OUTPUT_ATTACHMENT,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT,
     });
 
     const encoder = this.device.createCommandEncoder();
     const pass = encoder.beginRenderPass({
       colorAttachments: [
         {
-          attachment: attachment.createView(),
-          loadValue: 'load',
+          view: attachment.createView(),
+          loadOp: 'load',
+          storeOp: 'store',
         },
       ],
     });
@@ -97,7 +98,7 @@ class F extends ValidationTest {
       });
     } else {
       pass.setScissorRect(s.x, s.y, s.w, s.h);
-      pass.endPass();
+      pass.end();
 
       this.expectValidationError(() => {
         encoder.finish();
@@ -109,15 +110,16 @@ class F extends ValidationTest {
     const attachment = this.device.createTexture({
       format: 'rgba8unorm',
       size: [1, 1, 1],
-      usage: GPUTextureUsage.OUTPUT_ATTACHMENT,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT,
     });
 
     const encoder = this.device.createCommandEncoder();
     const pass = encoder.beginRenderPass({
       colorAttachments: [
         {
-          attachment: attachment.createView(),
-          loadValue: 'load',
+          view: attachment.createView(),
+          loadOp: 'load',
+          storeOp: 'store',
         },
       ],
     });
@@ -129,8 +131,13 @@ class F extends ValidationTest {
 export const g = makeTestGroup(F);
 
 g.test('setViewport,x_y_width_height_nonnegative')
-  .desc('Test that the parameters of setViewport to define the box must be non-negative.')
-  .params([
+  .desc(
+    `Test that the parameters of setViewport to define the box must be non-negative.
+
+TODO Test -0 (it should be valid) but can't be tested because the harness complains about duplicate parameters.
+TODO Test the first value smaller than -0`
+  )
+  .paramsSubcasesOnly([
     // Control case: everything to 0 is ok, covers the empty viewport case.
     { x: 0, y: 0, w: 0, h: 0 },
 
@@ -139,9 +146,6 @@ g.test('setViewport,x_y_width_height_nonnegative')
     { x: 0, y: -1, w: 0, h: 0 },
     { x: 0, y: 0, w: -1, h: 0 },
     { x: 0, y: 0, w: 0, h: -1 },
-
-    // TODO Test -0 (it should be valid) but can't be tested because the harness complains about duplicate parameters.
-    // TODO Test the first value smaller than -0
   ])
   .fn(t => {
     const { x, y, w, h } = t.params;
@@ -153,15 +157,15 @@ g.test('setViewport,xy_rect_contained_in_attachment')
   .desc(
     'Test that the rectangle defined by x, y, width, height must be contained in the attachments'
   )
-  .params(
-    params()
-      .combine([
+  .paramsSubcasesOnly(u =>
+    u
+      .combineWithParams([
         { attachmentWidth: 3, attachmentHeight: 5 },
         { attachmentWidth: 5, attachmentHeight: 3 },
         { attachmentWidth: 1024, attachmentHeight: 1 },
         { attachmentWidth: 1, attachmentHeight: 1024 },
       ])
-      .combine([
+      .combineWithParams([
         // Control case: a full viewport is valid.
         { dx: 0, dy: 0, dw: 0, dh: 0 },
 
@@ -189,13 +193,13 @@ g.test('setViewport,xy_rect_contained_in_attachment')
     t.testViewportCall(
       success,
       { x, y, w, h, minDepth: 0, maxDepth: 1 },
-      { width: attachmentWidth, height: attachmentHeight, depth: 1 }
+      { width: attachmentWidth, height: attachmentHeight, depthOrArrayLayers: 1 }
     );
   });
 
 g.test('setViewport,depth_rangeAndOrder')
   .desc('Test that 0 <= minDepth <= maxDepth <= 1')
-  .params([
+  .paramsSubcasesOnly([
     // Success cases
     { minDepth: 0, maxDepth: 1 },
     { minDepth: -0, maxDepth: -0 },
@@ -218,9 +222,12 @@ g.test('setViewport,depth_rangeAndOrder')
 
 g.test('setScissorRect,x_y_width_height_nonnegative')
   .desc(
-    'Test that the parameters of setScissorRect to define the box must be non-negative or a TypeError is thrown.'
+    `Test that the parameters of setScissorRect to define the box must be non-negative or a TypeError is thrown.
+
+TODO Test -0 (it should be valid) but can't be tested because the harness complains about duplicate parameters.
+TODO Test the first value smaller than -0`
   )
-  .params([
+  .paramsSubcasesOnly([
     // Control case: everything to 0 is ok, covers the empty scissor case.
     { x: 0, y: 0, w: 0, h: 0 },
 
@@ -229,9 +236,6 @@ g.test('setScissorRect,x_y_width_height_nonnegative')
     { x: 0, y: -1, w: 0, h: 0 },
     { x: 0, y: 0, w: -1, h: 0 },
     { x: 0, y: 0, w: 0, h: -1 },
-
-    // TODO Test -0 (it should be valid) but can't be tested because the harness complains about duplicate parameters.
-    // TODO Test the first value smaller than -0
   ])
   .fn(t => {
     const { x, y, w, h } = t.params;
@@ -243,15 +247,15 @@ g.test('setScissorRect,xy_rect_contained_in_attachment')
   .desc(
     'Test that the rectangle defined by x, y, width, height must be contained in the attachments'
   )
-  .params(
-    params()
-      .combine([
+  .paramsSubcasesOnly(u =>
+    u
+      .combineWithParams([
         { attachmentWidth: 3, attachmentHeight: 5 },
         { attachmentWidth: 5, attachmentHeight: 3 },
         { attachmentWidth: 1024, attachmentHeight: 1 },
         { attachmentWidth: 1, attachmentHeight: 1024 },
       ])
-      .combine([
+      .combineWithParams([
         // Control case: a full scissor is valid.
         { dx: 0, dy: 0, dw: 0, dh: 0 },
 
@@ -279,13 +283,13 @@ g.test('setScissorRect,xy_rect_contained_in_attachment')
     t.testScissorCall(
       success,
       { x, y, w, h },
-      { width: attachmentWidth, height: attachmentHeight, depth: 1 }
+      { width: attachmentWidth, height: attachmentHeight, depthOrArrayLayers: 1 }
     );
   });
 
-g.test('setBlendColor')
-  .desc('Test that almost any color value is valid for setBlendColor')
-  .params([
+g.test('setBlendConstant')
+  .desc('Test that almost any color value is valid for setBlendConstant')
+  .paramsSubcasesOnly([
     { r: 1.0, g: 1.0, b: 1.0, a: 1.0 },
     { r: -1.0, g: -1.0, b: -1.0, a: -1.0 },
     { r: Number.MAX_SAFE_INTEGER, g: Number.MIN_SAFE_INTEGER, b: -0, a: 100000 },
@@ -293,14 +297,14 @@ g.test('setBlendColor')
   .fn(t => {
     const { r, g, b, a } = t.params;
     const encoders = t.createDummyRenderPassEncoder();
-    encoders.pass.setBlendColor({ r, g, b, a });
-    encoders.pass.endPass();
+    encoders.pass.setBlendConstant({ r, g, b, a });
+    encoders.pass.end();
     encoders.encoder.finish();
   });
 
 g.test('setStencilReference')
   .desc('Test that almost any stencil reference value is valid for setStencilReference')
-  .params([
+  .paramsSubcasesOnly([
     { value: 1 }, //
     { value: 0 },
     { value: 1000 },
@@ -310,6 +314,6 @@ g.test('setStencilReference')
     const { value } = t.params;
     const encoders = t.createDummyRenderPassEncoder();
     encoders.pass.setStencilReference(value);
-    encoders.pass.endPass();
+    encoders.pass.end();
     encoders.encoder.finish();
   });

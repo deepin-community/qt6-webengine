@@ -5,7 +5,10 @@
 #include "cc/animation/animation_timeline.h"
 
 #include <algorithm>
+#include <utility>
+#include <vector>
 
+#include "base/time/time.h"
 #include "cc/animation/animation.h"
 #include "cc/animation/animation_host.h"
 #include "cc/trees/property_tree.h"
@@ -151,8 +154,8 @@ void AnimationTimeline::RemoveDetachedAnimationsFromImplThread(
 void AnimationTimeline::EraseAnimation(scoped_refptr<Animation> animation) {
   if (animation->element_animations())
     animation->DetachElement();
-  animation->SetAnimationTimeline(nullptr);
   animation->SetAnimationHost(nullptr);
+  animation->SetAnimationTimeline(nullptr);
 }
 
 void AnimationTimeline::PushPropertiesToImplThread(

@@ -24,7 +24,8 @@
 
 #include "third_party/blink/renderer/core/css/css_origin_clean.h"
 #include "third_party/blink/renderer/core/css/style_rule.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/platform/heap/prefinalizer.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_client.h"
 #include "third_party/blink/renderer/platform/wtf/casting.h"
 
@@ -38,6 +39,7 @@ class StyleRuleImport : public StyleRuleBase {
 
  public:
   StyleRuleImport(const String& href,
+                  LayerName&& layer,
                   scoped_refptr<MediaQuerySet>,
                   OriginClean origin_clean);
   ~StyleRuleImport();
@@ -56,6 +58,10 @@ class StyleRuleImport : public StyleRuleBase {
   MediaQuerySet* MediaQueries() { return media_queries_.get(); }
 
   void RequestStyleSheet();
+
+  bool IsLayered() const { return layer_.size(); }
+  const LayerName& GetLayerName() const { return layer_; }
+  String GetLayerNameAsString() const;
 
   void TraceAfterDispatch(blink::Visitor*) const;
 
@@ -95,6 +101,7 @@ class StyleRuleImport : public StyleRuleBase {
 
   Member<ImportedStyleSheetClient> style_sheet_client_;
   String str_href_;
+  LayerName layer_;
   scoped_refptr<MediaQuerySet> media_queries_;
   Member<StyleSheetContents> style_sheet_;
   bool loading_;
@@ -112,4 +119,4 @@ struct DowncastTraits<StyleRuleImport> {
 
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_RENDERER_CORE_CSS_STYLE_RULE_IMPORT_H_

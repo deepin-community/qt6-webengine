@@ -7,6 +7,7 @@
 
 #include <ostream>
 
+#include "base/memory/raw_ptr.h"
 #include "printing/page_range.h"
 
 namespace printing {
@@ -15,14 +16,15 @@ class PrintSettings;
 
 // Represents a page series following the array of page ranges defined in a
 // PrintSettings.
-class PRINTING_EXPORT PageNumber {
+class COMPONENT_EXPORT(PRINTING) PageNumber {
  public:
   // Initializes the page to the first page in the settings's range or 0.
   PageNumber(const PrintSettings& settings, uint32_t document_page_count);
 
   PageNumber();
 
-  void operator=(const PageNumber& other);
+  PageNumber(const PageNumber& other);
+  PageNumber& operator=(const PageNumber& other);
 
   // Initializes the page to the first page in the setting's range or 0. It
   // initialize to npos if the range is empty and document_page_count is 0.
@@ -44,12 +46,12 @@ class PRINTING_EXPORT PageNumber {
 
  private:
   // The page range to follow.
-  const PageRanges* ranges_;
+  raw_ptr<const PageRanges> ranges_;
 
-  // The next page to be printed. |kInvalidPageIndex| when not printing.
+  // The next page to be printed. `kInvalidPageIndex` when not printing.
   uint32_t page_number_;
 
-  // The next page to be printed. |kInvalidPageIndex| when not used. Valid only
+  // The next page to be printed. `kInvalidPageIndex` when not used. Valid only
   // if document()->settings().range.empty() is false.
   uint32_t page_range_index_;
 

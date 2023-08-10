@@ -8,7 +8,6 @@
 #include <string>
 
 #include "ash/components/audio/cras_audio_handler.h"
-#include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/test/test_message_loop.h"
@@ -71,6 +70,9 @@ class CrasInputStreamTest : public testing::Test {
     base::RunLoop().RunUntilIdle();
   }
 
+  CrasInputStreamTest(const CrasInputStreamTest&) = delete;
+  CrasInputStreamTest& operator=(const CrasInputStreamTest&) = delete;
+
   ~CrasInputStreamTest() override {
     mock_manager_->Shutdown();
     ash::CrasAudioHandler::Shutdown();
@@ -102,7 +104,7 @@ class CrasInputStreamTest : public testing::Test {
     CrasInputStream* test_stream = new CrasInputStream(
         params, mock_manager_.get(), AudioDeviceDescription::kDefaultDeviceId);
 
-    ASSERT_TRUE(test_stream->Open());
+    EXPECT_EQ(test_stream->Open(), AudioInputStream::OpenOutcome::kSuccess);
 
     // Allow 8 frames variance for SRC in the callback.  Different numbers of
     // samples can be provided when doing non-integer SRC.  For example
@@ -131,9 +133,6 @@ class CrasInputStreamTest : public testing::Test {
 
   base::TestMessageLoop message_loop_;
   std::unique_ptr<StrictMock<MockAudioManagerCrasInput>> mock_manager_;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(CrasInputStreamTest);
 };
 
 const unsigned int CrasInputStreamTest::kTestCaptureDurationMs = 250;
@@ -146,13 +145,13 @@ const int CrasInputStreamTest::kTestSampleRate = 44100;
 
 TEST_F(CrasInputStreamTest, OpenMono) {
   CrasInputStream* test_stream = CreateStream(CHANNEL_LAYOUT_MONO);
-  EXPECT_TRUE(test_stream->Open());
+  EXPECT_EQ(test_stream->Open(), AudioInputStream::OpenOutcome::kSuccess);
   test_stream->Close();
 }
 
 TEST_F(CrasInputStreamTest, OpenStereo) {
   CrasInputStream* test_stream = CreateStream(CHANNEL_LAYOUT_STEREO);
-  EXPECT_TRUE(test_stream->Open());
+  EXPECT_EQ(test_stream->Open(), AudioInputStream::OpenOutcome::kSuccess);
   test_stream->Close();
 }
 
@@ -164,13 +163,13 @@ TEST_F(CrasInputStreamTest, BadSampleRate) {
   CrasInputStream* test_stream =
       new CrasInputStream(bad_rate_params, mock_manager_.get(),
                           AudioDeviceDescription::kDefaultDeviceId);
-  EXPECT_FALSE(test_stream->Open());
+  EXPECT_EQ(test_stream->Open(), AudioInputStream::OpenOutcome::kFailed);
   test_stream->Close();
 }
 
 TEST_F(CrasInputStreamTest, SetGetVolume) {
   CrasInputStream* test_stream = CreateStream(CHANNEL_LAYOUT_MONO);
-  EXPECT_TRUE(test_stream->Open());
+  EXPECT_EQ(test_stream->Open(), AudioInputStream::OpenOutcome::kSuccess);
 
   double max_volume = test_stream->GetMaxVolume();
   EXPECT_GE(max_volume, 1.0);
@@ -212,7 +211,7 @@ TEST_F(CrasInputStreamTest, CaptureLoopback) {
   CrasInputStream* test_stream =
       CreateStream(CHANNEL_LAYOUT_STEREO, kTestFramesPerPacket,
                    AudioDeviceDescription::kLoopbackInputDeviceId);
-  EXPECT_TRUE(test_stream->Open());
+  EXPECT_EQ(test_stream->Open(), AudioInputStream::OpenOutcome::kSuccess);
   test_stream->Close();
 }
 

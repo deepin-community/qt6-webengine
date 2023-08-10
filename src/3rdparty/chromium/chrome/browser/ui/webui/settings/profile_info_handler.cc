@@ -88,7 +88,7 @@ void ProfileInfoHandler::OnUserImageChanged(const user_manager::User& user) {
 
 void ProfileInfoHandler::OnProfileNameChanged(
     const base::FilePath& /* profile_path */,
-    const base::string16& /* old_profile_name */) {
+    const std::u16string& /* old_profile_name */) {
   PushProfileInfo();
 }
 
@@ -97,18 +97,17 @@ void ProfileInfoHandler::OnProfileAvatarChanged(
   PushProfileInfo();
 }
 
-void ProfileInfoHandler::HandleGetProfileInfo(const base::ListValue* args) {
+void ProfileInfoHandler::HandleGetProfileInfo(const base::Value::List& args) {
   AllowJavascript();
 
-  CHECK_EQ(1U, args->GetSize());
-  const base::Value* callback_id;
-  CHECK(args->Get(0, &callback_id));
+  CHECK_EQ(1U, args.size());
+  const base::Value& callback_id = args[0];
 
-  ResolveJavascriptCallback(*callback_id, *GetAccountNameAndIcon());
+  ResolveJavascriptCallback(callback_id, *GetAccountNameAndIcon());
 }
 
 #if !BUILDFLAG(IS_CHROMEOS_ASH)
-void ProfileInfoHandler::HandleGetProfileStats(const base::ListValue* args) {
+void ProfileInfoHandler::HandleGetProfileStats(const base::Value::List& args) {
   AllowJavascript();
 
   ProfileStatisticsFactory::GetForProfile(profile_)->GatherStatistics(
@@ -134,13 +133,13 @@ void ProfileInfoHandler::PushProfileInfo() {
 }
 
 std::unique_ptr<base::DictionaryValue>
-ProfileInfoHandler::GetAccountNameAndIcon() const {
+ProfileInfoHandler::GetAccountNameAndIcon() {
   std::string name;
   std::string icon_url;
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
   const user_manager::User* user =
-      chromeos::ProfileHelper::Get()->GetUserByProfile(profile_);
+      ash::ProfileHelper::Get()->GetUserByProfile(profile_);
   DCHECK(user);
   name = base::UTF16ToUTF8(user->GetDisplayName());
 
@@ -167,8 +166,8 @@ ProfileInfoHandler::GetAccountNameAndIcon() const {
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
   auto response = std::make_unique<base::DictionaryValue>();
-  response->SetString("name", name);
-  response->SetString("iconUrl", icon_url);
+  response->SetStringKey("name", name);
+  response->SetStringKey("iconUrl", icon_url);
   return response;
 }
 

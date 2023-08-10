@@ -10,6 +10,8 @@
 
 #include "src/shaders/SkShaderBase.h"
 
+class SkShaderCodeDictionary;
+
 /** \class SkColorShader
     A Shader that represents a single color. In general, this effect can be
     accomplished by just using the color field on the paint, but if an
@@ -32,6 +34,12 @@ public:
     std::unique_ptr<GrFragmentProcessor> asFragmentProcessor(const GrFPArgs&) const override;
 #endif
 
+#ifdef SK_ENABLE_SKSL
+    void addToKey(const SkKeyContext&,
+                  SkPaintParamsKeyBuilder*,
+                  SkPipelineDataGatherer*) const override;
+#endif
+
 private:
     SK_FLATTENABLE_HOOKS(SkColorShader)
 
@@ -45,8 +53,7 @@ private:
     bool onAppendStages(const SkStageRec&) const override;
 
     skvm::Color onProgram(skvm::Builder*, skvm::Coord device, skvm::Coord local, skvm::Color paint,
-                          const SkMatrixProvider&, const SkMatrix* localM,
-                          SkFilterQuality quality, const SkColorInfo& dst,
+                          const SkMatrixProvider&, const SkMatrix* localM, const SkColorInfo& dst,
                           skvm::Uniforms* uniforms, SkArenaAlloc*) const override;
 
     SkColor fColor;
@@ -62,6 +69,11 @@ public:
 #if SK_SUPPORT_GPU
     std::unique_ptr<GrFragmentProcessor> asFragmentProcessor(const GrFPArgs&) const override;
 #endif
+#ifdef SK_ENABLE_SKSL
+    void addToKey(const SkKeyContext&,
+                  SkPaintParamsKeyBuilder*,
+                  SkPipelineDataGatherer*) const override;
+#endif
 
 private:
     SK_FLATTENABLE_HOOKS(SkColor4Shader)
@@ -70,8 +82,7 @@ private:
     bool onAppendStages(const SkStageRec&) const override;
 
     skvm::Color onProgram(skvm::Builder*, skvm::Coord device, skvm::Coord local, skvm::Color paint,
-                          const SkMatrixProvider&, const SkMatrix* localM,
-                          SkFilterQuality quality, const SkColorInfo& dst,
+                          const SkMatrixProvider&, const SkMatrix* localM, const SkColorInfo& dst,
                           skvm::Uniforms* uniforms, SkArenaAlloc*) const override;
 
     sk_sp<SkColorSpace> fColorSpace;

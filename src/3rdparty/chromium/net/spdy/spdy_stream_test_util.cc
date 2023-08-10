@@ -7,7 +7,6 @@
 #include <cstddef>
 #include <utility>
 
-#include "base/stl_util.h"
 #include "base/strings/string_piece.h"
 #include "net/spdy/spdy_stream.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -24,6 +23,9 @@ ClosingDelegate::ClosingDelegate(
 ClosingDelegate::~ClosingDelegate() = default;
 
 void ClosingDelegate::OnHeadersSent() {}
+
+void ClosingDelegate::OnEarlyHintsReceived(
+    const spdy::Http2HeaderBlock& headers) {}
 
 void ClosingDelegate::OnHeadersReceived(
     const spdy::Http2HeaderBlock& response_headers,
@@ -62,6 +64,12 @@ void StreamDelegateBase::OnHeadersSent() {
   stream_id_ = stream_->stream_id();
   EXPECT_NE(stream_id_, 0u);
   send_headers_completed_ = true;
+}
+
+void StreamDelegateBase::OnEarlyHintsReceived(
+    const spdy::Http2HeaderBlock& headers) {
+  EXPECT_EQ(stream_->type() != SPDY_PUSH_STREAM, send_headers_completed_);
+  early_hints_.push_back(headers.Clone());
 }
 
 void StreamDelegateBase::OnHeadersReceived(
@@ -107,8 +115,7 @@ std::string StreamDelegateBase::TakeReceivedData() {
   size_t len = received_data_queue_.GetTotalSize();
   std::string received_data(len, '\0');
   if (len > 0) {
-    EXPECT_EQ(len,
-              received_data_queue_.Dequeue(base::data(received_data), len));
+    EXPECT_EQ(len, received_data_queue_.Dequeue(std::data(received_data), len));
   }
   return received_data;
 }
@@ -130,6 +137,17 @@ StreamDelegateDoNothing::StreamDelegateDoNothing(
     : StreamDelegateBase(stream) {}
 
 StreamDelegateDoNothing::~StreamDelegateDoNothing() = default;
+
+StreamDelegateConsumeData::StreamDelegateConsumeData(
+    const base::WeakPtr<SpdyStream>& stream)
+    : StreamDelegateBase(stream) {}
+
+StreamDelegateConsumeData::~StreamDelegateConsumeData() = default;
+
+void StreamDelegateConsumeData::OnDataReceived(
+    std::unique_ptr<SpdyBuffer> buffer) {
+  buffer->Consume(buffer->GetRemainingSize());
+}
 
 StreamDelegateSendImmediate::StreamDelegateSendImmediate(
     const base::WeakPtr<SpdyStream>& stream,
@@ -174,6 +192,18 @@ void StreamDelegateCloseOnHeaders::OnHeadersReceived(
     const spdy::Http2HeaderBlock& response_headers,
     const spdy::Http2HeaderBlock* pushed_request_headers) {
   stream()->Cancel(ERR_ABORTED);
+}
+
+StreamDelegateDetectEOF::StreamDelegateDetectEOF(
+    const base::WeakPtr<SpdyStream>& stream)
+    : StreamDelegateBase(stream) {}
+
+StreamDelegateDetectEOF::~StreamDelegateDetectEOF() = default;
+
+void StreamDelegateDetectEOF::OnDataReceived(
+    std::unique_ptr<SpdyBuffer> buffer) {
+  if (!buffer)
+    eof_detected_ = true;
 }
 
 }  // namespace test

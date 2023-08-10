@@ -9,8 +9,8 @@
 #include <set>
 #include <string>
 
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
-#include "base/optional.h"
 #include "base/threading/thread_checker.h"
 #include "net/base/completion_once_callback.h"
 #include "net/base/net_export.h"
@@ -18,7 +18,9 @@
 #include "net/http/http_auth.h"
 #include "net/http/http_auth_preferences.h"
 #include "net/log/net_log_with_source.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/gurl.h"
+#include "url/scheme_host_port.h"
 
 namespace net {
 
@@ -123,7 +125,7 @@ class NET_EXPORT_PRIVATE HttpAuthController
   bool NeedsHTTP11() const;
 
   // Swaps the authentication challenge info into |other|.
-  void TakeAuthInfo(base::Optional<AuthChallengeInfo>* other);
+  void TakeAuthInfo(absl::optional<AuthChallengeInfo>* other);
 
   bool IsAuthSchemeDisabled(HttpAuth::Scheme scheme) const;
   void DisableAuthScheme(HttpAuth::Scheme scheme);
@@ -195,7 +197,7 @@ class NET_EXPORT_PRIVATE HttpAuthController
   const GURL auth_url_;
 
   // Holds the {scheme, host, port} for the authentication target.
-  const GURL auth_origin_;
+  const url::SchemeHostPort auth_scheme_host_port_;
 
   // The absolute path of the resource needing authentication.
   // For proxy authentication, the path is empty.
@@ -219,7 +221,7 @@ class NET_EXPORT_PRIVATE HttpAuthController
   std::string auth_token_;
 
   // Contains information about the auth challenge.
-  base::Optional<AuthChallengeInfo> auth_info_;
+  absl::optional<AuthChallengeInfo> auth_info_;
 
   // True if we've used the username:password embedded in the URL.  This
   // makes sure we use the embedded identity only once for the transaction,
@@ -233,9 +235,9 @@ class NET_EXPORT_PRIVATE HttpAuthController
   // These two are owned by the HttpNetworkSession/IOThread, which own the
   // objects which reference |this|. Therefore, these raw pointers are valid
   // for the lifetime of this object.
-  HttpAuthCache* const http_auth_cache_;
-  HttpAuthHandlerFactory* const http_auth_handler_factory_;
-  HostResolver* const host_resolver_;
+  const raw_ptr<HttpAuthCache> http_auth_cache_;
+  const raw_ptr<HttpAuthHandlerFactory> http_auth_handler_factory_;
+  const raw_ptr<HostResolver> host_resolver_;
 
   std::set<HttpAuth::Scheme> disabled_schemes_;
 

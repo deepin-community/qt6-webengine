@@ -147,7 +147,7 @@ bool IsAtomicFunctionForSharedVariableDirectAssign(const TIntermBinary &node)
         return false;
     }
 
-    if (node.getOp() == EOpAssign && IsAtomicFunction(aggregateNode->getOp()))
+    if (node.getOp() == EOpAssign && BuiltInGroup::IsAtomicMemory(aggregateNode->getOp()))
     {
         return !IsInShaderStorageBlock((*aggregateNode->getSequence())[0]->getAsTyped());
     }
@@ -387,8 +387,7 @@ OutputHLSL::OutputHLSL(sh::GLenum shaderType,
     // Reserve registers for the default uniform block and driver constants
     mResourcesHLSL->reserveUniformBlockRegisters(2);
 
-    mSSBOOutputHLSL =
-        new ShaderStorageBlockOutputHLSL(this, symbolTable, mResourcesHLSL, shaderStorageBlocks);
+    mSSBOOutputHLSL = new ShaderStorageBlockOutputHLSL(this, mResourcesHLSL, shaderStorageBlocks);
 }
 
 OutputHLSL::~OutputHLSL()
@@ -661,7 +660,7 @@ void OutputHLSL::header(TInfoSinkBase &out,
 
     mResourcesHLSL->uniformsHeader(out, mOutputType, mReferencedUniforms, mSymbolTable);
     out << mResourcesHLSL->uniformBlocksHeader(mReferencedUniformBlocks, mUniformBlockOptimizedMap);
-    mSSBOOutputHLSL->writeShaderStorageBlocksHeader(out);
+    mSSBOOutputHLSL->writeShaderStorageBlocksHeader(mShaderType, out);
 
     if (!mEqualityFunctions.empty())
     {
@@ -970,14 +969,17 @@ void OutputHLSL::header(TInfoSinkBase &out,
                 out << "    float multiviewSelectViewportIndex : packoffset(c3.z);\n";
             }
 
+            out << "    float clipControlOrigin : packoffset(c3.w);\n";
+            out << "    float clipControlZeroToOne : packoffset(c4);\n";
+
             if (mOutputType == SH_HLSL_4_1_OUTPUT)
             {
-                mResourcesHLSL->samplerMetadataUniforms(out, 4);
+                mResourcesHLSL->samplerMetadataUniforms(out, 5);
             }
 
             if (mUsesVertexID)
             {
-                out << "    uint dx_VertexID : packoffset(c3.w);\n";
+                out << "    uint dx_VertexID : packoffset(c4.y);\n";
             }
 
             out << "};\n"
@@ -991,8 +993,12 @@ void OutputHLSL::header(TInfoSinkBase &out,
             }
 
             out << "uniform float4 dx_ViewAdjust : register(c1);\n";
-            out << "uniform float2 dx_ViewCoords : register(c2);\n"
-                   "\n";
+            out << "uniform float2 dx_ViewCoords : register(c2);\n";
+
+            out << "static const float clipControlOrigin = -1.0f;\n";
+            out << "static const float clipControlZeroToOne = 0.0f;\n";
+
+            out << "\n";
         }
 
         if (mUsesDepthRange)
@@ -1919,7 +1925,7 @@ bool OutputHLSL::visitUnary(Visit visit, TIntermUnary *node)
         case EOpAcosh:
         case EOpAtanh:
             ASSERT(node->getUseEmulatedFunction());
-            writeEmulatedFunctionTriplet(out, visit, node->getOp());
+            writeEmulatedFunctionTriplet(out, visit, node->getFunction());
             break;
         case EOpExp:
             outputTriplet(out, visit, "exp(", "", ")");
@@ -1956,7 +1962,7 @@ bool OutputHLSL::visitUnary(Visit visit, TIntermUnary *node)
             break;
         case EOpRoundEven:
             ASSERT(node->getUseEmulatedFunction());
-            writeEmulatedFunctionTriplet(out, visit, node->getOp());
+            writeEmulatedFunctionTriplet(out, visit, node->getFunction());
             break;
         case EOpCeil:
             outputTriplet(out, visit, "ceil(", "", ")");
@@ -1966,7 +1972,7 @@ bool OutputHLSL::visitUnary(Visit visit, TIntermUnary *node)
             break;
         case EOpIsnan:
             if (node->getUseEmulatedFunction())
-                writeEmulatedFunctionTriplet(out, visit, node->getOp());
+                writeEmulatedFunctionTriplet(out, visit, node->getFunction());
             else
                 outputTriplet(out, visit, "isnan(", "", ")");
             mRequiresIEEEStrictCompiling = true;
@@ -1997,43 +2003,13 @@ bool OutputHLSL::visitUnary(Visit visit, TIntermUnary *node)
         case EOpUnpackUnorm4x8:
         case EOpUnpackSnorm4x8:
             ASSERT(node->getUseEmulatedFunction());
-            writeEmulatedFunctionTriplet(out, visit, node->getOp());
+            writeEmulatedFunctionTriplet(out, visit, node->getFunction());
             break;
         case EOpLength:
             outputTriplet(out, visit, "length(", "", ")");
             break;
         case EOpNormalize:
             outputTriplet(out, visit, "normalize(", "", ")");
-            break;
-        case EOpDFdx:
-            if (mInsideDiscontinuousLoop || mOutputLod0Function)
-            {
-                outputTriplet(out, visit, "(", "", ", 0.0)");
-            }
-            else
-            {
-                outputTriplet(out, visit, "ddx(", "", ")");
-            }
-            break;
-        case EOpDFdy:
-            if (mInsideDiscontinuousLoop || mOutputLod0Function)
-            {
-                outputTriplet(out, visit, "(", "", ", 0.0)");
-            }
-            else
-            {
-                outputTriplet(out, visit, "ddy(", "", ")");
-            }
-            break;
-        case EOpFwidth:
-            if (mInsideDiscontinuousLoop || mOutputLod0Function)
-            {
-                outputTriplet(out, visit, "(", "", ", 0.0)");
-            }
-            else
-            {
-                outputTriplet(out, visit, "fwidth(", "", ")");
-            }
             break;
         case EOpTranspose:
             outputTriplet(out, visit, "transpose(", "", ")");
@@ -2043,7 +2019,7 @@ bool OutputHLSL::visitUnary(Visit visit, TIntermUnary *node)
             break;
         case EOpInverse:
             ASSERT(node->getUseEmulatedFunction());
-            writeEmulatedFunctionTriplet(out, visit, node->getOp());
+            writeEmulatedFunctionTriplet(out, visit, node->getFunction());
             break;
 
         case EOpAny:
@@ -2052,7 +2028,7 @@ bool OutputHLSL::visitUnary(Visit visit, TIntermUnary *node)
         case EOpAll:
             outputTriplet(out, visit, "all(", "", ")");
             break;
-        case EOpLogicalNotComponentWise:
+        case EOpNotComponentWise:
             outputTriplet(out, visit, "(!", "", ")");
             break;
         case EOpBitfieldReverse:
@@ -2398,14 +2374,18 @@ bool OutputHLSL::visitAggregate(Visit visit, TIntermAggregate *node)
 
     switch (node->getOp())
     {
-        case EOpCallBuiltInFunction:
         case EOpCallFunctionInAST:
         case EOpCallInternalRawFunction:
+        default:
         {
             TIntermSequence *arguments = node->getSequence();
 
             bool lod0 = (mInsideDiscontinuousLoop || mOutputLod0Function) &&
                         mShaderType == GL_FRAGMENT_SHADER;
+
+            // No raw function is expected.
+            ASSERT(node->getOp() != EOpCallInternalRawFunction);
+
             if (node->getOp() == EOpCallFunctionInAST)
             {
                 if (node->isArray())
@@ -2419,12 +2399,6 @@ bool OutputHLSL::visitAggregate(Visit visit, TIntermAggregate *node)
                 out << DecorateFunctionIfNeeded(node->getFunction());
                 out << DisambiguateFunctionName(node->getSequence());
                 out << (lod0 ? "Lod0(" : "(");
-            }
-            else if (node->getOp() == EOpCallInternalRawFunction)
-            {
-                // This path is used for internal functions that don't have their definitions in the
-                // AST, such as precision emulation functions.
-                out << DecorateFunctionIfNeeded(node->getFunction()) << "(";
             }
             else if (node->getFunction()->isImageFunction())
             {
@@ -2527,7 +2501,7 @@ bool OutputHLSL::visitAggregate(Visit visit, TIntermAggregate *node)
             break;
         case EOpMod:
             ASSERT(node->getUseEmulatedFunction());
-            writeEmulatedFunctionTriplet(out, visit, node->getOp());
+            writeEmulatedFunctionTriplet(out, visit, node->getFunction());
             break;
         case EOpModf:
             outputTriplet(out, visit, "modf(", ", ", ")");
@@ -2538,7 +2512,7 @@ bool OutputHLSL::visitAggregate(Visit visit, TIntermAggregate *node)
         case EOpAtan:
             ASSERT(node->getSequence()->size() == 2);  // atan(x) is a unary operator
             ASSERT(node->getUseEmulatedFunction());
-            writeEmulatedFunctionTriplet(out, visit, node->getOp());
+            writeEmulatedFunctionTriplet(out, visit, node->getFunction());
             break;
         case EOpMin:
             outputTriplet(out, visit, "min(", ", ", ")");
@@ -2558,7 +2532,7 @@ bool OutputHLSL::visitAggregate(Visit visit, TIntermAggregate *node)
                 // y, genBType a)",
                 // so use emulated version.
                 ASSERT(node->getUseEmulatedFunction());
-                writeEmulatedFunctionTriplet(out, visit, node->getOp());
+                writeEmulatedFunctionTriplet(out, visit, node->getFunction());
             }
             else
             {
@@ -2578,7 +2552,7 @@ bool OutputHLSL::visitAggregate(Visit visit, TIntermAggregate *node)
         case EOpFrexp:
         case EOpLdexp:
             ASSERT(node->getUseEmulatedFunction());
-            writeEmulatedFunctionTriplet(out, visit, node->getOp());
+            writeEmulatedFunctionTriplet(out, visit, node->getFunction());
             break;
         case EOpDistance:
             outputTriplet(out, visit, "distance(", ", ", ")");
@@ -2591,7 +2565,7 @@ bool OutputHLSL::visitAggregate(Visit visit, TIntermAggregate *node)
             break;
         case EOpFaceforward:
             ASSERT(node->getUseEmulatedFunction());
-            writeEmulatedFunctionTriplet(out, visit, node->getOp());
+            writeEmulatedFunctionTriplet(out, visit, node->getFunction());
             break;
         case EOpReflect:
             outputTriplet(out, visit, "reflect(", ", ", ")");
@@ -2601,9 +2575,9 @@ bool OutputHLSL::visitAggregate(Visit visit, TIntermAggregate *node)
             break;
         case EOpOuterProduct:
             ASSERT(node->getUseEmulatedFunction());
-            writeEmulatedFunctionTriplet(out, visit, node->getOp());
+            writeEmulatedFunctionTriplet(out, visit, node->getFunction());
             break;
-        case EOpMulMatrixComponentWise:
+        case EOpMatrixCompMult:
             outputTriplet(out, visit, "(", " * ", ")");
             break;
         case EOpBitfieldExtract:
@@ -2613,7 +2587,37 @@ bool OutputHLSL::visitAggregate(Visit visit, TIntermAggregate *node)
         case EOpUmulExtended:
         case EOpImulExtended:
             ASSERT(node->getUseEmulatedFunction());
-            writeEmulatedFunctionTriplet(out, visit, node->getOp());
+            writeEmulatedFunctionTriplet(out, visit, node->getFunction());
+            break;
+        case EOpDFdx:
+            if (mInsideDiscontinuousLoop || mOutputLod0Function)
+            {
+                outputTriplet(out, visit, "(", "", ", 0.0)");
+            }
+            else
+            {
+                outputTriplet(out, visit, "ddx(", "", ")");
+            }
+            break;
+        case EOpDFdy:
+            if (mInsideDiscontinuousLoop || mOutputLod0Function)
+            {
+                outputTriplet(out, visit, "(", "", ", 0.0)");
+            }
+            else
+            {
+                outputTriplet(out, visit, "ddy(", "", ")");
+            }
+            break;
+        case EOpFwidth:
+            if (mInsideDiscontinuousLoop || mOutputLod0Function)
+            {
+                outputTriplet(out, visit, "(", "", ", 0.0)");
+            }
+            else
+            {
+                outputTriplet(out, visit, "fwidth(", "", ")");
+            }
             break;
         case EOpBarrier:
             // barrier() is translated to GroupMemoryBarrierWithGroupSync(), which is the
@@ -2696,8 +2700,6 @@ bool OutputHLSL::visitAggregate(Visit visit, TIntermAggregate *node)
 
             break;
         }
-        default:
-            UNREACHABLE();
     }
 
     return true;
@@ -2989,7 +2991,7 @@ bool OutputHLSL::handleExcessiveLoop(TInfoSinkBase &out, TIntermLoop *node)
             {
                 TIntermBinary *assign = variable->getAsBinaryNode();
 
-                if (assign->getOp() == EOpInitialize)
+                if (assign != nullptr && assign->getOp() == EOpInitialize)
                 {
                     TIntermSymbol *symbol          = assign->getLeft()->getAsSymbolNode();
                     TIntermConstantUnion *constant = assign->getRight()->getAsConstantUnion();
@@ -3231,7 +3233,7 @@ void OutputHLSL::writeParameter(const TVariable *param, TInfoSinkBase &out)
         if (mOutputType == SH_HLSL_4_1_OUTPUT)
         {
             // Samplers are passed as indices to the sampler array.
-            ASSERT(qualifier != EvqOut && qualifier != EvqInOut);
+            ASSERT(qualifier != EvqParamOut && qualifier != EvqParamInOut);
             out << "const uint " << nameStr << ArrayString(type);
             return;
         }
@@ -3262,7 +3264,7 @@ void OutputHLSL::writeParameter(const TVariable *param, TInfoSinkBase &out)
     // separate parameters. HLSL doesn't natively support samplers in structs.
     if (type.isStructureContainingSamplers())
     {
-        ASSERT(qualifier != EvqOut && qualifier != EvqInOut);
+        ASSERT(qualifier != EvqParamOut && qualifier != EvqParamInOut);
         TVector<const TVariable *> samplerSymbols;
         std::string namePrefix = "angle";
         namePrefix += nameStr.c_str();
@@ -3384,12 +3386,14 @@ const TConstantUnion *OutputHLSL::writeConstantUnion(TInfoSinkBase &out,
     return constUnionIterated;
 }
 
-void OutputHLSL::writeEmulatedFunctionTriplet(TInfoSinkBase &out, Visit visit, TOperator op)
+void OutputHLSL::writeEmulatedFunctionTriplet(TInfoSinkBase &out,
+                                              Visit visit,
+                                              const TFunction *function)
 {
     if (visit == PreVisit)
     {
-        const char *opStr = GetOperatorString(op);
-        BuiltInFunctionEmulator::WriteEmulatedFunctionName(out, opStr);
+        ASSERT(function != nullptr);
+        BuiltInFunctionEmulator::WriteEmulatedFunctionName(out, function->name().data());
         out << "(";
     }
     else

@@ -33,9 +33,10 @@
 
 #include <vector>
 
+#include "third_party/blink/public/platform/web_common.h"
 #include "third_party/blink/public/web/web_node.h"
 #include "third_party/skia/include/core/SkBitmap.h"
-#include "v8/include/v8.h"
+#include "v8/include/v8-forward.h"
 
 namespace gfx {
 class Rect;
@@ -85,6 +86,9 @@ class BLINK_EXPORT WebElement : public WebNode {
   // Returns true if this is an autonomous custom element.
   bool IsAutonomousCustomElement() const;
 
+  // Returns the owning shadow host for this element, if there is one.
+  WebElement OwnerShadowHost() const;
+
   // Returns an author ShadowRoot attached to this element, regardless
   // of open or closed.  This returns null WebNode if this
   // element has no ShadowRoot or has a UA ShadowRoot.
@@ -121,6 +125,10 @@ class BLINK_EXPORT WebElement : public WebNode {
   // /public/web interfaces.
   WebString GetComputedValue(const WebString& property_name);
 
+  // TODO(crbug.com/1286950) Remove this once a decision is made on deprecation
+  // of the <param> URL functionality.
+  void UseCountParamUrlUsageIfNeeded(bool is_pdf) const;
+
 #if INSIDE_BLINK
   WebElement(Element*);
   WebElement& operator=(Element*);
@@ -135,4 +143,4 @@ DECLARE_WEB_NODE_TYPE_CASTS(WebElement);
 
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_PUBLIC_WEB_WEB_ELEMENT_H_

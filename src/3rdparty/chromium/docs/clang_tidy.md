@@ -83,6 +83,9 @@ $ ${chromium_build}/recipes/recipe_modules/tricium_clang_tidy/resources/tricium_
     --all
 ```
 
+To only run clang-tidy against certain files, replace the `--all` parameter with
+the individual file paths.
+
 All clang-tidy checks are run on Linux builds of Chromium, so please set up your
 `args.gn` to build Linux.
 
@@ -197,6 +200,15 @@ That said, assuming you have the LLVM sources available, you'll need to bring
 your own `clang-apply-replacements` binary if you want to use the `-fix` option
 noted below.
 
+**Note:** If you're on a system that offers a clang tools through its package
+manager (e.g., on Debian/Ubuntu, `sudo apt-get install clang-tidy clang-tools`),
+you might not need an LLVM checkout to make the required binaries and scripts
+(`clang-tidy`, `run-clang-tidy` and `clang-apply-replacements`) available in
+your `$PATH`. However, the system packaged binaries might be several versions
+behind Chromium's toolchain, so not all flags are guaranteed to work. If this is
+a problem, consider building clang-tidy from the same revision the current
+toolchain is using, rather than filing a bug against the toolchain component.
+
 Running clang-tidy is (hopefully) simple.
 1.  Build chrome normally.\* Note that [Jumbo builds](jumbo.md) are not
     supported.
@@ -257,7 +269,7 @@ Questions about the local flow? Reach out to rdevlin.cronin@chromium.org,
 thakis@chromium.org, or gbiv@chromium.org.
 
 Questions about the Gerrit flow? Email tricium-dev@google.com or
-infra-dev+tricium@chromium.org, or file a bug against `Infra>Platform>Tricium`.
+infra-dev+tricium@chromium.org, or file a bug against `Infra>LUCI>BuildService>PreSubmit>Tricium`.
 Please CC gbiv@chromium.org on any of these.
 
 Discoveries? Update the doc!

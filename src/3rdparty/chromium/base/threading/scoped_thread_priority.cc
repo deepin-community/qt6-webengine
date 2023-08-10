@@ -15,14 +15,18 @@ namespace internal {
 ScopedMayLoadLibraryAtBackgroundPriority::
     ScopedMayLoadLibraryAtBackgroundPriority(const Location& from_here,
                                              std::atomic_bool* already_loaded)
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
     : already_loaded_(already_loaded)
-#endif  // OS_WIN
+#endif  // BUILDFLAG(IS_WIN)
 {
-  TRACE_EVENT_BEGIN2("base", "ScopedMayLoadLibraryAtBackgroundPriority",
-                     "file_name", from_here.file_name(), "function_name",
-                     from_here.function_name());
-#if defined(OS_WIN)
+  TRACE_EVENT_BEGIN(
+      "base", "ScopedMayLoadLibraryAtBackgroundPriority",
+      [&](perfetto::EventContext ctx) {
+        ctx.event()->set_source_location_iid(
+            base::trace_event::InternedSourceLocation::Get(&ctx, from_here));
+      });
+
+#if BUILDFLAG(IS_WIN)
   if (already_loaded_ && already_loaded_->load(std::memory_order_relaxed))
     return;
 
@@ -36,14 +40,14 @@ ScopedMayLoadLibraryAtBackgroundPriority::
         "base",
         "ScopedMayLoadLibraryAtBackgroundPriority : Priority Increased");
   }
-#endif  // OS_WIN
+#endif  // BUILDFLAG(IS_WIN)
 }
 
 ScopedMayLoadLibraryAtBackgroundPriority::
     ~ScopedMayLoadLibraryAtBackgroundPriority() {
   // Trace events must be closed in reverse order of opening so that they nest
   // correctly.
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   if (original_thread_priority_) {
     TRACE_EVENT_END0(
         "base",
@@ -53,7 +57,7 @@ ScopedMayLoadLibraryAtBackgroundPriority::
 
   if (already_loaded_)
     already_loaded_->store(true, std::memory_order_relaxed);
-#endif  // OS_WIN
+#endif  // BUILDFLAG(IS_WIN)
   TRACE_EVENT_END0("base", "ScopedMayLoadLibraryAtBackgroundPriority");
 }
 

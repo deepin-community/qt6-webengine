@@ -7,8 +7,6 @@
 #include <algorithm>
 #include <iterator>
 
-#include "base/macros.h"
-#include "base/stl_util.h"
 #include "device/gamepad/gamepad_id_list.h"
 #include "device/gamepad/gamepad_standard_mappings.h"
 
@@ -24,13 +22,6 @@ enum StadiaGamepadButtons {
   STADIA_GAMEPAD_BUTTON_EXTRA = BUTTON_INDEX_COUNT,
   STADIA_GAMEPAD_BUTTON_EXTRA2,
   STADIA_GAMEPAD_BUTTON_COUNT
-};
-
-// The Switch Pro controller has a Capture button that has no equivalent in the
-// Standard Gamepad.
-enum SwitchProButtons {
-  SWITCH_PRO_BUTTON_CAPTURE = BUTTON_INDEX_COUNT,
-  SWITCH_PRO_BUTTON_COUNT
 };
 
 void MapperLogitechDInput(const Gamepad& input, Gamepad* mapped) {
@@ -421,34 +412,6 @@ void MapperBoomN64Psx(const Gamepad& input, Gamepad* mapped) {
   mapped->axes_length = AXIS_INDEX_COUNT;
 }
 
-void MapperSwitchJoyCon(const Gamepad& input, Gamepad* mapped) {
-  *mapped = input;
-  mapped->buttons_length = BUTTON_INDEX_COUNT;
-  mapped->axes_length = 2;
-}
-
-void MapperSwitchPro(const Gamepad& input, Gamepad* mapped) {
-  *mapped = input;
-  mapped->buttons_length = SWITCH_PRO_BUTTON_COUNT;
-  mapped->axes_length = AXIS_INDEX_COUNT;
-}
-
-void MapperSwitchComposite(const Gamepad& input, Gamepad* mapped) {
-  // In composite mode, the inputs from two Joy-Cons are combined to form one
-  // virtual gamepad. Some buttons do not have equivalents in the Standard
-  // Gamepad and are exposed as extra buttons:
-  // * Capture button (Joy-Con L):  BUTTON_INDEX_COUNT
-  // * SL (Joy-Con L):              BUTTON_INDEX_COUNT + 1
-  // * SR (Joy-Con L):              BUTTON_INDEX_COUNT + 2
-  // * SL (Joy-Con R):              BUTTON_INDEX_COUNT + 3
-  // * SR (Joy-Con R):              BUTTON_INDEX_COUNT + 4
-  const size_t kSwitchCompositeExtraButtonCount = 5;
-  *mapped = input;
-  mapped->buttons_length =
-      BUTTON_INDEX_COUNT + kSwitchCompositeExtraButtonCount;
-  mapped->axes_length = AXIS_INDEX_COUNT;
-}
-
 void MapperSnakebyteIDroidCon(const Gamepad& input, Gamepad* mapped) {
   *mapped = input;
   mapped->buttons[BUTTON_INDEX_TERTIARY] = input.buttons[3];
@@ -499,6 +462,29 @@ void MapperHoripadSwitch(const Gamepad& input, Gamepad* mapped) {
   mapped->axes_length = AXIS_INDEX_COUNT;
 }
 
+void MapperXboxBluetooth(const Gamepad& input, Gamepad* mapped) {
+  *mapped = input;
+  mapped->buttons[BUTTON_INDEX_PRIMARY] = input.buttons[0];
+  mapped->buttons[BUTTON_INDEX_SECONDARY] = input.buttons[1];
+  mapped->buttons[BUTTON_INDEX_TERTIARY] = input.buttons[3];
+  mapped->buttons[BUTTON_INDEX_QUATERNARY] = input.buttons[4];
+  mapped->buttons[BUTTON_INDEX_LEFT_SHOULDER] = input.buttons[6];
+  mapped->buttons[BUTTON_INDEX_RIGHT_SHOULDER] = input.buttons[7];
+  mapped->buttons[BUTTON_INDEX_LEFT_TRIGGER] = AxisToButton(input.axes[3]);
+  mapped->buttons[BUTTON_INDEX_RIGHT_TRIGGER] = AxisToButton(input.axes[4]);
+  mapped->buttons[BUTTON_INDEX_BACK_SELECT] = input.buttons[10];
+  mapped->buttons[BUTTON_INDEX_START] = input.buttons[11];
+  mapped->buttons[BUTTON_INDEX_LEFT_THUMBSTICK] = input.buttons[13];
+  mapped->buttons[BUTTON_INDEX_RIGHT_THUMBSTICK] = input.buttons[14];
+  mapped->buttons[BUTTON_INDEX_META] = input.buttons[12];
+  mapped->axes[AXIS_INDEX_RIGHT_STICK_X] = input.axes[2];
+  mapped->axes[AXIS_INDEX_RIGHT_STICK_Y] = input.axes[5];
+  DpadFromAxis(mapped, input.axes[9]);
+
+  mapped->buttons_length = BUTTON_INDEX_COUNT;
+  mapped->axes_length = AXIS_INDEX_COUNT;
+}
+
 constexpr struct MappingData {
   GamepadId gamepad_id;
   GamepadStandardMappingFunction function;
@@ -511,6 +497,12 @@ constexpr struct MappingData {
     {GamepadId::kDragonRiseProduct0011, Mapper2Axes8Keys},
     // HORIPAD for Nintendo Switch
     {GamepadId::kHoriProduct00c1, MapperHoripadSwitch},
+    // Xbox One S (Bluetooth)
+    {GamepadId::kMicrosoftProduct0b20, MapperXboxBluetooth},
+    // Xbox Elite Series 2 (Bluetooth)
+    {GamepadId::kMicrosoftProduct0b21, MapperXboxBluetooth},
+    // Xbox Adaptive (Bluetooth)
+    {GamepadId::kMicrosoftProduct0b22, MapperXboxBluetooth},
     // Logitech F310, D-mode
     {GamepadId::kLogitechProductc216, MapperLogitechDInput},
     // Logitech F510, D-mode
@@ -550,15 +542,15 @@ constexpr struct MappingData {
     // Stadia Controller
     {GamepadId::kGoogleProduct9400, MapperStadiaController},
     // Moga Pro Controller (HID mode)
-    {GamepadId::kVendor20d6Product6271, MapperMogaPro},
+    {GamepadId::kBdaProduct6271, MapperMogaPro},
     // OnLive Controller (Bluetooth)
-    {GamepadId::kVendor2378Product1008, MapperOnLiveWireless},
+    {GamepadId::kOnLiveProduct1008, MapperOnLiveWireless},
     // OnLive Controller (Wired)
-    {GamepadId::kVendor2378Product100a, MapperOnLiveWireless},
+    {GamepadId::kOnLiveProduct100a, MapperOnLiveWireless},
     // OUYA Controller
-    {GamepadId::kVendor2836Product0001, MapperOUYA},
+    {GamepadId::kOuyaProduct0001, MapperOUYA},
     // SCUF Vantage, SCUF Vantage 2
-    {GamepadId::kVendor2e95Product7725, MapperDualshock4},
+    {GamepadId::kScufProduct7725, MapperDualshock4},
     // boom PSX+N64 USB Converter
     {GamepadId::kPrototypeVendorProduct0667, MapperBoomN64Psx},
     // Stadia Controller prototype

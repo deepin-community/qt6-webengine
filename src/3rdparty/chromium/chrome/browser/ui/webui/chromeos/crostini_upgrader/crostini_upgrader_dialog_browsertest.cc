@@ -4,15 +4,16 @@
 
 #include "chrome/browser/ui/webui/chromeos/crostini_upgrader/crostini_upgrader_dialog.h"
 
+#include "base/callback_helpers.h"
 #include "base/feature_list.h"
 #include "base/metrics/histogram_base.h"
 #include "base/run_loop.h"
 #include "base/test/metrics/histogram_tester.h"
-#include "chrome/browser/chromeos/crostini/crostini_manager.h"
-#include "chrome/browser/chromeos/crostini/crostini_test_helper.h"
-#include "chrome/browser/chromeos/crostini/crostini_util.h"
-#include "chrome/browser/chromeos/guest_os/guest_os_registry_service.h"
-#include "chrome/browser/chromeos/guest_os/guest_os_registry_service_factory.h"
+#include "chrome/browser/ash/crostini/crostini_manager.h"
+#include "chrome/browser/ash/crostini/crostini_test_helper.h"
+#include "chrome/browser/ash/crostini/crostini_util.h"
+#include "chrome/browser/ash/guest_os/guest_os_registry_service.h"
+#include "chrome/browser/ash/guest_os/guest_os_registry_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/views/crostini/crostini_dialogue_browser_test_util.h"
@@ -31,6 +32,11 @@ class CrostiniUpgraderDialogBrowserTest : public CrostiniDialogBrowserTest {
   CrostiniUpgraderDialogBrowserTest()
       : CrostiniDialogBrowserTest(true /*register_termina*/),
         app_id_(crostini::CrostiniTestHelper::GenerateAppId(kDesktopFileId)) {}
+
+  CrostiniUpgraderDialogBrowserTest(const CrostiniUpgraderDialogBrowserTest&) =
+      delete;
+  CrostiniUpgraderDialogBrowserTest& operator=(
+      const CrostiniUpgraderDialogBrowserTest&) = delete;
 
   // DialogBrowserTest:
   void ShowUi(const std::string& name) override {
@@ -99,8 +105,6 @@ class CrostiniUpgraderDialogBrowserTest : public CrostiniDialogBrowserTest {
 
  private:
   std::string app_id_;
-
-  DISALLOW_COPY_AND_ASSIGN(CrostiniUpgraderDialogBrowserTest);
 };
 
 IN_PROC_BROWSER_TEST_F(CrostiniUpgraderDialogBrowserTest,

@@ -11,6 +11,8 @@
 #include "fxjs/cfx_v8.h"
 #include "fxjs/fxv8.h"
 #include "fxjs/js_resources.h"
+#include "third_party/base/numerics/safe_conversions.h"
+#include "v8/include/v8-primitive.h"
 #include "xfa/fgas/crt/cfgas_decimal.h"
 #include "xfa/fxfa/cxfa_eventparam.h"
 #include "xfa/fxfa/cxfa_ffnotify.h"
@@ -110,8 +112,8 @@ CJS_Result CJX_Field::getSaveItem(
   if (!node->IsWidgetReady())
     return CJS_Result::Success(runtime->NewNull());
 
-  Optional<WideString> value = node->GetChoiceListItem(iIndex, true);
-  if (!value)
+  absl::optional<WideString> value = node->GetChoiceListItem(iIndex, true);
+  if (!value.has_value())
     return CJS_Result::Success(runtime->NewNull());
 
   return CJS_Result::Success(
@@ -176,8 +178,8 @@ CJS_Result CJX_Field::getDisplayItem(
   if (!node->IsWidgetReady())
     return CJS_Result::Success(runtime->NewNull());
 
-  Optional<WideString> value = node->GetChoiceListItem(iIndex, false);
-  if (!value)
+  absl::optional<WideString> value = node->GetChoiceListItem(iIndex, false);
+  if (!value.has_value())
     return CJS_Result::Success(runtime->NewNull());
 
   return CJS_Result::Success(
@@ -196,11 +198,11 @@ CJS_Result CJX_Field::setItemState(
 
   int32_t iIndex = runtime->ToInt32(params[0]);
   if (runtime->ToInt32(params[1]) != 0) {
-    node->SetItemState(iIndex, true, true, true, true);
+    node->SetItemState(iIndex, true, true, true);
     return CJS_Result::Success();
   }
   if (node->GetItemState(iIndex))
-    node->SetItemState(iIndex, false, true, true, true);
+    node->SetItemState(iIndex, false, true, true);
 
   return CJS_Result::Success();
 }
@@ -311,19 +313,20 @@ void CJX_Field::editValue(v8::Isolate* pIsolate,
     return;
 
   if (bSetting) {
-    node->SetValue(XFA_VALUEPICTURE_Edit,
+    node->SetValue(XFA_ValuePicture::kEdit,
                    fxv8::ReentrantToWideStringHelper(pIsolate, *pValue));
     return;
   }
   *pValue = fxv8::NewStringHelper(
-      pIsolate, node->GetValue(XFA_VALUEPICTURE_Edit).ToUTF8().AsStringView());
+      pIsolate,
+      node->GetValue(XFA_ValuePicture::kEdit).ToUTF8().AsStringView());
 }
 
 void CJX_Field::formatMessage(v8::Isolate* pIsolate,
                               v8::Local<v8::Value>* pValue,
                               bool bSetting,
                               XFA_Attribute eAttribute) {
-  ScriptSomMessage(pIsolate, pValue, bSetting, XFA_SOM_FormatMessage);
+  ScriptSomMessage(pIsolate, pValue, bSetting, SOMMessageType::kFormatMessage);
 }
 
 void CJX_Field::formattedValue(v8::Isolate* pIsolate,
@@ -335,13 +338,13 @@ void CJX_Field::formattedValue(v8::Isolate* pIsolate,
     return;
 
   if (bSetting) {
-    node->SetValue(XFA_VALUEPICTURE_Display,
+    node->SetValue(XFA_ValuePicture::kDisplay,
                    fxv8::ReentrantToWideStringHelper(pIsolate, *pValue));
     return;
   }
   *pValue = fxv8::NewStringHelper(
       pIsolate,
-      node->GetValue(XFA_VALUEPICTURE_Display).ToUTF8().AsStringView());
+      node->GetValue(XFA_ValuePicture::kDisplay).ToUTF8().AsStringView());
 }
 
 void CJX_Field::length(v8::Isolate* pIsolate,
@@ -349,13 +352,15 @@ void CJX_Field::length(v8::Isolate* pIsolate,
                        bool bSetting,
                        XFA_Attribute eAttribute) {
   if (bSetting) {
-    ThrowInvalidPropertyException();
+    ThrowInvalidPropertyException(pIsolate);
     return;
   }
 
   CXFA_Node* node = GetXFANode();
   *pValue = fxv8::NewNumberHelper(
-      pIsolate, node->IsWidgetReady() ? node->CountChoiceListItems(true) : 0);
+      pIsolate, node->IsWidgetReady() ? pdfium::base::checked_cast<int>(
+                                            node->CountChoiceListItems(true))
+                                      : 0);
 }
 
 void CJX_Field::parentSubform(v8::Isolate* pIsolate,
@@ -363,7 +368,7 @@ void CJX_Field::parentSubform(v8::Isolate* pIsolate,
                               bool bSetting,
                               XFA_Attribute eAttribute) {
   if (bSetting) {
-    ThrowInvalidPropertyException();
+    ThrowInvalidPropertyException(pIsolate);
     return;
   }
   *pValue = fxv8::NewNullHelper(pIsolate);
@@ -388,7 +393,7 @@ void CJX_Field::selectedIndex(v8::Isolate* pIsolate,
     return;
   }
 
-  node->SetItemState(iIndex, true, true, true, true);
+  node->SetItemState(iIndex, true, true, true);
 }
 
 void CJX_Field::rawValue(v8::Isolate* pIsolate,

@@ -10,11 +10,12 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "build/chromeos_buildflags.h"
 #include "chrome/browser/consent_auditor/consent_auditor_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_avatar_icon_util.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
-#include "chrome/browser/sync/profile_sync_service_factory.h"
+#include "chrome/browser/sync/sync_service_factory.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/signin_view_controller_delegate.h"
@@ -24,8 +25,9 @@
 #include "chrome/common/webui_url_constants.h"
 #include "components/consent_auditor/consent_auditor.h"
 #include "components/signin/public/base/avatar_icon_util.h"
+#include "components/signin/public/base/consent_level.h"
+#include "components/signin/public/base/signin_switches.h"
 #include "components/signin/public/identity_manager/account_info.h"
-#include "components/signin/public/identity_manager/consent_level.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
 #include "url/gurl.h"
@@ -65,23 +67,23 @@ void SyncConfirmationHandler::OnBrowserRemoved(Browser* browser) {
 }
 
 void SyncConfirmationHandler::RegisterMessages() {
-  web_ui()->RegisterMessageCallback(
+  web_ui()->RegisterDeprecatedMessageCallback(
       "confirm", base::BindRepeating(&SyncConfirmationHandler::HandleConfirm,
                                      base::Unretained(this)));
-  web_ui()->RegisterMessageCallback(
+  web_ui()->RegisterDeprecatedMessageCallback(
       "undo", base::BindRepeating(&SyncConfirmationHandler::HandleUndo,
                                   base::Unretained(this)));
-  web_ui()->RegisterMessageCallback(
+  web_ui()->RegisterDeprecatedMessageCallback(
       "goToSettings",
       base::BindRepeating(&SyncConfirmationHandler::HandleGoToSettings,
                           base::Unretained(this)));
-  web_ui()->RegisterMessageCallback(
+  web_ui()->RegisterDeprecatedMessageCallback(
       "initializedWithSize",
       base::BindRepeating(&SyncConfirmationHandler::HandleInitializedWithSize,
                           base::Unretained(this)));
-  web_ui()->RegisterMessageCallback(
-      "accountImageRequest",
-      base::BindRepeating(&SyncConfirmationHandler::HandleAccountImageRequest,
+  web_ui()->RegisterDeprecatedMessageCallback(
+      "accountInfoRequest",
+      base::BindRepeating(&SyncConfirmationHandler::HandleAccountInfoRequest,
                           base::Unretained(this)));
 }
 
@@ -92,36 +94,40 @@ void SyncConfirmationHandler::HandleConfirm(const base::ListValue* args) {
 }
 
 void SyncConfirmationHandler::HandleGoToSettings(const base::ListValue* args) {
-  DCHECK(ProfileSyncServiceFactory::IsSyncAllowed(profile_));
+  DCHECK(SyncServiceFactory::IsSyncAllowed(profile_));
   did_user_explicitly_interact_ = true;
   RecordConsent(args);
   CloseModalSigninWindow(LoginUIService::CONFIGURE_SYNC_FIRST);
 }
 
 void SyncConfirmationHandler::HandleUndo(const base::ListValue* args) {
+#if BUILDFLAG(IS_CHROMEOS_LACROS)
+  DCHECK(base::FeatureList::IsEnabled(switches::kLacrosNonSyncingProfiles));
+#endif
   did_user_explicitly_interact_ = true;
   CloseModalSigninWindow(LoginUIService::ABORT_SYNC);
 }
 
-void SyncConfirmationHandler::HandleAccountImageRequest(
+void SyncConfirmationHandler::HandleAccountInfoRequest(
     const base::ListValue* args) {
-  DCHECK(ProfileSyncServiceFactory::IsSyncAllowed(profile_));
-  base::Optional<AccountInfo> primary_account_info =
-      identity_manager_->FindExtendedAccountInfoForAccountWithRefreshToken(
-          identity_manager_->GetPrimaryAccountInfo(ConsentLevel::kNotRequired));
+  DCHECK(SyncServiceFactory::IsSyncAllowed(profile_));
+  AccountInfo primary_account_info = identity_manager_->FindExtendedAccountInfo(
+      identity_manager_->GetPrimaryAccountInfo(ConsentLevel::kSignin));
 
-  // Fire the "account-image-changed" listener from |SetUserImageURL()|.
+  // Fire the "account-info-changed" listener from |SetAccountInfo()|.
   // Note: If the account info is not available yet in the
   // IdentityManager, i.e. account_info is empty, the listener will be
   // fired again through |OnAccountUpdated()|.
-  if (primary_account_info)
-    SetUserImageURL(primary_account_info->picture_url);
+  if (primary_account_info.IsValid())
+    SetAccountInfo(primary_account_info);
 }
 
 void SyncConfirmationHandler::RecordConsent(const base::ListValue* args) {
-  CHECK_EQ(2U, args->GetSize());
-  base::Value::ConstListView consent_description = args->GetList()[0].GetList();
-  const std::string& consent_confirmation = args->GetList()[1].GetString();
+  CHECK_EQ(2U, args->GetListDeprecated().size());
+  base::Value::ConstListView consent_description =
+      args->GetListDeprecated()[0].GetListDeprecated();
+  const std::string& consent_confirmation =
+      args->GetListDeprecated()[1].GetString();
 
   // The strings returned by the WebUI are not free-form, they must belong into
   // a pre-determined set of strings (stored in |string_to_grd_id_map_|). As
@@ -151,30 +157,28 @@ void SyncConfirmationHandler::RecordConsent(const base::ListValue* args) {
   consent_auditor::ConsentAuditor* consent_auditor =
       ConsentAuditorFactory::GetForProfile(profile_);
   consent_auditor->RecordSyncConsent(
-      identity_manager_->GetPrimaryAccountId(ConsentLevel::kNotRequired),
+      identity_manager_->GetPrimaryAccountId(ConsentLevel::kSignin),
       sync_consent);
 }
 
-void SyncConfirmationHandler::SetUserImageURL(const std::string& picture_url) {
-  if (!ProfileSyncServiceFactory::IsSyncAllowed(profile_)) {
+void SyncConfirmationHandler::SetAccountInfo(const AccountInfo& info) {
+  DCHECK(info.IsValid());
+  if (!SyncServiceFactory::IsSyncAllowed(profile_)) {
     // The sync disabled confirmation handler does not present the user image.
     // Avoid updating the image URL in this case.
     return;
   }
 
-  GURL picture_gurl(picture_url);
-  if (!picture_gurl.is_valid()) {
-    // As long as the provided gaia picture is not valid, stick to the default
-    // avatar provided in the load-time data.
-    return;
-  }
-
+  GURL picture_gurl(info.picture_url);
   GURL picture_gurl_with_options = signin::GetAvatarImageURLWithOptions(
       picture_gurl, kProfileImageSize, false /* no_silhouette */);
-  base::Value picture_url_value(picture_gurl_with_options.spec());
+
+  base::Value value(base::Value::Type::DICTIONARY);
+  value.SetKey("src", base::Value(picture_gurl_with_options.spec()));
+  value.SetKey("showEnterpriseBadge", base::Value(info.IsManaged()));
 
   AllowJavascript();
-  FireWebUIListener("account-image-changed", picture_url_value);
+  FireWebUIListener("account-info-changed", value);
 }
 
 void SyncConfirmationHandler::OnExtendedAccountInfoUpdated(
@@ -183,12 +187,12 @@ void SyncConfirmationHandler::OnExtendedAccountInfoUpdated(
     return;
 
   if (info.account_id !=
-      identity_manager_->GetPrimaryAccountId(ConsentLevel::kNotRequired)) {
+      identity_manager_->GetPrimaryAccountId(ConsentLevel::kSignin)) {
     return;
   }
 
   identity_manager_->RemoveObserver(this);
-  SetUserImageURL(info.picture_url);
+  SetAccountInfo(info);
 }
 
 void SyncConfirmationHandler::CloseModalSigninWindow(
@@ -211,27 +215,24 @@ void SyncConfirmationHandler::CloseModalSigninWindow(
   }
   LoginUIServiceFactory::GetForProfile(profile_)->SyncConfirmationUIClosed(
       result);
-  if (browser_)
-    browser_->signin_view_controller()->CloseModalSignin();
 }
 
 void SyncConfirmationHandler::HandleInitializedWithSize(
     const base::ListValue* args) {
   AllowJavascript();
 
-  base::Optional<AccountInfo> primary_account_info =
-      identity_manager_->FindExtendedAccountInfoForAccountWithRefreshToken(
-          identity_manager_->GetPrimaryAccountInfo(ConsentLevel::kNotRequired));
-  if (!primary_account_info) {
+  AccountInfo primary_account_info = identity_manager_->FindExtendedAccountInfo(
+      identity_manager_->GetPrimaryAccountInfo(ConsentLevel::kSignin));
+  if (primary_account_info.IsEmpty()) {
     // No account is signed in, so there is nothing to be displayed in the sync
     // confirmation dialog.
     return;
   }
 
-  if (!primary_account_info->IsValid()) {
+  if (!primary_account_info.IsValid()) {
     identity_manager_->AddObserver(this);
   } else {
-    SetUserImageURL(primary_account_info->picture_url);
+    SetAccountInfo(primary_account_info);
   }
 
   if (browser_)

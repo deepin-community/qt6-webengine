@@ -23,6 +23,7 @@
 #define AVCODEC_WMA_H
 
 #include "libavutil/float_dsp.h"
+#include "libavutil/mem_internal.h"
 
 #include "avcodec.h"
 #include "fft.h"
@@ -133,6 +134,8 @@ typedef struct WMACodecContext {
     float lsp_pow_m_table1[(1 << LSP_POW_BITS)];
     float lsp_pow_m_table2[(1 << LSP_POW_BITS)];
     AVFloatDSPContext *fdsp;
+
+    int eof_done; /* decode flag to output remaining samples after EOF */
 
 #ifdef TRACE
     int frame_count;

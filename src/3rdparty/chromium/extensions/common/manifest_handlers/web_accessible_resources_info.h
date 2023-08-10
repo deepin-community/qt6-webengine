@@ -8,7 +8,6 @@
 #include <string>
 #include <vector>
 
-#include "base/macros.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_id.h"
 #include "extensions/common/manifest_handler.h"
@@ -51,7 +50,7 @@ struct WebAccessibleResourcesInfo : public Extension::ManifestData {
   static bool IsResourceWebAccessible(
       const Extension* extension,
       const std::string& relative_path,
-      const base::Optional<url::Origin>& initiator_origin);
+      const absl::optional<url::Origin>& initiator_origin);
 
   // Returns true when 'web_accessible_resources' are defined for the extension.
   static bool HasWebAccessibleResources(const Extension* extension);
@@ -64,14 +63,17 @@ struct WebAccessibleResourcesInfo : public Extension::ManifestData {
 class WebAccessibleResourcesHandler : public ManifestHandler {
  public:
   WebAccessibleResourcesHandler();
+
+  WebAccessibleResourcesHandler(const WebAccessibleResourcesHandler&) = delete;
+  WebAccessibleResourcesHandler& operator=(
+      const WebAccessibleResourcesHandler&) = delete;
+
   ~WebAccessibleResourcesHandler() override;
 
-  bool Parse(Extension* extension, base::string16* error) override;
+  bool Parse(Extension* extension, std::u16string* error) override;
 
  private:
   base::span<const char* const> Keys() const override;
-
-  DISALLOW_COPY_AND_ASSIGN(WebAccessibleResourcesHandler);
 };
 
 }  // namespace extensions

@@ -10,7 +10,7 @@
 
 #include "gpu/vulkan/vulkan_implementation.h"
 #include "gpu/vulkan/vulkan_instance.h"
-#include "ui/ozone/public/mojom/scenic_gpu_host.mojom.h"
+#include "ui/ozone/platform/scenic/mojom/scenic_gpu_host.mojom.h"
 
 namespace ui {
 
@@ -21,8 +21,12 @@ class VulkanImplementationScenic : public gpu::VulkanImplementation {
  public:
   VulkanImplementationScenic(ScenicSurfaceFactory* scenic_surface_factory,
                              SysmemBufferManager* sysmem_buffer_manager,
-                             bool allow_protected_memory,
-                             bool enforce_protected_memory);
+                             bool allow_protected_memory);
+
+  VulkanImplementationScenic(const VulkanImplementationScenic&) = delete;
+  VulkanImplementationScenic& operator=(const VulkanImplementationScenic&) =
+      delete;
+
   ~VulkanImplementationScenic() override;
 
   // VulkanImplementation:
@@ -68,8 +72,6 @@ class VulkanImplementationScenic : public gpu::VulkanImplementation {
   SysmemBufferManager* const sysmem_buffer_manager_;
 
   gpu::VulkanInstance vulkan_instance_;
-
-  DISALLOW_COPY_AND_ASSIGN(VulkanImplementationScenic);
 };
 
 }  // namespace ui

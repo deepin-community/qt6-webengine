@@ -5,7 +5,7 @@
 #ifndef UI_VIEWS_CONTROLS_DOT_INDICATOR_H_
 #define UI_VIEWS_CONTROLS_DOT_INDICATOR_H_
 
-#include "base/macros.h"
+#include "ui/gfx/color_palette.h"
 #include "ui/views/view.h"
 
 namespace views {
@@ -33,9 +33,10 @@ class VIEWS_EXPORT DotIndicator : public View {
 
   // View:
   void OnPaint(gfx::Canvas* canvas) override;
+  void OnThemeChanged() override;
 
-  SkColor dot_color_ = SK_ColorRED;
-  SkColor border_color_ = SK_ColorWHITE;
+  absl::optional<SkColor> dot_color_;
+  absl::optional<SkColor> border_color_;
 };
 
 }  // namespace views

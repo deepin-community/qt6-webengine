@@ -4,6 +4,8 @@
 
 #include "BadPatternFinder.h"
 #include <clang/AST/Decl.h>
+#include "BlinkGCPluginOptions.h"
+#include "Config.h"
 #include "DiagnosticsReporter.h"
 
 #include <algorithm>
@@ -63,11 +65,11 @@ class OptionalGarbageCollectedMatcher : public MatchFinder::MatchCallback {
       : diagnostics_(diagnostics) {}
 
   void Register(MatchFinder& match_finder) {
-    // Matches fields and new-expressions of type base::Optional where the
+    // Matches fields and new-expressions of type absl::optional where the
     // template argument is known to refer to a garbage-collected type.
     auto optional_type = hasType(
         classTemplateSpecializationDecl(
-            hasName("::base::Optional"),
+            hasName("::absl::optional"),
             hasTemplateArgument(0, refersToType(GarbageCollectedType())))
             .bind("optional"));
     auto optional_field = fieldDecl(optional_type).bind("bad_field");
@@ -147,10 +149,42 @@ class VariantGarbageCollectedMatcher : public MatchFinder::MatchCallback {
   DiagnosticsReporter& diagnostics_;
 };
 
+class MemberOnStackMatcher : public MatchFinder::MatchCallback {
+ public:
+  explicit MemberOnStackMatcher(DiagnosticsReporter& diagnostics)
+      : diagnostics_(diagnostics) {}
+
+  void Register(MatchFinder& match_finder) {
+    auto class_member_variable_matcher =
+        varDecl(hasType(recordDecl(
+                    hasAnyName("::blink::Member", "::blink::WeakMember",
+                               "::cppgc::internal::BasicMember"))))
+            .bind("member");
+    match_finder.addDynamicMatcher(class_member_variable_matcher, this);
+    auto alias_member_variable_matcher =
+        varDecl(hasType(typeAliasTemplateDecl(
+                    hasAnyName("::blink::Member", "::blink::WeakMember",
+                               "::cppgc::Member", "::cppgc::WeakMember"))))
+            .bind("member");
+    match_finder.addDynamicMatcher(alias_member_variable_matcher, this);
+  }
+
+  void run(const MatchFinder::MatchResult& result) override {
+    auto* member = result.Nodes.getNodeAs<clang::VarDecl>("member");
+    if (Config::IsIgnoreAnnotated(member))
+      return;
+    diagnostics_.MemberOnStack(member);
+  }
+
+ private:
+  DiagnosticsReporter& diagnostics_;
+};
+
 }  // namespace
 
 void FindBadPatterns(clang::ASTContext& ast_context,
-                     DiagnosticsReporter& diagnostics) {
+                     DiagnosticsReporter& diagnostics,
+                     const BlinkGCPluginOptions& options) {
   MatchFinder match_finder;
 
   UniquePtrGarbageCollectedMatcher unique_ptr_gc(diagnostics);
@@ -161,6 +195,11 @@ void FindBadPatterns(clang::ASTContext& ast_context,
 
   VariantGarbageCollectedMatcher variant_gc(diagnostics);
   variant_gc.Register(match_finder);
+
+  MemberOnStackMatcher member_on_stack(diagnostics);
+  if (options.enable_members_on_stack_check) {
+    member_on_stack.Register(match_finder);
+  }
 
   match_finder.matchAST(ast_context);
 }

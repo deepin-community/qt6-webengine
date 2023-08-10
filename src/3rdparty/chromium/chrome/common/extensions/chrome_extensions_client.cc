@@ -13,6 +13,7 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_util.h"
 #include "base/values.h"
+#include "chrome/common/chrome_resource_request_blocked_reason.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/extensions/chrome_extensions_api_provider.h"
 #include "chrome/common/extensions/manifest_handlers/theme_handler.h"
@@ -47,8 +48,6 @@ const char kExtensionBlocklistUrlPrefix[] =
     "http://www.gstatic.com/chrome/extensions/blocklist";
 const char kExtensionBlocklistHttpsUrlPrefix[] =
     "https://www.gstatic.com/chrome/extensions/blocklist";
-
-const char kThumbsWhiteListedExtension[] = "khopmbdjffemhegeeobelklnbglcdgfh";
 
 }  // namespace
 
@@ -100,8 +99,6 @@ void ChromeExtensionsClient::FilterHostPermissions(
     const URLPatternSet& hosts,
     URLPatternSet* new_hosts,
     PermissionIDSet* permissions) const {
-  // When editing this function, be sure to add the same functionality to
-  // FilterHostPermissions() above.
   for (auto i = hosts.begin(); i != hosts.end(); ++i) {
     // Filters out every URL pattern that matches chrome:// scheme.
     if (i->scheme() == content::kChromeUIScheme) {
@@ -110,7 +107,7 @@ void ChromeExtensionsClient::FilterHostPermissions(
       // We should not add any additional "host" here.
       if (GURL(chrome::kChromeUIFaviconURL).host() != i->host())
         continue;
-      permissions->insert(APIPermission::kFavicon);
+      permissions->insert(mojom::APIPermissionID::kFavicon);
     } else {
       new_hosts->AddPattern(*i);
     }
@@ -140,19 +137,6 @@ URLPatternSet ChromeExtensionsClient::GetPermittedChromeSchemeHosts(
   hosts.AddPattern(URLPattern(URLPattern::SCHEME_CHROMEUI,
                               chrome::kChromeUIFaviconURL));
 
-  // Experimental extensions are also allowed chrome://thumb.
-  //
-  // TODO: A public API should be created for retrieving thumbnails.
-  // See http://crbug.com/222856. A temporary hack is implemented here to
-  // make chrome://thumbs available to NTP Russia extension as
-  // non-experimental.
-  if ((api_permissions.find(APIPermission::kExperimental) !=
-       api_permissions.end()) ||
-      (extension->id() == kThumbsWhiteListedExtension &&
-       extension->from_webstore())) {
-    hosts.AddPattern(URLPattern(URLPattern::SCHEME_CHROMEUI,
-                                chrome::kChromeUIThumbnailURL));
-  }
   return hosts;
 }
 
@@ -180,12 +164,12 @@ const GURL& ChromeExtensionsClient::GetWebstoreUpdateURL() const {
   return webstore_update_url_;
 }
 
-bool ChromeExtensionsClient::IsBlacklistUpdateURL(const GURL& url) const {
+bool ChromeExtensionsClient::IsBlocklistUpdateURL(const GURL& url) const {
   // The extension blocklist URL is returned from the update service and
   // therefore not determined by Chromium. If the location of the blocklist file
   // ever changes, we need to update this function. A DCHECK in the
   // ExtensionUpdater ensures that we notice a change. This is the full URL
-  // of a blacklist:
+  // of a blocklist:
   // http://www.gstatic.com/chrome/extensions/blocklist/l_0_0_0_7.txt
   return base::StartsWith(url.spec(), kExtensionBlocklistUrlPrefix,
                           base::CompareCase::SENSITIVE) ||
@@ -203,9 +187,9 @@ std::set<base::FilePath> ChromeExtensionsClient::GetBrowserImagePaths(
   if (theme_images) {
     for (base::DictionaryValue::Iterator it(*theme_images); !it.IsAtEnd();
          it.Advance()) {
-      std::string path;
-      if (it.value().GetAsString(&path))
-        image_paths.insert(base::FilePath::FromUTF8Unsafe(path));
+      if (it.value().is_string())
+        image_paths.insert(
+            base::FilePath::FromUTF8Unsafe(it.value().GetString()));
     }
   }
 
@@ -239,16 +223,21 @@ void ChromeExtensionsClient::AddOriginAccessPermissions(
   }
 
   // TODO(jstritar): We should try to remove this special case. Also, these
-  // whitelist entries need to be updated when the kManagement permission
+  // allowed entries need to be updated when the kManagement permission
   // changes.
   if (is_extension_active && extension.permissions_data()->HasAPIPermission(
-                                 extensions::APIPermission::kManagement)) {
+                                 mojom::APIPermissionID::kManagement)) {
     origin_patterns->push_back(network::mojom::CorsOriginPattern::New(
         content::kChromeUIScheme, chrome::kChromeUIExtensionIconHost,
         /*port=*/0, network::mojom::CorsDomainMatchMode::kDisallowSubdomains,
         network::mojom::CorsPortMatchMode::kAllowAnyPort,
         network::mojom::CorsOriginAccessMatchPriority::kDefaultPriority));
   }
+}
+
+absl::optional<int> ChromeExtensionsClient::GetExtensionExtendedErrorCode()
+    const {
+  return static_cast<int>(ChromeResourceRequestBlockedReason::kExtension);
 }
 
 }  // namespace extensions

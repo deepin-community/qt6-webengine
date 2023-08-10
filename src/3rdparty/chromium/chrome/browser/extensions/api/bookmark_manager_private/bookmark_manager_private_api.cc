@@ -42,6 +42,7 @@
 #include "extensions/browser/extension_function_dispatcher.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/view_type_utils.h"
+#include "extensions/common/mojom/view_type.mojom.h"
 #include "ui/base/dragdrop/mojom/drag_drop_types.mojom-shared.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/webui/web_ui_util.h"
@@ -104,12 +105,12 @@ CreateNodeDataElementFromBookmarkNode(const BookmarkNode& node) {
   bookmark_manager_private::BookmarkNodeDataElement element;
   // Add id and parentId so we can associate the data with existing nodes on the
   // client side.
-  element.id.reset(new std::string(base::NumberToString(node.id())));
-  element.parent_id.reset(
-      new std::string(base::NumberToString(node.parent()->id())));
+  element.id = std::make_unique<std::string>(base::NumberToString(node.id()));
+  element.parent_id =
+      std::make_unique<std::string>(base::NumberToString(node.parent()->id()));
 
   if (node.is_url())
-    element.url.reset(new std::string(node.url().spec()));
+    element.url = std::make_unique<std::string>(node.url().spec());
 
   element.title = base::UTF16ToUTF8(node.GetTitle());
   for (const auto& child : node.children()) {
@@ -128,7 +129,7 @@ bookmark_manager_private::BookmarkNodeDataElement CreateApiNodeDataElement(
   bookmark_manager_private::BookmarkNodeDataElement node_element;
 
   if (element.is_url)
-    node_element.url.reset(new std::string(element.url.spec()));
+    node_element.url = std::make_unique<std::string>(element.url.spec());
   node_element.title = base::UTF16ToUTF8(element.title);
   for (size_t i = 0; i < element.children.size(); ++i) {
     node_element.children.push_back(
@@ -187,7 +188,7 @@ BookmarkManagerPrivateEventRouter::~BookmarkManagerPrivateEventRouter() {
 void BookmarkManagerPrivateEventRouter::DispatchEvent(
     events::HistogramValue histogram_value,
     const std::string& event_name,
-    std::unique_ptr<base::ListValue> event_args) {
+    std::vector<base::Value> event_args) {
   EventRouter::Get(browser_context_)
       ->BroadcastEvent(std::make_unique<Event>(histogram_value, event_name,
                                                std::move(event_args)));
@@ -224,20 +225,20 @@ BookmarkManagerPrivateAPI::GetFactoryInstance() {
 void BookmarkManagerPrivateAPI::OnListenerAdded(
     const EventListenerInfo& details) {
   EventRouter::Get(browser_context_)->UnregisterObserver(this);
-  event_router_.reset(new BookmarkManagerPrivateEventRouter(
+  event_router_ = std::make_unique<BookmarkManagerPrivateEventRouter>(
       browser_context_,
-      BookmarkModelFactory::GetForBrowserContext(browser_context_)));
+      BookmarkModelFactory::GetForBrowserContext(browser_context_));
 }
 
 BookmarkManagerPrivateDragEventRouter::BookmarkManagerPrivateDragEventRouter(
     content::WebContents* web_contents)
-    : web_contents_(web_contents),
-      profile_(
-          Profile::FromBrowserContext(web_contents_->GetBrowserContext())) {
+    : content::WebContentsUserData<BookmarkManagerPrivateDragEventRouter>(
+          *web_contents),
+      profile_(Profile::FromBrowserContext(web_contents->GetBrowserContext())) {
   // We need to guarantee the BookmarkTabHelper is created.
-  BookmarkTabHelper::CreateForWebContents(web_contents_);
+  BookmarkTabHelper::CreateForWebContents(web_contents);
   BookmarkTabHelper* bookmark_tab_helper =
-      BookmarkTabHelper::FromWebContents(web_contents_);
+      BookmarkTabHelper::FromWebContents(web_contents);
   bookmark_tab_helper->set_bookmark_drag_delegate(this);
 }
 
@@ -250,7 +251,7 @@ BookmarkManagerPrivateDragEventRouter::
 void BookmarkManagerPrivateDragEventRouter::DispatchEvent(
     events::HistogramValue histogram_value,
     const std::string& event_name,
-    std::unique_ptr<base::ListValue> args) {
+    std::vector<base::Value> args) {
   EventRouter* event_router = EventRouter::Get(profile_);
   if (!event_router)
     return;
@@ -332,7 +333,7 @@ ExtensionFunction::ResponseValue ClipboardBookmarkManagerFunction::CopyOrCut(
 
 ExtensionFunction::ResponseValue
 BookmarkManagerPrivateCopyFunction::RunOnReady() {
-  std::unique_ptr<Copy::Params> params(Copy::Params::Create(*args_));
+  std::unique_ptr<Copy::Params> params(Copy::Params::Create(args()));
   if (!params)
     return BadMessage();
   return CopyOrCut(false, params->id_list);
@@ -343,7 +344,7 @@ BookmarkManagerPrivateCutFunction::RunOnReady() {
   if (!EditBookmarksEnabled())
     return Error(bookmark_keys::kEditBookmarksDisabled);
 
-  std::unique_ptr<Cut::Params> params(Cut::Params::Create(*args_));
+  std::unique_ptr<Cut::Params> params(Cut::Params::Create(args()));
   if (!params)
     return BadMessage();
   return CopyOrCut(true, params->id_list);
@@ -354,7 +355,7 @@ BookmarkManagerPrivatePasteFunction::RunOnReady() {
   if (!EditBookmarksEnabled())
     return Error(bookmark_keys::kEditBookmarksDisabled);
 
-  std::unique_ptr<Paste::Params> params(Paste::Params::Create(*args_));
+  std::unique_ptr<Paste::Params> params(Paste::Params::Create(args()));
   if (!params)
     return BadMessage();
   BookmarkModel* model =
@@ -381,7 +382,7 @@ BookmarkManagerPrivatePasteFunction::RunOnReady() {
   }
   size_t insertion_index = (highest_index == -1)
                                ? parent_node->children().size()
-                               : size_t{highest_index};
+                               : static_cast<size_t>(highest_index);
 
   bookmarks::PasteFromClipboard(model, parent_node, insertion_index);
   return NoArguments();
@@ -389,7 +390,7 @@ BookmarkManagerPrivatePasteFunction::RunOnReady() {
 
 ExtensionFunction::ResponseValue
 BookmarkManagerPrivateCanPasteFunction::RunOnReady() {
-  std::unique_ptr<CanPaste::Params> params(CanPaste::Params::Create(*args_));
+  std::unique_ptr<CanPaste::Params> params(CanPaste::Params::Create(args()));
   if (!params)
     return BadMessage();
 
@@ -412,7 +413,7 @@ BookmarkManagerPrivateSortChildrenFunction::RunOnReady() {
     return Error(bookmark_keys::kEditBookmarksDisabled);
 
   std::unique_ptr<SortChildren::Params> params(
-      SortChildren::Params::Create(*args_));
+      SortChildren::Params::Create(args()));
   if (!params)
     return BadMessage();
 
@@ -432,12 +433,7 @@ BookmarkManagerPrivateStartDragFunction::RunOnReady() {
     return Error(bookmark_keys::kEditBookmarksDisabled);
 
   content::WebContents* web_contents = GetSenderWebContents();
-  if (GetViewType(web_contents) != VIEW_TYPE_TAB_CONTENTS) {
-    NOTREACHED();
-    return Error(kUnknownErrorDoNotUse);
-  }
-
-  std::unique_ptr<StartDrag::Params> params(StartDrag::Params::Create(*args_));
+  std::unique_ptr<StartDrag::Params> params(StartDrag::Params::Create(args()));
   if (!params)
     return BadMessage();
 
@@ -465,7 +461,7 @@ BookmarkManagerPrivateDropFunction::RunOnReady() {
   if (!EditBookmarksEnabled())
     return Error(bookmark_keys::kEditBookmarksDisabled);
 
-  std::unique_ptr<Drop::Params> params(Drop::Params::Create(*args_));
+  std::unique_ptr<Drop::Params> params(Drop::Params::Create(args()));
   if (!params)
     return BadMessage();
 
@@ -478,20 +474,19 @@ BookmarkManagerPrivateDropFunction::RunOnReady() {
     return Error(error);
 
   content::WebContents* web_contents = GetSenderWebContents();
-  DCHECK_EQ(VIEW_TYPE_TAB_CONTENTS, GetViewType(web_contents));
-
   size_t drop_index;
-  if (params->index)
-    drop_index = size_t{*params->index};
-  else
+  if (params->index) {
+    drop_index = static_cast<size_t>(*params->index);
+    CHECK(drop_index >= 0 && drop_index <= drop_parent->children().size());
+  } else {
     drop_index = drop_parent->children().size();
+  }
 
   BookmarkManagerPrivateDragEventRouter* router =
       BookmarkManagerPrivateDragEventRouter::FromWebContents(web_contents);
 
-  DCHECK(router);
   const BookmarkNodeData* drag_data = router->GetBookmarkNodeData();
-  DCHECK_NE(nullptr, drag_data) << "Somehow we're dropping null bookmark data";
+  CHECK_NE(nullptr, drag_data) << "Somehow we're dropping null bookmark data";
   const bool copy = false;
   chrome::DropBookmarks(
       GetProfile(), *drag_data, drop_parent, drop_index, copy);
@@ -503,7 +498,7 @@ BookmarkManagerPrivateDropFunction::RunOnReady() {
 ExtensionFunction::ResponseValue
 BookmarkManagerPrivateGetSubtreeFunction::RunOnReady() {
   std::unique_ptr<GetSubtree::Params> params(
-      GetSubtree::Params::Create(*args_));
+      GetSubtree::Params::Create(args()));
   if (!params)
     return BadMessage();
 
@@ -535,7 +530,7 @@ BookmarkManagerPrivateRemoveTreesFunction::RunOnReady() {
     return Error(bookmark_keys::kEditBookmarksDisabled);
 
   std::unique_ptr<RemoveTrees::Params> params(
-      RemoveTrees::Params::Create(*args_));
+      RemoveTrees::Params::Create(args()));
   if (!params)
     return BadMessage();
 
@@ -574,6 +569,6 @@ BookmarkManagerPrivateRedoFunction::RunOnReady() {
   return NoArguments();
 }
 
-WEB_CONTENTS_USER_DATA_KEY_IMPL(BookmarkManagerPrivateDragEventRouter)
+WEB_CONTENTS_USER_DATA_KEY_IMPL(BookmarkManagerPrivateDragEventRouter);
 
 }  // namespace extensions

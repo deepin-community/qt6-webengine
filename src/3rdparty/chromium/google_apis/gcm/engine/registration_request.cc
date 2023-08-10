@@ -5,12 +5,12 @@
 #include "google_apis/gcm/engine/registration_request.h"
 
 #include <stddef.h>
+
 #include <utility>
 
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/metrics/histogram.h"
-#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/values.h"
 #include "google_apis/gcm/base/gcm_util.h"
@@ -22,6 +22,7 @@
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/network/public/cpp/simple_url_loader.h"
+#include "services/network/public/mojom/url_response_head.mojom.h"
 #include "url/gurl.h"
 
 namespace gcm {
@@ -259,7 +260,7 @@ RegistrationRequest::Status RegistrationRequest::ParseResponse(
   size_t error_pos = response.find(kErrorPrefix);
   if (error_pos != std::string::npos) {
     std::string error =
-        response.substr(error_pos + base::size(kErrorPrefix) - 1);
+        response.substr(error_pos + std::size(kErrorPrefix) - 1);
     LOG(ERROR) << "Registration response error message: " << error;
     return GetStatusFromError(error);
   }
@@ -280,7 +281,7 @@ RegistrationRequest::Status RegistrationRequest::ParseResponse(
 
   size_t token_pos = response.find(kTokenPrefix);
   if (token_pos != std::string::npos) {
-    *token = response.substr(token_pos + base::size(kTokenPrefix) - 1);
+    *token = response.substr(token_pos + std::size(kTokenPrefix) - 1);
     return SUCCESS;
   }
 

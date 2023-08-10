@@ -6,23 +6,27 @@
 
 #include "base/command_line.h"
 #include "base/feature_list.h"
-#include "base/macros.h"
-#include "base/util/memory_pressure/multi_source_memory_pressure_monitor.h"
 #include "components/cdm/renderer/widevine_key_system_properties.h"
 #include "components/media_control/renderer/media_playback_options.h"
+#include "components/memory_pressure/multi_source_memory_pressure_monitor.h"
 #include "components/on_load_script_injector/renderer/on_load_script_injector.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/renderer/render_frame.h"
+#include "content/public/renderer/render_view.h"
 #include "fuchsia/engine/common/cast_streaming.h"
 #include "fuchsia/engine/features.h"
-#include "fuchsia/engine/renderer/cast_streaming_demuxer.h"
+#include "fuchsia/engine/renderer/web_engine_media_renderer_factory.h"
 #include "fuchsia/engine/renderer/web_engine_url_loader_throttle_provider.h"
 #include "fuchsia/engine/switches.h"
+#include "media/base/demuxer.h"
 #include "media/base/eme_constants.h"
+#include "media/base/media_switches.h"
 #include "media/base/video_codecs.h"
 #include "services/network/public/cpp/features.h"
 #include "services/service_manager/public/cpp/binder_registry.h"
 #include "third_party/blink/public/common/associated_interfaces/associated_interface_registry.h"
+#include "third_party/blink/public/common/browser_interface_broker_proxy.h"
+#include "third_party/blink/public/web/web_view.h"
 #include "third_party/widevine/cdm/widevine_cdm_common.h"
 
 namespace {
@@ -30,11 +34,11 @@ namespace {
 // Returns true if the specified video format can be decoded on hardware.
 bool IsSupportedHardwareVideoCodec(const media::VideoType& type) {
   // TODO(crbug.com/1013412): Replace these hardcoded checks with a query to the
-  // fuchsia.mediacodec FIDL service when fxb/36000 is resolved.
-  if (type.codec == media::kCodecH264 && type.level <= 41)
+  // fuchsia.mediacodec FIDL service.
+  if (type.codec == media::VideoCodec::kH264 && type.level <= 41)
     return true;
 
-  if (type.codec == media::kCodecVP9 && type.level <= 40)
+  if (type.codec == media::VideoCodec::kVP9 && type.level <= 40)
     return true;
 
   return false;
@@ -43,13 +47,11 @@ bool IsSupportedHardwareVideoCodec(const media::VideoType& type) {
 class PlayreadyKeySystemProperties : public ::media::KeySystemProperties {
  public:
   PlayreadyKeySystemProperties(const std::string& key_system_name,
-                               media::SupportedCodecs supported_codecs,
-                               bool persistent_usage_record_support)
+                               media::SupportedCodecs supported_codecs)
       : key_system_name_(key_system_name),
-        supported_codecs_(supported_codecs),
-        persistent_usage_record_support_(persistent_usage_record_support) {}
+        supported_codecs_(supported_codecs) {}
 
-  std::string GetKeySystemName() const override { return key_system_name_; }
+  std::string GetBaseKeySystemName() const override { return key_system_name_; }
 
   bool IsSupportedInitDataType(
       media::EmeInitDataType init_data_type) const override {
@@ -65,8 +67,10 @@ class PlayreadyKeySystemProperties : public ::media::KeySystemProperties {
   }
 
   media::EmeConfigRule GetRobustnessConfigRule(
-      media::EmeMediaType media_type,
-      const std::string& requested_robustness) const override {
+      const std::string& /*key_system*/,
+      media::EmeMediaType /*media_type*/,
+      const std::string& requested_robustness,
+      const bool* /*hw_secure_requirement*/) const override {
     // Only empty robustness string is currently supported.
     if (requested_robustness.empty()) {
       return media::EmeConfigRule::HW_SECURE_CODECS_REQUIRED;
@@ -75,24 +79,9 @@ class PlayreadyKeySystemProperties : public ::media::KeySystemProperties {
     return media::EmeConfigRule::NOT_SUPPORTED;
   }
 
-  // For backward compatible, currently JS will create a persistent license
-  // session and inject a special init data as the persistent usage record
-  // session signal. In other words, the platform has to announce the support of
-  // persistent license session to allow JS use the persistent usage record
-  // session functions.
-  // TODO(internal b/142749428): Remove once the temporary solution is removed.
   media::EmeSessionTypeSupport GetPersistentLicenseSessionSupport()
       const override {
-    return persistent_usage_record_support_
-               ? media::EmeSessionTypeSupport::SUPPORTED
-               : media::EmeSessionTypeSupport::NOT_SUPPORTED;
-  }
-
-  media::EmeSessionTypeSupport GetPersistentUsageRecordSessionSupport()
-      const override {
-    return persistent_usage_record_support_
-               ? media::EmeSessionTypeSupport::SUPPORTED
-               : media::EmeSessionTypeSupport::NOT_SUPPORTED;
+    return media::EmeSessionTypeSupport::NOT_SUPPORTED;
   }
 
   media::EmeFeatureSupport GetPersistentStateSupport() const override {
@@ -115,7 +104,6 @@ class PlayreadyKeySystemProperties : public ::media::KeySystemProperties {
  private:
   const std::string key_system_name_;
   const media::SupportedCodecs supported_codecs_;
-  const bool persistent_usage_record_support_;
 };
 
 }  // namespace
@@ -128,12 +116,7 @@ WebEngineRenderFrameObserver*
 WebEngineContentRendererClient::GetWebEngineRenderFrameObserverForRenderFrameId(
     int render_frame_id) const {
   auto iter = render_frame_id_to_observer_map_.find(render_frame_id);
-
-  // TODO(https://crbug.com/1181062): Change this back to a DCHECK once the root
-  // cause of this bug has been found.
-  CHECK(iter != render_frame_id_to_observer_map_.end())
-      << "No WebEngineRenderFrameObserver for RenderFrame ID "
-      << render_frame_id;
+  DCHECK(iter != render_frame_id_to_observer_map_.end());
   return iter->second.get();
 }
 
@@ -149,7 +132,7 @@ void WebEngineContentRendererClient::RenderThreadStarted() {
       !base::CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kBrowserTest)) {
     memory_pressure_monitor_ =
-        std::make_unique<util::MultiSourceMemoryPressureMonitor>();
+        std::make_unique<memory_pressure::MultiSourceMemoryPressureMonitor>();
     memory_pressure_monitor_->Start();
   }
 }
@@ -170,40 +153,42 @@ void WebEngineContentRendererClient::RenderFrameCreated(
       render_frame_id, std::move(render_frame_observer));
   DCHECK(render_frame_observer_iter.second);
 
+  // Call into the cast_streaming-specific frame creation logic.
+  cast_streaming_demuxer_provider_.RenderFrameCreated(render_frame);
+
   // Lifetime is tied to |render_frame| via content::RenderFrameObserver.
   new media_control::MediaPlaybackOptions(render_frame);
 }
 
-std::unique_ptr<content::URLLoaderThrottleProvider>
+std::unique_ptr<blink::URLLoaderThrottleProvider>
 WebEngineContentRendererClient::CreateURLLoaderThrottleProvider(
-    content::URLLoaderThrottleProviderType type) {
-  DCHECK(base::FeatureList::IsEnabled(network::features::kNetworkService));
-
+    blink::URLLoaderThrottleProviderType type) {
   // TODO(crbug.com/976975): Add support for service workers.
-  if (type == content::URLLoaderThrottleProviderType::kWorker)
+  if (type == blink::URLLoaderThrottleProviderType::kWorker)
     return nullptr;
 
   return std::make_unique<WebEngineURLLoaderThrottleProvider>(this);
 }
 
-void WebEngineContentRendererClient::AddSupportedKeySystems(
-    std::vector<std::unique_ptr<media::KeySystemProperties>>* key_systems) {
+void WebEngineContentRendererClient::GetSupportedKeySystems(
+    media::GetSupportedKeySystemsCB cb) {
+  media::KeySystemPropertiesVector key_systems;
   media::SupportedCodecs supported_video_codecs = 0;
   constexpr uint8_t kUnknownCodecLevel = 0;
   if (IsSupportedHardwareVideoCodec(media::VideoType{
-          media::kCodecVP9, media::VP9PROFILE_PROFILE0, kUnknownCodecLevel,
-          media::VideoColorSpace::REC709()})) {
+          media::VideoCodec::kVP9, media::VP9PROFILE_PROFILE0,
+          kUnknownCodecLevel, media::VideoColorSpace::REC709()})) {
     supported_video_codecs |= media::EME_CODEC_VP9_PROFILE0;
   }
 
   if (IsSupportedHardwareVideoCodec(media::VideoType{
-          media::kCodecVP9, media::VP9PROFILE_PROFILE2, kUnknownCodecLevel,
-          media::VideoColorSpace::REC709()})) {
+          media::VideoCodec::kVP9, media::VP9PROFILE_PROFILE2,
+          kUnknownCodecLevel, media::VideoColorSpace::REC709()})) {
     supported_video_codecs |= media::EME_CODEC_VP9_PROFILE2;
   }
 
   if (IsSupportedHardwareVideoCodec(media::VideoType{
-          media::kCodecH264, media::H264PROFILE_MAIN, kUnknownCodecLevel,
+          media::VideoCodec::kH264, media::H264PROFILE_MAIN, kUnknownCodecLevel,
           media::VideoColorSpace::REC709()})) {
     supported_video_codecs |= media::EME_CODEC_AVC1;
   }
@@ -221,7 +206,9 @@ void WebEngineContentRendererClient::AddSupportedKeySystems(
     // Fuchsia always decrypts audio into clear buffers and return them back to
     // Chromium. Hardware secured decoders are only available for supported
     // video codecs.
-    key_systems->emplace_back(new cdm::WidevineKeySystemProperties(
+    // TODO(crbug.com/1013412): Replace these hardcoded values with a query to
+    // the fuchsia.mediacodec FIDL service.
+    key_systems.emplace_back(new cdm::WidevineKeySystemProperties(
         supported_codecs,    // codecs
         encryption_schemes,  // encryption schemes
         supported_codecs,    // hw secure codecs
@@ -229,29 +216,28 @@ void WebEngineContentRendererClient::AddSupportedKeySystems(
         cdm::WidevineKeySystemProperties::Robustness::
             HW_SECURE_CRYPTO,  // max audio robustness
         cdm::WidevineKeySystemProperties::Robustness::
-            HW_SECURE_ALL,                           // max video robustness
-        media::EmeSessionTypeSupport::SUPPORTED,     // persistent license
-        media::EmeSessionTypeSupport::SUPPORTED,     // persistent usage record
-        media::EmeFeatureSupport::ALWAYS_ENABLED,    // persistent state
-        media::EmeFeatureSupport::ALWAYS_ENABLED));  // distinctive identifier
+            HW_SECURE_ALL,                            // max video robustness
+        media::EmeSessionTypeSupport::NOT_SUPPORTED,  // persistent license
+        media::EmeFeatureSupport::ALWAYS_ENABLED,     // persistent state
+        media::EmeFeatureSupport::ALWAYS_ENABLED));   // distinctive identifier
   }
 
   std::string playready_key_system =
       base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
           switches::kPlayreadyKeySystem);
   if (!playready_key_system.empty()) {
-    key_systems->emplace_back(new PlayreadyKeySystemProperties(
-        playready_key_system, supported_codecs,
-        /*persistent_usage_record_support=*/true));
+    key_systems.emplace_back(new PlayreadyKeySystemProperties(
+        playready_key_system, supported_codecs));
   }
+
+  std::move(cb).Run(std::move(key_systems));
 }
 
 bool WebEngineContentRendererClient::IsSupportedVideoType(
     const media::VideoType& type) {
-  // Fall back to default codec querying logic if software codecs aren't
-  // disabled.
-  if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kDisableSoftwareVideoDecoders)) {
+  // Fall back to default codec querying logic if software-only codecs are
+  // enabled.
+  if (base::FeatureList::IsEnabled(features::kEnableSoftwareOnlyVideoCodecs)) {
     return ContentRendererClient::IsSupportedVideoType(type);
   }
 
@@ -272,23 +258,36 @@ WebEngineContentRendererClient::OverrideDemuxerForUrl(
     content::RenderFrame* render_frame,
     const GURL& url,
     scoped_refptr<base::SingleThreadTaskRunner> media_task_runner) {
-  if (IsCastStreamingEnabled() && IsCastStreamingMediaSourceUrl(url)) {
-    auto iter =
-        render_frame_id_to_observer_map_.find(render_frame->GetRoutingID());
-    DCHECK(iter != render_frame_id_to_observer_map_.end());
-    // Do not create a CastStreamingDemuxer if the Cast Streaming MessagePort
-    // was not set in the browser process. This will manifest as an unbound
-    // CastStreamingReceiver object in the renderer process.
-    // TODO(crbug.com/1082821): Simplify the instantiation conditions for the
-    // CastStreamingDemuxer once the CastStreamingReceiver Component has been
-    // implemented.
-    if (iter->second->cast_streaming_receiver()->IsBound()) {
-      return std::make_unique<CastStreamingDemuxer>(
-          iter->second->cast_streaming_receiver(), media_task_runner);
-    }
+  if (!IsCastStreamingEnabled()) {
+    return nullptr;
   }
 
-  return nullptr;
+  return cast_streaming_demuxer_provider_.OverrideDemuxerForUrl(
+      render_frame, url, std::move(media_task_runner));
+}
+
+std::unique_ptr<media::RendererFactory>
+WebEngineContentRendererClient::GetBaseRendererFactory(
+    content::RenderFrame* render_frame,
+    media::MediaLog* media_log,
+    media::DecoderFactory* decoder_factory,
+    base::RepeatingCallback<media::GpuVideoAcceleratorFactories*()>
+        get_gpu_factories_cb) {
+  auto* interface_broker = render_frame->GetBrowserInterfaceBroker();
+
+  mojo::Remote<mojom::WebEngineMediaResourceProvider> media_resource_provider;
+  interface_broker->GetInterface(
+      media_resource_provider.BindNewPipeAndPassReceiver());
+
+  bool use_audio_consumer = false;
+  if (!media_resource_provider->ShouldUseAudioConsumer(&use_audio_consumer) ||
+      !use_audio_consumer) {
+    return nullptr;
+  }
+
+  return std::make_unique<WebEngineMediaRendererFactory>(
+      media_log, decoder_factory, std::move(get_gpu_factories_cb),
+      std::move(media_resource_provider));
 }
 
 bool WebEngineContentRendererClient::RunClosureWhenInForeground(

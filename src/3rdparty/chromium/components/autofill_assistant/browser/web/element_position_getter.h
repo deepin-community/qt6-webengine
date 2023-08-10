@@ -9,8 +9,9 @@
 #include <string>
 
 #include "base/callback.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/time/time.h"
 #include "components/autofill_assistant/browser/devtools/devtools/domains/types_dom.h"
 #include "components/autofill_assistant/browser/devtools/devtools/domains/types_runtime.h"
 #include "components/autofill_assistant/browser/devtools/devtools_client.h"
@@ -61,15 +62,16 @@ class ElementPositionGetter : public WebControllerWorker {
       std::unique_ptr<dom::GetBoxModelResult> result);
   void OnScrollIntoView(const DevtoolsClient::ReplyStatus& reply_status,
                         std::unique_ptr<runtime::CallFunctionOnResult> result);
+  void RunNextRound();
   void OnResult(int x, int y);
-  void OnError();
+  void OnError(const ClientStatus& status);
 
   // Time to wait between two box model checks.
   const base::TimeDelta check_interval_;
   // Maximum number of checks to run.
   int max_rounds_;
 
-  DevtoolsClient* devtools_client_ = nullptr;
+  raw_ptr<DevtoolsClient> devtools_client_ = nullptr;
   std::string object_id_;
   int remaining_rounds_ = 0;
   Callback callback_;

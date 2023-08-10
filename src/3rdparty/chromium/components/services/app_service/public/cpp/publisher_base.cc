@@ -6,6 +6,7 @@
 
 #include <vector>
 
+#include "base/notreached.h"
 #include "base/time/time.h"
 
 namespace apps {
@@ -20,7 +21,7 @@ apps::mojom::AppPtr PublisherBase::MakeApp(
     std::string app_id,
     apps::mojom::Readiness readiness,
     const std::string& name,
-    apps::mojom::InstallSource install_source) {
+    apps::mojom::InstallReason install_reason) {
   apps::mojom::AppPtr app = apps::mojom::App::New();
 
   app->app_type = app_type;
@@ -32,7 +33,8 @@ apps::mojom::AppPtr PublisherBase::MakeApp(
   app->last_launch_time = base::Time();
   app->install_time = base::Time();
 
-  app->install_source = install_source;
+  app->install_reason = install_reason;
+  app->install_source = apps::mojom::InstallSource::kUnknown;
 
   app->is_platform_app = apps::mojom::OptionalBool::kFalse;
   app->recommendable = apps::mojom::OptionalBool::kTrue;
@@ -69,8 +71,8 @@ void PublisherBase::Publish(
 void PublisherBase::ModifyCapabilityAccess(
     const mojo::RemoteSet<apps::mojom::Subscriber>& subscribers,
     const std::string& app_id,
-    base::Optional<bool> accessing_camera,
-    base::Optional<bool> accessing_microphone) {
+    absl::optional<bool> accessing_camera,
+    absl::optional<bool> accessing_microphone) {
   if (!accessing_camera.has_value() && !accessing_microphone.has_value()) {
     return;
   }
@@ -98,20 +100,20 @@ void PublisherBase::ModifyCapabilityAccess(
 }
 
 void PublisherBase::LaunchAppWithFiles(const std::string& app_id,
-                                       apps::mojom::LaunchContainer container,
                                        int32_t event_flags,
                                        apps::mojom::LaunchSource launch_source,
                                        apps::mojom::FilePathsPtr file_paths) {
   NOTIMPLEMENTED();
 }
 
-void PublisherBase::LaunchAppWithIntent(
-    const std::string& app_id,
-    int32_t event_flags,
-    apps::mojom::IntentPtr intent,
-    apps::mojom::LaunchSource launch_source,
-    apps::mojom::WindowInfoPtr window_info) {
+void PublisherBase::LaunchAppWithIntent(const std::string& app_id,
+                                        int32_t event_flags,
+                                        apps::mojom::IntentPtr intent,
+                                        apps::mojom::LaunchSource launch_source,
+                                        apps::mojom::WindowInfoPtr window_info,
+                                        LaunchAppWithIntentCallback callback) {
   NOTIMPLEMENTED();
+  std::move(callback).Run(/*success=*/false);
 }
 
 void PublisherBase::SetPermission(const std::string& app_id,
@@ -130,7 +132,7 @@ void PublisherBase::PauseApp(const std::string& app_id) {
   NOTIMPLEMENTED();
 }
 
-void PublisherBase::UnpauseApps(const std::string& app_id) {
+void PublisherBase::UnpauseApp(const std::string& app_id) {
   NOTIMPLEMENTED();
 }
 
@@ -161,6 +163,27 @@ void PublisherBase::OnPreferredAppSet(
     apps::mojom::IntentFilterPtr intent_filter,
     apps::mojom::IntentPtr intent,
     apps::mojom::ReplacedAppPreferencesPtr replaced_app_preferences) {
+  NOTIMPLEMENTED();
+}
+
+void PublisherBase::OnSupportedLinksPreferenceChanged(const std::string& app_id,
+                                                      bool open_in_app) {
+  NOTIMPLEMENTED();
+}
+
+void PublisherBase::SetResizeLocked(const std::string& app_id,
+                                    apps::mojom::OptionalBool locked) {
+  NOTIMPLEMENTED();
+}
+
+void PublisherBase::SetWindowMode(const std::string& app_id,
+                                  apps::mojom::WindowMode window_mode) {
+  NOTIMPLEMENTED();
+}
+
+void PublisherBase::SetRunOnOsLoginMode(
+    const std::string& app_id,
+    apps::mojom::RunOnOsLoginMode run_on_os_login_mode) {
   NOTIMPLEMENTED();
 }
 

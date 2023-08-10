@@ -4,6 +4,10 @@
 
 #include "components/signin/internal/identity_manager/test_profile_oauth2_token_service_delegate_chromeos.h"
 
+#include <limits>
+
+#include "components/account_manager_core/account_manager_facade_impl.h"
+#include "components/account_manager_core/chromeos/account_manager_mojo_service.h"
 #include "google_apis/gaia/oauth2_access_token_fetcher.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 
@@ -11,17 +15,27 @@ namespace signin {
 
 TestProfileOAuth2TokenServiceDelegateChromeOS::
     TestProfileOAuth2TokenServiceDelegateChromeOS(
+        SigninClient* client,
         AccountTrackerService* account_tracker_service,
-        ash::AccountManager* account_manager,
+        crosapi::AccountManagerMojoService* account_manager_mojo_service,
         bool is_regular_profile) {
   if (!network::TestNetworkConnectionTracker::HasInstance()) {
     owned_tracker_ = network::TestNetworkConnectionTracker::CreateInstance();
   }
 
+  mojo::Remote<crosapi::mojom::AccountManager> remote;
+  account_manager_mojo_service->BindReceiver(
+      remote.BindNewPipeAndPassReceiver());
+  account_manager_facade_ =
+      std::make_unique<account_manager::AccountManagerFacadeImpl>(
+          std::move(remote),
+          /*remote_version=*/std::numeric_limits<uint32_t>::max(),
+          /*account_manager_for_tests=*/nullptr);
+
   delegate_ = std::make_unique<ProfileOAuth2TokenServiceDelegateChromeOS>(
-      account_tracker_service,
-      network::TestNetworkConnectionTracker::GetInstance(), account_manager,
-      is_regular_profile);
+      client, account_tracker_service,
+      network::TestNetworkConnectionTracker::GetInstance(),
+      account_manager_facade_.get(), is_regular_profile);
   delegate_->AddObserver(this);
 }
 

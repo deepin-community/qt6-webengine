@@ -5,6 +5,7 @@
 #ifndef COMPONENTS_SIGNIN_INTERNAL_IDENTITY_MANAGER_DEVICE_ACCOUNTS_SYNCHRONIZER_IMPL_H_
 #define COMPONENTS_SIGNIN_INTERNAL_IDENTITY_MANAGER_DEVICE_ACCOUNTS_SYNCHRONIZER_IMPL_H_
 
+#include "base/memory/raw_ptr.h"
 #include "build/build_config.h"
 #include "components/signin/public/identity_manager/device_accounts_synchronizer.h"
 
@@ -21,14 +22,14 @@ class DeviceAccountsSynchronizerImpl : public DeviceAccountsSynchronizer {
 
   // DeviceAccountsSynchronizer implementation.
   void ReloadAllAccountsFromSystemWithPrimaryAccount(
-      const base::Optional<CoreAccountId>& primary_account_id) override;
+      const absl::optional<CoreAccountId>& primary_account_id) override;
 
-#if defined(OS_IOS)
+#if BUILDFLAG(IS_IOS)
   void ReloadAccountFromSystem(const CoreAccountId& account_id) override;
 #endif
 
  private:
-  ProfileOAuth2TokenServiceDelegate* token_service_delegate_ = nullptr;
+  raw_ptr<ProfileOAuth2TokenServiceDelegate> token_service_delegate_ = nullptr;
 };
 
 }  // namespace signin

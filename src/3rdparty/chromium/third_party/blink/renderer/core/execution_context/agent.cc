@@ -6,24 +6,38 @@
 
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/mutation_observer.h"
+#include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/platform/scheduler/public/event_loop.h"
 
 namespace blink {
 
 namespace {
 bool is_cross_origin_isolated = false;
+bool is_direct_socket_potentially_available = false;
 
 #if DCHECK_IS_ON()
 bool is_cross_origin_isolated_set = false;
+bool is_direct_socket_potentially_available_set = false;
 #endif
 }  // namespace
 
 Agent::Agent(v8::Isolate* isolate,
              const base::UnguessableToken& cluster_id,
              std::unique_ptr<v8::MicrotaskQueue> microtask_queue)
+    : Agent(isolate, cluster_id, std::move(microtask_queue), false, true) {}
+
+Agent::Agent(v8::Isolate* isolate,
+             const base::UnguessableToken& cluster_id,
+             std::unique_ptr<v8::MicrotaskQueue> microtask_queue,
+             bool is_origin_agent_cluster,
+             bool origin_agent_cluster_left_as_default)
     : event_loop_(base::AdoptRef(
           new scheduler::EventLoop(isolate, std::move(microtask_queue)))),
-      cluster_id_(cluster_id) {}
+      cluster_id_(cluster_id),
+      origin_keyed_because_of_inheritance_(false),
+      is_origin_agent_cluster_(is_origin_agent_cluster),
+      origin_agent_cluster_left_as_default_(
+          origin_agent_cluster_left_as_default) {}
 
 Agent::~Agent() = default;
 
@@ -52,24 +66,35 @@ void Agent::SetIsCrossOriginIsolated(bool value) {
   is_cross_origin_isolated = value;
 }
 
-bool Agent::IsOriginKeyed() {
-  if (IsCrossOriginIsolated()) {
-    return true;
-  }
-
-#if DCHECK_IS_ON()
-  DCHECK(is_explicitly_origin_keyed_set_);
-#endif
-  return is_explicitly_origin_keyed_;
+// static
+bool Agent::IsDirectSocketEnabled() {
+  return is_direct_socket_potentially_available;
 }
 
-void Agent::SetIsExplicitlyOriginKeyed(bool value) {
+// static
+void Agent::SetIsDirectSocketEnabled(bool value) {
 #if DCHECK_IS_ON()
-  DCHECK(!is_explicitly_origin_keyed_set_ ||
-         value == is_explicitly_origin_keyed_);
-  is_explicitly_origin_keyed_set_ = true;
+  if (is_direct_socket_potentially_available_set)
+    DCHECK_EQ(is_direct_socket_potentially_available, value);
+  is_direct_socket_potentially_available_set = true;
 #endif
-  is_explicitly_origin_keyed_ = value;
+  is_direct_socket_potentially_available = value;
+}
+
+bool Agent::IsOriginKeyed() const {
+  return IsCrossOriginIsolated() || IsOriginKeyedForInheritance();
+}
+
+bool Agent::IsOriginKeyedForInheritance() const {
+  return is_origin_agent_cluster_ || origin_keyed_because_of_inheritance_;
+}
+
+bool Agent::IsOriginOrSiteKeyedBasedOnDefault() const {
+  return origin_agent_cluster_left_as_default_;
+}
+
+void Agent::ForceOriginKeyedBecauseOfInheritance() {
+  origin_keyed_because_of_inheritance_ = true;
 }
 
 }  // namespace blink

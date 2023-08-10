@@ -68,31 +68,38 @@ enum class PerfettoStatsdAtom {
   kTracedEnableTracingOom = 34,
   kTracedEnableTracingUnknown = 35,
   kTracedStartTracingInvalidSessionState = 36,
+  kTracedEnableTracingInvalidFilter = 47,
+  kTracedEnableTracingOobTargetBuffer = 48,
 
   // Checkpoints inside perfetto_cmd after tracing has finished.
   kOnTracingDisabled = 4,
-  kUploadIncidentBegin = 8,
   kFinalizeTraceAndExit = 11,
+  kCmdFwReportBegin = 49,
+  // Will be removed once incidentd is no longer used.
+  kUploadIncidentBegin = 8,
   kNotUploadingEmptyTrace = 17,
 
   // Guardrails inside perfetto_cmd after tracing has finished.
+  kCmdFwReportEmptyTrace = 50,
+  // Will be removed once incidentd is no longer used.
   kUploadIncidentFailure = 10,
+
+  // "Successful" terminal states inside perfetto_cmd.
+  kCmdFwReportHandoff = 51,
 
   // Deprecated as "success" is misleading; it simply means we were
   // able to communicate with incidentd. Will be removed once
-  // incidentd is properly instrumented.
+  // incidentd is no longer used.
   kUploadIncidentSuccess = 9,
 
-  // Deprecated as has the potential to be too spammy. Will be
-  // replaced with a whole new atom proto which uses a count metric
-  // instead of the event metric used for this proto.
-  kTriggerBegin = 12,
-  kTriggerSuccess = 13,
-  kTriggerFailure = 14,
+  // Contained trigger begin/success/failure. Replaced by
+  // |PerfettoTriggerAtom| to allow aggregation using a count metric
+  // and reduce spam.
+  // reserved 12, 13, 14;
 
-  // Deprecated as too coarse grained to be useful. Will be replaced
-  // with better broken down atoms as we do with traced.
-  kHitGuardrails = 15,
+  // Contained that a guardrail in perfetto_cmd was hit. Replaced with
+  // kCmd* guardrails.
+  // reserved 15;
 
   // Contained status of Dropbox uploads. Removed as Perfetto no
   // longer supports uploading traces using Dropbox.
@@ -109,6 +116,12 @@ enum PerfettoTriggerAtom {
 
   kTriggerPerfettoTrigger = 3,
   kTriggerPerfettoTriggerFail = 4,
+
+  kTracedLimitProbability = 5,
+  kTracedLimitMaxPer24h = 6,
+
+  kProbesProducerTrigger = 7,
+  kProbesProducerTriggerFail = 8,
 };
 
 }  // namespace perfetto

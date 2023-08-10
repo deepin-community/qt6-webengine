@@ -14,10 +14,9 @@
 #include <vector>
 
 #include "base/callback_forward.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
-#include "base/time/time.h"
 #include "build/build_config.h"
 #include "gpu/command_buffer/common/capabilities.h"
 #include "gpu/command_buffer/common/command_buffer_id.h"
@@ -106,6 +105,9 @@ class GPU_GLES2_EXPORT GLES2Decoder : public CommonDecoder,
                               CommandBufferServiceBase* command_buffer_service,
                               Outputter* outputter,
                               ContextGroup* group);
+
+  GLES2Decoder(const GLES2Decoder&) = delete;
+  GLES2Decoder& operator=(const GLES2Decoder&) = delete;
 
   ~GLES2Decoder() override;
 
@@ -212,9 +214,7 @@ class GPU_GLES2_EXPORT GLES2Decoder : public CommonDecoder,
   bool initialized_ = false;
   bool debug_ = false;
   bool log_commands_ = false;
-  Outputter* outputter_ = nullptr;
-
-  DISALLOW_COPY_AND_ASSIGN(GLES2Decoder);
+  raw_ptr<Outputter> outputter_ = nullptr;
 };
 
 }  // namespace gles2

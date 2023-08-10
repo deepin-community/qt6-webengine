@@ -79,6 +79,7 @@ class CORE_EXPORT CSSParserSelector {
       Vector<std::unique_ptr<CSSParserSelector>>& selector_vector);
   void SetSelectorList(std::unique_ptr<CSSSelectorList>);
   void SetAtomics(std::unique_ptr<CSSSelectorList>);
+  void SetContainsPseudoInsideHasPseudoClass();
 
   bool IsHostPseudoSelector() const;
 
@@ -118,4 +119,4 @@ class CORE_EXPORT CSSParserSelector {
 
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_RENDERER_CORE_CSS_PARSER_CSS_PARSER_SELECTOR_H_

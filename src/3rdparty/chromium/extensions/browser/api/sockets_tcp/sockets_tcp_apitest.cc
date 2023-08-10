@@ -71,9 +71,9 @@ IN_PROC_BROWSER_TEST_F(SocketsTcpApiTest, SocketsTcpCreateGood) {
   ASSERT_EQ(base::Value::Type::DICTIONARY, result->type());
   std::unique_ptr<base::DictionaryValue> value =
       base::DictionaryValue::From(std::move(result));
-  int socketId = -1;
-  EXPECT_TRUE(value->GetInteger("socketId", &socketId));
-  ASSERT_TRUE(socketId > 0);
+  absl::optional<int> socketId = value->FindIntKey("socketId");
+  ASSERT_TRUE(socketId);
+  ASSERT_TRUE(*socketId > 0);
 }
 
 IN_PROC_BROWSER_TEST_F(SocketsTcpApiTest, SocketTcpExtension) {
@@ -105,8 +105,7 @@ IN_PROC_BROWSER_TEST_F(SocketsTcpApiTest, SocketTcpExtension) {
   // Make sure the extension's NetworkIsolationKey was used. Do a cache only DNS
   // lookup using the expected NIK, and make sure the IP address is retrieved.
   network::mojom::NetworkContext* network_context =
-      content::BrowserContext::GetDefaultStoragePartition(browser_context())
-          ->GetNetworkContext();
+      browser_context()->GetDefaultStoragePartition()->GetNetworkContext();
   network::mojom::ResolveHostParametersPtr params =
       network::mojom::ResolveHostParameters::New();
   // Cache only lookup.
@@ -133,7 +132,9 @@ IN_PROC_BROWSER_TEST_F(SocketsTcpApiTest, SocketTcpExtension) {
   EXPECT_EQ(net::ERR_NAME_NOT_RESOLVED, result2.error);
 }
 
-IN_PROC_BROWSER_TEST_F(SocketsTcpApiTest, SocketTcpExtensionTLS) {
+// TODO(https://crbug.com/1218531): test has a high flake score and fails quite
+// often.
+IN_PROC_BROWSER_TEST_F(SocketsTcpApiTest, DISABLED_SocketTcpExtensionTLS) {
   // Because the network service runs in a utility process, the cert of the
   // EmbeddedTestServer won't be recognized, so inject mock cert verifier
   // through the test helper interface.

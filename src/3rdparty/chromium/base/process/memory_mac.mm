@@ -4,6 +4,8 @@
 
 #include "base/process/memory.h"
 
+#include <new>
+
 #include "base/allocator/allocator_interception_mac.h"
 #include "base/allocator/allocator_shim.h"
 #include "base/allocator/buildflags.h"
@@ -24,12 +26,23 @@ void EnableTerminationOnHeapCorruption() {
 }
 
 bool UncheckedMalloc(size_t size, void** result) {
+#if BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
+  // Unlike use_allocator="none", the default malloc zone is replaced with
+  // PartitionAlloc, so the allocator shim functions work best.
+  *result = allocator::UncheckedAlloc(size);
+  return *result != nullptr;
+#else   // BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
   return allocator::UncheckedMallocMac(size, result);
+#endif  // BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
 }
 
+// The standard version is defined in memory.cc in case of
+// USE_PARTITION_ALLOC_AS_MALLOC.
+#if !BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
 bool UncheckedCalloc(size_t num_items, size_t size, void** result) {
   return allocator::UncheckedCallocMac(num_items, size, result);
 }
+#endif  // !BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
 
 void EnableTerminationOnOutOfMemory() {
   // Step 1: Enable OOM killer on C++ failures.
@@ -44,6 +57,16 @@ void EnableTerminationOnOutOfMemory() {
   // Step 3: Enable OOM killer on all other malloc zones (or just "all" without
   // "other" if shim is disabled).
   allocator::InterceptAllocationsMac();
+}
+
+void UncheckedFree(void* ptr) {
+#if BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
+  // Important: might be different from free(), because in some cases, free()
+  // does not necessarily know about allocator::* functions.
+  allocator::UncheckedFree(ptr);
+#else   // BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
+  free(ptr);
+#endif  // BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
 }
 
 }  // namespace base

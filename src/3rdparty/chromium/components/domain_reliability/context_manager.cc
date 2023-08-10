@@ -64,10 +64,11 @@ void DomainReliabilityContextManager::RouteBeacon(
 }
 
 void DomainReliabilityContextManager::ClearBeacons(
-    const base::RepeatingCallback<bool(const GURL&)>& origin_filter) {
+    const base::RepeatingCallback<bool(const url::Origin&)>& origin_filter) {
   for (auto& context_entry : contexts_) {
     if (origin_filter.is_null() ||
-        origin_filter.Run(context_entry.second->config().origin)) {
+        origin_filter.Run(
+            url::Origin::Create(context_entry.second->config().origin))) {
       context_entry.second->ClearBeacons();
     }
   }
@@ -85,14 +86,14 @@ DomainReliabilityContext* DomainReliabilityContextManager::AddContextForConfig(
 }
 
 void DomainReliabilityContextManager::RemoveContexts(
-    const base::RepeatingCallback<bool(const GURL&)>& origin_filter) {
+    const base::RepeatingCallback<bool(const url::Origin&)>& origin_filter) {
   if (origin_filter.is_null()) {
     contexts_.clear();
     return;
   }
 
   for (auto it = contexts_.begin(); it != contexts_.end();) {
-    if (origin_filter.Run(it->second->config().origin)) {
+    if (origin_filter.Run(url::Origin::Create(it->second->config().origin))) {
       it = contexts_.erase(it);
       continue;
     }
@@ -100,12 +101,11 @@ void DomainReliabilityContextManager::RemoveContexts(
   }
 }
 
-std::unique_ptr<base::Value> DomainReliabilityContextManager::GetWebUIData()
-    const {
-  std::unique_ptr<base::ListValue> contexts_value(new base::ListValue());
+base::Value DomainReliabilityContextManager::GetWebUIData() const {
+  base::Value contexts_value(base::Value::Type::LIST);
   for (const auto& context_entry : contexts_)
-    contexts_value->Append(context_entry.second->GetWebUIData());
-  return std::move(contexts_value);
+    contexts_value.Append(context_entry.second->GetWebUIData());
+  return contexts_value;
 }
 
 DomainReliabilityContext* DomainReliabilityContextManager::GetContext(

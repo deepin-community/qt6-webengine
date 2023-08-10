@@ -18,13 +18,12 @@
 #define MT_TOOL_PALM 2
 #endif
 
-#include "base/compiler_specific.h"
 #include "base/component_export.h"
 #include "base/files/file_path.h"
 #include "base/files/scoped_file.h"
-#include "base/macros.h"
 #include "base/message_loop/message_pump_libevent.h"
 #include "base/metrics/field_trial_params.h"
+#include "base/time/time.h"
 #include "ui/events/ozone/evdev/event_converter_evdev.h"
 #include "ui/events/ozone/evdev/event_device_info.h"
 #include "ui/events/ozone/evdev/touch_evdev_debug_buffer.h"
@@ -48,6 +47,10 @@ class COMPONENT_EXPORT(EVDEV) TouchEventConverterEvdev
                            const EventDeviceInfo& devinfo,
                            SharedPalmDetectionFilterState* shared_palm_state,
                            DeviceEventDispatcherEvdev* dispatcher);
+
+  TouchEventConverterEvdev(const TouchEventConverterEvdev&) = delete;
+  TouchEventConverterEvdev& operator=(const TouchEventConverterEvdev&) = delete;
+
   ~TouchEventConverterEvdev() override;
 
   static std::unique_ptr<TouchEventConverterEvdev> Create(
@@ -74,6 +77,14 @@ class COMPONENT_EXPORT(EVDEV) TouchEventConverterEvdev
   // Sets callback to enable/disable palm suppression.
   void SetPalmSuppressionCallback(
       const base::RepeatingCallback<void(bool)>& callback) override;
+
+  // Sets callback to report the latest stylus state.
+  void SetReportStylusStateCallback(
+      const ReportStylusStateCallback& callback) override;
+
+  // Sets callback to get the latest stylus state.
+  void SetGetLatestStylusStateCallback(
+      const GetLatestStylusStateCallback& callback) override;
 
   // Unsafe part of initialization.
   virtual void Initialize(const EventDeviceInfo& info);
@@ -118,6 +129,9 @@ class COMPONENT_EXPORT(EVDEV) TouchEventConverterEvdev
   // Normalize pressure value to [0, 1].
   float ScalePressure(int32_t value) const;
 
+  bool SupportsOrientation() const;
+  void UpdateRadiusFromTouchWithOrientation(InProgressTouchEvdev* event) const;
+
   int NextTrackingId();
 
   // Input device file descriptor.
@@ -142,11 +156,19 @@ class COMPONENT_EXPORT(EVDEV) TouchEventConverterEvdev
   int pressure_min_;
   int pressure_max_;  // Used to normalize pressure values.
 
+  // Orientation values.
+  int orientation_min_;
+  int orientation_max_;
+
   // Input range for tilt.
   int tilt_x_min_;
   int tilt_x_range_;
   int tilt_y_min_;
   int tilt_y_range_;
+
+  // Resolution of x and y, used to normalize stylus x and y coord.
+  int x_res_;
+  int y_res_;
 
   // Input range for x-axis.
   float x_min_tuxels_;
@@ -159,8 +181,16 @@ class COMPONENT_EXPORT(EVDEV) TouchEventConverterEvdev
   // The resolution of ABS_MT_TOUCH_MAJOR/MINOR might be different from the
   // resolution of ABS_MT_POSITION_X/Y. As we use the (position range, display
   // pixels) to resize touch event radius, we have to scale major/minor.
-  float touch_major_scale_ = 1.0f;
-  float touch_minor_scale_ = 1.0f;
+
+  // When the major axis is X, we precompute the scale for x_radius/y_radius
+  // from ABS_MT_TOUCH_MAJOR/ABS_MT_TOUCH_MINOR respectively.
+  float x_scale_ = 0.5f;
+  float y_scale_ = 0.5f;
+  // Since the x and y resolution can differ, we pre-compute the
+  // x_radius/y_radius scale from ABS_MT_TOUCH_MINOR/ABS_MT_TOUCH_MAJOR
+  // resolution respectively when ABS_MT_ORIENTATION is rotated.
+  float rotated_x_scale_ = 0.5f;
+  float rotated_y_scale_ = 0.5f;
 
   // Number of touch points reported by driver
   int touch_points_ = 0;
@@ -197,13 +227,17 @@ class COMPONENT_EXPORT(EVDEV) TouchEventConverterEvdev
   // Callback to enable/disable palm suppression.
   base::RepeatingCallback<void(bool)> enable_palm_suppression_callback_;
 
+  // Callback to report latest stylus state, set only when HasPen.
+  ReportStylusStateCallback report_stylus_state_callback_;
+
+  // Callback to get latest stylus state, set only when HasMultitouch.
+  GetLatestStylusStateCallback get_latest_stylus_state_callback_;
+
   // Do we mark a touch as palm when touch_major is the max?
   bool palm_on_touch_major_max_;
 
   // Do we mark a touch as palm when the tool type is marked as TOOL_TYPE_PALM ?
   bool palm_on_tool_type_palm_;
-
-  DISALLOW_COPY_AND_ASSIGN(TouchEventConverterEvdev);
 };
 
 }  // namespace ui

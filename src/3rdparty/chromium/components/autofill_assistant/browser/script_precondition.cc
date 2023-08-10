@@ -25,6 +25,7 @@ void RunCallbackWithoutData(
     base::OnceCallback<void(bool)> callback,
     const ClientStatus& status,
     const std::vector<std::string>& ignored_payloads,
+    const std::vector<std::string>& ignored_tags,
     const base::flat_map<std::string, DomObjectFrameStack>& ignored_elements) {
   std::move(callback).Run(status.ok());
 }
@@ -55,7 +56,6 @@ std::unique_ptr<ScriptPrecondition> ScriptPrecondition::FromProto(
   // reject them.
   return std::make_unique<ScriptPrecondition>(
       script_precondition_proto.domain(), std::move(path_pattern),
-      script_precondition_proto.script_status_match(),
       script_precondition_proto.script_parameter_match(),
       script_precondition_proto.element_condition());
 }
@@ -66,30 +66,25 @@ void ScriptPrecondition::Check(
     const GURL& url,
     BatchElementChecker* batch_checks,
     const TriggerContext& context,
-    const std::map<std::string, ScriptStatusProto>& executed_scripts,
     base::OnceCallback<void(bool)> callback) {
-  if (!MatchDomain(url) || !MatchPath(url) || !MatchParameters(context) ||
-      !MatchScriptStatus(executed_scripts)) {
+  if (!MatchDomain(url) || !MatchPath(url) || !MatchParameters(context)) {
     std::move(callback).Run(false);
     return;
   }
-  element_precondition_.Check(
-      batch_checks,
+  batch_checks->AddElementConditionCheck(
+      element_precondition_,
       base::BindOnce(&RunCallbackWithoutData, std::move(callback)));
 }
 
 ScriptPrecondition::ScriptPrecondition(
     const google::protobuf::RepeatedPtrField<std::string>& domain_match,
     std::vector<std::unique_ptr<re2::RE2>> path_pattern,
-    const google::protobuf::RepeatedPtrField<ScriptStatusMatchProto>&
-        status_match,
     const google::protobuf::RepeatedPtrField<ScriptParameterMatchProto>&
         parameter_match,
     const ElementConditionProto& element_condition)
     : domain_match_(domain_match.begin(), domain_match.end()),
       path_pattern_(std::move(path_pattern)),
       parameter_match_(parameter_match.begin(), parameter_match.end()),
-      status_match_(status_match.begin(), status_match.end()),
       element_precondition_(element_condition) {}
 
 bool ScriptPrecondition::MatchDomain(const GURL& url) const {
@@ -122,30 +117,6 @@ bool ScriptPrecondition::MatchParameters(const TriggerContext& context) const {
   for (const auto& match : parameter_match_) {
     if (!context.GetScriptParameters().Matches(match)) {
       return false;
-    }
-  }
-  return true;
-}
-
-bool ScriptPrecondition::MatchScriptStatus(
-    const std::map<std::string, ScriptStatusProto>& executed_scripts) const {
-  for (const auto& status_match : status_match_) {
-    auto status = SCRIPT_STATUS_NOT_RUN;
-    auto iter = executed_scripts.find(status_match.script());
-    if (iter != executed_scripts.end()) {
-      status = iter->second;
-    }
-    bool has_same_status = status_match.status() == status;
-    switch (status_match.comparator()) {
-      case ScriptStatusMatchProto::DIFFERENT:
-        if (has_same_status)
-          return false;
-        break;
-      case ScriptStatusMatchProto::EQUAL:
-      default:
-        if (!has_same_status)
-          return false;
-        break;
     }
   }
   return true;

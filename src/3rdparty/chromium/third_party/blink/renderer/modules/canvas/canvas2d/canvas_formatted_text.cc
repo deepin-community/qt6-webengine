@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/modules/canvas/canvas2d/canvas_formatted_text.h"
+#include "third_party/blink/renderer/core/css/resolver/style_resolver.h"
 #include "third_party/blink/renderer/core/inspector/inspector_trace_events.h"
 #include "third_party/blink/renderer/core/layout/layout_block_flow.h"
 #include "third_party/blink/renderer/core/layout/ng/inline/ng_inline_child_layout_context.h"
@@ -15,13 +16,15 @@
 #include "third_party/blink/renderer/core/style/computed_style.h"
 #include "third_party/blink/renderer/platform/fonts/font_description.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_context.h"
-#include "third_party/blink/renderer/platform/graphics/paint/paint_controller.h"
+#include "third_party/blink/renderer/platform/graphics/paint/paint_record_builder.h"
 
 namespace blink {
 
 void CanvasFormattedText::Trace(Visitor* visitor) const {
   visitor->Trace(text_runs_);
+  visitor->Trace(block_);
   ScriptWrappable::Trace(visitor);
+  CanvasFormattedTextStyle::Trace(visitor);
 }
 
 CanvasFormattedText* CanvasFormattedText::Create(
@@ -36,15 +39,17 @@ CanvasFormattedText* CanvasFormattedText::Create(
   return canvas_formatted_text;
 }
 
-CanvasFormattedText::CanvasFormattedText(ExecutionContext* execution_context) {
-  scoped_refptr<ComputedStyle> style = ComputedStyle::Create();
-  style->SetDisplay(EDisplay::kBlock);
+CanvasFormattedText::CanvasFormattedText(ExecutionContext* execution_context)
+    : CanvasFormattedTextStyle(/* is_text_run */ false) {
   // Refrain from extending the use of document, apart from creating layout
   // block flow. In the future we should handle execution_context's from worker
   // threads that do not have a document.
-  auto* window = To<LocalDOMWindow>(execution_context);
-  block_ = LayoutBlockFlow::CreateAnonymous(window->document(), style,
-                                            LegacyLayout::kAuto);
+  auto* document = To<LocalDOMWindow>(execution_context)->document();
+  scoped_refptr<ComputedStyle> style =
+      document->GetStyleResolver().CreateComputedStyle();
+  style->SetDisplay(EDisplay::kBlock);
+  block_ =
+      LayoutBlockFlow::CreateAnonymous(document, style, LegacyLayout::kAuto);
   block_->SetIsLayoutNGObjectForCanvasFormattedText(true);
 }
 
@@ -60,14 +65,23 @@ void CanvasFormattedText::Dispose() {
     block_->Destroy();
 }
 
-LayoutBlockFlow* CanvasFormattedText::GetLayoutBlock(
+void CanvasFormattedText::SetNeedsStyleRecalc() {
+  needs_style_recalc_ = true;
+}
+
+void CanvasFormattedText::UpdateComputedStylesIfNeeded(
     Document& document,
     const FontDescription& defaultFont) {
-  scoped_refptr<ComputedStyle> style = ComputedStyle::Create();
-  style->SetDisplay(EDisplay::kBlock);
-  style->SetFontDescription(defaultFont);
-  block_->SetStyle(style);
-  return block_;
+  if (needs_style_recalc_ || current_default_font_ != defaultFont) {
+    auto style = document.GetStyleResolver().StyleForCanvasFormattedText(
+        /*is_text_run*/ false, defaultFont, GetCssPropertySet());
+    block_->SetStyle(style, LayoutObject::ApplyStyleChanges::kNo);
+    block_->SetHorizontalWritingMode(style->IsHorizontalWritingMode());
+    for (auto& text_run : text_runs_)
+      text_run->UpdateStyle(document, /*parent_style*/ *style);
+    needs_style_recalc_ = false;
+    current_default_font_ = defaultFont;
+  }
 }
 
 CanvasFormattedTextRun* CanvasFormattedText::appendRun(
@@ -77,6 +91,8 @@ CanvasFormattedTextRun* CanvasFormattedText::appendRun(
     return nullptr;
   text_runs_.push_back(run);
   block_->AddChild(run->GetLayoutObject());
+  run->SetParent(this);
+  SetNeedsStyleRecalc();
   return run;
 }
 
@@ -87,10 +103,13 @@ CanvasFormattedTextRun* CanvasFormattedText::setRun(
   if (!CheckRunsIndexBound(index, &exception_state) ||
       !CheckRunIsNotParented(run, &exception_state))
     return nullptr;
+  run->SetParent(this);
   block_->AddChild(run->GetLayoutObject(),
                    text_runs_[index]->GetLayoutObject());
+  text_runs_[index]->SetParent(nullptr);
   block_->RemoveChild(text_runs_[index]->GetLayoutObject());
   text_runs_[index] = run;
+  SetNeedsStyleRecalc();
   return text_runs_[index];
 }
 
@@ -107,6 +126,8 @@ CanvasFormattedTextRun* CanvasFormattedText::insertRun(
   block_->AddChild(run->GetLayoutObject(),
                    text_runs_[index]->GetLayoutObject());
   text_runs_.insert(index, run);
+  run->SetParent(this);
+  SetNeedsStyleRecalc();
   return text_runs_[index];
 }
 
@@ -126,6 +147,7 @@ void CanvasFormattedText::deleteRun(unsigned index,
   }
 
   for (wtf_size_t i = index; i < index + length; i++) {
+    text_runs_[i]->SetParent(nullptr);
     block_->RemoveChild(text_runs_[i]->GetLayoutObject());
   }
   block_->SetNeedsLayoutAndIntrinsicWidthsRecalcAndFullPaintInvalidation(
@@ -140,48 +162,32 @@ sk_sp<PaintRecord> CanvasFormattedText::PaintFormattedText(
     double x,
     double y,
     double wrap_width,
-    FloatRect& bounds) {
-  LayoutBlockFlow* block = GetLayoutBlock(document, font);
-  NGBlockNode block_node(block);
-  NGInlineNode node(block);
-  // Call IsEmptyInline to force prepare layout.
-  if (node.IsEmptyInline())
-    return nullptr;
+    double wrap_height,
+    gfx::RectF& bounds) {
+  UpdateComputedStylesIfNeeded(document, font);
+  NGBlockNode block_node(block_);
 
-  // TODO(sushraja) Once we add support for writing mode on the canvas formatted
-  // text, fix this to be not hardcoded horizontal top to bottom.
   NGConstraintSpaceBuilder builder(
       WritingMode::kHorizontalTb,
-      {WritingMode::kHorizontalTb, TextDirection::kLtr},
+      {block_->StyleRef().GetWritingMode(), block_->StyleRef().Direction()},
       /* is_new_fc */ true);
-  LayoutUnit available_logical_width(wrap_width);
-  LogicalSize available_size = {available_logical_width, kIndefiniteSize};
+  LayoutUnit available_logical_width(std::max(wrap_width, 0.0));
+  LayoutUnit available_logical_height(std::max(wrap_height, 0.0));
+  LogicalSize available_size = {available_logical_width,
+                                available_logical_height};
   builder.SetAvailableSize(available_size);
   NGConstraintSpace space = builder.ToConstraintSpace();
-  scoped_refptr<const NGLayoutResult> block_results =
-      block_node.Layout(space, nullptr);
+  const NGLayoutResult* block_results = block_node.Layout(space, nullptr);
   const auto& fragment =
       To<NGPhysicalBoxFragment>(block_results->PhysicalFragment());
-  block->RecalcInlineChildrenVisualOverflow();
-  bounds = FloatRect(block->PhysicalVisualOverflowRect());
-
-  PaintController paint_controller(PaintController::Usage::kTransient);
-  paint_controller.UpdateCurrentPaintChunkProperties(nullptr,
-                                                     PropertyTreeState::Root());
-  GraphicsContext graphics_context(paint_controller);
-  PhysicalOffset physical_offset((LayoutUnit(x)), (LayoutUnit(y)));
-  NGBoxFragmentPainter box_fragment_painter(fragment);
-  PaintInfo paint_info(graphics_context, CullRect::Infinite(),
-                       PaintPhase::kForeground, kGlobalPaintNormalPhase,
-                       kPaintLayerPaintingRenderingClipPathAsMask |
-                           kPaintLayerPaintingRenderingResourceSubtree);
-  box_fragment_painter.PaintObject(paint_info, physical_offset);
-  paint_controller.CommitNewDisplayItems();
-  paint_controller.FinishCycle();
-  sk_sp<PaintRecord> recording =
-      paint_controller.GetPaintArtifact().GetPaintRecord(
-          PropertyTreeState::Root());
-  return recording;
+  block_->RecalcFragmentsVisualOverflow();
+  bounds = gfx::RectF{block_->PhysicalVisualOverflowRect()};
+  auto* paint_record_builder = MakeGarbageCollected<PaintRecordBuilder>();
+  PaintInfo paint_info(paint_record_builder->Context(), CullRect::Infinite(),
+                       PaintPhase::kForeground);
+  NGBoxFragmentPainter(fragment).PaintObject(
+      paint_info, PhysicalOffset(LayoutUnit(x), LayoutUnit(y)));
+  return paint_record_builder->EndRecording();
 }
 
 }  // namespace blink

@@ -15,7 +15,6 @@
 #include "base/check_op.h"
 #include "base/compiler_specific.h"
 #include "base/metrics/histogram_functions.h"
-#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
@@ -71,7 +70,7 @@ std::string MissingHeaderMessage(const std::string& header_name) {
 
 std::string GenerateHandshakeChallenge() {
   std::string raw_challenge(websockets::kRawChallengeLength, '\0');
-  crypto::RandBytes(base::data(raw_challenge), raw_challenge.length());
+  crypto::RandBytes(std::data(raw_challenge), raw_challenge.length());
   std::string encoded_challenge;
   base::Base64Encode(raw_challenge, &encoded_challenge);
   return encoded_challenge;
@@ -160,6 +159,13 @@ bool ValidateConnection(const HttpResponseHeaders* headers,
   return true;
 }
 
+base::Value NetLogFailureParam(int net_error, const std::string& message) {
+  base::Value dict(base::Value::Type::DICTIONARY);
+  dict.SetIntKey("net_error", net_error);
+  dict.SetStringKey("message", message);
+  return dict;
+}
+
 }  // namespace
 
 WebSocketBasicHandshakeStream::WebSocketBasicHandshakeStream(
@@ -192,14 +198,20 @@ WebSocketBasicHandshakeStream::~WebSocketBasicHandshakeStream() {
   RecordHandshakeResult(result_);
 }
 
+void WebSocketBasicHandshakeStream::RegisterRequest(
+    const HttpRequestInfo* request_info) {
+  DCHECK(request_info);
+  DCHECK(request_info->traffic_annotation.is_valid());
+  request_info_ = request_info;
+}
+
 int WebSocketBasicHandshakeStream::InitializeStream(
-    const HttpRequestInfo* request_info,
     bool can_send_early,
     RequestPriority priority,
     const NetLogWithSource& net_log,
     CompletionOnceCallback callback) {
-  DCHECK(request_info->traffic_annotation.is_valid());
-  url_ = request_info->url;
+  url_ = request_info_->url;
+  net_log_ = net_log;
   // The WebSocket may receive a socket in the early data state from
   // HttpNetworkTransaction, which means it must call ConfirmHandshake() for
   // requests that need replay protection. However, the first request on any
@@ -210,7 +222,9 @@ int WebSocketBasicHandshakeStream::InitializeStream(
   // Data after the WebSockets handshake may not be replayable, but the
   // handshake is guaranteed to be confirmed once the HTTP response is received.
   DCHECK(can_send_early);
-  state_.Initialize(request_info, priority, net_log);
+  state_.Initialize(request_info_, priority, net_log);
+  // RequestInfo is no longer needed after this point.
+  request_info_ = nullptr;
   return OK;
 }
 
@@ -390,9 +404,13 @@ HttpStream* WebSocketBasicHandshakeStream::RenewStreamForAuth() {
   return handshake_stream.release();
 }
 
-const std::vector<std::string>& WebSocketBasicHandshakeStream::GetDnsAliases()
+const std::set<std::string>& WebSocketBasicHandshakeStream::GetDnsAliases()
     const {
   return state_.GetDnsAliases();
+}
+
+base::StringPiece WebSocketBasicHandshakeStream::GetAcceptChViaAlps() const {
+  return {};
 }
 
 std::unique_ptr<WebSocketStream> WebSocketBasicHandshakeStream::Upgrade() {
@@ -405,7 +423,7 @@ std::unique_ptr<WebSocketStream> WebSocketBasicHandshakeStream::Upgrade() {
       std::make_unique<WebSocketBasicStream>(
           std::make_unique<WebSocketClientSocketHandleAdapter>(
               state_.ReleaseConnection()),
-          state_.read_buf(), sub_protocol_, extensions_);
+          state_.read_buf(), sub_protocol_, extensions_, net_log_);
   DCHECK(extension_params_.get());
   if (extension_params_->deflate_enabled) {
     return std::make_unique<WebSocketDeflateStream>(
@@ -459,7 +477,7 @@ int WebSocketBasicHandshakeStream::ValidateResponse(int rv) {
         // helpful, so use a different error message.
         if (headers->GetHttpVersion() == HttpVersion(0, 9)) {
           OnFailure("Error during WebSocket handshake: Invalid status line",
-                    ERR_FAILED, base::nullopt);
+                    ERR_FAILED, absl::nullopt);
         } else {
           OnFailure(base::StringPrintf("Error during WebSocket handshake: "
                                        "Unexpected response code: %d",
@@ -472,13 +490,13 @@ int WebSocketBasicHandshakeStream::ValidateResponse(int rv) {
   } else {
     if (rv == ERR_EMPTY_RESPONSE) {
       OnFailure("Connection closed before receiving a handshake response", rv,
-                base::nullopt);
+                absl::nullopt);
       result_ = HandshakeResult::EMPTY_RESPONSE;
       return rv;
     }
     OnFailure(
         std::string("Error during WebSocket handshake: ") + ErrorToString(rv),
-        rv, base::nullopt);
+        rv, absl::nullopt);
     // Some error codes (for example ERR_CONNECTION_CLOSED) get changed to OK at
     // higher levels. To prevent an unvalidated connection getting erroneously
     // upgraded, don't pass through the status code unchanged if it is
@@ -518,14 +536,16 @@ int WebSocketBasicHandshakeStream::ValidateUpgradeResponse(
     return OK;
   }
   OnFailure("Error during WebSocket handshake: " + failure_message, ERR_FAILED,
-            base::nullopt);
+            absl::nullopt);
   return ERR_INVALID_RESPONSE;
 }
 
 void WebSocketBasicHandshakeStream::OnFailure(
     const std::string& message,
     int net_error,
-    base::Optional<int> response_code) {
+    absl::optional<int> response_code) {
+  net_log_.AddEvent(net::NetLogEventType::WEBSOCKET_UPGRADE_FAILURE,
+                    [&] { return NetLogFailureParam(net_error, message); });
   // Avoid connection reuse if auth did not happen.
   state_.connection()->socket()->Disconnect();
   stream_request_->OnFailure(message, net_error, response_code);

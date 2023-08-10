@@ -7,7 +7,7 @@
 
 #include "third_party/blink/renderer/core/editing/forward.h"
 #include "third_party/blink/renderer/core/editing/position.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 
 namespace blink {
 
@@ -25,6 +25,9 @@ class ColdModeSpellCheckRequester
     : public GarbageCollected<ColdModeSpellCheckRequester> {
  public:
   explicit ColdModeSpellCheckRequester(LocalDOMWindow&);
+  ColdModeSpellCheckRequester(const ColdModeSpellCheckRequester&) = delete;
+  ColdModeSpellCheckRequester& operator=(const ColdModeSpellCheckRequester&) =
+      delete;
 
   void SetNeedsMoreInvocationForTesting() {
     needs_more_invocation_for_testing_ = true;
@@ -60,9 +63,7 @@ class ColdModeSpellCheckRequester
 
   // A test-only flag for forcing lifecycle advancing.
   mutable bool needs_more_invocation_for_testing_;
-
-  DISALLOW_COPY_AND_ASSIGN(ColdModeSpellCheckRequester);
 };
 }
 
-#endif
+#endif  // THIRD_PARTY_BLINK_RENDERER_CORE_EDITING_SPELLCHECK_COLD_MODE_SPELL_CHECK_REQUESTER_H_

@@ -6,28 +6,27 @@
 
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
+#include "sandbox/features.h"
 
-namespace sandbox {
-namespace policy {
-namespace features {
+namespace sandbox::policy::features {
 
-#if defined(TOOLKIT_QT) || (!defined(OS_MAC) && !defined(OS_FUCHSIA))
+#if defined(TOOLKIT_QT) || (!BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_FUCHSIA))
 // Enables network service sandbox.
 // (Only causes an effect when feature kNetworkService is enabled.)
 const base::Feature kNetworkServiceSandbox{"NetworkServiceSandbox",
                                            base::FEATURE_DISABLED_BY_DEFAULT};
-#endif  // !defined(OS_MAC) && !defined(OS_FUCHSIA)
+#endif  // !BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_FUCHSIA)
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 // Emergency "off switch" for new Windows KTM security mitigation,
 // sandbox::MITIGATION_KTM_COMPONENT.
 const base::Feature kWinSboxDisableKtmComponent{
     "WinSboxDisableKtmComponent", base::FEATURE_ENABLED_BY_DEFAULT};
 
-// Emergency "off switch" for new Windows sandbox security mitigation,
+// Experiment for Windows sandbox security mitigation,
 // sandbox::MITIGATION_EXTENSION_POINT_DISABLE.
 const base::Feature kWinSboxDisableExtensionPoints{
-    "WinSboxDisableExtensionPoint", base::FEATURE_ENABLED_BY_DEFAULT};
+    "WinSboxDisableExtensionPoint", base::FEATURE_DISABLED_BY_DEFAULT};
 
 // Enables GPU AppContainer sandbox on Windows.
 const base::Feature kGpuAppContainer{"GpuAppContainer",
@@ -35,12 +34,17 @@ const base::Feature kGpuAppContainer{"GpuAppContainer",
 
 // Enables GPU Low Privilege AppContainer when combined with kGpuAppContainer.
 const base::Feature kGpuLPAC{"GpuLPAC", base::FEATURE_ENABLED_BY_DEFAULT};
-#endif  // defined(OS_WIN)
 
-#if !defined(OS_ANDROID)
+// Enables Renderer AppContainer
+const base::Feature kRendererAppContainer{"RendererAppContainer",
+                                          base::FEATURE_DISABLED_BY_DEFAULT};
+
+#endif  // BUILDFLAG(IS_WIN)
+
+#if !BUILDFLAG(IS_ANDROID)
 // Controls whether the isolated XR service is sandboxed.
 const base::Feature kXRSandbox{"XRSandbox", base::FEATURE_ENABLED_BY_DEFAULT};
-#endif  // !defined(OS_ANDROID)
+#endif  // !BUILDFLAG(IS_ANDROID)
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
 // Controls whether the Spectre variant 2 mitigation is enabled. We use a USE
@@ -56,6 +60,17 @@ const base::Feature kForceSpectreVariant2Mitigation{
     "ForceSpectreVariant2Mitigation", base::FEATURE_DISABLED_BY_DEFAULT};
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
-}  // namespace features
-}  // namespace policy
-}  // namespace sandbox
+bool IsNetworkSandboxEnabled() {
+#if !defined(TOOLKIT_QT) && (BUILDFLAG(IS_MAC) || BUILDFLAG(IS_FUCHSIA))
+  return true;
+#else
+#if BUILDFLAG(IS_WIN)
+  if (!sandbox::features::IsAppContainerSandboxSupported())
+    return false;
+#endif  // BUILDFLAG(IS_WIN)
+  // Check feature status.
+  return base::FeatureList::IsEnabled(kNetworkServiceSandbox);
+#endif  // BUILDFLAG(IS_MAC) || BUILDFLAG(IS_FUCHSIA)
+}
+
+}  // namespace sandbox::policy::features

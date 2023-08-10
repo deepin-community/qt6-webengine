@@ -4,10 +4,10 @@
 
 /***************************************************************************
  *
- * Copyright (c) 2015-2021 The Khronos Group Inc.
- * Copyright (c) 2015-2021 Valve Corporation
- * Copyright (c) 2015-2021 LunarG, Inc.
- * Copyright (c) 2015-2021 Google Inc.
+ * Copyright (c) 2015-2022 The Khronos Group Inc.
+ * Copyright (c) 2015-2022 Valve Corporation
+ * Copyright (c) 2015-2022 LunarG, Inc.
+ * Copyright (c) 2015-2022 Google Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@
  * Author: Tobin Ehlis <tobine@google.com>
  * Author: Chris Forbes <chrisforbes@google.com>
  * Author: John Zulauf<jzulauf@lunarg.com>
+ * Author: Tony Barbour <tony@lunarg.com>
  *
  ****************************************************************************/
 
@@ -34,10 +35,9 @@
 #include <array>
 #include <bitset>
 #include <map>
-#include <unordered_map>
 #include <stdint.h>
 #include <vulkan/vulkan.h>
-
+#include "vk_layer_data.h"
 using SyncStageAccessFlags = std::bitset<128>;
 
 // clang-format off
@@ -112,18 +112,28 @@ enum SyncStageAccessIndex {
     SYNC_COMMAND_PREPROCESS_NV_COMMAND_PREPROCESS_READ_NV = 65,
     SYNC_COMMAND_PREPROCESS_NV_COMMAND_PREPROCESS_WRITE_NV = 66,
     SYNC_CONDITIONAL_RENDERING_EXT_CONDITIONAL_RENDERING_READ_EXT = 67,
-    SYNC_RAY_TRACING_SHADER_SHADER_SAMPLED_READ = 68,
-    SYNC_RAY_TRACING_SHADER_SHADER_STORAGE_READ = 69,
-    SYNC_RAY_TRACING_SHADER_SHADER_STORAGE_WRITE = 70,
-    SYNC_RAY_TRACING_SHADER_UNIFORM_READ = 71,
-    SYNC_ACCELERATION_STRUCTURE_BUILD_ACCELERATION_STRUCTURE_READ = 72,
-    SYNC_ACCELERATION_STRUCTURE_BUILD_ACCELERATION_STRUCTURE_WRITE = 73,
-    SYNC_ACCELERATION_STRUCTURE_BUILD_SHADER_SAMPLED_READ = 74,
-    SYNC_ACCELERATION_STRUCTURE_BUILD_SHADER_STORAGE_READ = 75,
-    SYNC_HOST_HOST_READ = 76,
-    SYNC_HOST_HOST_WRITE = 77,
-    SYNC_IMAGE_LAYOUT_TRANSITION = 78,
-    SYNC_QUEUE_FAMILY_OWNERSHIP_TRANSFER = 79,
+    SYNC_RAY_TRACING_SHADER_ACCELERATION_STRUCTURE_READ = 68,
+    SYNC_RAY_TRACING_SHADER_SHADER_SAMPLED_READ = 69,
+    SYNC_RAY_TRACING_SHADER_SHADER_STORAGE_READ = 70,
+    SYNC_RAY_TRACING_SHADER_SHADER_STORAGE_WRITE = 71,
+    SYNC_RAY_TRACING_SHADER_UNIFORM_READ = 72,
+    SYNC_ACCELERATION_STRUCTURE_BUILD_ACCELERATION_STRUCTURE_READ = 73,
+    SYNC_ACCELERATION_STRUCTURE_BUILD_ACCELERATION_STRUCTURE_WRITE = 74,
+    SYNC_ACCELERATION_STRUCTURE_BUILD_INDIRECT_COMMAND_READ = 75,
+    SYNC_ACCELERATION_STRUCTURE_BUILD_SHADER_SAMPLED_READ = 76,
+    SYNC_ACCELERATION_STRUCTURE_BUILD_SHADER_STORAGE_READ = 77,
+    SYNC_ACCELERATION_STRUCTURE_BUILD_TRANSFER_READ = 78,
+    SYNC_ACCELERATION_STRUCTURE_BUILD_TRANSFER_WRITE = 79,
+    SYNC_ACCELERATION_STRUCTURE_BUILD_UNIFORM_READ = 80,
+    SYNC_VIDEO_DECODE_VIDEO_DECODE_READ = 81,
+    SYNC_VIDEO_DECODE_VIDEO_DECODE_WRITE = 82,
+    SYNC_VIDEO_ENCODE_VIDEO_ENCODE_READ = 83,
+    SYNC_VIDEO_ENCODE_VIDEO_ENCODE_WRITE = 84,
+    SYNC_SUBPASS_SHADING_HUAWEI_INPUT_ATTACHMENT_READ = 85,
+    SYNC_HOST_HOST_READ = 86,
+    SYNC_HOST_HOST_WRITE = 87,
+    SYNC_IMAGE_LAYOUT_TRANSITION = 88,
+    SYNC_QUEUE_FAMILY_OWNERSHIP_TRANSFER = 89,
 };
 
 // Unique bit for each  stage/access combination
@@ -194,32 +204,42 @@ static const SyncStageAccessFlags SYNC_CLEAR_TRANSFER_WRITE_BIT = (SyncStageAcce
 static const SyncStageAccessFlags SYNC_COMMAND_PREPROCESS_BIT_NV_COMMAND_PREPROCESS_READ_BIT_NV = (SyncStageAccessFlags(1) << SYNC_COMMAND_PREPROCESS_NV_COMMAND_PREPROCESS_READ_NV);
 static const SyncStageAccessFlags SYNC_COMMAND_PREPROCESS_BIT_NV_COMMAND_PREPROCESS_WRITE_BIT_NV = (SyncStageAccessFlags(1) << SYNC_COMMAND_PREPROCESS_NV_COMMAND_PREPROCESS_WRITE_NV);
 static const SyncStageAccessFlags SYNC_CONDITIONAL_RENDERING_BIT_EXT_CONDITIONAL_RENDERING_READ_BIT_EXT = (SyncStageAccessFlags(1) << SYNC_CONDITIONAL_RENDERING_EXT_CONDITIONAL_RENDERING_READ_EXT);
+static const SyncStageAccessFlags SYNC_RAY_TRACING_SHADER_ACCELERATION_STRUCTURE_READ_BIT = (SyncStageAccessFlags(1) << SYNC_RAY_TRACING_SHADER_ACCELERATION_STRUCTURE_READ);
 static const SyncStageAccessFlags SYNC_RAY_TRACING_SHADER_SHADER_SAMPLED_READ_BIT = (SyncStageAccessFlags(1) << SYNC_RAY_TRACING_SHADER_SHADER_SAMPLED_READ);
 static const SyncStageAccessFlags SYNC_RAY_TRACING_SHADER_SHADER_STORAGE_READ_BIT = (SyncStageAccessFlags(1) << SYNC_RAY_TRACING_SHADER_SHADER_STORAGE_READ);
 static const SyncStageAccessFlags SYNC_RAY_TRACING_SHADER_SHADER_STORAGE_WRITE_BIT = (SyncStageAccessFlags(1) << SYNC_RAY_TRACING_SHADER_SHADER_STORAGE_WRITE);
 static const SyncStageAccessFlags SYNC_RAY_TRACING_SHADER_UNIFORM_READ_BIT = (SyncStageAccessFlags(1) << SYNC_RAY_TRACING_SHADER_UNIFORM_READ);
 static const SyncStageAccessFlags SYNC_ACCELERATION_STRUCTURE_BUILD_ACCELERATION_STRUCTURE_READ_BIT = (SyncStageAccessFlags(1) << SYNC_ACCELERATION_STRUCTURE_BUILD_ACCELERATION_STRUCTURE_READ);
 static const SyncStageAccessFlags SYNC_ACCELERATION_STRUCTURE_BUILD_ACCELERATION_STRUCTURE_WRITE_BIT = (SyncStageAccessFlags(1) << SYNC_ACCELERATION_STRUCTURE_BUILD_ACCELERATION_STRUCTURE_WRITE);
+static const SyncStageAccessFlags SYNC_ACCELERATION_STRUCTURE_BUILD_INDIRECT_COMMAND_READ_BIT = (SyncStageAccessFlags(1) << SYNC_ACCELERATION_STRUCTURE_BUILD_INDIRECT_COMMAND_READ);
 static const SyncStageAccessFlags SYNC_ACCELERATION_STRUCTURE_BUILD_SHADER_SAMPLED_READ_BIT = (SyncStageAccessFlags(1) << SYNC_ACCELERATION_STRUCTURE_BUILD_SHADER_SAMPLED_READ);
 static const SyncStageAccessFlags SYNC_ACCELERATION_STRUCTURE_BUILD_SHADER_STORAGE_READ_BIT = (SyncStageAccessFlags(1) << SYNC_ACCELERATION_STRUCTURE_BUILD_SHADER_STORAGE_READ);
+static const SyncStageAccessFlags SYNC_ACCELERATION_STRUCTURE_BUILD_TRANSFER_READ_BIT = (SyncStageAccessFlags(1) << SYNC_ACCELERATION_STRUCTURE_BUILD_TRANSFER_READ);
+static const SyncStageAccessFlags SYNC_ACCELERATION_STRUCTURE_BUILD_TRANSFER_WRITE_BIT = (SyncStageAccessFlags(1) << SYNC_ACCELERATION_STRUCTURE_BUILD_TRANSFER_WRITE);
+static const SyncStageAccessFlags SYNC_ACCELERATION_STRUCTURE_BUILD_UNIFORM_READ_BIT = (SyncStageAccessFlags(1) << SYNC_ACCELERATION_STRUCTURE_BUILD_UNIFORM_READ);
+static const SyncStageAccessFlags SYNC_VIDEO_DECODE_VIDEO_DECODE_READ_BIT = (SyncStageAccessFlags(1) << SYNC_VIDEO_DECODE_VIDEO_DECODE_READ);
+static const SyncStageAccessFlags SYNC_VIDEO_DECODE_VIDEO_DECODE_WRITE_BIT = (SyncStageAccessFlags(1) << SYNC_VIDEO_DECODE_VIDEO_DECODE_WRITE);
+static const SyncStageAccessFlags SYNC_VIDEO_ENCODE_VIDEO_ENCODE_READ_BIT = (SyncStageAccessFlags(1) << SYNC_VIDEO_ENCODE_VIDEO_ENCODE_READ);
+static const SyncStageAccessFlags SYNC_VIDEO_ENCODE_VIDEO_ENCODE_WRITE_BIT = (SyncStageAccessFlags(1) << SYNC_VIDEO_ENCODE_VIDEO_ENCODE_WRITE);
+static const SyncStageAccessFlags SYNC_SUBPASS_SHADING_HUAWEI_INPUT_ATTACHMENT_READ_BIT = (SyncStageAccessFlags(1) << SYNC_SUBPASS_SHADING_HUAWEI_INPUT_ATTACHMENT_READ);
 static const SyncStageAccessFlags SYNC_HOST_HOST_READ_BIT = (SyncStageAccessFlags(1) << SYNC_HOST_HOST_READ);
 static const SyncStageAccessFlags SYNC_HOST_HOST_WRITE_BIT = (SyncStageAccessFlags(1) << SYNC_HOST_HOST_WRITE);
 static const SyncStageAccessFlags SYNC_IMAGE_LAYOUT_TRANSITION_BIT = (SyncStageAccessFlags(1) << SYNC_IMAGE_LAYOUT_TRANSITION);
 static const SyncStageAccessFlags SYNC_QUEUE_FAMILY_OWNERSHIP_TRANSFER_BIT = (SyncStageAccessFlags(1) << SYNC_QUEUE_FAMILY_OWNERSHIP_TRANSFER);
 
 // Map of the StageAccessIndices from the StageAccess Bit
-extern const std::unordered_map<SyncStageAccessFlags, SyncStageAccessIndex> syncStageAccessIndexByStageAccessBit;
+extern const layer_data::unordered_map<SyncStageAccessFlags, SyncStageAccessIndex> syncStageAccessIndexByStageAccessBit;
 
 struct SyncStageAccessInfoType {
     const char *name;
-    VkPipelineStageFlags2KHR stage_mask;
-    VkAccessFlags2KHR access_mask;
+    VkPipelineStageFlags2 stage_mask;
+    VkAccessFlags2 access_mask;
     SyncStageAccessIndex stage_access_index;
     SyncStageAccessFlags stage_access_bit;
 };
 
 // Array of text names and component masks for each stage/access index
-extern const std::array<SyncStageAccessInfoType, 80> syncStageAccessInfoByStageAccessIndex;
+extern const std::array<SyncStageAccessInfoType, 90> syncStageAccessInfoByStageAccessIndex;
 
 // Constants defining the mask of all read and write stage_access states
 static const SyncStageAccessFlags syncStageAccessReadMask = ( //  Mask of all read StageAccess bits
@@ -272,12 +292,19 @@ static const SyncStageAccessFlags syncStageAccessReadMask = ( //  Mask of all re
     SYNC_BLIT_TRANSFER_READ_BIT |
     SYNC_COMMAND_PREPROCESS_BIT_NV_COMMAND_PREPROCESS_READ_BIT_NV |
     SYNC_CONDITIONAL_RENDERING_BIT_EXT_CONDITIONAL_RENDERING_READ_BIT_EXT |
+    SYNC_RAY_TRACING_SHADER_ACCELERATION_STRUCTURE_READ_BIT |
     SYNC_RAY_TRACING_SHADER_SHADER_SAMPLED_READ_BIT |
     SYNC_RAY_TRACING_SHADER_SHADER_STORAGE_READ_BIT |
     SYNC_RAY_TRACING_SHADER_UNIFORM_READ_BIT |
     SYNC_ACCELERATION_STRUCTURE_BUILD_ACCELERATION_STRUCTURE_READ_BIT |
+    SYNC_ACCELERATION_STRUCTURE_BUILD_INDIRECT_COMMAND_READ_BIT |
     SYNC_ACCELERATION_STRUCTURE_BUILD_SHADER_SAMPLED_READ_BIT |
     SYNC_ACCELERATION_STRUCTURE_BUILD_SHADER_STORAGE_READ_BIT |
+    SYNC_ACCELERATION_STRUCTURE_BUILD_TRANSFER_READ_BIT |
+    SYNC_ACCELERATION_STRUCTURE_BUILD_UNIFORM_READ_BIT |
+    SYNC_VIDEO_DECODE_VIDEO_DECODE_READ_BIT |
+    SYNC_VIDEO_ENCODE_VIDEO_ENCODE_READ_BIT |
+    SYNC_SUBPASS_SHADING_HUAWEI_INPUT_ATTACHMENT_READ_BIT |
     SYNC_HOST_HOST_READ_BIT
 );
 
@@ -302,34 +329,37 @@ static const SyncStageAccessFlags syncStageAccessWriteMask = ( //  Mask of all w
     SYNC_COMMAND_PREPROCESS_BIT_NV_COMMAND_PREPROCESS_WRITE_BIT_NV |
     SYNC_RAY_TRACING_SHADER_SHADER_STORAGE_WRITE_BIT |
     SYNC_ACCELERATION_STRUCTURE_BUILD_ACCELERATION_STRUCTURE_WRITE_BIT |
+    SYNC_ACCELERATION_STRUCTURE_BUILD_TRANSFER_WRITE_BIT |
+    SYNC_VIDEO_DECODE_VIDEO_DECODE_WRITE_BIT |
+    SYNC_VIDEO_ENCODE_VIDEO_ENCODE_WRITE_BIT |
     SYNC_HOST_HOST_WRITE_BIT |
     SYNC_IMAGE_LAYOUT_TRANSITION_BIT |
     SYNC_QUEUE_FAMILY_OWNERSHIP_TRANSFER_BIT
 );
 
 // Bit order mask of stage_access bit for each stage
-extern const std::map<VkPipelineStageFlags2KHR, SyncStageAccessFlags> syncStageAccessMaskByStageBit;
+extern const std::map<VkPipelineStageFlags2, SyncStageAccessFlags> syncStageAccessMaskByStageBit;
 
 // Bit order mask of stage_access bit for each access
-extern const std::map<VkAccessFlags2KHR, SyncStageAccessFlags> syncStageAccessMaskByAccessBit;
+extern const std::map<VkAccessFlags2, SyncStageAccessFlags> syncStageAccessMaskByAccessBit;
 
 // stage_access index for each stage and access
-extern const std::map<VkPipelineStageFlags2KHR, std::map<VkAccessFlags2KHR, SyncStageAccessIndex>> syncStageAccessIndexByStageAndAccess;
+extern const std::map<VkPipelineStageFlags2, std::map<VkAccessFlags2, SyncStageAccessIndex>> syncStageAccessIndexByStageAndAccess;
 
 // Direct VkPipelineStageFlags to valid VkAccessFlags lookup table
-extern const std::map<VkPipelineStageFlags2KHR, VkAccessFlags2KHR> syncDirectStageToAccessMask;
+extern const std::map<VkPipelineStageFlags2, VkAccessFlags2> syncDirectStageToAccessMask;
 
-// Pipeline stages corresponding to VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT_KHR for each VkQueueFlagBits
-extern const std::map<VkQueueFlagBits, VkPipelineStageFlags2KHR> syncAllCommandStagesByQueueFlags;
+// Pipeline stages corresponding to VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT for each VkQueueFlagBits
+extern const std::map<VkQueueFlagBits, VkPipelineStageFlags2> syncAllCommandStagesByQueueFlags;
 
 // Masks of logically earlier stage flags for a given stage flag
-extern const std::map<VkPipelineStageFlags2KHR, VkPipelineStageFlags2KHR> syncLogicallyEarlierStages;
+extern const std::map<VkPipelineStageFlags2, VkPipelineStageFlags2> syncLogicallyEarlierStages;
 
 // Masks of logically later stage flags for a given stage flag
-extern const std::map<VkPipelineStageFlags2KHR, VkPipelineStageFlags2KHR> syncLogicallyLaterStages;
+extern const std::map<VkPipelineStageFlags2, VkPipelineStageFlags2> syncLogicallyLaterStages;
 
 // Lookup table of stage orderings
-extern const std::map<VkPipelineStageFlags2KHR, int> syncStageOrder;
+extern const std::map<VkPipelineStageFlags2, int> syncStageOrder;
 
 struct SyncShaderStageAccess {
     SyncStageAccessIndex sampled_read;

@@ -6,10 +6,6 @@
 
 #include <algorithm>
 
-#if defined(OS_WIN)
-#include <vector>
-#endif
-
 #include "base/i18n/case_conversion.h"
 #include "base/time/default_tick_clock.h"
 #include "build/build_config.h"
@@ -20,6 +16,10 @@
 #include "ui/views/controls/prefix_delegate.h"
 #include "ui/views/view.h"
 #include "ui/views/widget/widget.h"
+
+#if BUILDFLAG(IS_WIN)
+#include <vector>
+#endif
 
 namespace views {
 
@@ -36,7 +36,7 @@ void PrefixSelector::OnViewBlur() {
 
 bool PrefixSelector::ShouldContinueSelection() const {
   const base::TimeTicks now(tick_clock_->NowTicks());
-  constexpr auto kTimeBeforeClearing = base::TimeDelta::FromSeconds(1);
+  constexpr auto kTimeBeforeClearing = base::Seconds(1);
   return (now - time_of_last_key_) < kTimeBeforeClearing;
 }
 
@@ -49,14 +49,14 @@ uint32_t PrefixSelector::ConfirmCompositionText(bool keep_selection) {
 
 void PrefixSelector::ClearCompositionText() {}
 
-void PrefixSelector::InsertText(const base::string16& text,
+void PrefixSelector::InsertText(const std::u16string& text,
                                 InsertTextCursorBehavior cursor_behavior) {
   // TODO(crbug.com/1155331): Handle |cursor_behavior| correctly.
   OnTextInput(text);
 }
 
 void PrefixSelector::InsertChar(const ui::KeyEvent& event) {
-  OnTextInput(base::string16(1, event.GetCharacter()));
+  OnTextInput(std::u16string(1, event.GetCharacter()));
 }
 
 ui::TextInputType PrefixSelector::GetTextInputType() const {
@@ -85,6 +85,11 @@ gfx::Rect PrefixSelector::GetCaretBounds() const {
   // coordinates.
   views::View::ConvertRectToScreen(host_view_, &rect);
   return rect;
+}
+
+gfx::Rect PrefixSelector::GetSelectionBoundingBox() const {
+  NOTIMPLEMENTED_LOG_ONCE();
+  return gfx::Rect();
 }
 
 bool PrefixSelector::GetCompositionCharacterBounds(uint32_t index,
@@ -129,7 +134,7 @@ bool PrefixSelector::DeleteRange(const gfx::Range& range) {
 }
 
 bool PrefixSelector::GetTextFromRange(const gfx::Range& range,
-                                      base::string16* text) const {
+                                      std::u16string* text) const {
   return false;
 }
 
@@ -166,7 +171,7 @@ bool PrefixSelector::ShouldDoLearning() {
   return false;
 }
 
-#if defined(OS_WIN) || BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
 bool PrefixSelector::SetCompositionFromExistingText(
     const gfx::Range& range,
     const std::vector<ui::ImeTextSpan>& ui_ime_text_spans) {
@@ -194,18 +199,20 @@ bool PrefixSelector::SetAutocorrectRange(const gfx::Range& range) {
 }
 #endif
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 void PrefixSelector::SetActiveCompositionForAccessibility(
     const gfx::Range& range,
-    const base::string16& active_composition_text,
+    const std::u16string& active_composition_text,
     bool is_composition_committed) {}
-
-void PrefixSelector::GetActiveTextInputControlLayoutBounds(
-    base::Optional<gfx::Rect>* control_bounds,
-    base::Optional<gfx::Rect>* selection_bounds) {}
 #endif
 
-void PrefixSelector::OnTextInput(const base::string16& text) {
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_CHROMEOS)
+void PrefixSelector::GetActiveTextInputControlLayoutBounds(
+    absl::optional<gfx::Rect>* control_bounds,
+    absl::optional<gfx::Rect>* selection_bounds) {}
+#endif
+
+void PrefixSelector::OnTextInput(const std::u16string& text) {
   // Small hack to filter out 'tab' and 'enter' input, as the expectation is
   // that they are control characters and will not affect the currently-active
   // prefix.
@@ -232,7 +239,7 @@ void PrefixSelector::OnTextInput(const base::string16& text) {
   time_of_last_key_ = tick_clock_->NowTicks();
 
   const int start_row = row;
-  const base::string16 lower_text(base::i18n::ToLower(current_text_));
+  const std::u16string lower_text(base::i18n::ToLower(current_text_));
   do {
     if (TextAtRowMatchesText(row, lower_text)) {
       prefix_delegate_->SetSelectedRow(row);
@@ -243,8 +250,8 @@ void PrefixSelector::OnTextInput(const base::string16& text) {
 }
 
 bool PrefixSelector::TextAtRowMatchesText(int row,
-                                          const base::string16& lower_text) {
-  const base::string16 model_text(
+                                          const std::u16string& lower_text) {
+  const std::u16string model_text(
       base::i18n::ToLower(prefix_delegate_->GetTextForRow(row)));
   return (model_text.size() >= lower_text.size()) &&
          (model_text.compare(0, lower_text.size(), lower_text) == 0);

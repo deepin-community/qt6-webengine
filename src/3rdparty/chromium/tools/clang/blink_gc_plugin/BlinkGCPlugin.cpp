@@ -28,17 +28,21 @@ class BlinkGCPluginAction : public PluginASTAction {
     return std::make_unique<BlinkGCPluginConsumer>(instance, options_);
   }
 
+  PluginASTAction::ActionType getActionType() override {
+    return CmdlineBeforeMainAction;
+  }
+
   bool ParseArgs(const CompilerInstance&,
                  const std::vector<std::string>& args) override {
     for (const auto& arg : args) {
       if (arg == "dump-graph") {
         options_.dump_graph = true;
-      } else if (arg == "no-members-in-stack-allocated") {
-        // TODO(bikineev): Flag is on by default. Remove after
-        // third_party/blink/renderer/BUILD.gn has been updated.
-        continue;
       } else if (arg == "enable-weak-members-in-unmanaged-classes") {
         options_.enable_weak_members_in_unmanaged_classes = true;
+      } else if (arg == "enable-persistent-in-unique-ptr-check") {
+        options_.enable_persistent_in_unique_ptr_check = true;
+      } else if (arg == "enable-members-on-stack-check") {
+        options_.enable_members_on_stack_check = true;
       } else {
         llvm::errs() << "Unknown blink-gc-plugin argument: " << arg << "\n";
         return false;

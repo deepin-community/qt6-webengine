@@ -9,8 +9,6 @@
 #include <memory>
 #include <vector>
 
-#include "base/compiler_specific.h"
-#include "base/macros.h"
 #include "components/password_manager/core/browser/password_store_change.h"
 #include "components/sync/model/sync_metadata_store.h"
 
@@ -21,11 +19,7 @@ class MetadataBatch;
 namespace password_manager {
 
 struct PasswordForm;
-struct CompromisedCredentials;
 
-using InsecureCredential = CompromisedCredentials;
-using ForceInitialSyncCycle =
-    base::StrongAlias<class ForceInitialSyncCycleTag, bool>;
 using PrimaryKeyToFormMap =
     std::map<FormPrimaryKey, std::unique_ptr<PasswordForm>>;
 
@@ -46,7 +40,9 @@ enum class FormRetrievalResult {
   kDbError,
   // A service-level failure (e.g., on a platform using a keyring, the keyring
   // is temporarily unavailable).
-  kEncrytionServiceFailure,
+  kEncryptionServiceFailure,
+  // A service-level failure, but some forms can be retrieved successfully.
+  kEncryptionServiceFailureWithPartialData,
 };
 
 // Error values for adding a login to the store.
@@ -63,7 +59,7 @@ enum class AddLoginError {
   kConstraintViolation = 2,
   // A service-level failure (e.g., on a platform using a keyring, the keyring
   // is temporarily unavailable).
-  kEncrytionServiceFailure = 3,
+  kEncryptionServiceFailure = 3,
   // Database error.
   kDbError = 4,
 
@@ -84,7 +80,7 @@ enum class UpdateLoginError {
   kNoUpdatedRecords = 2,
   // A service-level failure (e.g., on a platform using a keyring, the keyring
   // is temporarily unavailable).
-  kEncrytionServiceFailure = 3,
+  kEncryptionServiceFailure = 3,
   // Database error.
   kDbError = 4,
 
@@ -122,14 +118,13 @@ class PasswordStoreSync {
 
   PasswordStoreSync();
 
+  PasswordStoreSync(const PasswordStoreSync&) = delete;
+  PasswordStoreSync& operator=(const PasswordStoreSync&) = delete;
+
   // Overwrites |key_to_form_map| with a map from the DB primary key to the
   // corresponding form for all stored credentials. Returns true on success.
-  virtual FormRetrievalResult ReadAllLogins(
-      PrimaryKeyToFormMap* key_to_form_map) WARN_UNUSED_RESULT = 0;
-
-  // Returns insecure credentials for the provided |parent_key|.
-  virtual std::vector<InsecureCredential> ReadSecurityIssues(
-      FormPrimaryKey parent_key) = 0;
+  [[nodiscard]] virtual FormRetrievalResult ReadAllLogins(
+      PrimaryKeyToFormMap* key_to_form_map) = 0;
 
   // Deletes logins that cannot be decrypted.
   virtual DatabaseCleanupResult DeleteUndecryptableLogins() = 0;
@@ -139,25 +134,10 @@ class PasswordStoreSync {
       const PasswordForm& form,
       AddLoginError* error = nullptr) = 0;
 
-  // Synchronous implementation to add insecure credentials. Operation will
-  // be terminated if any insertion into the database fails. Returns whether
-  // operation was successful.
-  virtual bool AddInsecureCredentialsSync(
-      base::span<const InsecureCredential> credentials) = 0;
-
   // Synchronous implementation to update the given login.
   virtual PasswordStoreChangeList UpdateLoginSync(
       const PasswordForm& form,
       UpdateLoginError* error = nullptr) = 0;
-
-  // Synchronous implementation to replace existing insecure credentials for
-  // the |form| with |credentials|.
-  virtual bool UpdateInsecureCredentialsSync(
-      const PasswordForm& form,
-      base::span<const InsecureCredential> credentials) = 0;
-
-  // Synchronous implementation to remove the given login.
-  virtual PasswordStoreChangeList RemoveLoginSync(const PasswordForm& form) = 0;
 
   // Synchronous implementation to remove the login with the given primary key.
   virtual PasswordStoreChangeList RemoveLoginByPrimaryKeySync(
@@ -165,9 +145,6 @@ class PasswordStoreSync {
 
   // Notifies observers that password store data may have been changed.
   virtual void NotifyLoginsChanged(const PasswordStoreChangeList& changes) = 0;
-
-  // Notifies observers that local list of insecure credentials changed.
-  virtual void NotifyInsecureCredentialsChanged() = 0;
 
   // Notifies any waiting callback that all pending deletions have been
   // committed to the Sync server now, or that Sync definitely won't commit
@@ -205,9 +182,6 @@ class PasswordStoreSync {
 
  protected:
   virtual ~PasswordStoreSync();
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(PasswordStoreSync);
 };
 
 }  // namespace password_manager

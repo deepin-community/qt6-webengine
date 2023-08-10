@@ -9,9 +9,11 @@
 
 #include "base/feature_list.h"
 #include "base/memory/weak_ptr.h"
-#include "base/single_thread_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
+#include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "cc/input/touch_action.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/common/input/web_input_event.h"
 #include "third_party/blink/public/mojom/input/input_event_result.mojom-shared.h"
 #include "third_party/blink/public/mojom/input/input_handler.mojom-blink.h"
@@ -31,7 +33,7 @@ using HandledEventCallback =
     base::OnceCallback<void(mojom::blink::InputEventResultState ack_state,
                             const ui::LatencyInfo& latency_info,
                             mojom::blink::DidOverscrollParamsPtr,
-                            base::Optional<cc::TouchAction>)>;
+                            absl::optional<cc::TouchAction>)>;
 
 // All interaction with the MainThreadEventQueueClient will occur
 // on the main thread.
@@ -45,6 +47,12 @@ class PLATFORM_EXPORT MainThreadEventQueueClient {
   virtual bool HandleInputEvent(const WebCoalescedInputEvent& event,
                                 std::unique_ptr<cc::EventMetrics> metrics,
                                 HandledEventCallback handled_callback) = 0;
+
+  // Notify clients that the queued events have been dispatched. `raf_aligned`
+  // determines whether the events were rAF-aligned events or non-rAF-aligned
+  // ones.
+  virtual void InputEventsDispatched(bool raf_aligned) = 0;
+
   // Requests a BeginMainFrame callback from the compositor.
   virtual void SetNeedsMainFrame() = 0;
 };
@@ -93,6 +101,8 @@ class PLATFORM_EXPORT MainThreadEventQueue
       const scoped_refptr<base::SingleThreadTaskRunner>& main_task_runner,
       scheduler::WebThreadScheduler* main_thread_scheduler,
       bool allow_raf_aligned_input);
+  MainThreadEventQueue(const MainThreadEventQueue&) = delete;
+  MainThreadEventQueue& operator=(const MainThreadEventQueue&) = delete;
 
   // Type of dispatching of the event.
   enum class DispatchType { kBlocking, kNonBlocking };
@@ -127,6 +137,10 @@ class PLATFORM_EXPORT MainThreadEventQueue
     return ack_state == mojom::blink::InputEventResultState::kNotConsumed ||
            ack_state ==
                mojom::blink::InputEventResultState::kSetNonBlockingDueToFling;
+  }
+
+  base::SingleThreadTaskRunner* main_task_runner_for_testing() const {
+    return main_task_runner_.get();
   }
 
  protected:
@@ -190,8 +204,6 @@ class PLATFORM_EXPORT MainThreadEventQueue
   std::unique_ptr<base::OneShotTimer> raf_fallback_timer_;
 
   std::unique_ptr<InputEventPrediction> event_predictor_;
-
-  DISALLOW_COPY_AND_ASSIGN(MainThreadEventQueue);
 };
 
 }  // namespace blink

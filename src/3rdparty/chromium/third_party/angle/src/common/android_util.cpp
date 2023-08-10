@@ -193,6 +193,8 @@ enum {
     AHARDWAREBUFFER_FORMAT_Y8Cb8Cr8_420             = 0x23,
 
 #endif  // ANGLE_AHARDWARE_BUFFER_SUPPORT
+
+    AHARDWAREBUFFER_FORMAT_YV12                     = 0x32315659
 };
 // clang-format on
 
@@ -257,6 +259,7 @@ GLenum getPixelFormatInfo(int pixelFormat, bool *isYUV)
         case AHARDWAREBUFFER_FORMAT_S8_UINT:
             return GL_STENCIL_INDEX8;
         case AHARDWAREBUFFER_FORMAT_Y8Cb8Cr8_420:
+        case AHARDWAREBUFFER_FORMAT_YV12:
             *isYUV = true;
             return GL_RGB8;
         default:
@@ -326,21 +329,24 @@ EGLClientBuffer CreateEGLClientBufferFromAHardwareBuffer(int width,
     }
 
     return AHardwareBufferToClientBuffer(aHardwareBuffer);
-#endif  // ANGLE_AHARDWARE_BUFFER_SUPPORT
+#else
     return nullptr;
+#endif  // ANGLE_AHARDWARE_BUFFER_SUPPORT
 }
 
 void GetANativeWindowBufferProperties(const ANativeWindowBuffer *buffer,
                                       int *width,
                                       int *height,
                                       int *depth,
-                                      int *pixelFormat)
+                                      int *pixelFormat,
+                                      uint64_t *usage)
 {
     *width       = buffer->width;
     *height      = buffer->height;
     *depth       = static_cast<int>(buffer->layerCount);
     *height      = buffer->height;
     *pixelFormat = buffer->format;
+    *usage       = buffer->usage;
 }
 
 GLenum NativePixelFormatToGLInternalFormat(int pixelFormat)

@@ -8,7 +8,9 @@
 #include <memory>
 #include <vector>
 
-#include "base/macros.h"
+#include "base/containers/flat_set.h"
+#include "base/threading/platform_thread.h"
+#include "components/viz/common/resources/returned_resource.h"
 #include "components/viz/service/surfaces/pending_copy_output_request.h"
 #include "components/viz/service/viz_service_export.h"
 
@@ -33,6 +35,9 @@ class VIZ_SERVICE_EXPORT SurfaceClient {
  public:
   SurfaceClient() = default;
 
+  SurfaceClient(const SurfaceClient&) = delete;
+  SurfaceClient& operator=(const SurfaceClient&) = delete;
+
   virtual ~SurfaceClient() = default;
 
   // Called when |surface| has a new CompositorFrame available for display.
@@ -49,13 +54,11 @@ class VIZ_SERVICE_EXPORT SurfaceClient {
       const std::vector<TransferableResource>& resources) = 0;
 
   // Decrements the reference count on resources specified by |resources|.
-  virtual void UnrefResources(
-      const std::vector<ReturnedResource>& resources) = 0;
+  virtual void UnrefResources(std::vector<ReturnedResource> resources) = 0;
 
   // ReturnResources gets called when the display compositor is done using the
   // resources so that the client can use them.
-  virtual void ReturnResources(
-      const std::vector<ReturnedResource>& resources) = 0;
+  virtual void ReturnResources(std::vector<ReturnedResource> resources) = 0;
 
   // Increments the reference count of resources received from a child
   // compositor.
@@ -90,8 +93,9 @@ class VIZ_SERVICE_EXPORT SurfaceClient {
       const gfx::Rect& damage_rect,
       base::TimeTicks expected_display_time) = 0;
 
- private:
-  DISALLOW_COPY_AND_ASSIGN(SurfaceClient);
+  virtual bool IsVideoCaptureStarted() = 0;
+
+  virtual base::flat_set<base::PlatformThreadId> GetThreadIds() = 0;
 };
 
 }  // namespace viz

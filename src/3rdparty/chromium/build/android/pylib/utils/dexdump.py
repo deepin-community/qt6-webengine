@@ -42,7 +42,7 @@ def Dump(apk_path):
                                            dexfile_dir,
                                            pattern='*classes*.dex'):
       output_xml = cmd_helper.GetCmdOutput(
-          [DEXDUMP_PATH, '-l', 'xml', dex_file])
+          [DEXDUMP_PATH, '-j', '-l', 'xml', dex_file])
       # Dexdump doesn't escape its XML output very well; decode it as utf-8 with
       # invalid sequences replaced, then remove forbidden characters and
       # re-encode it (as etree expects a byte string as input so it can figure
@@ -50,8 +50,12 @@ def Dump(apk_path):
       BAD_XML_CHARS = re.compile(
           u'[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f-\x84\x86-\x9f' +
           u'\ud800-\udfff\ufdd0-\ufddf\ufffe-\uffff]')
-      decoded_xml = output_xml.decode('utf-8', 'replace')
-      clean_xml = BAD_XML_CHARS.sub(u'\ufffd', decoded_xml)
+      if sys.version_info[0] < 3:
+        decoded_xml = output_xml.decode('utf-8', 'replace')
+        clean_xml = BAD_XML_CHARS.sub(u'\ufffd', decoded_xml)
+      else:
+        # Line duplicated to avoid pylint redefined-variable-type error.
+        clean_xml = BAD_XML_CHARS.sub(u'\ufffd', output_xml)
       parsed_dex_files.append(
           _ParseRootNode(ElementTree.fromstring(clean_xml.encode('utf-8'))))
     return parsed_dex_files

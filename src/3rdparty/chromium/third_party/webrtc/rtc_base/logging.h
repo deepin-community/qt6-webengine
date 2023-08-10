@@ -54,7 +54,6 @@
 #include "absl/base/attributes.h"
 #include "absl/meta/type_traits.h"
 #include "absl/strings/string_view.h"
-#include "rtc_base/constructor_magic.h"
 #include "rtc_base/strings/string_builder.h"
 #include "rtc_base/system/inline.h"
 
@@ -73,9 +72,7 @@
 namespace rtc {
 
 //////////////////////////////////////////////////////////////////////
-
-// Note that the non-standard LoggingSeverity aliases exist because they are
-// still in broad use.  The meanings of the levels are:
+// The meanings of the levels are:
 //  LS_VERBOSE: This level is for data which we do not want to appear in the
 //   normal debug log, but should appear in diagnostic logs.
 //  LS_INFO: Chatty level used in debugging for all sorts of things, the default
@@ -89,9 +86,6 @@ enum LoggingSeverity {
   LS_WARNING,
   LS_ERROR,
   LS_NONE,
-  INFO = LS_INFO,
-  WARNING = LS_WARNING,
-  LERROR = LS_ERROR
 };
 
 // LogErrorContext assists in interpreting the meaning of an error value.
@@ -117,6 +111,13 @@ class LogSink {
   virtual void OnLogMessage(const std::string& message,
                             LoggingSeverity severity);
   virtual void OnLogMessage(const std::string& message) = 0;
+
+  virtual void OnLogMessage(absl::string_view msg,
+                            LoggingSeverity severity,
+                            const char* tag);
+  virtual void OnLogMessage(absl::string_view message,
+                            LoggingSeverity severity);
+  virtual void OnLogMessage(absl::string_view message);
 
  private:
   friend class ::rtc::LogMessage;
@@ -441,6 +442,9 @@ class LogMessage {
              const std::string& tag);
   ~LogMessage();
 
+  LogMessage(const LogMessage&) = delete;
+  LogMessage& operator=(const LogMessage&) = delete;
+
   void AddTag(const char* tag);
   rtc::StringBuilder& stream();
   // Returns the time at which this function was called for the first time.
@@ -449,7 +453,7 @@ class LogMessage {
   // which case the logging start time will be the time of the first LogMessage
   // instance is created.
   static int64_t LogStartTime();
-  // Returns the wall clock equivalent of |LogStartTime|, in seconds from the
+  // Returns the wall clock equivalent of `LogStartTime`, in seconds from the
   // epoch.
   static uint32_t WallClockStartTime();
   //  LogThreads: Display the thread identifier of the current thread
@@ -463,14 +467,14 @@ class LogMessage {
   // Sets whether logs will be directed to stderr in debug mode.
   static void SetLogToStderr(bool log_to_stderr);
   // Stream: Any non-blocking stream interface.
-  // Installs the |stream| to collect logs with severtiy |min_sev| or higher.
-  // |stream| must live until deinstalled by RemoveLogToStream.
-  // If |stream| is the first stream added to the system, we might miss some
+  // Installs the `stream` to collect logs with severtiy `min_sev` or higher.
+  // `stream` must live until deinstalled by RemoveLogToStream.
+  // If `stream` is the first stream added to the system, we might miss some
   // early concurrent log statement happening from another thread happening near
   // this instant.
   static void AddLogToStream(LogSink* stream, LoggingSeverity min_sev);
   // Removes the specified stream, without destroying it. When the method
-  // has completed, it's guaranteed that |stream| will receive no more logging
+  // has completed, it's guaranteed that `stream` will receive no more logging
   // calls.
   static void RemoveLogToStream(LogSink* stream);
   // Returns the severity for the specified stream, of if none is specified,
@@ -482,9 +486,9 @@ class LogMessage {
   // Parses the provided parameter stream to configure the options above.
   // Useful for configuring logging from the command line.
   static void ConfigureLogging(const char* params);
-  // Checks the current global debug severity and if the |streams_| collection
-  // is empty. If |severity| is smaller than the global severity and if the
-  // |streams_| collection is empty, the LogMessage will be considered a noop
+  // Checks the current global debug severity and if the `streams_` collection
+  // is empty. If `severity` is smaller than the global severity and if the
+  // `streams_` collection is empty, the LogMessage will be considered a noop
   // LogMessage.
   static bool IsNoop(LoggingSeverity severity);
   // Version of IsNoop that uses fewer instructions at the call site, since the
@@ -573,7 +577,7 @@ class LogMessage {
   // The output streams and their associated severities
   static LogSink* streams_;
 
-  // Holds true with high probability if |streams_| is empty, false with high
+  // Holds true with high probability if `streams_` is empty, false with high
   // probability otherwise. Operated on with std::memory_order_relaxed because
   // it's ok to lose or log some additional statements near the instant streams
   // are added/removed.
@@ -600,8 +604,6 @@ class LogMessage {
 
   // The stringbuilder that buffers the formatted message before output
   rtc::StringBuilder print_stream_;
-
-  RTC_DISALLOW_COPY_AND_ASSIGN(LogMessage);
 };
 
 //////////////////////////////////////////////////////////////////////

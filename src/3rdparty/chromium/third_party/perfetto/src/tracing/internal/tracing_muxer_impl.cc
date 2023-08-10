@@ -24,6 +24,7 @@
 #include "perfetto/base/build_config.h"
 #include "perfetto/base/logging.h"
 #include "perfetto/base/task_runner.h"
+#include "perfetto/base/time.h"
 #include "perfetto/ext/base/hash.h"
 #include "perfetto/ext/base/thread_checker.h"
 #include "perfetto/ext/base/waitable_event.h"
@@ -58,6 +59,58 @@ namespace internal {
 
 namespace {
 
+// A task runner which prevents calls to DataSource::Trace() while an operation
+// is in progress. Used to guard against unexpected re-entrancy where the
+// user-provided task runner implementation tries to enter a trace point under
+// the hood.
+class NonReentrantTaskRunner : public base::TaskRunner {
+ public:
+  NonReentrantTaskRunner(TracingMuxer* muxer,
+                         std::unique_ptr<base::TaskRunner> task_runner)
+      : muxer_(muxer), task_runner_(std::move(task_runner)) {}
+
+  // base::TaskRunner implementation.
+  void PostTask(std::function<void()> task) override {
+    CallWithGuard([&] { task_runner_->PostTask(std::move(task)); });
+  }
+
+  void PostDelayedTask(std::function<void()> task, uint32_t delay_ms) override {
+    CallWithGuard(
+        [&] { task_runner_->PostDelayedTask(std::move(task), delay_ms); });
+  }
+
+  void AddFileDescriptorWatch(base::PlatformHandle fd,
+                              std::function<void()> callback) override {
+    CallWithGuard(
+        [&] { task_runner_->AddFileDescriptorWatch(fd, std::move(callback)); });
+  }
+
+  void RemoveFileDescriptorWatch(base::PlatformHandle fd) override {
+    CallWithGuard([&] { task_runner_->RemoveFileDescriptorWatch(fd); });
+  }
+
+  bool RunsTasksOnCurrentThread() const override {
+    bool result;
+    CallWithGuard([&] { result = task_runner_->RunsTasksOnCurrentThread(); });
+    return result;
+  }
+
+ private:
+  template <typename T>
+  void CallWithGuard(T lambda) const {
+    auto* root_tls = muxer_->GetOrCreateTracingTLS();
+    if (PERFETTO_UNLIKELY(root_tls->is_in_trace_point)) {
+      lambda();
+      return;
+    }
+    ScopedReentrancyAnnotator scoped_annotator(*root_tls);
+    lambda();
+  }
+
+  TracingMuxer* const muxer_;
+  std::unique_ptr<base::TaskRunner> task_runner_;
+};
+
 class StopArgsImpl : public DataSourceBase::StopArgs {
  public:
   std::function<void()> HandleStopAsynchronously() const override {
@@ -76,6 +129,9 @@ uint64_t ComputeConfigHash(const DataSourceConfig& config) {
   return hasher.digest();
 }
 
+// Holds an earlier TracingMuxerImpl instance after ResetForTesting() is called.
+static TracingMuxerImpl* g_prev_instance{};
+
 }  // namespace
 
 // ----- Begin of TracingMuxerImpl::ProducerImpl
@@ -87,7 +143,9 @@ TracingMuxerImpl::ProducerImpl::ProducerImpl(
       backend_id_(backend_id),
       shmem_batch_commits_duration_ms_(shmem_batch_commits_duration_ms) {}
 
-TracingMuxerImpl::ProducerImpl::~ProducerImpl() = default;
+TracingMuxerImpl::ProducerImpl::~ProducerImpl() {
+  muxer_ = nullptr;
+}
 
 void TracingMuxerImpl::ProducerImpl::Initialize(
     std::unique_ptr<ProducerEndpoint> endpoint) {
@@ -101,6 +159,10 @@ void TracingMuxerImpl::ProducerImpl::Initialize(
   // that |task_runner| is assumed to outlive tracing sessions on all threads.)
   auto* task_runner = muxer_->task_runner_.get();
   auto deleter = [task_runner](ProducerEndpoint* e) {
+    if (task_runner->RunsTasksOnCurrentThread()) {
+      delete e;
+      return;
+    }
     task_runner->PostTask([e] { delete e; });
   };
   std::shared_ptr<ProducerEndpoint> service(endpoint.release(), deleter);
@@ -122,23 +184,37 @@ void TracingMuxerImpl::ProducerImpl::OnConnect() {
 
 void TracingMuxerImpl::ProducerImpl::OnDisconnect() {
   PERFETTO_DCHECK_THREAD(thread_checker_);
+  // If we're being destroyed, bail out.
+  if (!muxer_)
+    return;
   connected_ = false;
   // Active data sources for this producer will be stopped by
   // DestroyStoppedTraceWritersForCurrentThread() since the reconnected producer
   // will have a different connection id (even before it has finished
   // connecting).
   registered_data_sources_.reset();
-  // Keep the old service around as a dead connection in case it has active
-  // trace writers. We can't clear |service_| here because other threads may be
-  // concurrently creating new trace writers. The reconnection below will
-  // atomically swap the new service in place of the old one.
-  dead_services_.push_back(service_);
+  DisposeConnection();
+
   // Try reconnecting the producer.
   muxer_->OnProducerDisconnected(this);
 }
 
+void TracingMuxerImpl::ProducerImpl::DisposeConnection() {
+  // Keep the old service around as a dead connection in case it has active
+  // trace writers. If any tracing sessions were created, we can't clear
+  // |service_| here because other threads may be concurrently creating new
+  // trace writers. Any reconnection attempt will atomically swap the new
+  // service in place of the old one.
+  if (did_setup_tracing_) {
+    dead_services_.push_back(service_);
+  } else {
+    service_.reset();
+  }
+}
+
 void TracingMuxerImpl::ProducerImpl::OnTracingSetup() {
   PERFETTO_DCHECK_THREAD(thread_checker_);
+  did_setup_tracing_ = true;
   service_->MaybeSharedMemoryArbiter()->SetBatchCommitsDuration(
       shmem_batch_commits_duration_ms_);
 }
@@ -147,18 +223,24 @@ void TracingMuxerImpl::ProducerImpl::SetupDataSource(
     DataSourceInstanceID id,
     const DataSourceConfig& cfg) {
   PERFETTO_DCHECK_THREAD(thread_checker_);
+  if (!muxer_)
+    return;
   muxer_->SetupDataSource(backend_id_, connection_id_, id, cfg);
 }
 
 void TracingMuxerImpl::ProducerImpl::StartDataSource(DataSourceInstanceID id,
                                                      const DataSourceConfig&) {
   PERFETTO_DCHECK_THREAD(thread_checker_);
+  if (!muxer_)
+    return;
   muxer_->StartDataSource(backend_id_, id);
   service_->NotifyDataSourceStarted(id);
 }
 
 void TracingMuxerImpl::ProducerImpl::StopDataSource(DataSourceInstanceID id) {
   PERFETTO_DCHECK_THREAD(thread_checker_);
+  if (!muxer_)
+    return;
   muxer_->StopDataSource_AsyncBegin(backend_id_, id);
 }
 
@@ -171,14 +253,17 @@ void TracingMuxerImpl::ProducerImpl::Flush(FlushRequestID flush_id,
 }
 
 void TracingMuxerImpl::ProducerImpl::ClearIncrementalState(
-    const DataSourceInstanceID*,
-    size_t) {
+    const DataSourceInstanceID* instances,
+    size_t instance_count) {
   PERFETTO_DCHECK_THREAD(thread_checker_);
-  // TODO(skyostil): Mark each affected data source's incremental state as
-  // needing to be cleared.
+  if (!muxer_)
+    return;
+  for (size_t inst_idx = 0; inst_idx < instance_count; inst_idx++) {
+    muxer_->ClearDataSourceIncrementalState(backend_id_, instances[inst_idx]);
+  }
 }
 
-void TracingMuxerImpl::ProducerImpl::SweepDeadServices() {
+bool TracingMuxerImpl::ProducerImpl::SweepDeadServices() {
   PERFETTO_DCHECK_THREAD(thread_checker_);
   auto is_unused = [](const std::shared_ptr<ProducerEndpoint>& endpoint) {
     auto* arbiter = endpoint->MaybeSharedMemoryArbiter();
@@ -192,6 +277,7 @@ void TracingMuxerImpl::ProducerImpl::SweepDeadServices() {
     }
     it = next_it;
   }
+  return dead_services_.empty();
 }
 
 // ----- End of TracingMuxerImpl::ProducerImpl methods.
@@ -206,7 +292,9 @@ TracingMuxerImpl::ConsumerImpl::ConsumerImpl(TracingMuxerImpl* muxer,
       backend_id_(backend_id),
       session_id_(session_id) {}
 
-TracingMuxerImpl::ConsumerImpl::~ConsumerImpl() = default;
+TracingMuxerImpl::ConsumerImpl::~ConsumerImpl() {
+  muxer_ = nullptr;
+}
 
 void TracingMuxerImpl::ConsumerImpl::Initialize(
     std::unique_ptr<ConsumerEndpoint> endpoint) {
@@ -247,6 +335,9 @@ void TracingMuxerImpl::ConsumerImpl::OnConnect() {
 
 void TracingMuxerImpl::ConsumerImpl::OnDisconnect() {
   PERFETTO_DCHECK_THREAD(thread_checker_);
+  // If we're being destroyed, bail out.
+  if (!muxer_)
+    return;
 #if PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID)
   if (!connected_ && backend_type_ == kSystemBackend) {
     PERFETTO_ELOG(
@@ -641,9 +732,12 @@ TracingMuxerImpl::TracingMuxerImpl(const TracingInitArgs& args)
     : TracingMuxer(args.platform ? args.platform
                                  : Platform::GetDefaultPlatform()) {
   PERFETTO_DETACH_FROM_THREAD(thread_checker_);
+  instance_ = this;
 
   // Create the thread where muxer, producers and service will live.
-  task_runner_ = platform_->CreateTaskRunner({});
+  Platform::CreateTaskRunnerArgs tr_args{/*name_for_debugging=*/"TracingMuxer"};
+  task_runner_.reset(new NonReentrantTaskRunner(
+      this, platform_->CreateTaskRunner(std::move(tr_args))));
 
   // Run the initializer on that thread.
   task_runner_->PostTask([this, args] { Initialize(args); });
@@ -651,6 +745,8 @@ TracingMuxerImpl::TracingMuxerImpl(const TracingInitArgs& args)
 
 void TracingMuxerImpl::Initialize(const TracingInitArgs& args) {
   PERFETTO_DCHECK_THREAD(thread_checker_);  // Rebind the thread checker.
+
+  policy_ = args.tracing_policy;
 
   auto add_backend = [this, &args](TracingBackend* backend, BackendType type) {
     if (!backend) {
@@ -712,8 +808,7 @@ bool TracingMuxerImpl::RegisterDataSource(
   if (static_state->index != kMaxDataSources)
     return true;
 
-  static std::atomic<uint32_t> last_id{};
-  uint32_t new_index = last_id++;
+  uint32_t new_index = next_data_source_index_++;
   if (new_index >= kMaxDataSources) {
     PERFETTO_DLOG(
         "RegisterDataSource failed: too many data sources already registered");
@@ -728,15 +823,39 @@ bool TracingMuxerImpl::RegisterDataSource(
 
   static_state->index = new_index;
 
+  // Generate a semi-unique id for this data source.
+  base::Hash hash;
+  hash.Update(reinterpret_cast<intptr_t>(static_state));
+  hash.Update(base::GetWallTimeNs().count());
+  static_state->id = hash.digest() ? hash.digest() : 1;
+
   task_runner_->PostTask([this, descriptor, factory, static_state] {
     data_sources_.emplace_back();
     RegisteredDataSource& rds = data_sources_.back();
     rds.descriptor = descriptor;
     rds.factory = factory;
     rds.static_state = static_state;
-    UpdateDataSourcesOnAllBackends();
+
+    UpdateDataSourceOnAllBackends(rds, /*is_changed=*/false);
   });
   return true;
+}
+
+// Can be called from any thread (but not concurrently).
+void TracingMuxerImpl::UpdateDataSourceDescriptor(
+    const DataSourceDescriptor& descriptor,
+    const DataSourceStaticState* static_state) {
+  task_runner_->PostTask([this, descriptor, static_state] {
+    for (auto& rds : data_sources_) {
+      if (rds.static_state == static_state) {
+        PERFETTO_CHECK(rds.descriptor.name() == descriptor.name());
+        rds.descriptor = descriptor;
+        rds.descriptor.set_id(static_state->id);
+        UpdateDataSourceOnAllBackends(rds, /*is_changed=*/true);
+        return;
+      }
+    }
+  });
 }
 
 // Can be called from any thread (but not concurrently).
@@ -827,6 +946,7 @@ void TracingMuxerImpl::SetupDataSource(TracingBackendId backend_id,
           std::is_same<decltype(internal_state->data_source_instance_id),
                        DataSourceInstanceID>::value,
           "data_source_instance_id type mismatch");
+      internal_state->muxer_id_for_testing = muxer_id_for_testing_;
       internal_state->backend_id = backend_id;
       internal_state->backend_connection_id = backend_connection_id;
       internal_state->data_source_instance_id = instance_id;
@@ -963,6 +1083,7 @@ void TracingMuxerImpl::StopDataSource_AsyncEnd(
     std::lock_guard<std::recursive_mutex> guard(ds.internal_state->lock);
     ds.internal_state->trace_lambda_enabled = false;
     ds.internal_state->data_source.reset();
+    ds.internal_state->interceptor.reset();
   }
 
   // The other fields of internal_state are deliberately *not* cleared.
@@ -982,6 +1103,23 @@ void TracingMuxerImpl::StopDataSource_AsyncEnd(
     producer->service_->NotifyDataSourceStopped(instance_id);
   }
   producer->SweepDeadServices();
+}
+
+void TracingMuxerImpl::ClearDataSourceIncrementalState(
+    TracingBackendId backend_id,
+    DataSourceInstanceID instance_id) {
+  PERFETTO_DCHECK_THREAD(thread_checker_);
+  PERFETTO_DLOG("Clearing incremental state for data source %" PRIu64,
+                instance_id);
+  auto ds = FindDataSource(backend_id, instance_id);
+  if (!ds) {
+    PERFETTO_ELOG("Could not find data source to clear incremental state for");
+    return;
+  }
+  // Make DataSource::TraceContext::GetIncrementalState() eventually notice that
+  // the incremental state should be cleared.
+  ds.static_state->incremental_state_generation.fetch_add(
+      1, std::memory_order_relaxed);
 }
 
 void TracingMuxerImpl::SyncProducersForTesting() {
@@ -1056,7 +1194,9 @@ void TracingMuxerImpl::DestroyStoppedTraceWritersForCurrentThread() {
         continue;
 
       DataSourceState* ds_state = static_state->TryGet(inst);
-      if (ds_state && ds_state->backend_id == ds_tls.backend_id &&
+      if (ds_state &&
+          ds_state->muxer_id_for_testing == ds_tls.muxer_id_for_testing &&
+          ds_state->backend_id == ds_tls.backend_id &&
           ds_state->backend_connection_id == ds_tls.backend_connection_id &&
           ds_state->buffer_id == ds_tls.buffer_id &&
           ds_state->data_source_instance_id == ds_tls.data_source_instance_id) {
@@ -1083,21 +1223,34 @@ void TracingMuxerImpl::DestroyStoppedTraceWritersForCurrentThread() {
 void TracingMuxerImpl::UpdateDataSourcesOnAllBackends() {
   PERFETTO_DCHECK_THREAD(thread_checker_);
   for (RegisteredDataSource& rds : data_sources_) {
-    for (RegisteredBackend& backend : backends_) {
-      // We cannot call RegisterDataSource on the backend before it connects.
-      if (!backend.producer->connected_)
-        continue;
+    UpdateDataSourceOnAllBackends(rds, /*is_changed=*/false);
+  }
+}
 
-      PERFETTO_DCHECK(rds.static_state->index < kMaxDataSources);
-      if (backend.producer->registered_data_sources_.test(
-              rds.static_state->index))
-        continue;
+void TracingMuxerImpl::UpdateDataSourceOnAllBackends(RegisteredDataSource& rds,
+                                                     bool is_changed) {
+  PERFETTO_DCHECK_THREAD(thread_checker_);
+  for (RegisteredBackend& backend : backends_) {
+    // We cannot call RegisterDataSource on the backend before it connects.
+    if (!backend.producer->connected_)
+      continue;
 
-      rds.descriptor.set_will_notify_on_start(true);
-      rds.descriptor.set_will_notify_on_stop(true);
+    PERFETTO_DCHECK(rds.static_state->index < kMaxDataSources);
+    bool is_registered = backend.producer->registered_data_sources_.test(
+        rds.static_state->index);
+    if (is_registered && !is_changed)
+      continue;
+
+    rds.descriptor.set_will_notify_on_start(true);
+    rds.descriptor.set_will_notify_on_stop(true);
+    rds.descriptor.set_handles_incremental_state_clear(true);
+    rds.descriptor.set_id(rds.static_state->id);
+    if (is_registered) {
+      backend.producer->service_->UpdateDataSource(rds.descriptor);
+    } else {
       backend.producer->service_->RegisterDataSource(rds.descriptor);
-      backend.producer->registered_data_sources_.set(rds.static_state->index);
     }
+    backend.producer->registered_data_sources_.set(rds.static_state->index);
   }
 }
 
@@ -1342,12 +1495,29 @@ TracingMuxerImpl::ConsumerImpl* TracingMuxerImpl::FindConsumer(
   for (RegisteredBackend& backend : backends_) {
     for (auto& consumer : backend.consumers) {
       if (consumer->session_id_ == session_id) {
-        PERFETTO_DCHECK(consumer->service_);
         return consumer.get();
       }
     }
   }
   return nullptr;
+}
+
+void TracingMuxerImpl::InitializeConsumer(TracingSessionGlobalID session_id) {
+  PERFETTO_DCHECK_THREAD(thread_checker_);
+
+  auto* consumer = FindConsumer(session_id);
+  if (!consumer)
+    return;
+
+  TracingBackendId backend_id = consumer->backend_id_;
+  // |backends_| is append-only, Backend instances are always valid.
+  PERFETTO_CHECK(backend_id < backends_.size());
+  RegisteredBackend& backend = backends_[backend_id];
+
+  TracingBackend::ConnectConsumerArgs conn_args;
+  conn_args.consumer = consumer;
+  conn_args.task_runner = task_runner_.get();
+  consumer->Initialize(backend.backend->ConnectConsumer(conn_args));
 }
 
 void TracingMuxerImpl::OnConsumerDisconnected(ConsumerImpl* consumer) {
@@ -1390,6 +1560,17 @@ void TracingMuxerImpl::OnProducerDisconnected(ProducerImpl* producer) {
   // 2. No new trace writers can be created for the SharedMemoryArbiter from the
   //    old connection.
   TracingMuxer::generation_++;
+}
+
+void TracingMuxerImpl::SweepDeadBackends() {
+  PERFETTO_DCHECK_THREAD(thread_checker_);
+  for (auto it = dead_backends_.begin(); it != dead_backends_.end();) {
+    auto next_it = it;
+    next_it++;
+    if (it->producer->SweepDeadServices())
+      dead_backends_.erase(it);
+    it = next_it;
+  }
 }
 
 TracingMuxerImpl::FindDataSourceRes TracingMuxerImpl::FindDataSource(
@@ -1464,21 +1645,53 @@ std::unique_ptr<TracingSession> TracingMuxerImpl::CreateTracingSession(
         continue;
       }
 
+      TracingBackendId backend_id = backend.id;
+
+      // Create the consumer now, even if we have to ask the embedder below, so
+      // that any other tasks executing after this one can find the consumer and
+      // change its pending attributes.
+      backend.consumers.emplace_back(
+          new ConsumerImpl(this, backend.type, backend.id, session_id));
+
       // The last registered backend in |backends_| is the unsupported backend
       // without a valid type.
       if (!backend.type) {
         PERFETTO_ELOG(
             "No tracing backend ready for type=%d, consumer will disconnect",
             requested_backend_type);
+        InitializeConsumer(session_id);
+        return;
       }
 
-      backend.consumers.emplace_back(
-          new ConsumerImpl(this, backend.type, backend.id, session_id));
-      auto& consumer = backend.consumers.back();
-      TracingBackend::ConnectConsumerArgs conn_args;
-      conn_args.consumer = consumer.get();
-      conn_args.task_runner = task_runner_.get();
-      consumer->Initialize(backend.backend->ConnectConsumer(conn_args));
+      // Check if the embedder wants to be asked for permission before
+      // connecting the consumer.
+      if (!policy_) {
+        InitializeConsumer(session_id);
+        return;
+      }
+
+      TracingPolicy::ShouldAllowConsumerSessionArgs args;
+      args.backend_type = backend.type;
+      args.result_callback = [this, backend_id, session_id](bool allow) {
+        task_runner_->PostTask([this, backend_id, session_id, allow] {
+          if (allow) {
+            InitializeConsumer(session_id);
+            return;
+          }
+
+          PERFETTO_ELOG(
+              "Consumer session for backend type type=%d forbidden, "
+              "consumer will disconnect",
+              backends_[backend_id].type);
+
+          auto* consumer = FindConsumer(session_id);
+          if (!consumer)
+            return;
+
+          consumer->OnDisconnect();
+        });
+      };
+      policy_->ShouldAllowConsumerSession(args);
       return;
     }
     PERFETTO_DFATAL("Not reached");
@@ -1488,10 +1701,94 @@ std::unique_ptr<TracingSession> TracingMuxerImpl::CreateTracingSession(
       new TracingSessionImpl(this, session_id, requested_backend_type));
 }
 
+// static
 void TracingMuxerImpl::InitializeInstance(const TracingInitArgs& args) {
   if (instance_ != TracingMuxerFake::Get())
     PERFETTO_FATAL("Tracing already initialized");
-  instance_ = new TracingMuxerImpl(args);
+  // If we previously had a TracingMuxerImpl instance which was reset,
+  // reinitialize and reuse it instead of trying to create a new one. See
+  // ResetForTesting().
+  if (g_prev_instance) {
+    auto* muxer = g_prev_instance;
+    g_prev_instance = nullptr;
+    instance_ = muxer;
+    muxer->task_runner_->PostTask([muxer, args] { muxer->Initialize(args); });
+  } else {
+    new TracingMuxerImpl(args);
+  }
+}
+
+// static
+void TracingMuxerImpl::ResetForTesting() {
+  // Ideally we'd tear down the entire TracingMuxerImpl, but the lifetimes of
+  // various objects make that a non-starter. In particular:
+  //
+  // 1) Any thread that has entered a trace event has a TraceWriter, which holds
+  //    a reference back to ProducerImpl::service_.
+  //
+  // 2) ProducerImpl::service_ has a reference back to the ProducerImpl.
+  //
+  // 3) ProducerImpl holds reference to TracingMuxerImpl::task_runner_, which in
+  //    turn depends on TracingMuxerImpl itself.
+  //
+  // Because of this, it's not safe to deallocate TracingMuxerImpl until all
+  // threads have dropped their TraceWriters. Since we can't really ask the
+  // caller to guarantee this, we'll instead reset enough of the muxer's state
+  // so that it can be reinitialized later and ensure all necessary objects from
+  // the old state remain alive until all references have gone away.
+  auto* muxer = reinterpret_cast<TracingMuxerImpl*>(instance_);
+
+  base::WaitableEvent reset_done;
+  auto do_reset = [muxer, &reset_done] {
+    // Unregister all data sources so they don't interfere with any future
+    // tracing sessions.
+    for (RegisteredDataSource& rds : muxer->data_sources_) {
+      for (RegisteredBackend& backend : muxer->backends_) {
+        if (!backend.producer->service_)
+          continue;
+        backend.producer->service_->UnregisterDataSource(rds.descriptor.name());
+      }
+    }
+    for (auto& backend : muxer->backends_) {
+      // Check that no consumer session is currently active on any backend.
+      for (auto& consumer : backend.consumers)
+        PERFETTO_CHECK(!consumer->service_);
+      backend.producer->muxer_ = nullptr;
+      backend.producer->DisposeConnection();
+      muxer->dead_backends_.push_back(std::move(backend));
+    }
+    muxer->backends_.clear();
+    muxer->interceptors_.clear();
+
+    for (auto& ds : muxer->data_sources_) {
+      ds.static_state->~DataSourceStaticState();
+      new (ds.static_state) DataSourceStaticState{};
+    }
+    muxer->data_sources_.clear();
+    muxer->next_data_source_index_ = 0;
+
+    // Free all backends without active trace writers or other inbound
+    // references. Note that even if all the backends get swept, the muxer still
+    // needs to stay around since |task_runner_| is assumed to be long-lived.
+    muxer->SweepDeadBackends();
+
+    // Make sure we eventually discard any per-thread trace writers from the
+    // previous instance.
+    muxer->muxer_id_for_testing_++;
+
+    g_prev_instance = muxer;
+    instance_ = TracingMuxerFake::Get();
+    reset_done.Notify();
+  };
+
+  // Some tests run the muxer and the test on the same thread. In these cases,
+  // we can reset synchronously.
+  if (muxer->task_runner_->RunsTasksOnCurrentThread()) {
+    do_reset();
+  } else {
+    muxer->task_runner_->PostTask(std::move(do_reset));
+    reset_done.Wait();
+  }
 }
 
 TracingMuxer::~TracingMuxer() = default;

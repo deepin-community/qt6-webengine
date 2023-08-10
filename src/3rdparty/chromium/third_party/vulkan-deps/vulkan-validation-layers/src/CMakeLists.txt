@@ -1,6 +1,6 @@
 # ~~~
-# Copyright (c) 2014-2021 Valve Corporation
-# Copyright (c) 2014-2021 LunarG, Inc.
+# Copyright (c) 2014-2022 Valve Corporation
+# Copyright (c) 2014-2022 LunarG, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -33,10 +33,11 @@ enable_testing()
 # This section contains variables that affect development GUIs (e.g. CMake GUI and IDEs), such as option(), folders, and variables
 # with the CACHE property.
 
-option(VVL_CPP_STANDARD "Set the C++ standard to build against. The value will be passed to cmake's CXX_STANDARD property. Default = 11" 11)
-if (NOT VVL_CPP_STANDARD)
-    set(VVL_CPP_STANDARD 11)
-endif()
+set(VVL_CPP_STANDARD 11 CACHE STRING "Set the C++ standard to build against. The value will be passed to cmake's CXX_STANDARD property.")
+
+option(VVL_ENABLE_ASAN "Use address sanitization (specifically -fsanitize=address)" OFF)
+
+option(BUILD_TESTS "Build the tests" OFF)
 
 # API_NAME allows renaming builds to avoid conflicts with installed SDKs.  It is referenced by layers/vk_loader_platform.h
 set(API_NAME "Vulkan" CACHE STRING "API name to use when building")
@@ -48,7 +49,73 @@ add_definitions(-DVK_ENABLE_BETA_EXTENSIONS)
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
-find_package(PythonInterp 3 QUIET)
+if (UPDATE_DEPS)
+    find_package(PythonInterp 3 REQUIRED)
+
+    if (CMAKE_GENERATOR_PLATFORM)
+        set(_target_arch ${CMAKE_GENERATOR_PLATFORM})
+    else()
+        message(WARNING "CMAKE_GENERATOR_PLATFORM not set. Using x64 as target architecture.")
+        set(_target_arch x64)
+    endif()
+
+    if (NOT CMAKE_BUILD_TYPE)
+        message(WARNING "CMAKE_BUILD_TYPE not set. Using Debug for dependency build type")
+        set(_build_type Debug)
+    else()
+        set(_build_type ${CMAKE_BUILD_TYPE})
+    endif()
+
+    message("********************************************************************************")
+    message("* NOTE: Adding target vvl_update_deps to run as needed for updating            *")
+    message("*       dependencies.                                                          *")
+    message("********************************************************************************")
+
+    set(_build_tests_arg "")
+    if (NOT BUILD_TESTS)
+        set(_build_tests_arg "--optional=tests")
+    endif()
+
+    # Add a target so that update_deps.py will run when necessary
+    # NOTE: This is triggered off of the timestamps of known_good.json and helper.cmake
+    add_custom_command(OUTPUT ${CMAKE_CURRENT_LIST_DIR}/external/helper.cmake
+                       COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/scripts/update_deps.py --dir ${CMAKE_CURRENT_LIST_DIR}/external --arch ${_target_arch} --config ${_build_type} --generator "${CMAKE_GENERATOR}" ${_build_tests_arg}
+                       DEPENDS ${CMAKE_CURRENT_LIST_DIR}/scripts/known_good.json)
+
+    add_custom_target(vvl_update_deps DEPENDS ${CMAKE_CURRENT_LIST_DIR}/external/helper.cmake)
+
+    # Check if update_deps.py needs to be run on first cmake run
+    if (${CMAKE_CURRENT_LIST_DIR}/scripts/known_good.json IS_NEWER_THAN ${CMAKE_CURRENT_LIST_DIR}/external/helper.cmake)
+        execute_process(
+            COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/scripts/update_deps.py --dir ${CMAKE_CURRENT_LIST_DIR}/external --arch ${_target_arch} --config ${_build_type} --generator "${CMAKE_GENERATOR}" ${_build_tests_arg}
+            WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+            RESULT_VARIABLE _update_deps_result
+        )
+        if (NOT (${_update_deps_result} EQUAL 0))
+            message(FATAL_ERROR "Could not run update_deps.py which is necessary to download dependencies.")
+        endif()
+    endif()
+    include(${CMAKE_CURRENT_LIST_DIR}/external/helper.cmake)
+else()
+    message("********************************************************************************")
+    message("* NOTE: Not adding target to run update_deps.py automatically.                 *")
+    message("********************************************************************************")
+    find_package(PythonInterp 3 QUIET)
+endif()
+#backwards compatability settings for other parts of the build system that don't use find_package() variables yet
+if (ROBIN_HOOD_HASHING_INSTALL_DIR)
+    list(APPEND CMAKE_PREFIX_PATH ${ROBIN_HOOD_HASHING_INSTALL_DIR})
+endif()
+if (SPIRV_HEADERS_INSTALL_DIR)
+    list(APPEND CMAKE_PREFIX_PATH ${SPIRV_HEADERS_INSTALL_DIR})
+endif()
+if (SPIRV_TOOLS_INSTALL_DIR)
+    list(APPEND CMAKE_PREFIX_PATH ${SPIRV_TOOLS_INSTALL_DIR})
+endif()
+if (GOOGLETEST_INSTALL_DIR)
+    list(APPEND CMAKE_PREFIX_PATH ${GOOGLETEST_INSTALL_DIR})
+endif()
+
 
 if (TARGET Vulkan::Headers)
     message(STATUS "Using Vulkan headers from Vulkan::Headers target")
@@ -114,6 +181,18 @@ endif()
 
 # Platform-specific compiler switches
 option(BUILD_WERROR "Treat compiler warnings as errors" ON)
+if(MAKE_C_COMPILER_ID MATCHES "Clang")
+    add_compile_options(-Wconversion
+
+                        # TODO These warnings also get turned on with -Wconversion in some versions of clang.
+                        #      Leave off until further investigation.
+                        -Wno-sign-conversion
+                        -Wno-shorten-64-to-32
+                        -Wno-string-conversion
+                        -Wno-implicit-int-conversion
+                        -Wno-enum-enum-conversion)
+
+endif()
 if(CMAKE_COMPILER_IS_GNUCC OR CMAKE_C_COMPILER_ID MATCHES "Clang")
     add_compile_options(-Wall
                         -Wextra
@@ -154,18 +233,69 @@ elseif(MSVC)
     add_compile_options("/w34245")
 endif()
 
-if(TARGET gtest OR IS_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/external/googletest)
-    option(BUILD_TESTS "Build tests" ON)
-else()
-    option(BUILD_TESTS "Build tests" OFF)
+if(MAKE_C_COMPILER_ID MATCHES "Clang")
+    add_compile_options(-Wconversion
+
+                        # TODO These warnings also get turned on with -Wconversion in some versions of clang.
+                        #      Leave off until further investigation.
+                        -Wno-sign-conversion
+                        -Wno-shorten-64-to-32
+                        -Wno-string-conversion
+                        -Wno-implicit-int-conversion
+                        -Wno-enum-enum-conversion)
+
 endif()
 
 option(INSTALL_TESTS "Install tests" OFF)
 option(BUILD_LAYERS "Build layers" ON)
 option(BUILD_LAYER_SUPPORT_FILES "Generate layer files" OFF) # For generating files when not building layers
+option(USE_ROBIN_HOOD_HASHING "Use robin-hood-hashing" ON)
+if (USE_ROBIN_HOOD_HASHING)
+    if (NOT TARGET robin_hood::robin_hood)
+        find_package(robin_hood REQUIRED CONFIG)
+    endif()
+endif()
 
-if(BUILD_TESTS OR BUILD_LAYERS)
+if(BUILD_LAYERS OR BUILD_TESTS)
+    find_package(SPIRV-Headers CONFIG QUIET)
+    if(SPIRV-Headers_FOUND)
+	# pefer the package if found. Note that if SPIRV_HEADERS_INSTALL_DIR points at an 'installed'
+	# version of SPIRV-Headers, the package will be found.
+	get_target_property(SPIRV_HEADERS_INCLUDE_DIR SPIRV-Headers::SPIRV-Headers INTERFACE_INCLUDE_DIRECTORIES)
+    elseif(SPIRV_HEADERS_INCLUDE_DIR)
+	# This is set by SPIRV-Tools (in parent scope!) and also some packages that include VVL with add_subdirectory
+	if (NOT EXISTS "${SPIRV_HEADERS_INCLUDE_DIR}/spirv/unified1/spirv.h")
+	    message(FATAL_ERROR "Cannot find SPIRV-Headers from SPIRV_HEADERS_INCLUDE_DIR: ${SPIRV_HEADERS_INCLUDE_DIR}")
+        endif()
+    elseif(SPIRV_HEADERS_INSTALL_DIR)
+        # This is our official variable for setting SPIRV-Headers location, but pointing at the raw source of SPIRV-Headers
+	if (NOT EXISTS "${SPIRV_HEADERS_INSTALL_DIR}/include/spirv/unified1/spirv.h")
+	    message(FATAL_ERROR "Cannot find SPIRV-Headers from SPIRV_HEADERS_INSTALL_DIR: ${SPIRV_HEADERS_INSTALL_DIR}")
+        endif()
+	set(SPIRV_HEADERS_INCLUDE_DIR "${SPIRV_HEADERS_INSTALL_DIR}/include")
+    endif()
+    if (NOT TARGET SPIRV-Tools)
+        find_package(SPIRV-Tools REQUIRED CONFIG)
+	# See https://github.com/KhronosGroup/SPIRV-Tools/issues/3909 for background on this.
+	# The targets available from SPIRV-Tools change depending on how SPIRV_TOOLS_BUILD_STATIC is set.
+	# Try to handle all possible combinations so that we work with externally built packages.
+	if (TARGET SPIRV-Tools)
+	    set(SPIRV_TOOLS_TARGET "SPIRV-Tools")
+	elseif(TARGET SPIRV-Tools-static)
+	    set(SPIRV_TOOLS_TARGET "SPIRV-Tools-static")
+	elseif(TARGET SPIRV-Tools-shared)
+	    set(SPIRV_TOOLS_TARGET "SPIRV-Tools-shared")
+	else()
+	    message(FATAL_ERROR "Cannot determine SPIRV-Tools target name")
+	endif()
+    endif()
+    # Thankfully SPIRV-Tools-opt has only one target name.
+    if (NOT TARGET SPIRV-Tools-opt)
+        find_package(SPIRV-Tools-opt REQUIRED CONFIG)
+    endif()
+endif()
 
+if(BUILD_TESTS)
     set(GLSLANG_INSTALL_DIR "GLSLANG-NOTFOUND" CACHE PATH "Absolute path to a glslang install directory")
     if(NOT GLSLANG_INSTALL_DIR AND NOT DEFINED ENV{GLSLANG_INSTALL_DIR} AND NOT TARGET glslang)
         message(FATAL_ERROR "Must define location of glslang binaries -- see BUILD.md")
@@ -176,25 +306,11 @@ if(BUILD_TESTS OR BUILD_LAYERS)
         set(GLSLANG_INSTALL_DIR $ENV{GLSLANG_INSTALL_DIR})
     endif()
 
-    # CMake command line option overrides environment variable
-    if(NOT SPIRV_HEADERS_INSTALL_DIR)
-        set(SPIRV_HEADERS_INSTALL_DIR $ENV{SPIRV_HEADERS_INSTALL_DIR})
-    endif()
-
-    if(NOT SPIRV_TOOLS_INSTALL_DIR)
-        set(SPIRV_TOOLS_INSTALL_DIR $ENV{SPIRV_TOOLS_INSTALL_DIR})
-    endif()
-
     if (NOT TARGET glslang)
-        if(NOT SPIRV_HEADERS_INSTALL_DIR)
-            message(FATAL_ERROR "Must define location of SPIRV-Headers -- see BUILD.md")
-        endif()
-
         message(STATUS "Using glslang install located at ${GLSLANG_INSTALL_DIR}")
         set(GLSLANG_SEARCH_PATH "${GLSLANG_INSTALL_DIR}/lib")
         set(GLSLANG_DEBUG_SEARCH_PATH "${GLSLANG_INSTALL_DIR}/lib")
-        set(GLSLANG_SPIRV_INCLUDE_DIR "${GLSLANG_INSTALL_DIR}/include/glslang" CACHE PATH "Path to glslang spirv headers")
-        set(SPIRV_HEADERS_INCLUDE_DIR "${SPIRV_HEADERS_INSTALL_DIR}/include" CACHE PATH "Path to spirv-headers")
+        set(GLSLANG_INCLUDE_DIR "${GLSLANG_INSTALL_DIR}/include" CACHE PATH "Path to glslang headers")
 
         set(GLSLANG_LIBRARIES glslang OGLCompiler OSDependent MachineIndependent GenericCodeGen HLSL SPIRV SPVRemapper)
 
@@ -220,57 +336,9 @@ if(BUILD_TESTS OR BUILD_LAYERS)
                                              "${GLSLANG_LIBRARIES}")
         endforeach()
     else()
-        set(GLSLANG_SPIRV_INCLUDE_DIR "${glslang_SOURCE_DIR}" CACHE PATH "Path to glslang spirv headers")
+        set(GLSLANG_INCLUDE_DIR "${glslang_SOURCE_DIR}" CACHE PATH "Path to glslang headers")
         set(GLSLANG_LIBRARIES glslang SPIRV SPVRemapper)
     endif()
-
-    # spirv-tools
-    if (NOT TARGET SPIRV-Tools)
-        if(NOT SPIRV_TOOLS_INSTALL_DIR)
-            set(SPIRV_TOOLS_INSTALL_DIR "${GLSLANG_INSTALL_DIR}")
-        endif()
-
-        set(SPIRV_TOOLS_BINARY_ROOT "${SPIRV_TOOLS_INSTALL_DIR}/lib"
-            CACHE PATH "User defined path to the SPIRV-Tools binaries for this project")
-        set(SPIRV_TOOLS_OPT_BINARY_ROOT "${SPIRV_TOOLS_INSTALL_DIR}/lib"
-            CACHE PATH "User defined path to the SPIRV-Tools-opt binaries for this project")
-        set(SPIRV_TOOLS_INCLUDE_DIR "${SPIRV_TOOLS_INSTALL_DIR}/include" CACHE PATH "Path to spirv tools headers")
-        set(SPIRV_TOOLS_SEARCH_PATH "${SPIRV_TOOLS_INSTALL_DIR}/lib")
-        set(SPIRV_TOOLS_DEBUG_SEARCH_PATH "${SPIRV_TOOLS_INSTALL_DIR}/lib")
-        set(SPIRV_TOOLS_OPT_SEARCH_PATH "${SPIRV_TOOLS_INSTALL_DIR}/lib")
-        set(SPIRV_TOOLS_OPT_DEBUG_SEARCH_PATH "${SPIRV_TOOLS_INSTALL_DIR}/lib")
-
-        find_library(SPIRV_TOOLS_LIB NAMES SPIRV-Tools HINTS ${SPIRV_TOOLS_SEARCH_PATH})
-        find_library(SPIRV_TOOLS_OPT_LIB NAMES SPIRV-Tools-opt HINTS ${SPIRV_TOOLS_OPT_SEARCH_PATH})
-
-        if(WIN32)
-            add_library(SPIRV-Tools-opt STATIC IMPORTED)
-            add_library(SPIRV-Tools STATIC IMPORTED)
-
-            find_library(SPIRV_TOOLS_DLIB NAMES SPIRV-Toolsd HINTS ${SPIRV_TOOLS_DEBUG_SEARCH_PATH})
-            find_library(SPIRV_TOOLS_OPT_DLIB NAMES SPIRV-Tools-optd HINTS ${SPIRV_TOOLS_OPT_DEBUG_SEARCH_PATH})
-
-            set_target_properties(SPIRV-Tools
-                                  PROPERTIES IMPORTED_LOCATION
-                                             "${SPIRV_TOOLS_LIB}"
-                                             IMPORTED_LOCATION_DEBUG
-                                             "${SPIRV_TOOLS_DLIB}")
-            set_target_properties(SPIRV-Tools-opt
-                                  PROPERTIES IMPORTED_LOCATION
-                                             "${SPIRV_TOOLS_OPT_LIB}"
-                                             IMPORTED_LOCATION_DEBUG
-                                             "${SPIRV_TOOLS_OPT_DLIB}")
-
-            set(SPIRV_TOOLS_LIBRARIES SPIRV-Tools-opt SPIRV-Tools)
-        else()
-            set(SPIRV_TOOLS_LIBRARIES ${SPIRV_TOOLS_OPT_LIB} ${SPIRV_TOOLS_LIB})
-        endif()
-    else()
-        set(SPIRV_TOOLS_LIBRARIES SPIRV-Tools SPIRV-Tools-opt)
-        set(SPIRV_TOOLS_INCLUDE_DIR "${spirv-tools_SOURCE_DIR}/include" CACHE PATH "Path to spirv tools headers")
-    endif()
-
-    set(GLSLANG_LIBRARIES ${GLSLANG_LIBRARIES} ${SPIRV_TOOLS_LIBRARIES})
 endif()
 
 # Generate dependent helper files ------------------------------------------------------------------------------------------------
@@ -287,9 +355,17 @@ add_library(VkLayer_utils
             layers/vk_layer_config.cpp
             layers/vk_layer_extension_utils.cpp
             layers/vk_layer_utils.cpp
-            layers/vk_format_utils.cpp)
+            layers/generated/vk_format_utils.cpp)
 target_link_libraries(VkLayer_utils PUBLIC Vulkan::Headers)
 set_target_properties(VkLayer_utils PROPERTIES CXX_STANDARD ${VVL_CPP_STANDARD})
+if (VVL_ENABLE_ASAN)
+    target_compile_options(VkLayer_utils PRIVATE -fsanitize=address)
+    # NOTE: Use target_link_options when cmake 3.13 is available on CI
+    target_link_libraries(VkLayer_utils PRIVATE "-fsanitize=address")
+endif()
+if (UPDATE_DEPS)
+    add_dependencies(VkLayer_utils vvl_update_deps)
+endif()
 if(WIN32)
     target_compile_definitions(VkLayer_utils PUBLIC _CRT_SECURE_NO_WARNINGS NOMINMAX)
     if(MINGW)
@@ -305,6 +381,11 @@ target_include_directories(VkLayer_utils
                                   ${CMAKE_CURRENT_BINARY_DIR}/layers
                                   ${PROJECT_BINARY_DIR}
                                   ${VulkanHeaders_INCLUDE_DIR})
+
+if (USE_ROBIN_HOOD_HASHING)
+    target_link_libraries(VkLayer_utils PUBLIC robin_hood::robin_hood)
+    target_compile_definitions(VkLayer_utils PUBLIC USE_ROBIN_HOOD_HASHING)
+endif()
 
 # uninstall target ---------------------------------------------------------------------------------------------------------------
 if(NOT TARGET uninstall)
@@ -332,7 +413,7 @@ endif()
 if(PYTHONINTERP_FOUND)
     add_custom_target(VulkanVL_generated_source
                       COMMAND ${PYTHON_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/generate_source.py
-                              ${VulkanRegistry_DIR} --incremental
+                              ${VulkanRegistry_DIR} ${SPIRV_HEADERS_INSTALL_DIR}/include/spirv/unified1/ --incremental
                       WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}/layers/generated
                       )
 else()
@@ -341,9 +422,10 @@ endif()
 
 # Add subprojects ----------------------------------------------------------------------------------------------------------------
 
-add_subdirectory(external)
 if(BUILD_TESTS)
-    add_subdirectory(tests)
+    # Attempt to enable googletest if available.
+    find_package(GTest REQUIRED CONFIG)
+    add_subdirectory(tests ${CMAKE_BINARY_DIR}/tests)
 endif()
 
 if(BUILD_LAYERS OR BUILD_LAYER_SUPPORT_FILES)

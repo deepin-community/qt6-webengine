@@ -8,8 +8,8 @@
 #ifndef SKSL_INLINEMARKER
 #define SKSL_INLINEMARKER
 
+#include "include/private/SkSLStatement.h"
 #include "src/sksl/ir/SkSLFunctionDeclaration.h"
-#include "src/sksl/ir/SkSLStatement.h"
 #include "src/sksl/ir/SkSLSymbolTable.h"
 
 namespace SkSL {
@@ -20,11 +20,15 @@ namespace SkSL {
  */
 class InlineMarker final : public Statement {
 public:
-    static constexpr Kind kStatementKind = Kind::kInlineMarker;
+    inline static constexpr Kind kStatementKind = Kind::kInlineMarker;
 
     InlineMarker(const FunctionDeclaration* function)
-            : INHERITED(-1, kStatementKind)
+            : INHERITED(Position(), kStatementKind)
             , fFunction(*function) {}
+
+    static std::unique_ptr<Statement> Make(const FunctionDeclaration* function) {
+        return std::make_unique<InlineMarker>(function);
+    }
 
     const FunctionDeclaration& function() const {
         return fFunction;
@@ -34,8 +38,8 @@ public:
         return true;
     }
 
-    String description() const override {
-        return String("/* inlined: ") + this->function().name() + String(" */");
+    std::string description() const override {
+        return "/* inlined: " + std::string(this->function().name()) + " */";
     }
 
     std::unique_ptr<Statement> clone() const override {

@@ -9,8 +9,6 @@
 #include "base/callback.h"
 #include "base/json/json_reader.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/optional.h"
-#include "base/stl_util.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
@@ -22,6 +20,7 @@
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/network/public/cpp/simple_url_loader.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/url_constants.h"
 
 namespace safe_search_api {
@@ -42,7 +41,7 @@ std::string BuildRequestData(const std::string& api_key, const GURL& url) {
 // Parses a SafeSearch API |response| and stores the result in |is_porn|,
 // returns true on success. Otherwise, returns false and doesn't set |is_porn|.
 bool ParseResponse(const std::string& response, bool* is_porn) {
-  base::Optional<base::Value> optional_value = base::JSONReader::Read(response);
+  absl::optional<base::Value> optional_value = base::JSONReader::Read(response);
   const base::DictionaryValue* dict = nullptr;
   if (!optional_value || !optional_value.value().GetAsDictionary(&dict)) {
     DLOG(WARNING) << "ParseResponse failed to parse global dictionary";
@@ -53,16 +52,22 @@ bool ParseResponse(const std::string& response, bool* is_porn) {
     DLOG(WARNING) << "ParseResponse failed to parse classifications list";
     return false;
   }
-  if (classifications_list->GetSize() != 1) {
+  if (classifications_list->GetListDeprecated().size() != 1) {
     DLOG(WARNING) << "ParseResponse expected exactly one result";
     return false;
   }
-  const base::DictionaryValue* classification_dict = nullptr;
-  if (!classifications_list->GetDictionary(0, &classification_dict)) {
+  const base::Value& classification_value =
+      classifications_list->GetListDeprecated()[0];
+  if (!classification_value.is_dict()) {
     DLOG(WARNING) << "ParseResponse failed to parse classification dict";
     return false;
   }
-  classification_dict->GetBoolean("pornography", is_porn);
+  const base::DictionaryValue& classification_dict =
+      base::Value::AsDictionaryValue(classification_value);
+  absl::optional<bool> is_porn_opt =
+      classification_dict.FindBoolKey("pornography");
+  if (is_porn_opt.has_value())
+    *is_porn = is_porn_opt.value();
   return true;
 }
 

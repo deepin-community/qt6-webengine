@@ -5,9 +5,8 @@
 #ifndef CONTENT_BROWSER_ANDROID_CONTENT_URL_LOADER_FACTORY_H_
 #define CONTENT_BROWSER_ANDROID_CONTENT_URL_LOADER_FACTORY_H_
 
-#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/sequenced_task_runner.h"
+#include "base/task/sequenced_task_runner.h"
 #include "content/common/content_export.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
@@ -26,6 +25,9 @@ class CONTENT_EXPORT ContentURLLoaderFactory
   // mojo::PendingRemote and the receivers bound by the Clone method).
   static mojo::PendingRemote<network::mojom::URLLoaderFactory> Create();
 
+  ContentURLLoaderFactory(const ContentURLLoaderFactory&) = delete;
+  ContentURLLoaderFactory& operator=(const ContentURLLoaderFactory&) = delete;
+
  private:
   // SequencedTaskRunner must be allowed to block and should have background
   // priority since it will be used to schedule synchronous file I/O tasks.
@@ -37,7 +39,6 @@ class CONTENT_EXPORT ContentURLLoaderFactory
   ~ContentURLLoaderFactory() override;
   void CreateLoaderAndStart(
       mojo::PendingReceiver<network::mojom::URLLoader> loader,
-      int32_t routing_id,
       int32_t request_id,
       uint32_t options,
       const network::ResourceRequest& request,
@@ -46,8 +47,6 @@ class CONTENT_EXPORT ContentURLLoaderFactory
       override;
 
   const scoped_refptr<base::SequencedTaskRunner> task_runner_;
-
-  DISALLOW_COPY_AND_ASSIGN(ContentURLLoaderFactory);
 };
 
 }  // namespace content

@@ -14,14 +14,14 @@ namespace {
 class TestDelegate : public CFX_GlobalData::Delegate {
  public:
   TestDelegate() = default;
-  ~TestDelegate() override {}
+  ~TestDelegate() override = default;
 
   bool StoreBuffer(pdfium::span<const uint8_t> buffer) override {
     last_buffer_ = std::vector<uint8_t, FxAllocAllocator<uint8_t>>(
         buffer.begin(), buffer.end());
     return true;
   }
-  Optional<pdfium::span<uint8_t>> LoadBuffer() override {
+  absl::optional<pdfium::span<uint8_t>> LoadBuffer() override {
     return pdfium::span<uint8_t>(last_buffer_);
   }
   void BufferDone() override {

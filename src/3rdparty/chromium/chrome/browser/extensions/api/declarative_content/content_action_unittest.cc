@@ -22,6 +22,7 @@
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/user_script_manager.h"
 #include "extensions/common/api/declarative/declarative_constants.h"
+#include "extensions/common/api/extension_action/action_info.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_builder.h"
 #include "extensions/common/value_builder.h"
@@ -38,6 +39,7 @@ namespace {
 using base::test::ParseJson;
 using testing::HasSubstr;
 using ContentActionType = declarative_content_constants::ContentActionType;
+using extensions::mojom::ManifestLocation;
 
 std::unique_ptr<base::DictionaryValue> SimpleManifest() {
   return DictionaryBuilder()
@@ -60,7 +62,9 @@ class RequestContentScriptTest : public ExtensionServiceTestBase {
     InitializeEmptyExtensionService();
     auto* extension_system =
         static_cast<TestExtensionSystem*>(ExtensionSystem::Get(profile()));
+
     extension_system->CreateUserScriptManager();
+    service()->AddExtension(extension());
     extension_system->SetReady();
     base::RunLoop().RunUntilIdle();
   }
@@ -120,7 +124,7 @@ TEST(DeclarativeContentActionTest, ShowActionWithoutAction) {
   scoped_refptr<const Extension> extension =
       ExtensionBuilder()
           .SetManifest(manifest.Build())
-          .SetLocation(Manifest::COMPONENT)
+          .SetLocation(ManifestLocation::kComponent)
           .Build();
   env.GetExtensionService()->AddExtension(extension.get());
 
@@ -140,7 +144,7 @@ TEST(DeclarativeContentActionTest, ShowActionWithoutAction) {
 }
 
 class ParameterizedDeclarativeContentActionTest
-    : public ::testing::TestWithParam<ExtensionBuilder::ActionType> {};
+    : public ::testing::TestWithParam<ActionInfo::Type> {};
 
 TEST_P(ParameterizedDeclarativeContentActionTest, ShowAction) {
   TestExtensionEnvironment env;
@@ -149,7 +153,7 @@ TEST_P(ParameterizedDeclarativeContentActionTest, ShowAction) {
   scoped_refptr<const Extension> extension =
       ExtensionBuilder("extension")
           .SetAction(GetParam())
-          .SetLocation(Manifest::INTERNAL)
+          .SetLocation(ManifestLocation::kInternal)
           .Build();
 
   env.GetExtensionService()->AddExtension(extension.get());
@@ -173,7 +177,7 @@ TEST_P(ParameterizedDeclarativeContentActionTest, ShowAction) {
   auto* action_manager = ExtensionActionManager::Get(env.profile());
   ExtensionAction* action = action_manager->GetExtensionAction(*extension);
   ASSERT_TRUE(action);
-  if (GetParam() == ExtensionBuilder::ActionType::BROWSER_ACTION) {
+  if (GetParam() == ActionInfo::TYPE_BROWSER) {
     EXPECT_EQ(ActionInfo::TYPE_BROWSER, action->action_type());
     // Switch the default so we properly see the action toggling.
     action->SetIsVisible(ExtensionAction::kDefaultTabId, false);
@@ -208,11 +212,10 @@ TEST_P(ParameterizedDeclarativeContentActionTest, ShowAction) {
   EXPECT_FALSE(action->GetIsVisible(tab_id));
 }
 
-INSTANTIATE_TEST_SUITE_P(
-    All,
-    ParameterizedDeclarativeContentActionTest,
-    testing::Values(ExtensionBuilder::ActionType::BROWSER_ACTION,
-                    ExtensionBuilder::ActionType::PAGE_ACTION));
+INSTANTIATE_TEST_SUITE_P(All,
+                         ParameterizedDeclarativeContentActionTest,
+                         testing::Values(ActionInfo::TYPE_BROWSER,
+                                         ActionInfo::TYPE_PAGE));
 
 TEST(DeclarativeContentActionTest, SetIcon) {
   enum Mode { Base64, Mojo, MojoHuge };
@@ -273,9 +276,6 @@ TEST(DeclarativeContentActionTest, SetIcon) {
     EXPECT_THAT(histogram_tester.GetAllSamples(
                     "Extensions.DeclarativeSetIconWasVisible"),
                 testing::ElementsAre(base::Bucket(1, 1)));
-    EXPECT_THAT(histogram_tester.GetAllSamples(
-                    "Extensions.DeclarativeSetIconWasVisibleRendered"),
-                testing::ElementsAre(base::Bucket(1, 1)));
     histogram_tester.ExpectUniqueSample(
         "Extensions.DeclarativeContentActionCreated",
         ContentActionType::kSetIcon, 1);
@@ -334,9 +334,6 @@ TEST(DeclarativeContentActionTest, SetInvisibleIcon) {
   EXPECT_THAT(
       histogram_tester.GetAllSamples("Extensions.DeclarativeSetIconWasVisible"),
       testing::ElementsAre(base::Bucket(0, 1)));
-  EXPECT_THAT(histogram_tester.GetAllSamples(
-                  "Extensions.DeclarativeSetIconWasVisibleRendered"),
-              testing::ElementsAre(base::Bucket(0, 1)));
   histogram_tester.ExpectTotalCount(
       "Extensions.DeclarativeContentActionCreated", 0);
 }

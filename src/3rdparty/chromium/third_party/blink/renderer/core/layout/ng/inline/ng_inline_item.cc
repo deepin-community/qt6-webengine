@@ -6,6 +6,7 @@
 
 #include "third_party/blink/renderer/core/layout/layout_inline.h"
 #include "third_party/blink/renderer/core/layout/layout_object.h"
+#include "third_party/blink/renderer/core/layout/svg/layout_svg_inline_text.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
 #include "third_party/blink/renderer/platform/fonts/shaping/shape_result_buffer.h"
 #include "third_party/blink/renderer/platform/wtf/size_assertions.h"
@@ -14,7 +15,8 @@ namespace blink {
 namespace {
 
 struct SameSizeAsNGInlineItem {
-  void* pointers[2];
+  void* pointers[1];
+  UntracedMember<void*> members[1];
   unsigned integers[3];
   unsigned bit_fields : 32;
 };
@@ -72,7 +74,9 @@ NGInlineItem::NGInlineItem(NGInlineItemType type,
                            LayoutObject* layout_object)
     : start_offset_(start),
       end_offset_(end),
-      layout_object_(layout_object),
+      // Use atomic construction to allow for concurrently marking NGInlineItem.
+      layout_object_(layout_object,
+                     Member<LayoutObject>::AtomicInitializerTag{}),
       type_(type),
       text_type_(static_cast<unsigned>(NGTextType::kNormal)),
       style_variant_(static_cast<unsigned>(NGStyleVariant::kStandard)),
@@ -129,8 +133,9 @@ void NGInlineItem::ComputeBoxProperties() {
     return;
   }
 
-  if (type_ == kListMarker) {
-    is_empty_item_ = false;
+  if (type_ == kBlockInInline) {
+    // |is_empty_item_| can't be determined until this item is laid out.
+    // |false| is a safer approximation.
     return;
   }
 
@@ -145,7 +150,7 @@ const char* NGInlineItem::NGInlineItemTypeToString(int val) const {
 }
 
 void NGInlineItem::SetSegmentData(const RunSegmenter::RunSegmenterRange& range,
-                                  Vector<NGInlineItem>* items) {
+                                  HeapVector<NGInlineItem>* items) {
   unsigned segment_data = NGInlineItemSegment::PackSegmentData(range);
   for (NGInlineItem& item : *items) {
     if (item.Type() == NGInlineItem::kText)
@@ -162,7 +167,7 @@ void NGInlineItem::SetSegmentData(const RunSegmenter::RunSegmenterRange& range,
 // @param end_offset The exclusive end offset to set.
 // @param level The level to set.
 // @return The index of the next item.
-unsigned NGInlineItem::SetBidiLevel(Vector<NGInlineItem>& items,
+unsigned NGInlineItem::SetBidiLevel(HeapVector<NGInlineItem>& items,
                                     unsigned index,
                                     unsigned end_offset,
                                     UBiDiLevel level) {
@@ -190,15 +195,15 @@ unsigned NGInlineItem::SetBidiLevel(Vector<NGInlineItem>& items,
   return index + 1;
 }
 
-void NGInlineItemsData::GetOpenTagItems(wtf_size_t size,
-                                        OpenTagItems* open_items) const {
-  DCHECK_LE(size, items.size());
-  for (const NGInlineItem& item : base::make_span(items.data(), size)) {
-    if (item.Type() == NGInlineItem::kOpenTag)
-      open_items->push_back(&item);
-    else if (item.Type() == NGInlineItem::kCloseTag)
-      open_items->pop_back();
+const Font& NGInlineItem::FontWithSvgScaling() const {
+  if (const auto* svg_text =
+          DynamicTo<LayoutSVGInlineText>(layout_object_.Get())) {
+    DCHECK(RuntimeEnabledFeatures::SVGTextNGEnabled());
+    // We don't need to care about StyleVariant(). SVG 1.1 doesn't support
+    // ::first-line.
+    return svg_text->ScaledFont();
   }
+  return Style()->GetFont();
 }
 
 String NGInlineItem::ToString() const {
@@ -213,7 +218,7 @@ String NGInlineItem::ToString() const {
 // @param items The list of NGInlineItem.
 // @param index The index to split.
 // @param offset The offset to split at.
-void NGInlineItem::Split(Vector<NGInlineItem>& items,
+void NGInlineItem::Split(HeapVector<NGInlineItem>& items,
                          unsigned index,
                          unsigned offset) {
   DCHECK_GT(offset, items[index].start_offset_);
@@ -222,6 +227,10 @@ void NGInlineItem::Split(Vector<NGInlineItem>& items,
   items.insert(index + 1, items[index]);
   items[index].end_offset_ = offset;
   items[index + 1].start_offset_ = offset;
+}
+
+void NGInlineItem::Trace(Visitor* visitor) const {
+  visitor->Trace(layout_object_);
 }
 
 }  // namespace blink

@@ -43,6 +43,10 @@ gfx::Size GLImageEGL::GetSize() {
   return size_;
 }
 
+void* GLImageEGL::GetEGLImage() const {
+  return egl_image_;
+}
+
 GLImageEGL::BindOrCopy GLImageEGL::ShouldBindOrCopy() {
   return egl_image_ == EGL_NO_IMAGE_KHR ? COPY : BIND;
 }
@@ -52,11 +56,8 @@ bool GLImageEGL::BindTexImage(unsigned target) {
   DCHECK_EQ(BIND, ShouldBindOrCopy());
 
   glEGLImageTargetTexture2DOES(target, egl_image_);
-  const GLenum error = glGetError();
-
-  DLOG_IF(ERROR, error != GL_NO_ERROR)
-      << "Error binding EGLImage: " << GLEnums::GetStringError(error);
-  return error == GL_NO_ERROR;
+  DCHECK_EQ(static_cast<GLenum>(GL_NO_ERROR), glGetError());
+  return true;
 }
 
 }  // namespace gl

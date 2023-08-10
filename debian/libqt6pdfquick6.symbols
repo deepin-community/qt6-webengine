@@ -1,33 +1,51 @@
-# SymbolsHelper-Confirmed: 6.2.2 amd64
+# SymbolsHelper-Confirmed: 6.4.1 amd64
 libQt6PdfQuick.so.6 libqt6pdfquick6 #MINVER#
-| libqt6pdfquick6 #MINVER#, qt6-webengine-abi (= 6.2.4)
+| libqt6pdfquick6 #MINVER#, qt6-webengine-abi (= 6.4.2)
 * Build-Depends-Package: qt6-webengine-dev
+ _Z30qml_register_types_QtQuick_Pdfv@Base 6.4.0
+ _ZGVZN9QMetaType21registerConverterImplI5QListI8QPdfLinkE9QIterableI13QMetaSequenceEEEbSt8functionIFbPKvPvEES_S_E10unregister@Base 6.4.0
  _ZGVZN9QMetaType21registerConverterImplI5QListI9QPolygonFE9QIterableI13QMetaSequenceEEEbSt8functionIFbPKvPvEES_S_E10unregister@Base 6.2.2
+ _ZGVZN9QMetaType23registerMutableViewImplI5QListI8QPdfLinkE9QIterableI13QMetaSequenceEEEbSt8functionIFbPvS8_EES_S_E10unregister@Base 6.4.0
  _ZGVZN9QMetaType23registerMutableViewImplI5QListI9QPolygonFE9QIterableI13QMetaSequenceEEEbSt8functionIFbPvS8_EES_S_E10unregister@Base 6.2.2
+ _ZN13QMetaSequence12MetaSequenceI5QListI8QPdfLinkEE5valueE@Base 6.4.0
  _ZN13QMetaSequence12MetaSequenceI5QListI9QPolygonFEE5valueE@Base 6.2.2
+ _ZN15QPdfLinkForeign16staticMetaObjectE@Base 6.4.0
+ _ZN17QQuickPdfDocument10classBeginEv@Base 6.4.0
+ _ZN17QQuickPdfDocument11carrierFileEv@Base 6.4.0
  _ZN17QQuickPdfDocument11qt_metacallEN11QMetaObject4CallEiPPv@Base 6.2.2
  _ZN17QQuickPdfDocument11qt_metacastEPKc@Base 6.2.2
- _ZN17QQuickPdfDocument11setPasswordERK7QString@Base 6.2.2
+ _ZN17QQuickPdfDocument12errorChangedEv@Base 6.4.0
  _ZN17QQuickPdfDocument13sourceChangedEv@Base 6.2.2
- _ZN17QQuickPdfDocument13statusChangedEv@Base 6.2.2
  _ZN17QQuickPdfDocument15metaDataChangedEv@Base 6.2.2
- _ZN17QQuickPdfDocument15passwordChangedEv@Base 6.2.2
- _ZN17QQuickPdfDocument16pageCountChangedEv@Base 6.2.2
- _ZN17QQuickPdfDocument16passwordRequiredEv@Base 6.2.2
  _ZN17QQuickPdfDocument16staticMetaObjectE@Base 6.2.2
- _ZN17QQuickPdfDocument17componentCompleteEv@Base 6.2.2
- _ZN17QQuickPdfDocument17updateMaxPageSizeEv@Base 6.2.2
  _ZN17QQuickPdfDocument9setSourceE4QUrl@Base 6.2.2
  _ZN17QQuickPdfDocumentC1EP7QObject@Base 6.2.2
  _ZN17QQuickPdfDocumentC2EP7QObject@Base 6.2.2
+ _ZN17QQuickPdfDocumentD0Ev@Base 6.3.0
+ _ZN17QQuickPdfDocumentD1Ev@Base 6.3.0
+ _ZN17QQuickPdfDocumentD2Ev@Base 6.3.0
  _ZN18QQuickPdfLinkModel11qt_metacallEN11QMetaObject4CallEiPPv@Base 6.2.2
  _ZN18QQuickPdfLinkModel11qt_metacastEPKc@Base 6.2.2
  _ZN18QQuickPdfLinkModel11setDocumentEP17QQuickPdfDocument@Base 6.2.2
- _ZN18QQuickPdfLinkModel15documentChangedEv@Base 6.2.2
  _ZN18QQuickPdfLinkModel16staticMetaObjectE@Base 6.2.2
  _ZN18QQuickPdfLinkModelC1EP7QObject@Base 6.2.2
  _ZN18QQuickPdfLinkModelC2EP7QObject@Base 6.2.2
- _ZN18QQuickPdfSelection10setToPointE7QPointF@Base 6.2.2
+ _ZN18QQuickPdfLinkModelD0Ev@Base 6.3.0
+ _ZN18QQuickPdfLinkModelD1Ev@Base 6.3.0
+ _ZN18QQuickPdfLinkModelD2Ev@Base 6.3.0
+ _ZN18QQuickPdfPageImage11qt_metacallEN11QMetaObject4CallEiPPv@Base 6.4.0
+ _ZN18QQuickPdfPageImage11qt_metacastEPKc@Base 6.4.0
+ _ZN18QQuickPdfPageImage11setDocumentEP17QQuickPdfDocument@Base 6.4.0
+ _ZN18QQuickPdfPageImage15documentChangedEv@Base 6.4.0
+ _ZN18QQuickPdfPageImage16staticMetaObjectE@Base 6.4.0
+ _ZN18QQuickPdfPageImage21documentStatusChangedEv@Base 6.4.0
+ _ZN18QQuickPdfPageImage4loadEv@Base 6.4.0
+ _ZN18QQuickPdfPageImageC1EP10QQuickItem@Base 6.4.0
+ _ZN18QQuickPdfPageImageC2EP10QQuickItem@Base 6.4.0
+ _ZN18QQuickPdfPageImageD0Ev@Base 6.4.0
+ _ZN18QQuickPdfPageImageD1Ev@Base 6.4.0
+ _ZN18QQuickPdfPageImageD2Ev@Base 6.4.0
+ _ZN18QQuickPdfSelection11fromChangedEv@Base 6.4.0
  _ZN18QQuickPdfSelection11holdChangedEv@Base 6.2.2
  _ZN18QQuickPdfSelection11pageChangedEv@Base 6.2.2
  _ZN18QQuickPdfSelection11qt_metacallEN11QMetaObject4CallEiPPv@Base 6.2.2
@@ -35,155 +53,134 @@ libQt6PdfQuick.so.6 libqt6pdfquick6 #MINVER#
  _ZN18QQuickPdfSelection11resetPointsEv@Base 6.2.2
  _ZN18QQuickPdfSelection11setDocumentEP17QQuickPdfDocument@Base 6.2.2
  _ZN18QQuickPdfSelection11textChangedEv@Base 6.2.2
- _ZN18QQuickPdfSelection12setFromPointE7QPointF@Base 6.2.2
  _ZN18QQuickPdfSelection13updateResultsEv@Base 6.2.2
  _ZN18QQuickPdfSelection14setRenderScaleEd@Base 6.2.2
- _ZN18QQuickPdfSelection14toPointChangedEv@Base 6.2.2
  _ZN18QQuickPdfSelection15documentChangedEv@Base 6.2.2
  _ZN18QQuickPdfSelection15keyReleaseEventEP9QKeyEvent@Base 6.2.2
- _ZN18QQuickPdfSelection16fromPointChangedEv@Base 6.2.2
  _ZN18QQuickPdfSelection16inputMethodEventEP17QInputMethodEvent@Base 6.2.2
  _ZN18QQuickPdfSelection16staticMetaObjectE@Base 6.2.2
  _ZN18QQuickPdfSelection18renderScaleChangedEv@Base 6.2.2
  _ZN18QQuickPdfSelection19selectedAreaChangedEv@Base 6.2.2
  _ZN18QQuickPdfSelection5clearEv@Base 6.2.2
+ _ZN18QQuickPdfSelection5setToE7QPointF@Base 6.4.0
  _ZN18QQuickPdfSelection6updateERK13QPdfSelectionb@Base 6.2.2
+ _ZN18QQuickPdfSelection7setFromE7QPointF@Base 6.4.0
  _ZN18QQuickPdfSelection7setHoldEb@Base 6.2.2
  _ZN18QQuickPdfSelection7setPageEi@Base 6.2.2
  _ZN18QQuickPdfSelection9selectAllEv@Base 6.2.2
+ _ZN18QQuickPdfSelection9toChangedEv@Base 6.4.0
  _ZN18QQuickPdfSelectionC1EP10QQuickItem@Base 6.2.2
  _ZN18QQuickPdfSelectionC2EP10QQuickItem@Base 6.2.2
+ _ZN18QQuickPdfSelectionD0Ev@Base 6.3.0
+ _ZN18QQuickPdfSelectionD1Ev@Base 6.3.0
+ _ZN18QQuickPdfSelectionD2Ev@Base 6.3.0
  _ZN20QQuickPdfSearchModel11qt_metacallEN11QMetaObject4CallEiPPv@Base 6.2.2
  _ZN20QQuickPdfSearchModel11qt_metacastEPKc@Base 6.2.2
  _ZN20QQuickPdfSearchModel11setDocumentEP17QQuickPdfDocument@Base 6.2.2
  _ZN20QQuickPdfSearchModel14setCurrentPageEi@Base 6.2.2
- _ZN20QQuickPdfSearchModel15documentChangedEv@Base 6.2.2
  _ZN20QQuickPdfSearchModel16onResultsChangedEv@Base 6.2.2
  _ZN20QQuickPdfSearchModel16setCurrentResultEi@Base 6.2.2
  _ZN20QQuickPdfSearchModel16staticMetaObjectE@Base 6.2.2
  _ZN20QQuickPdfSearchModel18currentPageChangedEv@Base 6.2.2
  _ZN20QQuickPdfSearchModel20currentResultChangedEv@Base 6.2.2
  _ZN20QQuickPdfSearchModel22boundingPolygonsOnPageEi@Base 6.2.2
+ _ZN20QQuickPdfSearchModel24currentResultLinkChangedEv@Base 6.4.0
  _ZN20QQuickPdfSearchModel32currentResultBoundingRectChangedEv@Base 6.2.2
  _ZN20QQuickPdfSearchModel34currentPageBoundingPolygonsChangedEv@Base 6.2.2
  _ZN20QQuickPdfSearchModel36currentResultBoundingPolygonsChangedEv@Base 6.2.2
  _ZN20QQuickPdfSearchModelC1EP7QObject@Base 6.2.2
  _ZN20QQuickPdfSearchModelC2EP7QObject@Base 6.2.2
- _ZN20QQuickTableViewExtra11qt_metacallEN11QMetaObject4CallEiPPv@Base 6.2.2
- _ZN20QQuickTableViewExtra11qt_metacastEPKc@Base 6.2.2
- _ZN20QQuickTableViewExtra16staticMetaObjectE@Base 6.2.2
- _ZN20QQuickTableViewExtra18positionViewAtCellERK6QPoint6QFlagsIN2Qt13AlignmentFlagEERK7QPointF@Base 6.2.2
- _ZN20QQuickTableViewExtraC1EP7QObject@Base 6.2.2
- _ZN20QQuickTableViewExtraC2EP7QObject@Base 6.2.2
- _ZN24QQuickPdfNavigationStack11qt_metacallEN11QMetaObject4CallEiPPv@Base 6.2.2
- _ZN24QQuickPdfNavigationStack11qt_metacastEPKc@Base 6.2.2
- _ZN24QQuickPdfNavigationStack16staticMetaObjectE@Base 6.2.2
- _ZN24QQuickPdfNavigationStack18currentPageChangedEv@Base 6.2.2
- _ZN24QQuickPdfNavigationStack18currentZoomChangedEv@Base 6.2.2
- _ZN24QQuickPdfNavigationStack20backAvailableChangedEv@Base 6.2.2
- _ZN24QQuickPdfNavigationStack22currentLocationChangedEv@Base 6.2.2
- _ZN24QQuickPdfNavigationStack23forwardAvailableChangedEv@Base 6.2.2
- _ZN24QQuickPdfNavigationStack4backEv@Base 6.2.2
- _ZN24QQuickPdfNavigationStack4pushEi7QPointFdb@Base 6.2.2
- _ZN24QQuickPdfNavigationStack6jumpedEi7QPointFd@Base 6.2.2
- _ZN24QQuickPdfNavigationStack6updateEi7QPointFd@Base 6.2.2
- _ZN24QQuickPdfNavigationStack7forwardEv@Base 6.2.2
- _ZN24QQuickPdfNavigationStackC1EP7QObject@Base 6.2.2
- _ZN24QQuickPdfNavigationStackC2EP7QObject@Base 6.2.2
+ _ZN20QQuickPdfSearchModelD0Ev@Base 6.3.0
+ _ZN20QQuickPdfSearchModelD1Ev@Base 6.3.0
+ _ZN20QQuickPdfSearchModelD2Ev@Base 6.3.0
+ _ZN22QQuickPdfBookmarkModel11qt_metacallEN11QMetaObject4CallEiPPv@Base 6.4.0
+ _ZN22QQuickPdfBookmarkModel11qt_metacastEPKc@Base 6.4.0
+ _ZN22QQuickPdfBookmarkModel11setDocumentEP17QQuickPdfDocument@Base 6.4.0
+ _ZN22QQuickPdfBookmarkModel15documentChangedEv@Base 6.4.0
+ _ZN22QQuickPdfBookmarkModel16staticMetaObjectE@Base 6.4.0
+ _ZN22QQuickPdfBookmarkModelC1EP7QObject@Base 6.4.0
+ _ZN22QQuickPdfBookmarkModelC2EP7QObject@Base 6.4.0
+ _ZN22QQuickPdfBookmarkModelD0Ev@Base 6.4.0
+ _ZN22QQuickPdfBookmarkModelD1Ev@Base 6.4.0
+ _ZN22QQuickPdfBookmarkModelD2Ev@Base 6.4.0
+ _ZN22QQuickPdfPageNavigator11qt_metacallEN11QMetaObject4CallEiPPv@Base 6.4.0
+ _ZN22QQuickPdfPageNavigator11qt_metacastEPKc@Base 6.4.0
+ _ZN22QQuickPdfPageNavigator16staticMetaObjectE@Base 6.4.0
+ _ZN22QQuickPdfPageNavigator8navStackEv@Base 6.4.0
+ _ZN22QQuickPdfPageNavigatorC1EP7QObject@Base 6.4.0
+ _ZN22QQuickPdfPageNavigatorC2EP7QObject@Base 6.4.0
+ _ZN22QQuickPdfPageNavigatorD0Ev@Base 6.4.0
+ _ZN22QQuickPdfPageNavigatorD1Ev@Base 6.4.0
+ _ZN22QQuickPdfPageNavigatorD2Ev@Base 6.4.0
  _ZNK17QQuickPdfDocument10metaObjectEv@Base 6.2.2
  _ZNK17QQuickPdfDocument12maxPageWidthEv@Base 6.2.2
  _ZNK17QQuickPdfDocument13maxPageHeightEv@Base 6.2.2
- _ZNK17QQuickPdfDocument13pagePointSizeEi@Base 6.2.2
- _ZNK17QQuickPdfDocument19heightSumBeforePageEidi@Base 6.2.2
+ _ZNK17QQuickPdfDocument17updateMaxPageSizeEv@Base 6.4.0
  _ZNK17QQuickPdfDocument5errorEv@Base 6.2.2
+ _ZNK17QQuickPdfDocument8documentEv@Base 6.4.0
  _ZNK18QQuickPdfLinkModel10metaObjectEv@Base 6.2.2
  _ZNK18QQuickPdfLinkModel8documentEv@Base 6.2.2
+ _ZNK18QQuickPdfPageImage10metaObjectEv@Base 6.4.0
+ _ZNK18QQuickPdfPageImage8documentEv@Base 6.4.0
  _ZNK18QQuickPdfSelection10metaObjectEv@Base 6.2.2
  _ZNK18QQuickPdfSelection11renderScaleEv@Base 6.2.2
  _ZNK18QQuickPdfSelection15copyToClipboardEv@Base 6.2.2
  _ZNK18QQuickPdfSelection16inputMethodQueryEN2Qt16InputMethodQueryE@Base 6.2.2
  _ZNK18QQuickPdfSelection16inputMethodQueryEN2Qt16InputMethodQueryERK8QVariant@Base 6.2.2
+ _ZNK18QQuickPdfSelection2toEv@Base 6.4.0
+ _ZNK18QQuickPdfSelection4fromEv@Base 6.4.0
  _ZNK18QQuickPdfSelection4holdEv@Base 6.2.2
  _ZNK18QQuickPdfSelection4pageEv@Base 6.2.2
  _ZNK18QQuickPdfSelection4textEv@Base 6.2.2
- _ZNK18QQuickPdfSelection7toPointEv@Base 6.2.2
  _ZNK18QQuickPdfSelection8documentEv@Base 6.2.2
  _ZNK18QQuickPdfSelection8geometryEv@Base 6.2.2
  _ZNK18QQuickPdfSelection8pageTextEv@Base 6.2.2
- _ZNK18QQuickPdfSelection9fromPointEv@Base 6.2.2
  _ZNK20QQuickPdfSearchModel10metaObjectEv@Base 6.2.2
+ _ZNK20QQuickPdfSearchModel17currentResultLinkEv@Base 6.4.0
  _ZNK20QQuickPdfSearchModel25currentResultBoundingRectEv@Base 6.2.2
  _ZNK20QQuickPdfSearchModel27currentPageBoundingPolygonsEv@Base 6.2.2
  _ZNK20QQuickPdfSearchModel29currentResultBoundingPolygonsEv@Base 6.2.2
  _ZNK20QQuickPdfSearchModel8documentEv@Base 6.2.2
- _ZNK20QQuickTableViewExtra10itemAtCellERK6QPoint@Base 6.2.2
- _ZNK20QQuickTableViewExtra10metaObjectEv@Base 6.2.2
- _ZNK20QQuickTableViewExtra9cellAtPosEdd@Base 6.2.2
- _ZNK24QQuickPdfNavigationStack10metaObjectEv@Base 6.2.2
- _ZNK24QQuickPdfNavigationStack11currentPageEv@Base 6.2.2
- _ZNK24QQuickPdfNavigationStack11currentZoomEv@Base 6.2.2
- _ZNK24QQuickPdfNavigationStack13backAvailableEv@Base 6.2.2
- _ZNK24QQuickPdfNavigationStack15currentLocationEv@Base 6.2.2
- _ZNK24QQuickPdfNavigationStack16forwardAvailableEv@Base 6.2.2
+ _ZNK22QQuickPdfBookmarkModel10metaObjectEv@Base 6.4.0
+ _ZNK22QQuickPdfBookmarkModel8documentEv@Base 6.4.0
+ _ZNK22QQuickPdfPageNavigator10metaObjectEv@Base 6.4.0
  _ZTI17QQuickPdfDocument@Base 6.2.2
+ _ZTI18QQuickImagePrivate@Base 6.4.0
  _ZTI18QQuickPdfLinkModel@Base 6.2.2
+ _ZTI18QQuickPdfPageImage@Base 6.4.0
  _ZTI18QQuickPdfSelection@Base 6.2.2
  _ZTI20QQuickPdfSearchModel@Base 6.2.2
- _ZTI20QQuickTableViewExtra@Base 6.2.2
- _ZTI24QQuickPdfNavigationStack@Base 6.2.2
+ _ZTI22QQuickPdfBookmarkModel@Base 6.4.0
+ _ZTI22QQuickPdfPageNavigator@Base 6.4.0
+ _ZTIZN9QMetaType17registerConverterI5QListI8QPdfLinkE9QIterableI13QMetaSequenceEN9QtPrivate33QSequentialIterableConvertFunctorIS3_EEEEbT1_EUlPKvPvE_@Base 6.4.0
  _ZTIZN9QMetaType17registerConverterI5QListI9QPolygonFE9QIterableI13QMetaSequenceEN9QtPrivate33QSequentialIterableConvertFunctorIS3_EEEEbT1_EUlPKvPvE_@Base 6.2.2
+ _ZTIZN9QMetaType19registerMutableViewI5QListI8QPdfLinkE9QIterableI13QMetaSequenceEN9QtPrivate37QSequentialIterableMutableViewFunctorIS3_EEEEbT1_EUlPvSB_E_@Base 6.4.0
  _ZTIZN9QMetaType19registerMutableViewI5QListI9QPolygonFE9QIterableI13QMetaSequenceEN9QtPrivate37QSequentialIterableMutableViewFunctorIS3_EEEEbT1_EUlPvSB_E_@Base 6.2.2
  _ZTS17QQuickPdfDocument@Base 6.2.2
+ _ZTS18QQuickImagePrivate@Base 6.4.0
  _ZTS18QQuickPdfLinkModel@Base 6.2.2
+ _ZTS18QQuickPdfPageImage@Base 6.4.0
  _ZTS18QQuickPdfSelection@Base 6.2.2
  _ZTS20QQuickPdfSearchModel@Base 6.2.2
- _ZTS20QQuickTableViewExtra@Base 6.2.2
- _ZTS24QQuickPdfNavigationStack@Base 6.2.2
+ _ZTS22QQuickPdfBookmarkModel@Base 6.4.0
+ _ZTS22QQuickPdfPageNavigator@Base 6.4.0
+ _ZTS29QQuickImplicitSizeItemPrivate@Base 6.4.0
+ _ZTSZN9QMetaType17registerConverterI5QListI8QPdfLinkE9QIterableI13QMetaSequenceEN9QtPrivate33QSequentialIterableConvertFunctorIS3_EEEEbT1_EUlPKvPvE_@Base 6.4.0
  _ZTSZN9QMetaType17registerConverterI5QListI9QPolygonFE9QIterableI13QMetaSequenceEN9QtPrivate33QSequentialIterableConvertFunctorIS3_EEEEbT1_EUlPKvPvE_@Base 6.2.2
+ _ZTSZN9QMetaType19registerMutableViewI5QListI8QPdfLinkE9QIterableI13QMetaSequenceEN9QtPrivate37QSequentialIterableMutableViewFunctorIS3_EEEEbT1_EUlPvSB_E_@Base 6.4.0
  _ZTSZN9QMetaType19registerMutableViewI5QListI9QPolygonFE9QIterableI13QMetaSequenceEN9QtPrivate37QSequentialIterableMutableViewFunctorIS3_EEEEbT1_EUlPvSB_E_@Base 6.2.2
  _ZTV17QQuickPdfDocument@Base 6.2.2
  _ZTV18QQuickPdfLinkModel@Base 6.2.2
+ _ZTV18QQuickPdfPageImage@Base 6.4.0
  _ZTV18QQuickPdfSelection@Base 6.2.2
  _ZTV20QQuickPdfSearchModel@Base 6.2.2
- _ZTV20QQuickTableViewExtra@Base 6.2.2
- _ZTV24QQuickPdfNavigationStack@Base 6.2.2
+ _ZTV22QQuickPdfBookmarkModel@Base 6.4.0
+ _ZTV22QQuickPdfPageNavigator@Base 6.4.0
+ (optional=templinst)_ZZN9QMetaType21registerConverterImplI5QListI8QPdfLinkE9QIterableI13QMetaSequenceEEEbSt8functionIFbPKvPvEES_S_E10unregister@Base 6.4.0
  (optional=templinst)_ZZN9QMetaType21registerConverterImplI5QListI9QPolygonFE9QIterableI13QMetaSequenceEEEbSt8functionIFbPKvPvEES_S_E10unregister@Base 6.2.2
+ (optional=templinst)_ZZN9QMetaType23registerMutableViewImplI5QListI8QPdfLinkE9QIterableI13QMetaSequenceEEEbSt8functionIFbPvS8_EES_S_E10unregister@Base 6.4.0
  (optional=templinst)_ZZN9QMetaType23registerMutableViewImplI5QListI9QPolygonFE9QIterableI13QMetaSequenceEEEbSt8functionIFbPvS8_EES_S_E10unregister@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeI4QUrlE10getCopyCtrEvENUlPKNS_18QMetaTypeInterfaceEPvPKvE_4_FUNES5_S6_S8_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeI4QUrlE10getMoveCtrEvENUlPKNS_18QMetaTypeInterfaceEPvS6_E_4_FUNES5_S6_S6_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeI4QUrlE13getDefaultCtrEvENUlPKNS_18QMetaTypeInterfaceEPvE_4_FUNES5_S6_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeI4QUrlE7getDtorEvENUlPKNS_18QMetaTypeInterfaceEPvE_4_FUNES5_S6_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeI6QPointE10getCopyCtrEvENUlPKNS_18QMetaTypeInterfaceEPvPKvE_4_FUNES5_S6_S8_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeI6QPointE10getMoveCtrEvENUlPKNS_18QMetaTypeInterfaceEPvS6_E_4_FUNES5_S6_S6_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeI6QPointE13getDefaultCtrEvENUlPKNS_18QMetaTypeInterfaceEPvE_4_FUNES5_S6_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeI6QRectFE10getCopyCtrEvENUlPKNS_18QMetaTypeInterfaceEPvPKvE_4_FUNES5_S6_S8_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeI6QRectFE10getMoveCtrEvENUlPKNS_18QMetaTypeInterfaceEPvS6_E_4_FUNES5_S6_S6_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeI6QRectFE13getDefaultCtrEvENUlPKNS_18QMetaTypeInterfaceEPvE_4_FUNES5_S6_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeI6QSizeFE10getCopyCtrEvENUlPKNS_18QMetaTypeInterfaceEPvPKvE_4_FUNES5_S6_S8_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeI6QSizeFE10getMoveCtrEvENUlPKNS_18QMetaTypeInterfaceEPvS6_E_4_FUNES5_S6_S6_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeI6QSizeFE13getDefaultCtrEvENUlPKNS_18QMetaTypeInterfaceEPvE_4_FUNES5_S6_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeI7QPointFE10getCopyCtrEvENUlPKNS_18QMetaTypeInterfaceEPvPKvE_4_FUNES5_S6_S8_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeI7QPointFE10getMoveCtrEvENUlPKNS_18QMetaTypeInterfaceEPvS6_E_4_FUNES5_S6_S6_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeI7QPointFE13getDefaultCtrEvENUlPKNS_18QMetaTypeInterfaceEPvE_4_FUNES5_S6_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeI7QStringE10getCopyCtrEvENUlPKNS_18QMetaTypeInterfaceEPvPKvE_4_FUNES5_S6_S8_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeI7QStringE10getMoveCtrEvENUlPKNS_18QMetaTypeInterfaceEPvS6_E_4_FUNES5_S6_S6_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeI7QStringE13getDefaultCtrEvENUlPKNS_18QMetaTypeInterfaceEPvE_4_FUNES5_S6_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeI7QStringE7getDtorEvENUlPKNS_18QMetaTypeInterfaceEPvE_4_FUNES5_S6_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeI8QVariantE10getCopyCtrEvENUlPKNS_18QMetaTypeInterfaceEPvPKvE_4_FUNES5_S6_S8_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeI8QVariantE10getMoveCtrEvENUlPKNS_18QMetaTypeInterfaceEPvS6_E_4_FUNES5_S6_S6_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeI8QVariantE13getDefaultCtrEvENUlPKNS_18QMetaTypeInterfaceEPvE_4_FUNES5_S6_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeI8QVariantE7getDtorEvENUlPKNS_18QMetaTypeInterfaceEPvE_4_FUNES5_S6_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeI9QDateTimeE10getCopyCtrEvENUlPKNS_18QMetaTypeInterfaceEPvPKvE_4_FUNES5_S6_S8_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeI9QDateTimeE10getMoveCtrEvENUlPKNS_18QMetaTypeInterfaceEPvS6_E_4_FUNES5_S6_S6_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeI9QDateTimeE13getDefaultCtrEvENUlPKNS_18QMetaTypeInterfaceEPvE_4_FUNES5_S6_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeI9QDateTimeE7getDtorEvENUlPKNS_18QMetaTypeInterfaceEPvE_4_FUNES5_S6_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeIbE10getCopyCtrEvENUlPKNS_18QMetaTypeInterfaceEPvPKvE_4_FUNES4_S5_S7_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeIbE10getMoveCtrEvENUlPKNS_18QMetaTypeInterfaceEPvS5_E_4_FUNES4_S5_S5_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeIbE13getDefaultCtrEvENUlPKNS_18QMetaTypeInterfaceEPvE_4_FUNES4_S5_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeIdE10getCopyCtrEvENUlPKNS_18QMetaTypeInterfaceEPvPKvE_4_FUNES4_S5_S7_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeIdE10getMoveCtrEvENUlPKNS_18QMetaTypeInterfaceEPvS5_E_4_FUNES4_S5_S5_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeIdE13getDefaultCtrEvENUlPKNS_18QMetaTypeInterfaceEPvE_4_FUNES4_S5_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeIiE10getCopyCtrEvENUlPKNS_18QMetaTypeInterfaceEPvPKvE_4_FUNES4_S5_S7_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeIiE10getMoveCtrEvENUlPKNS_18QMetaTypeInterfaceEPvS5_E_4_FUNES4_S5_S5_@Base 6.2.2
- (optional=templinst)_ZZN9QtPrivate16QMetaTypeForTypeIiE13getDefaultCtrEvENUlPKNS_18QMetaTypeInterfaceEPvE_4_FUNES4_S5_@Base 6.2.2
- (c++)"non-virtual thunk to QQuickPdfDocument::componentComplete()@Base" 6.2.2
+ (c++)"non-virtual thunk to QQuickPdfDocument::classBegin()@Base" 6.4.0
+ (c++)"non-virtual thunk to QQuickPdfDocument::~QQuickPdfDocument()@Base" 6.3.0
+ (c++)"non-virtual thunk to QQuickPdfPageImage::~QQuickPdfPageImage()@Base" 6.4.0
+ (c++)"non-virtual thunk to QQuickPdfSelection::~QQuickPdfSelection()@Base" 6.3.0

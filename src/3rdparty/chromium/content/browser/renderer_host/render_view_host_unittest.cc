@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 #include "base/bind.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/path_service.h"
 #include "base/strings/strcat.h"
 #include "base/strings/utf_string_conversions.h"
@@ -13,7 +13,6 @@
 #include "content/browser/renderer_host/render_frame_host_impl.h"
 #include "content/browser/renderer_host/render_view_host_delegate_view.h"
 #include "content/browser/renderer_host/render_widget_helper.h"
-#include "content/common/frame_messages.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/storage_partition.h"
@@ -32,27 +31,34 @@
 #include "skia/ext/skia_utils_base.h"
 #include "third_party/blink/public/common/page/drag_operation.h"
 #include "ui/base/page_transition_types.h"
+#include "ui/gfx/geometry/skia_conversions.h"
 #include "ui/gfx/image/image_skia.h"
-#include "ui/gfx/skia_util.h"
 
 namespace content {
 
 class RenderViewHostTestBrowserClient : public TestContentBrowserClient {
  public:
   RenderViewHostTestBrowserClient() {}
+
+  RenderViewHostTestBrowserClient(const RenderViewHostTestBrowserClient&) =
+      delete;
+  RenderViewHostTestBrowserClient& operator=(
+      const RenderViewHostTestBrowserClient&) = delete;
+
   ~RenderViewHostTestBrowserClient() override {}
 
   bool IsHandledURL(const GURL& url) override {
     return url.scheme() == url::kFileScheme;
   }
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(RenderViewHostTestBrowserClient);
 };
 
 class RenderViewHostTest : public RenderViewHostImplTestHarness {
  public:
   RenderViewHostTest() : old_browser_client_(nullptr) {}
+
+  RenderViewHostTest(const RenderViewHostTest&) = delete;
+  RenderViewHostTest& operator=(const RenderViewHostTest&) = delete;
+
   ~RenderViewHostTest() override {}
 
   void SetUp() override {
@@ -67,19 +73,8 @@ class RenderViewHostTest : public RenderViewHostImplTestHarness {
 
  private:
   RenderViewHostTestBrowserClient test_browser_client_;
-  ContentBrowserClient* old_browser_client_;
-
-  DISALLOW_COPY_AND_ASSIGN(RenderViewHostTest);
+  raw_ptr<ContentBrowserClient> old_browser_client_;
 };
-
-// All about URLs reported by the renderer should get rewritten to about:blank.
-// See RenderViewHost::OnNavigate for a discussion.
-TEST_F(RenderViewHostTest, FilterAbout) {
-  NavigationSimulator::NavigateAndCommitFromDocument(GURL("about:cache"),
-                                                     main_test_rfh());
-  ASSERT_TRUE(controller().GetVisibleEntry());
-  EXPECT_EQ(GURL(kBlockedURL), controller().GetVisibleEntry()->GetURL());
-}
 
 // Ensure we do not grant bindings to a process shared with unprivileged views.
 TEST_F(RenderViewHostTest, DontGrantBindingsToSharedProcess) {
@@ -126,7 +121,7 @@ TEST_F(RenderViewHostTest, StartDragging) {
   DropData drop_data;
   // If `html` is not populated, `html_base_url` won't be populated when
   // converting to `DragData` with `DropDataToDragData`.
-  drop_data.html = base::string16();
+  drop_data.html = std::u16string();
 
   GURL blocked_url = GURL(kBlockedURL);
   GURL file_url = GURL("file:///home/user/secrets.txt");
@@ -178,7 +173,8 @@ TEST_F(RenderViewHostTest, DragEnteredFileURLsStillBlocked) {
   // RenderWidgetHost to work with OOPIFs. See crbug.com/647249.
   rvh()->GetWidget()->FilterDropData(&dropped_data);
   rvh()->GetWidget()->DragTargetDragEnter(
-      dropped_data, client_point, screen_point, blink::kDragOperationNone, 0);
+      dropped_data, client_point, screen_point, blink::kDragOperationNone, 0,
+      base::DoNothing());
 
   int id = process()->GetID();
   ChildProcessSecurityPolicyImpl* policy =
@@ -233,10 +229,10 @@ TEST_F(RenderViewHostTest, NavigationWithBadHistoryItemFiles) {
 
 TEST_F(RenderViewHostTest, RoutingIdSane) {
   RenderFrameHostImpl* root_rfh =
-      contents()->GetFrameTree()->root()->current_frame_host();
+      contents()->GetPrimaryFrameTree().root()->current_frame_host();
   EXPECT_EQ(contents()->GetMainFrame(), root_rfh);
   EXPECT_EQ(test_rvh()->GetProcess(), root_rfh->GetProcess());
-  EXPECT_NE(test_rvh()->GetRoutingID(), root_rfh->routing_id());
+  EXPECT_NE(test_rvh()->GetRoutingID(), root_rfh->GetRoutingID());
 }
 
 }  // namespace content

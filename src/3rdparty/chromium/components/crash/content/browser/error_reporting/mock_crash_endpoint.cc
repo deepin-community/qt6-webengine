@@ -4,6 +4,7 @@
 
 #include "components/crash/content/browser/error_reporting/mock_crash_endpoint.h"
 
+#include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
 #include "base/threading/scoped_blocking_call.h"
 #include "build/build_config.h"
@@ -30,7 +31,7 @@ class MockCrashEndpoint::Client : public crash_reporter::CrashReporterClient {
         FROM_HERE, base::BlockingType::MAY_BLOCK);
     return owner_->consented_;
   }
-#if defined(OS_POSIX) && !defined(OS_MAC)
+#if BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_MAC)
   void GetProductNameAndVersion(std::string* product_name,
                                 std::string* version,
                                 std::string* channel) override {
@@ -40,7 +41,7 @@ class MockCrashEndpoint::Client : public crash_reporter::CrashReporterClient {
   }
 #endif
  private:
-  MockCrashEndpoint* owner_;
+  raw_ptr<MockCrashEndpoint> owner_;
 };
 
 MockCrashEndpoint::Report::Report(std::string query_value,
@@ -88,6 +89,7 @@ MockCrashEndpoint::HandleRequest(const net::test_server::HttpRequest& request) {
 
   ++report_count_;
   last_report_ = Report(absolute_url.query(), request.content);
+  all_reports_.push_back(*last_report_);
   auto http_response = std::make_unique<net::test_server::BasicHttpResponse>();
   http_response->set_code(response_code_);
   http_response->set_content(response_content_);
@@ -96,4 +98,10 @@ MockCrashEndpoint::HandleRequest(const net::test_server::HttpRequest& request) {
     on_report_.Run();
   }
   return http_response;
+}
+
+std::ostream& operator<<(std::ostream& out,
+                         const MockCrashEndpoint::Report& report) {
+  out << "query: " << report.query << "\ncontent: " << report.content;
+  return out;
 }

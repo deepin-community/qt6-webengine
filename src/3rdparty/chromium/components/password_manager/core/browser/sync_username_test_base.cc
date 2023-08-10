@@ -20,14 +20,14 @@ FormData CreateSigninFormData(const GURL& url, const char* username) {
   FormData form;
   form.url = url;
   FormFieldData field;
-  field.name = ASCIIToUTF16("username_element");
+  field.name = u"username_element";
   field.form_control_type = "text";
   field.value = ASCIIToUTF16(username);
   form.fields.push_back(field);
 
-  field.name = ASCIIToUTF16("password_element");
+  field.name = u"password_element";
   field.form_control_type = "password";
-  field.value = ASCIIToUTF16("strong_pw");
+  field.value = u"strong_pw";
   form.fields.push_back(field);
   return form;
 }
@@ -51,7 +51,8 @@ void SyncUsernameTestBase::FakeSigninAs(const std::string& email) {
             .email,
         email);
   } else {
-    identity_test_env_.MakePrimaryAccountAvailable(email);
+    identity_test_env_.MakePrimaryAccountAvailable(email,
+                                                   signin::ConsentLevel::kSync);
   }
 }
 
@@ -61,6 +62,7 @@ PasswordForm SyncUsernameTestBase::SimpleGaiaForm(const char* username) {
   form.signon_realm = "https://accounts.google.com";
   form.username_value = ASCIIToUTF16(username);
   form.form_data = CreateSigninFormData(GURL(form.signon_realm), username);
+  form.in_store = PasswordForm::Store::kProfileStore;
   return form;
 }
 
@@ -70,6 +72,7 @@ PasswordForm SyncUsernameTestBase::SimpleNonGaiaForm(const char* username) {
   form.signon_realm = "https://site.com";
   form.username_value = ASCIIToUTF16(username);
   form.form_data = CreateSigninFormData(GURL(form.signon_realm), username);
+  form.in_store = PasswordForm::Store::kProfileStore;
   return form;
 }
 
@@ -81,6 +84,7 @@ PasswordForm SyncUsernameTestBase::SimpleNonGaiaForm(const char* username,
   form.username_value = ASCIIToUTF16(username);
   form.url = GURL(origin);
   form.form_data = CreateSigninFormData(GURL(form.signon_realm), username);
+  form.in_store = PasswordForm::Store::kProfileStore;
   return form;
 }
 

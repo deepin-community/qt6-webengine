@@ -5,15 +5,11 @@
 #ifndef CONTENT_BROWSER_BROWSER_MAIN_H_
 #define CONTENT_BROWSER_BROWSER_MAIN_H_
 
-#include <memory>
-
-#include "content/common/content_export.h"
-
 namespace content {
 
 struct MainFunctionParams;
 
-CONTENT_EXPORT int BrowserMain(const content::MainFunctionParams& parameters);
+int BrowserMain(content::MainFunctionParams parameters);
 
 }  // namespace content
 

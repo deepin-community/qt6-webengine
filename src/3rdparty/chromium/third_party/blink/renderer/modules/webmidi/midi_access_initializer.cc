@@ -19,7 +19,7 @@
 #include "third_party/blink/renderer/modules/permissions/permission_utils.h"
 #include "third_party/blink/renderer/modules/webmidi/midi_access.h"
 #include "third_party/blink/renderer/modules/webmidi/midi_port.h"
-#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/mojo/mojo_helper.h"
 
 namespace blink {
@@ -39,7 +39,7 @@ void MIDIAccessInitializer::ContextDestroyed() {
 }
 
 ScriptPromise MIDIAccessInitializer::Start() {
-  ScriptPromise promise = this->Promise();
+  ScriptPromise promise = Promise();
 
   // See https://bit.ly/2S0zRAS for task types.
   scoped_refptr<base::SingleThreadTaskRunner> task_runner =

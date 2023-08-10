@@ -7,18 +7,23 @@
 #include <memory>
 #include <utility>
 
-#include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "ui/base/l10n/l10n_util.h"
+#include "ui/color/color_id.h"
+#include "ui/color/color_provider.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/font_list.h"
-#include "ui/native_theme/native_theme.h"
 #include "ui/views/border.h"
 #include "ui/views/controls/button/checkbox.h"
 #include "ui/views/controls/combobox/combobox.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/examples/example_combobox_model.h"
-#include "ui/views/layout/grid_layout.h"
+#include "ui/views/examples/grit/views_examples_resources.h"
+#include "ui/views/layout/box_layout.h"
+#include "ui/views/layout/fill_layout.h"
+#include "ui/views/layout/table_layout.h"
 #include "ui/views/view.h"
+#include "ui/views/view_class_properties.h"
 
 namespace views {
 namespace examples {
@@ -49,8 +54,8 @@ class TextExample::TextExampleView : public View {
   void OnPaint(gfx::Canvas* canvas) override {
     View::OnPaint(canvas);
     const gfx::Rect bounds = GetContentsBounds();
-    const SkColor color = GetNativeTheme()->GetSystemColor(
-        ui::NativeTheme::kColorId_TextfieldDefaultColor);
+    const SkColor color =
+        GetColorProvider()->GetColor(ui::kColorTextfieldForeground);
     canvas->DrawStringRectWithFlags(text_, font_list_, color, bounds, flags_);
   }
 
@@ -60,7 +65,7 @@ class TextExample::TextExampleView : public View {
     SchedulePaint();
   }
 
-  void SetText(const base::string16& text) {
+  void SetText(const std::u16string& text) {
     text_ = text;
     SchedulePaint();
   }
@@ -83,6 +88,13 @@ class TextExample::TextExampleView : public View {
     SchedulePaint();
   }
 
+ protected:
+  void OnThemeChanged() override {
+    View::OnThemeChanged();
+    SetBorder(CreateSolidBorder(
+        1, GetColorProvider()->GetColor(ui::kColorFocusableBorderUnfocused)));
+  }
+
  private:
   // The font used for drawing the text.
   gfx::FontList font_list_;
@@ -92,7 +104,7 @@ class TextExample::TextExampleView : public View {
   gfx::FontList base_font_;
 
   // The text to draw.
-  base::string16 text_;
+  std::u16string text_;
 
   // Text flags for passing to |DrawStringRect()|.
   int flags_ = 0;
@@ -101,46 +113,45 @@ class TextExample::TextExampleView : public View {
   gfx::ElideBehavior elide_ = gfx::NO_ELIDE;
 };
 
-TextExample::TextExample() : ExampleBase("Text Styles") {}
+TextExample::TextExample()
+    : ExampleBase(l10n_util::GetStringUTF8(IDS_TEXT_STYLE_LABEL).c_str()) {}
 
 TextExample::~TextExample() = default;
 
-Checkbox* TextExample::AddCheckbox(GridLayout* layout, const char* name) {
-  return layout->AddView(std::make_unique<Checkbox>(
+Checkbox* TextExample::AddCheckbox(View* parent, const char* name) {
+  return parent->AddChildView(std::make_unique<Checkbox>(
       base::ASCIIToUTF16(name),
       base::BindRepeating(&TextExample::UpdateStyle, base::Unretained(this))));
 }
 
-Combobox* TextExample::AddCombobox(GridLayout* layout,
-                                   const char* name,
+Combobox* TextExample::AddCombobox(View* parent,
+                                   std::u16string name,
                                    const char* const* strings,
                                    int count,
                                    void (TextExample::*combobox_callback)()) {
-  layout->StartRow(0, 0);
-  layout->AddView(std::make_unique<Label>(base::ASCIIToUTF16(name)));
-  auto* combobox = layout->AddView(
-      std::make_unique<Combobox>(
-          std::make_unique<ExampleComboboxModel>(strings, count)),
-      kNumColumns - 1, 1);
+  parent->AddChildView(std::make_unique<Label>(name));
+  auto* combobox = parent->AddChildView(std::make_unique<Combobox>(
+      std::make_unique<ExampleComboboxModel>(strings, count)));
+  combobox->SetProperty(kTableColAndRowSpanKey, gfx::Size(kNumColumns - 1, 1));
   combobox->SetCallback(
       base::BindRepeating(combobox_callback, base::Unretained(this)));
+  combobox->SetAccessibleName(name);
   return combobox;
 }
 
 void TextExample::CreateExampleView(View* container) {
-  GridLayout* layout =
-      container->SetLayoutManager(std::make_unique<views::GridLayout>());
-
-  layout->AddPaddingRow(0, 8);
-
-  ColumnSet* column_set = layout->AddColumnSet(0);
-  column_set->AddPaddingColumn(0, 8);
-  column_set->AddColumn(GridLayout::LEADING, GridLayout::FILL, 0.1f,
-                        GridLayout::ColumnSize::kUsePreferred, 0, 0);
-  for (int i = 0; i < kNumColumns - 1; i++)
-    column_set->AddColumn(GridLayout::FILL, GridLayout::FILL, 0.1f,
-                          GridLayout::ColumnSize::kUsePreferred, 0, 0);
-  column_set->AddPaddingColumn(0, 8);
+  auto* box_layout = container->SetLayoutManager(std::make_unique<BoxLayout>(
+      BoxLayout::Orientation::kVertical, gfx::Insets(8), 20, false));
+  auto* table_container = container->AddChildView(std::make_unique<View>());
+  TableLayout* layout =
+      table_container->SetLayoutManager(std::make_unique<TableLayout>());
+  layout->AddColumn(LayoutAlignment::kStart, LayoutAlignment::kStretch, 0.1f,
+                    TableLayout::ColumnSize::kUsePreferred, 0, 0);
+  for (int i = 0; i < kNumColumns - 1; i++) {
+    layout->AddColumn(LayoutAlignment::kStretch, LayoutAlignment::kStretch,
+                      0.1f, TableLayout::ColumnSize::kUsePreferred, 0, 0);
+  }
+  layout->AddRows(6, TableLayout::kFixedSize);
 
   constexpr const char* kHorizontalAligments[] = {
       "Default",
@@ -148,13 +159,13 @@ void TextExample::CreateExampleView(View* container) {
       "Center",
       "Right",
   };
-  h_align_cb_ = AddCombobox(layout, "H-Align", kHorizontalAligments,
-                            base::size(kHorizontalAligments),
+  h_align_cb_ = AddCombobox(table_container, u"H-Align", kHorizontalAligments,
+                            std::size(kHorizontalAligments),
                             &TextExample::AlignComboboxChanged);
 
   constexpr const char* kElideBehaviors[] = {"Elide", "No Elide"};
-  eliding_cb_ = AddCombobox(layout, "Eliding", kElideBehaviors,
-                            base::size(kElideBehaviors),
+  eliding_cb_ = AddCombobox(table_container, u"Eliding", kElideBehaviors,
+                            std::size(kElideBehaviors),
                             &TextExample::ElideComboboxChanged);
 
   constexpr const char* kPrefixOptions[] = {
@@ -162,9 +173,9 @@ void TextExample::CreateExampleView(View* container) {
       "Show",
       "Hide",
   };
-  prefix_cb_ =
-      AddCombobox(layout, "Prefix", kPrefixOptions, base::size(kPrefixOptions),
-                  &TextExample::PrefixComboboxChanged);
+  prefix_cb_ = AddCombobox(table_container, u"Prefix", kPrefixOptions,
+                           std::size(kPrefixOptions),
+                           &TextExample::PrefixComboboxChanged);
 
   constexpr const char* kTextExamples[] = {
       "Short",
@@ -173,38 +184,30 @@ void TextExample::CreateExampleView(View* container) {
       "RTL Hebrew",
   };
   text_cb_ =
-      AddCombobox(layout, "Example Text", kTextExamples,
-                  base::size(kTextExamples), &TextExample::TextComboboxChanged);
+      AddCombobox(table_container, u"Example Text", kTextExamples,
+                  std::size(kTextExamples), &TextExample::TextComboboxChanged);
 
   constexpr const char* kWeightLabels[] = {
       "Thin",     "Extra Light", "Light",      "Normal", "Medium",
       "Semibold", "Bold",        "Extra Bold", "Black",
   };
-  weight_cb_ = AddCombobox(layout, "Font Weight", kWeightLabels,
-                           base::size(kWeightLabels),
+  weight_cb_ = AddCombobox(table_container, u"Font Weight", kWeightLabels,
+                           std::size(kWeightLabels),
                            &TextExample::WeightComboboxChanged);
-  weight_cb_->SelectValue(base::ASCIIToUTF16("Normal"));
+  weight_cb_->SelectValue(u"Normal");
 
-  layout->StartRow(0, 0);
-  multiline_checkbox_ = AddCheckbox(layout, "Multiline");
-  break_checkbox_ = AddCheckbox(layout, "Character Break");
-  italic_checkbox_ = AddCheckbox(layout, "Italic");
-  underline_checkbox_ = AddCheckbox(layout, "Underline");
+  multiline_checkbox_ = AddCheckbox(table_container, "Multiline");
+  break_checkbox_ = AddCheckbox(table_container, "Character Break");
+  italic_checkbox_ = AddCheckbox(table_container, "Italic");
+  underline_checkbox_ = AddCheckbox(table_container, "Underline");
 
-  layout->AddPaddingRow(0, 20);
+  auto* fill_container = container->AddChildView(std::make_unique<View>());
+  box_layout->SetFlexForView(fill_container, 1);
+  fill_container->SetLayoutManager(std::make_unique<FillLayout>());
+  fill_container->SetBorder(CreateEmptyBorder(gfx::Insets::VH(0, 8)));
 
-  column_set = layout->AddColumnSet(1);
-  column_set->AddPaddingColumn(0, 16);
-  column_set->AddColumn(GridLayout::FILL, GridLayout::FILL, 1,
-                        GridLayout::ColumnSize::kUsePreferred, 0, 0);
-  column_set->AddPaddingColumn(0, 16);
-
-  layout->StartRow(1, 1);
-  text_view_ = layout->AddView(std::make_unique<TextExampleView>());
-  text_view_->SetBorder(CreateSolidBorder(
-      1, text_view_->GetNativeTheme()->GetSystemColor(
-             ui::NativeTheme::kColorId_UnfocusedBorderColor)));
-  layout->AddPaddingRow(0, 8);
+  text_view_ =
+      fill_container->AddChildView(std::make_unique<TextExampleView>());
 
   TextComboboxChanged();  // Sets initial text content.
 }
@@ -244,35 +247,33 @@ void TextExample::AlignComboboxChanged() {
 void TextExample::TextComboboxChanged() {
   switch (text_cb_->GetSelectedIndex()) {
     case 0:
-      text_view_->SetText(
-          base::ASCIIToUTF16("The quick brown fox jumps over the lazy dog."));
+      text_view_->SetText(u"The quick brown fox jumps over the lazy dog.");
       break;
     case 1:
-      text_view_->SetText(base::ASCIIToUTF16(
-          "Lorem ipsum dolor sit amet, consectetur adipisicing elit, sed do "
-          "eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim "
-          "ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut "
-          "aliquip ex ea commodo consequat.\n"
-          "Duis aute irure dolor in reprehenderit in voluptate velit esse "
-          "cillum dolore eu fugiat nulla pariatur.\n"
-          "\n"
-          "Excepteur sint occaecat cupidatat non proident, sunt in culpa qui "
-          "officia deserunt mollit anim id est laborum."));
+      text_view_->SetText(
+          u"Lorem ipsum dolor sit amet, consectetur adipisicing elit, sed do "
+          u"eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut "
+          u"enim ad minim veniam, quis nostrud exercitation ullamco laboris "
+          u"nisi ut aliquip ex ea commodo consequat.\n"
+          u"Duis aute irure dolor in reprehenderit in voluptate velit esse "
+          u"cillum dolore eu fugiat nulla pariatur.\n"
+          u"\n"
+          u"Excepteur sint occaecat cupidatat non proident, sunt in culpa qui "
+          u"officia deserunt mollit anim id est laborum.");
       break;
     case 2:
-      text_view_->SetText(base::ASCIIToUTF16(
-          "The quick && &brown fo&x jumps over the lazy dog."));
+      text_view_->SetText(u"The quick && &brown fo&x jumps over the lazy dog.");
       break;
     case 3:
-      text_view_->SetText(base::WideToUTF16(
-          L"\x5e9\x5dc\x5d5\x5dd \x5d4\x5e2\x5d5\x5dc\x5dd! "
-          L"\x5e9\x5dc\x5d5\x5dd \x5d4\x5e2\x5d5\x5dc\x5dd! "
-          L"\x5e9\x5dc\x5d5\x5dd \x5d4\x5e2\x5d5\x5dc\x5dd! "
-          L"\x5e9\x5dc\x5d5\x5dd \x5d4\x5e2\x5d5\x5dc\x5dd! "
-          L"\x5e9\x5dc\x5d5\x5dd \x5d4\x5e2\x5d5\x5dc\x5dd! "
-          L"\x5e9\x5dc\x5d5\x5dd \x5d4\x5e2\x5d5\x5dc\x5dd! "
-          L"\x5e9\x5dc\x5d5\x5dd \x5d4\x5e2\x5d5\x5dc\x5dd! "
-          L"\x5e9\x5dc\x5d5\x5dd \x5d4\x5e2\x5d5\x5dc\x5dd!"));
+      text_view_->SetText(
+          u"\x5e9\x5dc\x5d5\x5dd \x5d4\x5e2\x5d5\x5dc\x5dd! "
+          u"\x5e9\x5dc\x5d5\x5dd \x5d4\x5e2\x5d5\x5dc\x5dd! "
+          u"\x5e9\x5dc\x5d5\x5dd \x5d4\x5e2\x5d5\x5dc\x5dd! "
+          u"\x5e9\x5dc\x5d5\x5dd \x5d4\x5e2\x5d5\x5dc\x5dd! "
+          u"\x5e9\x5dc\x5d5\x5dd \x5d4\x5e2\x5d5\x5dc\x5dd! "
+          u"\x5e9\x5dc\x5d5\x5dd \x5d4\x5e2\x5d5\x5dc\x5dd! "
+          u"\x5e9\x5dc\x5d5\x5dd \x5d4\x5e2\x5d5\x5dc\x5dd! "
+          u"\x5e9\x5dc\x5d5\x5dd \x5d4\x5e2\x5d5\x5dc\x5dd!");
       break;
   }
 }

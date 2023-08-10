@@ -58,6 +58,8 @@ component("typemap_traits") {
     sources += [
       "logfont_win_mojom_traits.cc",
       "logfont_win_mojom_traits.h",
+      "wstring_mojom_traits.cc",
+      "wstring_mojom_traits.h",
     ]
   }
 
@@ -80,18 +82,24 @@ component("shared_typemap_traits") {
   sources = [
     "big_buffer_mojom_traits.cc",
     "big_buffer_mojom_traits.h",
+    "byte_string_mojom_traits.cc",
+    "byte_string_mojom_traits.h",
     "file_info_mojom_traits.cc",
     "file_info_mojom_traits.h",
     "file_mojom_traits.cc",
     "file_mojom_traits.h",
     "file_path_mojom_traits.cc",
     "file_path_mojom_traits.h",
+    "generic_pending_associated_receiver_mojom_traits.cc",
+    "generic_pending_associated_receiver_mojom_traits.h",
     "generic_pending_receiver_mojom_traits.cc",
     "generic_pending_receiver_mojom_traits.h",
     "read_only_buffer_mojom_traits.cc",
     "read_only_buffer_mojom_traits.h",
     "read_only_file_mojom_traits.cc",
     "read_only_file_mojom_traits.h",
+    "safe_base_name_mojom_traits.cc",
+    "safe_base_name_mojom_traits.h",
     "shared_memory_mojom_traits.cc",
     "shared_memory_mojom_traits.h",
     "time_mojom_traits.cc",
@@ -119,12 +127,14 @@ source_set("tests") {
   sources = [
     "big_buffer_unittest.cc",
     "big_string_unittest.cc",
+    "byte_string_unittest.cc",
     "file_path_unittest.cc",
     "file_unittest.cc",
     "memory_allocator_dump_cross_process_uid_unittest.cc",
     "process_id_unittest.cc",
     "read_only_buffer_unittest.cc",
     "ref_counted_memory_unittest.cc",
+    "safe_base_name_unittest.cc",
     "shared_memory_unittest.cc",
     "string16_unittest.cc",
     "text_direction_unittest.cc",

@@ -11,6 +11,7 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/time/default_tick_clock.h"
+#include "base/time/time.h"
 #include "base/timer/elapsed_timer.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/platform/graphics/animation_worklet_mutator.h"
@@ -20,7 +21,10 @@
 #include "third_party/blink/renderer/platform/scheduler/public/post_cross_thread_task.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread_scheduler.h"
+#include "third_party/blink/renderer/platform/wtf/cross_thread_copier_base.h"
+#include "third_party/blink/renderer/platform/wtf/cross_thread_copier_std.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
+#include "third_party/blink/renderer/platform/wtf/wtf.h"
 
 namespace blink {
 
@@ -135,8 +139,7 @@ void AnimationWorkletMutatorDispatcherImpl::MutateSynchronously(
 
   UMA_HISTOGRAM_CUSTOM_MICROSECONDS_TIMES(
       "Animation.AnimationWorklet.Dispatcher.SynchronousMutateDuration",
-      timer.Elapsed(), base::TimeDelta::FromMicroseconds(1),
-      base::TimeDelta::FromMilliseconds(100), 50);
+      timer.Elapsed(), base::Microseconds(1), base::Milliseconds(100), 50);
 }
 
 base::TimeTicks AnimationWorkletMutatorDispatcherImpl::NowTicks() const {
@@ -224,9 +227,9 @@ void AnimationWorkletMutatorDispatcherImpl::AsyncMutationsDone(
   auto done_callback = std::move(on_async_mutation_complete_);
   std::unique_ptr<AsyncMutationRequest> queued_request;
   if (queued_priority_request.get()) {
-    queued_request.reset(queued_priority_request.release());
+    queued_request = std::move(queued_priority_request);
   } else if (queued_replaceable_request.get()) {
-    queued_request.reset(queued_replaceable_request.release());
+    queued_request = std::move(queued_replaceable_request);
   }
   if (queued_request.get()) {
     mutator_input_map_ = CreateInputMap(*queued_request->input_state);
@@ -242,8 +245,8 @@ void AnimationWorkletMutatorDispatcherImpl::AsyncMutationsDone(
   // completion, and thus includes queuing time.
   UMA_HISTOGRAM_CUSTOM_MICROSECONDS_TIMES(
       "Animation.AnimationWorklet.Dispatcher.AsynchronousMutateDuration",
-      NowTicks() - request_time, base::TimeDelta::FromMicroseconds(1),
-      base::TimeDelta::FromMilliseconds(100), 50);
+      NowTicks() - request_time, base::Microseconds(1), base::Milliseconds(100),
+      50);
 
   std::move(done_callback)
       .Run(update_applied ? MutateStatus::kCompletedWithUpdate

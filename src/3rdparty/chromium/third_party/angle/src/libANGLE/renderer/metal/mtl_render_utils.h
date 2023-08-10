@@ -16,6 +16,7 @@
 #include "libANGLE/angletypes.h"
 #include "libANGLE/renderer/metal/RenderTargetMtl.h"
 #include "libANGLE/renderer/metal/mtl_command_buffer.h"
+#include "libANGLE/renderer/metal/mtl_context_device.h"
 #include "libANGLE/renderer/metal/mtl_state_cache.h"
 #include "libANGLE/renderer/metal/shaders/constants.h"
 
@@ -32,11 +33,13 @@ namespace mtl
 
 struct ClearRectParams
 {
+    ClearRectParams() { clearWriteMaskArray.fill(MTLColorWriteMaskAll); }
+
     Optional<ClearColorValue> clearColor;
     Optional<float> clearDepth;
     Optional<uint32_t> clearStencil;
 
-    MTLColorWriteMask clearColorMask = MTLColorWriteMaskAll;
+    WriteMaskArray clearWriteMaskArray;
 
     const mtl::Format *colorFormat = nullptr;
     gl::Extents dstTextureSize;
@@ -46,6 +49,14 @@ struct ClearRectParams
     gl::Rectangle clearArea;
 
     bool flipY = false;
+};
+
+struct NormalizedCoords
+{
+    NormalizedCoords();
+    NormalizedCoords(float x, float y, float width, float height, const gl::Rectangle &rect);
+    NormalizedCoords(const gl::Rectangle &rect, const gl::Extents &extents);
+    float v[4];
 };
 
 struct BlitParams
@@ -69,7 +80,7 @@ struct BlitParams
     // Source rectangle:
     // NOTE: if srcYFlipped=true, this rectangle will be converted internally to flipped rect before
     // blitting.
-    gl::Rectangle srcRect;
+    NormalizedCoords srcNormalizedCoords;
 
     bool srcYFlipped = false;  // source texture has data flipped in Y direction
     bool unpackFlipX = false;  // flip texture data copying process in X direction
@@ -78,7 +89,8 @@ struct BlitParams
 
 struct ColorBlitParams : public BlitParams
 {
-    MTLColorWriteMask blitColorMask = MTLColorWriteMaskAll;
+    ColorBlitParams() {}
+
     gl::DrawBufferMask enabledBuffers;
     GLenum filter               = GL_NEAREST;
     bool unpackPremultiplyAlpha = false;
@@ -196,9 +208,9 @@ class ClearUtils final : angle::NonCopyable
   private:
     void ensureRenderPipelineStateCacheInitialized(ContextMtl *ctx, uint32_t numColorAttachments);
 
-    void setupClearWithDraw(const gl::Context *context,
-                            RenderCommandEncoder *cmdEncoder,
-                            const ClearRectParams &params);
+    angle::Result setupClearWithDraw(const gl::Context *context,
+                                     RenderCommandEncoder *cmdEncoder,
+                                     const ClearRectParams &params);
     id<MTLDepthStencilState> getClearDepthStencilState(const gl::Context *context,
                                                        const ClearRectParams &params);
     id<MTLRenderPipelineState> getClearRenderPipelineState(const gl::Context *context,
@@ -232,9 +244,9 @@ class ColorBlitUtils final : angle::NonCopyable
                                                    int sourceTextureType,
                                                    RenderPipelineCache *cacheOut);
 
-    void setupColorBlitWithDraw(const gl::Context *context,
-                                RenderCommandEncoder *cmdEncoder,
-                                const ColorBlitParams &params);
+    angle::Result setupColorBlitWithDraw(const gl::Context *context,
+                                         RenderCommandEncoder *cmdEncoder,
+                                         const ColorBlitParams &params);
 
     id<MTLRenderPipelineState> getColorBlitRenderPipelineState(const gl::Context *context,
                                                                RenderCommandEncoder *cmdEncoder,
@@ -276,9 +288,9 @@ class DepthStencilBlitUtils final : angle::NonCopyable
                                                    int sourceStencilTextureType,
                                                    RenderPipelineCache *cacheOut);
 
-    void setupDepthStencilBlitWithDraw(const gl::Context *context,
-                                       RenderCommandEncoder *cmdEncoder,
-                                       const DepthStencilBlitParams &params);
+    angle::Result setupDepthStencilBlitWithDraw(const gl::Context *context,
+                                                RenderCommandEncoder *cmdEncoder,
+                                                const DepthStencilBlitParams &params);
 
     id<MTLRenderPipelineState> getDepthStencilBlitRenderPipelineState(
         const gl::Context *context,
@@ -309,21 +321,17 @@ class IndexGeneratorUtils final : angle::NonCopyable
   public:
     void onDestroy();
 
-    // Convert index buffer.
     angle::Result convertIndexBufferGPU(ContextMtl *contextMtl,
                                         const IndexConversionParams &params);
-    // Generate triangle fan index buffer for glDrawArrays().
     angle::Result generateTriFanBufferFromArrays(ContextMtl *contextMtl,
                                                  const TriFanOrLineLoopFromArrayParams &params);
     // Generate triangle fan index buffer for glDrawElements().
     angle::Result generateTriFanBufferFromElementsArray(ContextMtl *contextMtl,
-                                                        const IndexGenerationParams &params);
+                                                        const IndexGenerationParams &params,
+                                                        uint32_t *indicesGenerated);
 
-    // Generate line loop index buffer for glDrawArrays().
     angle::Result generateLineLoopBufferFromArrays(ContextMtl *contextMtl,
                                                    const TriFanOrLineLoopFromArrayParams &params);
-    // Generate line loop's last segment index buffer for glDrawArrays().
-    // This is used when primitive restart is not enabled.
     angle::Result generateLineLoopLastSegment(ContextMtl *contextMtl,
                                               uint32_t firstVertex,
                                               uint32_t lastVertex,
@@ -340,6 +348,18 @@ class IndexGeneratorUtils final : angle::NonCopyable
     angle::Result generateLineLoopLastSegmentFromElementsArray(ContextMtl *contextMtl,
                                                                const IndexGenerationParams &params);
 
+    angle::Result generatePrimitiveRestartPointsBuffer(ContextMtl *contextMtl,
+                                                       const IndexGenerationParams &params,
+                                                       size_t *indicesGenerated);
+
+    angle::Result generatePrimitiveRestartLinesBuffer(ContextMtl *contextMtl,
+                                                      const IndexGenerationParams &params,
+                                                      size_t *indicesGenerated);
+
+    angle::Result generatePrimitiveRestartTrianglesBuffer(ContextMtl *contextMtl,
+                                                          const IndexGenerationParams &params,
+                                                          size_t *indicesGenerated);
+
   private:
     // Index generator compute pipelines:
     //  - First dimension: index type.
@@ -348,7 +368,6 @@ class IndexGeneratorUtils final : angle::NonCopyable
         std::array<std::array<AutoObjCPtr<id<MTLComputePipelineState>>, 2>,
                    angle::EnumSize<gl::DrawElementsType>()>;
 
-    // Get compute pipeline to convert index between buffers.
     AutoObjCPtr<id<MTLComputePipelineState>> getIndexConversionPipeline(
         ContextMtl *contextMtl,
         gl::DrawElementsType srcType,
@@ -375,7 +394,8 @@ class IndexGeneratorUtils final : angle::NonCopyable
         // Must be multiples of kIndexBufferOffsetAlignment
         uint32_t dstOffset);
     angle::Result generateTriFanBufferFromElementsArrayCPU(ContextMtl *contextMtl,
-                                                           const IndexGenerationParams &params);
+                                                           const IndexGenerationParams &params,
+                                                           uint32_t *indicesGenerated);
 
     angle::Result generateLineLoopBufferFromElementsArrayGPU(
         ContextMtl *contextMtl,
@@ -392,6 +412,11 @@ class IndexGeneratorUtils final : angle::NonCopyable
     angle::Result generateLineLoopLastSegmentFromElementsArrayCPU(
         ContextMtl *contextMtl,
         const IndexGenerationParams &params);
+
+    angle::Result generatePrimitiveRestartBuffer(ContextMtl *contextMtl,
+                                                 unsigned numVerticesPerPrimitive,
+                                                 const IndexGenerationParams &params,
+                                                 size_t *indicesGenerated);
 
     IndexConversionPipelineArray mIndexConversionPipelineCaches;
 
@@ -429,7 +454,7 @@ class MipmapUtils final : angle::NonCopyable
   public:
     void onDestroy();
 
-    // Compute based mipmap generation. Only possible for 3D texture for now.
+    // Compute based mipmap generation.
     angle::Result generateMipmapCS(ContextMtl *contextMtl,
                                    const TextureRef &srcTexture,
                                    bool sRGBMipmap,
@@ -437,9 +462,15 @@ class MipmapUtils final : angle::NonCopyable
 
   private:
     void ensure3DMipGeneratorPipelineInitialized(ContextMtl *contextMtl);
+    void ensure2DMipGeneratorPipelineInitialized(ContextMtl *contextMtl);
+    void ensure2DArrayMipGeneratorPipelineInitialized(ContextMtl *contextMtl);
+    void ensureCubeMipGeneratorPipelineInitialized(ContextMtl *contextMtl);
 
     // Mipmaps generating compute pipeline:
     AutoObjCPtr<id<MTLComputePipelineState>> m3DMipGeneratorPipeline;
+    AutoObjCPtr<id<MTLComputePipelineState>> m2DMipGeneratorPipeline;
+    AutoObjCPtr<id<MTLComputePipelineState>> m2DArrayMipGeneratorPipeline;
+    AutoObjCPtr<id<MTLComputePipelineState>> mCubeMipGeneratorPipeline;
 };
 
 // Util class for handling pixels copy between buffers and textures
@@ -587,7 +618,8 @@ class RenderUtils : public Context, angle::NonCopyable
     angle::Result generateTriFanBufferFromArrays(ContextMtl *contextMtl,
                                                  const TriFanOrLineLoopFromArrayParams &params);
     angle::Result generateTriFanBufferFromElementsArray(ContextMtl *contextMtl,
-                                                        const IndexGenerationParams &params);
+                                                        const IndexGenerationParams &params,
+                                                        uint32_t *indicesGenerated);
 
     angle::Result generateLineLoopBufferFromArrays(ContextMtl *contextMtl,
                                                    const TriFanOrLineLoopFromArrayParams &params);
@@ -640,13 +672,23 @@ class RenderUtils : public Context, angle::NonCopyable
                                                  const angle::Format &srcAngleFormat,
                                                  const VertexFormatConvertParams &params);
 
+    angle::Result generatePrimitiveRestartPointsBuffer(ContextMtl *contextMtl,
+                                                       const IndexGenerationParams &params,
+                                                       size_t *indicesGenerated);
+    angle::Result generatePrimitiveRestartLinesBuffer(ContextMtl *contextMtl,
+                                                      const IndexGenerationParams &params,
+                                                      size_t *indicesGenerated);
+    angle::Result generatePrimitiveRestartTrianglesBuffer(ContextMtl *contextMtl,
+                                                          const IndexGenerationParams &params,
+                                                          size_t *indicesGenerated);
+
   private:
     // override ErrorHandler
     void handleError(GLenum error,
                      const char *file,
                      const char *function,
                      unsigned int line) override;
-    void handleError(NSError *_Nullable error,
+    void handleError(NSError *error,
                      const char *file,
                      const char *function,
                      unsigned int line) override;

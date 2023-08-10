@@ -8,13 +8,12 @@
 #ifndef SKSL_VARDECLARATIONS
 #define SKSL_VARDECLARATIONS
 
+#include "include/private/SkSLProgramElement.h"
+#include "include/private/SkSLStatement.h"
 #include "src/sksl/ir/SkSLExpression.h"
-#include "src/sksl/ir/SkSLProgramElement.h"
-#include "src/sksl/ir/SkSLStatement.h"
 #include "src/sksl/ir/SkSLVariable.h"
 
 namespace SkSL {
-
 
 namespace dsl {
     class DSLCore;
@@ -27,23 +26,50 @@ namespace dsl {
  */
 class VarDeclaration final : public Statement {
 public:
-    static constexpr Kind kStatementKind = Kind::kVarDeclaration;
+    inline static constexpr Kind kStatementKind = Kind::kVarDeclaration;
 
     VarDeclaration(const Variable* var,
                    const Type* baseType,
                    int arraySize,
-                   std::unique_ptr<Expression> value)
-            : INHERITED(var->fOffset, kStatementKind)
+                   std::unique_ptr<Expression> value,
+                   bool isClone = false)
+            : INHERITED(var->fPosition, kStatementKind)
             , fVar(var)
             , fBaseType(*baseType)
             , fArraySize(arraySize)
-            , fValue(std::move(value)) {}
+            , fValue(std::move(value))
+            , fIsClone(isClone) {}
 
+    ~VarDeclaration() override {
+        // Unhook this VarDeclaration from its associated Variable, since we're being deleted.
+        if (fVar && !fIsClone) {
+            fVar->detachDeadVarDeclaration();
+        }
+    }
+
+    // Checks the modifiers, baseType, and storage for compatibility with one another and reports
+    // errors if needed. This method is implicitly called during Convert(), but is also explicitly
+    // called while processing interface block fields.
+    static void ErrorCheck(const Context& context, Position pos, Position modifiersPosition,
+            const Modifiers& modifiers, const Type* baseType, Variable::Storage storage);
+
+    // Does proper error checking and type coercion; reports errors via ErrorReporter.
+    static std::unique_ptr<Statement> Convert(const Context& context, std::unique_ptr<Variable> var,
+            std::unique_ptr<Expression> value, bool addToSymbolTable = true);
+
+    // Reports errors via ASSERT.
+    static std::unique_ptr<Statement> Make(const Context& context,
+                                           Variable* var,
+                                           const Type* baseType,
+                                           int arraySize,
+                                           std::unique_ptr<Expression> value);
     const Type& baseType() const {
         return fBaseType;
     }
 
     const Variable& var() const {
+        // This should never be called after the Variable has been deleted.
+        SkASSERT(fVar);
         return *fVar;
     }
 
@@ -63,33 +89,20 @@ public:
         return fValue;
     }
 
-    std::unique_ptr<Statement> clone() const override {
-        return std::make_unique<VarDeclaration>(&this->var(),
-                                                &this->baseType(),
-                                                fArraySize,
-                                                this->value() ? this->value()->clone() : nullptr);
-    }
+    std::unique_ptr<Statement> clone() const override;
 
-    String description() const override {
-        String result = this->var().modifiers().description() + this->baseType().description() +
-                        " " + this->var().name();
-        if (this->arraySize() > 0) {
-            result.appendf("[%d]", this->arraySize());
-        } else if (this->arraySize() == Type::kUnsizedArray){
-            result += "[]";
-        }
-        if (this->value()) {
-            result += " = " + this->value()->description();
-        }
-        result += ";";
-        return result;
-    }
+    std::string description() const override;
 
 private:
+    static bool ErrorCheckAndCoerce(const Context& context, const Variable& var,
+            std::unique_ptr<Expression>& value);
+
     const Variable* fVar;
     const Type& fBaseType;
-    int fArraySize;  // zero means "not an array", Type::kUnsizedArray means var[]
+    int fArraySize;  // zero means "not an array"
     std::unique_ptr<Expression> fValue;
+    // if this VarDeclaration is a clone, it doesn't actually own the associated variable
+    bool fIsClone;
 
     friend class IRGenerator;
 
@@ -102,10 +115,10 @@ private:
  */
 class GlobalVarDeclaration final : public ProgramElement {
 public:
-    static constexpr Kind kProgramElementKind = Kind::kGlobalVar;
+    inline static constexpr Kind kProgramElementKind = Kind::kGlobalVar;
 
-    GlobalVarDeclaration(int offset, std::unique_ptr<Statement> decl)
-            : INHERITED(offset, kProgramElementKind)
+    GlobalVarDeclaration(std::unique_ptr<Statement> decl)
+            : INHERITED(decl->fPosition, kProgramElementKind)
             , fDeclaration(std::move(decl)) {
         SkASSERT(this->declaration()->is<VarDeclaration>());
     }
@@ -119,10 +132,10 @@ public:
     }
 
     std::unique_ptr<ProgramElement> clone() const override {
-        return std::make_unique<GlobalVarDeclaration>(fOffset, this->declaration()->clone());
+        return std::make_unique<GlobalVarDeclaration>(this->declaration()->clone());
     }
 
-    String description() const override {
+    std::string description() const override {
         return this->declaration()->description();
     }
 

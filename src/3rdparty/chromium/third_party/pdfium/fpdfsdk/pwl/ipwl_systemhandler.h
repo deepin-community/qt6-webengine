@@ -9,13 +9,20 @@
 
 #include <memory>
 
-#include "core/fxcrt/fx_coordinates.h"
-#include "core/fxcrt/fx_system.h"
-
-class CFFL_FormFiller;
+class CFX_FloatRect;
 
 class IPWL_SystemHandler {
  public:
+  // These must match the values in public/fpdf_formfill.h
+  enum CursorStyle {
+    kArrow = 0,
+    kNESW = 1,
+    kNWSE = 2,
+    kVBeam = 3,
+    kHBeam = 4,
+    kHand = 5,
+  };
+
   class PerWindowData {
    public:
     virtual ~PerWindowData() = default;
@@ -26,10 +33,10 @@ class IPWL_SystemHandler {
 
   virtual void InvalidateRect(PerWindowData* pWidgetData,
                               const CFX_FloatRect& rect) = 0;
-  virtual void OutputSelectedRect(CFFL_FormFiller* pFormFiller,
+  virtual void OutputSelectedRect(PerWindowData* pWidgetData,
                                   const CFX_FloatRect& rect) = 0;
   virtual bool IsSelectionImplemented() const = 0;
-  virtual void SetCursor(int32_t nCursorType) = 0;
+  virtual void SetCursor(CursorStyle nCursorStyle) = 0;
 };
 
 #endif  // FPDFSDK_PWL_IPWL_SYSTEMHANDLER_H_

@@ -6,35 +6,76 @@
 
 #include <stddef.h>
 
+#include <algorithm>
 #include <utility>
 
+#include "base/allocator/buildflags.h"
+#include "base/allocator/partition_allocator/partition_alloc_config.h"
+#include "base/callback_helpers.h"
 #include "base/check_op.h"
 #include "base/compiler_specific.h"
 #include "base/debug/alias.h"
+#include "base/synchronization/waitable_event.h"
 #include "base/task/thread_pool/environment_config.h"
 #include "base/task/thread_pool/task_tracker.h"
 #include "base/task/thread_pool/worker_thread_observer.h"
 #include "base/threading/hang_watcher.h"
 #include "base/time/time_override.h"
 #include "base/trace_event/base_tracing.h"
+#include "build/build_config.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
-#if defined(OS_APPLE)
+#if BUILDFLAG(IS_APPLE)
 #include "base/mac/scoped_nsautorelease_pool.h"
+#endif
+
+#if BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC) && \
+    defined(PA_THREAD_CACHE_SUPPORTED)
+#include "base/allocator/partition_allocator/thread_cache.h"
 #endif
 
 namespace base {
 namespace internal {
 
+constexpr TimeDelta WorkerThread::Delegate::kPurgeThreadCacheIdleDelay;
+
 void WorkerThread::Delegate::WaitForWork(WaitableEvent* wake_up_event) {
   DCHECK(wake_up_event);
   const TimeDelta sleep_time = GetSleepTimeout();
-  if (sleep_time.is_max()) {
-    // Calling TimedWait with TimeDelta::Max is not recommended per
-    // http://crbug.com/465948.
-    wake_up_event->Wait();
-  } else {
-    wake_up_event->TimedWait(sleep_time);
+
+  // When a thread goes to sleep, the memory retained by its thread cache is
+  // trapped there for as long as the thread sleeps. To prevent that, we can
+  // either purge the thread cache right before going to sleep, or after some
+  // delay.
+  //
+  // Purging the thread cache incurs a cost on the next task, since its thread
+  // cache will be empty and allocation performance initially lower. As a lot of
+  // sleeps are very short, do not purge all the time (this would also make
+  // sleep / wakeups cycles more costly).
+  //
+  // Instead, sleep for min(timeout, 1s). If the wait times out then purge at
+  // that point, and go to sleep for the remaining of the time. This ensures
+  // that we do no work for short sleeps, and that threads do not get awaken
+  // many times.
+#if BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC) && \
+    defined(PA_THREAD_CACHE_SUPPORTED)
+  bool was_signaled = wake_up_event->TimedWait(
+      std::min(sleep_time, kPurgeThreadCacheIdleDelay));
+
+  // Timed out.
+  if (!was_signaled) {
+    ThreadCache::PurgeCurrentThread();
+
+    if (sleep_time > kPurgeThreadCacheIdleDelay) {
+      wake_up_event->TimedWait(sleep_time.is_max()
+                                   ? base::TimeDelta::Max()
+                                   : sleep_time - kPurgeThreadCacheIdleDelay);
+    }
   }
+#else
+  wake_up_event->TimedWait(sleep_time);
+#endif  // BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC) &&
+        // defined(PA_THREAD_CACHE_SUPPORTED)
 }
 
 WorkerThread::WorkerThread(ThreadPriority priority_hint,
@@ -132,6 +173,10 @@ void WorkerThread::Cleanup() {
   wake_up_event_.Signal();
 }
 
+void WorkerThread::MaybeUpdateThreadPriority() {
+  UpdateThreadPriority(GetDesiredThreadPriority());
+}
+
 void WorkerThread::BeginUnusedPeriod() {
   CheckedAutoLock auto_lock(thread_lock_);
   DCHECK(last_used_time_.is_null());
@@ -187,14 +232,14 @@ void WorkerThread::ThreadMain() {
       case ThreadLabel::DEDICATED:
         RunBackgroundDedicatedWorker();
         return;
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
       case ThreadLabel::SHARED_COM:
         RunBackgroundSharedCOMWorker();
         return;
       case ThreadLabel::DEDICATED_COM:
         RunBackgroundDedicatedCOMWorker();
         return;
-#endif  // defined(OS_WIN)
+#endif  // BUILDFLAG(IS_WIN)
     }
   }
 
@@ -208,14 +253,14 @@ void WorkerThread::ThreadMain() {
     case ThreadLabel::DEDICATED:
       RunDedicatedWorker();
       return;
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
     case ThreadLabel::SHARED_COM:
       RunSharedCOMWorker();
       return;
     case ThreadLabel::DEDICATED_COM:
       RunDedicatedCOMWorker();
       return;
-#endif  // defined(OS_WIN)
+#endif  // BUILDFLAG(IS_WIN)
   }
 }
 
@@ -249,7 +294,7 @@ NOINLINE void WorkerThread::RunBackgroundDedicatedWorker() {
   NO_CODE_FOLDING();
 }
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 NOINLINE void WorkerThread::RunSharedCOMWorker() {
   RunWorker();
   NO_CODE_FOLDING();
@@ -269,7 +314,7 @@ NOINLINE void WorkerThread::RunBackgroundDedicatedCOMWorker() {
   RunWorker();
   NO_CODE_FOLDING();
 }
-#endif  // defined(OS_WIN)
+#endif  // BUILDFLAG(IS_WIN)
 
 void WorkerThread::RunWorker() {
   DCHECK_EQ(self_, this);
@@ -297,18 +342,19 @@ void WorkerThread::RunWorker() {
   // A WorkerThread starts out waiting for work.
   {
     TRACE_EVENT_END0("base", "WorkerThread active");
+    // TODO(crbug.com/1021571): Remove this once fixed.
+    PERFETTO_INTERNAL_ADD_EMPTY_EVENT();
     delegate_->WaitForWork(&wake_up_event_);
     TRACE_EVENT_BEGIN0("base", "WorkerThread active");
   }
 
   while (!ShouldExit()) {
-#if defined(OS_APPLE)
+#if BUILDFLAG(IS_APPLE)
     mac::ScopedNSAutoreleasePool autorelease_pool;
 #endif
-    base::Optional<HangWatchScopeEnabled> hang_watch_scope;
+    absl::optional<WatchHangsInScope> hang_watch_scope;
     if (watch_for_hangs)
-      hang_watch_scope.emplace(
-          base::HangWatchScopeEnabled::kDefaultHangWatchTime);
+      hang_watch_scope.emplace(base::WatchHangsInScope::kDefaultHangWatchTime);
 
     UpdateThreadPriority(GetDesiredThreadPriority());
 
@@ -320,15 +366,30 @@ void WorkerThread::RunWorker() {
         break;
 
       TRACE_EVENT_END0("base", "WorkerThread active");
+      // TODO(crbug.com/1021571): Remove this once fixed.
+      PERFETTO_INTERNAL_ADD_EMPTY_EVENT();
       hang_watch_scope.reset();
       delegate_->WaitForWork(&wake_up_event_);
       TRACE_EVENT_BEGIN0("base", "WorkerThread active");
       continue;
     }
 
+    // Alias pointer for investigation of memory corruption. crbug.com/1218384
+    TaskSource* task_source_before_run = task_source.get();
+    base::debug::Alias(&task_source_before_run);
+
     task_source = task_tracker_->RunAndPopNextTask(std::move(task_source));
 
+    // Alias pointer for investigation of memory corruption. crbug.com/1218384
+    TaskSource* task_source_before_move = task_source.get();
+    base::debug::Alias(&task_source_before_move);
+
     delegate_->DidProcessTask(std::move(task_source));
+
+    // Check that task_source is always cleared, to help investigation of memory
+    // corruption where task_source is non-null after being moved.
+    // crbug.com/1218384
+    CHECK(!task_source);
 
     // Calling WakeUp() guarantees that this WorkerThread will run Tasks from
     // TaskSources returned by the GetWork() method of |delegate_| until it
@@ -352,6 +413,8 @@ void WorkerThread::RunWorker() {
 
   TRACE_EVENT_END0("base", "WorkerThread active");
   TRACE_EVENT_INSTANT0("base", "WorkerThread dead", TRACE_EVENT_SCOPE_THREAD);
+  // TODO(crbug.com/1021571): Remove this once fixed.
+  PERFETTO_INTERNAL_ADD_EMPTY_EVENT();
 }
 
 }  // namespace internal

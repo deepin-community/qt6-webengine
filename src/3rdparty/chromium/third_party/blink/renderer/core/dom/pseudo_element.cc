@@ -28,6 +28,9 @@
 
 #include <utility>
 
+#include "third_party/blink/renderer/core/css/resolver/style_resolver.h"
+#include "third_party/blink/renderer/core/document_transition/document_transition_pseudo_element_base.h"
+#include "third_party/blink/renderer/core/document_transition/document_transition_supplement.h"
 #include "third_party/blink/renderer/core/dom/element_rare_data.h"
 #include "third_party/blink/renderer/core/dom/first_letter_pseudo_element.h"
 #include "third_party/blink/renderer/core/dom/node_computed_style.h"
@@ -43,12 +46,23 @@
 
 namespace blink {
 
-PseudoElement* PseudoElement::Create(Element* parent, PseudoId pseudo_id) {
-  if (pseudo_id == kPseudoIdFirstLetter)
+PseudoElement* PseudoElement::Create(
+    Element* parent,
+    PseudoId pseudo_id,
+    const AtomicString& document_transition_tag) {
+  if (pseudo_id == kPseudoIdFirstLetter) {
     return MakeGarbageCollected<FirstLetterPseudoElement>(parent);
+  } else if (IsTransitionPseudoElement(pseudo_id)) {
+    auto* document_transition =
+        DocumentTransitionSupplement::FromIfExists(parent->GetDocument())
+            ->GetTransition();
+    return document_transition->CreatePseudoElement(parent, pseudo_id,
+                                                    document_transition_tag);
+  }
   DCHECK(pseudo_id == kPseudoIdAfter || pseudo_id == kPseudoIdBefore ||
          pseudo_id == kPseudoIdBackdrop || pseudo_id == kPseudoIdMarker);
-  return MakeGarbageCollected<PseudoElement>(parent, pseudo_id);
+  return MakeGarbageCollected<PseudoElement>(parent, pseudo_id,
+                                             document_transition_tag);
 }
 
 const QualifiedName& PseudoElementTagName(PseudoId pseudo_id) {
@@ -78,6 +92,37 @@ const QualifiedName& PseudoElementTagName(PseudoId pseudo_id) {
                           (g_null_atom, "::marker", g_null_atom));
       return marker;
     }
+    case kPseudoIdPageTransition: {
+      DEFINE_STATIC_LOCAL(QualifiedName, transition,
+                          (g_null_atom, "::page-transition", g_null_atom));
+      return transition;
+    }
+    case kPseudoIdPageTransitionContainer: {
+      // TODO(khushalsagar) : Update these tag names to include the additional
+      // ID.
+      DEFINE_STATIC_LOCAL(
+          QualifiedName, transition_container,
+          (g_null_atom, "::page-transition-container", g_null_atom));
+      return transition_container;
+    }
+    case kPseudoIdPageTransitionImageWrapper: {
+      DEFINE_STATIC_LOCAL(
+          QualifiedName, transition_image_wrapper,
+          (g_null_atom, "::page-transition-image-wrapper", g_null_atom));
+      return transition_image_wrapper;
+    }
+    case kPseudoIdPageTransitionIncomingImage: {
+      DEFINE_STATIC_LOCAL(
+          QualifiedName, transition_incoming_image,
+          (g_null_atom, "::page-transition-incoming-image", g_null_atom));
+      return transition_incoming_image;
+    }
+    case kPseudoIdPageTransitionOutgoingImage: {
+      DEFINE_STATIC_LOCAL(
+          QualifiedName, transition_outgoing_image,
+          (g_null_atom, "::page-transition-outgoing-image", g_null_atom));
+      return transition_outgoing_image;
+    }
     default:
       NOTREACHED();
   }
@@ -100,16 +145,25 @@ bool PseudoElement::IsWebExposed(PseudoId pseudo_id, const Node* parent) {
       if (parent && parent->IsPseudoElement())
         return RuntimeEnabledFeatures::CSSMarkerNestedPseudoElementEnabled();
       return true;
+    case kPseudoIdPageTransition:
+    case kPseudoIdPageTransitionContainer:
+    case kPseudoIdPageTransitionImageWrapper:
+    case kPseudoIdPageTransitionIncomingImage:
+    case kPseudoIdPageTransitionOutgoingImage:
+      return RuntimeEnabledFeatures::DocumentTransitionEnabled();
     default:
       return true;
   }
 }
 
-PseudoElement::PseudoElement(Element* parent, PseudoId pseudo_id)
+PseudoElement::PseudoElement(Element* parent,
+                             PseudoId pseudo_id,
+                             const AtomicString& document_transition_tag)
     : Element(PseudoElementTagName(pseudo_id),
               &parent->GetDocument(),
               kCreateElement),
-      pseudo_id_(pseudo_id) {
+      pseudo_id_(pseudo_id),
+      document_transition_tag_(document_transition_tag) {
   DCHECK_NE(pseudo_id, kPseudoIdNone);
   parent->GetTreeScope().AdoptIfNeeded(*this);
   SetParentOrShadowHostNode(parent);
@@ -123,8 +177,10 @@ PseudoElement::PseudoElement(Element* parent, PseudoId pseudo_id)
 
 scoped_refptr<ComputedStyle> PseudoElement::CustomStyleForLayoutObject(
     const StyleRecalcContext& style_recalc_context) {
-  return ParentOrShadowHostElement()->StyleForPseudoElement(
-      style_recalc_context, PseudoElementStyleRequest(pseudo_id_));
+  Element* parent = ParentOrShadowHostElement();
+  return parent->StyleForPseudoElement(
+      style_recalc_context, StyleRequest(pseudo_id_, parent->GetComputedStyle(),
+                                         document_transition_tag_));
 }
 
 scoped_refptr<ComputedStyle> PseudoElement::LayoutStyleForDisplayContents(
@@ -132,7 +188,8 @@ scoped_refptr<ComputedStyle> PseudoElement::LayoutStyleForDisplayContents(
   // For display:contents we should not generate a box, but we generate a non-
   // observable inline box for pseudo elements to be able to locate the
   // anonymous layout objects for generated content during DetachLayoutTree().
-  scoped_refptr<ComputedStyle> layout_style = ComputedStyle::Create();
+  scoped_refptr<ComputedStyle> layout_style =
+      GetDocument().GetStyleResolver().CreateComputedStyle();
   layout_style->InheritFrom(style);
   layout_style->SetContent(style.GetContentData());
   layout_style->SetDisplay(EDisplay::kInline);
@@ -235,7 +292,7 @@ void PseudoElement::AttachLayoutTree(AttachContext& context) {
 }
 
 bool PseudoElement::LayoutObjectIsNeeded(const ComputedStyle& style) const {
-  return PseudoElementLayoutObjectIsNeeded(&style, this->parentElement());
+  return PseudoElementLayoutObjectIsNeeded(&style, parentElement());
 }
 
 bool PseudoElement::CanGeneratePseudoElement(PseudoId pseudo_id) const {
@@ -258,6 +315,15 @@ Node* PseudoElement::InnerNodeForHitTesting() const {
   return parent;
 }
 
+Element* PseudoElement::OriginatingElement() const {
+  auto* parent = parentElement();
+
+  while (parent && parent->IsPseudoElement())
+    parent = parent->parentElement();
+
+  return parent;
+}
+
 bool PseudoElementLayoutObjectIsNeeded(const ComputedStyle* pseudo_style,
                                        const Element* originating_element) {
   if (!pseudo_style)
@@ -267,6 +333,11 @@ bool PseudoElementLayoutObjectIsNeeded(const ComputedStyle* pseudo_style,
   switch (pseudo_style->StyleType()) {
     case kPseudoIdFirstLetter:
     case kPseudoIdBackdrop:
+    case kPseudoIdPageTransition:
+    case kPseudoIdPageTransitionContainer:
+    case kPseudoIdPageTransitionImageWrapper:
+    case kPseudoIdPageTransitionIncomingImage:
+    case kPseudoIdPageTransitionOutgoingImage:
       return true;
     case kPseudoIdBefore:
     case kPseudoIdAfter:
@@ -276,7 +347,7 @@ bool PseudoElementLayoutObjectIsNeeded(const ComputedStyle* pseudo_style,
         return !pseudo_style->ContentPreventsBoxGeneration();
       const ComputedStyle* parent_style =
           originating_element->GetComputedStyle();
-      return parent_style && (parent_style->GetListStyleType() ||
+      return parent_style && (parent_style->ListStyleType() ||
                               parent_style->GeneratesMarkerImage());
     }
     default:

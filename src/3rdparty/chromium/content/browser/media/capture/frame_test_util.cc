@@ -10,13 +10,14 @@
 
 #include "base/numerics/safe_conversions.h"
 #include "media/base/video_frame.h"
+#include "third_party/skia/include/core/SkColorSpace.h"
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/color_transform.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/rect_conversions.h"
 #include "ui/gfx/geometry/rect_f.h"
 #include "ui/gfx/geometry/size.h"
-#include "ui/gfx/transform.h"
+#include "ui/gfx/geometry/transform.h"
 
 namespace content {
 
@@ -75,8 +76,7 @@ SkBitmap FrameTestUtil::ConvertToBitmap(const media::VideoFrame& frame) {
 
   // Construct the ColorTransform.
   const auto transform = gfx::ColorTransform::NewColorTransform(
-      frame.ColorSpace(), gfx::ColorSpace::CreateSRGB(),
-      gfx::ColorTransform::Intent::INTENT_ABSOLUTE);
+      frame.ColorSpace(), gfx::ColorSpace::CreateSRGB());
   CHECK(transform);
 
   // Convert one row at a time.
@@ -103,7 +103,7 @@ gfx::Rect FrameTestUtil::ToSafeIncludeRect(const gfx::RectF& rect_f,
   gfx::Rect result = gfx::ToEnclosedRect(rect_f);
   CHECK_GT(result.width(), 2 * fuzzy_border);
   CHECK_GT(result.height(), 2 * fuzzy_border);
-  result.Inset(fuzzy_border, fuzzy_border, fuzzy_border, fuzzy_border);
+  result.Inset(fuzzy_border);
   return result;
 }
 
@@ -111,7 +111,7 @@ gfx::Rect FrameTestUtil::ToSafeIncludeRect(const gfx::RectF& rect_f,
 gfx::Rect FrameTestUtil::ToSafeExcludeRect(const gfx::RectF& rect_f,
                                            int fuzzy_border) {
   gfx::Rect result = gfx::ToEnclosingRect(rect_f);
-  result.Inset(-fuzzy_border, -fuzzy_border, -fuzzy_border, -fuzzy_border);
+  result.Inset(-fuzzy_border);
   return result;
 }
 

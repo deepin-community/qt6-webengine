@@ -70,7 +70,7 @@ TFLiteOpResolver::TFLiteOpResolver() {
   AddBuiltin(tflite::BuiltinOperator_FULLY_CONNECTED,
              tflite::ops::builtin::Register_FULLY_CONNECTED(),
              /* min_version = */ 1,
-             /* max_version = */ 8);
+             /* max_version = */ 9);
   AddBuiltin(tflite::BuiltinOperator_LSH_PROJECTION,
              tflite::ops::builtin::Register_LSH_PROJECTION());
   AddBuiltin(tflite::BuiltinOperator_HASHTABLE_LOOKUP,
@@ -369,6 +369,10 @@ TFLiteOpResolver::TFLiteOpResolver() {
              tflite::ops::builtin::Register_SEGMENT_SUM());
   AddBuiltin(tflite::BuiltinOperator_BATCH_MATMUL,
              tflite::ops::builtin::Register_BATCH_MATMUL(),
+             /* min_version = */ 1,
+             /* max_version = */ 4);
+  AddBuiltin(tflite::BuiltinOperator_GELU,
+             tflite::ops::builtin::Register_GELU(),
              /* min_version = */ 1,
              /* max_version = */ 2);
 }

@@ -8,7 +8,6 @@
 #include <vector>
 
 #include "base/containers/adapters.h"
-#include "base/lazy_instance.h"
 #include "base/logging.h"
 #include "base/unguessable_token.h"
 #include "build/chromecast_buildflags.h"
@@ -24,9 +23,6 @@
 
 namespace viz {
 namespace {
-
-base::LazyInstance<OverlayStrategyUnderlayCast::OverlayCompositedCallback>::
-    DestructorAtExit g_overlay_composited_callback = LAZY_INSTANCE_INITIALIZER;
 
 #if BUILDFLAG(IS_CHROMECAST)
 // This persistent mojo::Remote is bound then used by all the instances
@@ -49,7 +45,7 @@ OverlayStrategyUnderlayCast::OverlayStrategyUnderlayCast(
 OverlayStrategyUnderlayCast::~OverlayStrategyUnderlayCast() {}
 
 bool OverlayStrategyUnderlayCast::Attempt(
-    const SkMatrix44& output_color_matrix,
+    const SkM44& output_color_matrix,
     const OverlayProcessorInterface::FilterOperationsMap&
         render_pass_backdrop_filters,
     DisplayResourceProvider* resource_provider,
@@ -87,7 +83,8 @@ bool OverlayStrategyUnderlayCast::Attempt(
           quad->material == DrawQuad::Material::kVideoHole &&
           OverlayCandidate::FromDrawQuad(
               resource_provider, surface_damage_rect_list, output_color_matrix,
-              quad, GetPrimaryPlaneDisplayRect(primary_plane), &candidate);
+              quad, GetPrimaryPlaneDisplayRect(primary_plane),
+              &candidate) == OverlayCandidate::CandidateStatus::kSuccess;
       found_underlay = is_underlay;
     }
 
@@ -106,34 +103,22 @@ bool OverlayStrategyUnderlayCast::Attempt(
 
   if (is_using_overlay_ != found_underlay) {
     is_using_overlay_ = found_underlay;
-    VLOG(1) << (found_underlay ? "Overlay activated" : "Overlay deactivated");
+    LOG(INFO) << (found_underlay ? "Overlay activated" : "Overlay deactivated");
   }
 
   if (found_underlay) {
     for (auto it = quad_list.begin(); it != quad_list.end(); ++it) {
       OverlayCandidate candidate;
       if (it->material != DrawQuad::Material::kVideoHole ||
-          !OverlayCandidate::FromDrawQuad(
+          OverlayCandidate::FromDrawQuad(
               resource_provider, surface_damage_rect_list, output_color_matrix,
-              *it, GetPrimaryPlaneDisplayRect(primary_plane), &candidate)) {
+              *it, GetPrimaryPlaneDisplayRect(primary_plane),
+              &candidate) != OverlayCandidate::CandidateStatus::kSuccess) {
         continue;
       }
 
-      // TODO(guohuideng): when migration to GPU process complete, remove
-      // the code that's for the browser process compositor.
-#if BUILDFLAG(IS_CHROMECAST)
-      if (g_overlay_composited_callback.Get().is_null()) {
-        DCHECK(GetVideoGeometrySetter());
-        GetVideoGeometrySetter()->SetVideoGeometry(
-            candidate.display_rect, candidate.transform,
-            VideoHoleDrawQuad::MaterialCast(*it)->overlay_plane_id);
-      } else {
-        g_overlay_composited_callback.Get().Run(candidate.display_rect,
-                                                candidate.transform);
-      }
-#endif
-
-      render_pass->ReplaceExistingQuadWithOpaqueTransparentSolidColor(it);
+      OverlayProposedCandidate proposed_candidate(it, candidate, this);
+      CommitCandidate(proposed_candidate, render_pass);
 
       break;
     }
@@ -147,14 +132,14 @@ bool OverlayStrategyUnderlayCast::Attempt(
 }
 
 void OverlayStrategyUnderlayCast::ProposePrioritized(
-    const SkMatrix44& output_color_matrix,
+    const SkM44& output_color_matrix,
     const OverlayProcessorInterface::FilterOperationsMap&
         render_pass_backdrop_filters,
     DisplayResourceProvider* resource_provider,
     AggregatedRenderPassList* render_pass_list,
     SurfaceDamageRectList* surface_damage_rect_list,
     const PrimaryPlane* primary_plane,
-    OverlayProposedCandidateList* candidates,
+    std::vector<OverlayProposedCandidate>* candidates,
     std::vector<gfx::Rect>* content_bounds) {
   auto* render_pass = render_pass_list->back().get();
   QuadList& quad_list = render_pass->quad_list;
@@ -177,7 +162,8 @@ void OverlayStrategyUnderlayCast::ProposePrioritized(
     if (it->material == DrawQuad::Material::kVideoHole &&
         OverlayCandidate::FromDrawQuad(
             resource_provider, surface_damage_rect_list, output_color_matrix,
-            *it, GetPrimaryPlaneDisplayRect(primary_plane), &candidate)) {
+            *it, GetPrimaryPlaneDisplayRect(primary_plane),
+            &candidate) == OverlayCandidate::CandidateStatus::kSuccess) {
       overlay_iter = it;
     }
   }
@@ -188,7 +174,7 @@ void OverlayStrategyUnderlayCast::ProposePrioritized(
 }
 
 bool OverlayStrategyUnderlayCast::AttemptPrioritized(
-    const SkMatrix44& output_color_matrix,
+    const SkM44& output_color_matrix,
     const OverlayProcessorInterface::FilterOperationsMap&
         render_pass_backdrop_filters,
     DisplayResourceProvider* resource_provider,
@@ -197,7 +183,7 @@ bool OverlayStrategyUnderlayCast::AttemptPrioritized(
     const PrimaryPlane* primary_plane,
     OverlayCandidateList* candidate_list,
     std::vector<gfx::Rect>* content_bounds,
-    OverlayProposedCandidate* proposed_candidate) {
+    const OverlayProposedCandidate& proposed_candidate) {
   // Before we attempt an overlay strategy, the candidate list should be empty.
   DCHECK(candidate_list->empty());
   auto* render_pass = render_pass_list->back().get();
@@ -227,7 +213,8 @@ bool OverlayStrategyUnderlayCast::AttemptPrioritized(
           quad->material == DrawQuad::Material::kVideoHole &&
           OverlayCandidate::FromDrawQuad(
               resource_provider, surface_damage_rect_list, output_color_matrix,
-              quad, GetPrimaryPlaneDisplayRect(primary_plane), &candidate);
+              quad, GetPrimaryPlaneDisplayRect(primary_plane),
+              &candidate) == OverlayCandidate::CandidateStatus::kSuccess;
       found_underlay = is_underlay;
     }
 
@@ -246,34 +233,22 @@ bool OverlayStrategyUnderlayCast::AttemptPrioritized(
 
   if (is_using_overlay_ != found_underlay) {
     is_using_overlay_ = found_underlay;
-    VLOG(1) << (found_underlay ? "Overlay activated" : "Overlay deactivated");
+    LOG(INFO) << (found_underlay ? "Overlay activated" : "Overlay deactivated");
   }
 
   if (found_underlay) {
     for (auto it = quad_list.begin(); it != quad_list.end(); ++it) {
       OverlayCandidate candidate;
       if (it->material != DrawQuad::Material::kVideoHole ||
-          !OverlayCandidate::FromDrawQuad(
+          OverlayCandidate::FromDrawQuad(
               resource_provider, surface_damage_rect_list, output_color_matrix,
-              *it, GetPrimaryPlaneDisplayRect(primary_plane), &candidate)) {
+              *it, GetPrimaryPlaneDisplayRect(primary_plane),
+              &candidate) != OverlayCandidate::CandidateStatus::kSuccess) {
         continue;
       }
 
-      // TODO(guohuideng): when migration to GPU process complete, remove
-      // the code that's for the browser process compositor.
-#if BUILDFLAG(IS_CHROMECAST)
-      if (g_overlay_composited_callback.Get().is_null()) {
-        DCHECK(GetVideoGeometrySetter());
-        GetVideoGeometrySetter()->SetVideoGeometry(
-            candidate.display_rect, candidate.transform,
-            VideoHoleDrawQuad::MaterialCast(*it)->overlay_plane_id);
-      } else {
-        g_overlay_composited_callback.Get().Run(candidate.display_rect,
-                                                candidate.transform);
-      }
-#endif
-
-      render_pass->ReplaceExistingQuadWithOpaqueTransparentSolidColor(it);
+      OverlayProposedCandidate proposed_to_commit(it, candidate, this);
+      CommitCandidate(proposed_to_commit, render_pass);
 
       break;
     }
@@ -286,14 +261,30 @@ bool OverlayStrategyUnderlayCast::AttemptPrioritized(
   return found_underlay;
 }
 
-OverlayStrategy OverlayStrategyUnderlayCast::GetUMAEnum() const {
-  return OverlayStrategy::kUnderlayCast;
+void OverlayStrategyUnderlayCast::CommitCandidate(
+    const OverlayProposedCandidate& proposed_candidate,
+    AggregatedRenderPass* render_pass) {
+#if BUILDFLAG(IS_CHROMECAST)
+  DCHECK(GetVideoGeometrySetter());
+  GetVideoGeometrySetter()->SetVideoGeometry(
+      proposed_candidate.candidate.display_rect,
+      proposed_candidate.candidate.transform,
+      VideoHoleDrawQuad::MaterialCast(*proposed_candidate.quad_iter)
+          ->overlay_plane_id);
+#endif
+
+  if (proposed_candidate.candidate.has_mask_filter) {
+    render_pass->ReplaceExistingQuadWithSolidColor(
+        proposed_candidate.quad_iter, SK_ColorBLACK, SkBlendMode::kDstOut);
+  } else {
+    render_pass->ReplaceExistingQuadWithSolidColor(proposed_candidate.quad_iter,
+                                                   SK_ColorTRANSPARENT,
+                                                   SkBlendMode::kSrcOver);
+  }
 }
 
-// static
-void OverlayStrategyUnderlayCast::SetOverlayCompositedCallback(
-    const OverlayCompositedCallback& cb) {
-  g_overlay_composited_callback.Get() = cb;
+OverlayStrategy OverlayStrategyUnderlayCast::GetUMAEnum() const {
+  return OverlayStrategy::kUnderlayCast;
 }
 
 #if BUILDFLAG(IS_CHROMECAST)

@@ -68,7 +68,7 @@ base::Value ConvertedResultFromScriptResult(const base::Value* value,
     }
     // End of different implementation.
   } else if (value->is_bool()) {
-    result = base::Value(value);
+    result = base::Value(value->GetBool());
     DCHECK_EQ(result.type(), base::Value::Type::BOOLEAN);
   } else if (value->is_dict()) {
     base::Value dictionary(base::Value::Type::DICTIONARY);
@@ -86,7 +86,7 @@ base::Value ConvertedResultFromScriptResult(const base::Value* value,
 
   } else if (value->is_list()) {
     std::vector<base::Value> list;
-    for (const base::Value& list_item : value->GetList()) {
+    for (const base::Value& list_item : value->GetListDeprecated()) {
       base::Value converted_item =
           ConvertedResultFromScriptResult(&list_item, max_depth - 1);
       if (converted_item.type() == base::Value::Type::NONE) {
@@ -114,13 +114,17 @@ class DistillerPageMediaBlocker : public web::WebStatePolicyDecider {
       : web::WebStatePolicyDecider(web_state),
         main_frame_navigation_blocked_(false) {}
 
+  DistillerPageMediaBlocker(const DistillerPageMediaBlocker&) = delete;
+  DistillerPageMediaBlocker& operator=(const DistillerPageMediaBlocker&) =
+      delete;
+
   void ShouldAllowResponse(
       NSURLResponse* response,
-      bool for_main_frame,
-      base::OnceCallback<void(PolicyDecision)> callback) override {
+      web::WebStatePolicyDecider::ResponseInfo response_info,
+      web::WebStatePolicyDecider::PolicyDecisionCallback callback) override {
     if ([response.MIMEType hasPrefix:@"audio/"] ||
         [response.MIMEType hasPrefix:@"video/"]) {
-      if (for_main_frame) {
+      if (response_info.for_main_frame) {
         main_frame_navigation_blocked_ = true;
       }
       std::move(callback).Run(PolicyDecision::Cancel());
@@ -135,7 +139,6 @@ class DistillerPageMediaBlocker : public web::WebStatePolicyDecider {
 
  private:
   bool main_frame_navigation_blocked_;
-  DISALLOW_COPY_AND_ASSIGN(DistillerPageMediaBlocker);
 };
 
 #pragma mark -
@@ -240,8 +243,7 @@ void DistillerPageIOS::DidStartLoading(web::WebState* web_state) {
 
 void DistillerPageIOS::DidStopLoading(web::WebState* web_state) {
   DCHECK_EQ(web_state_.get(), web_state);
-  if (web_state->IsShowingWebInterstitial() ||
-      media_blocker_->main_frame_navigation_blocked()) {
+  if (media_blocker_->main_frame_navigation_blocked()) {
     // If there is an interstitial, stop the distillation.
     // The interstitial is not displayed to the user who cannot choose to
     // continue.

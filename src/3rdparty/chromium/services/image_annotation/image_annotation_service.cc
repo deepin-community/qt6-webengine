@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "base/bind.h"
+#include "base/metrics/field_trial_params.h"
 #include "base/time/time.h"
 #include "url/gurl.h"
 
@@ -33,7 +34,7 @@ ImageAnnotationService::ImageAnnotationService(
       annotator_(GURL(kPixelsServerUrl.Get()),
                  GURL(kLangsServerUrl.Get()),
                  kApiKey.Get().empty() ? std::move(api_key) : kApiKey.Get(),
-                 base::TimeDelta::FromMilliseconds(kThrottleMs.Get()),
+                 base::Milliseconds(kThrottleMs.Get()),
                  kBatchSize.Get(),
                  kMinOcrConfidence.Get(),
                  shared_url_loader_factory,

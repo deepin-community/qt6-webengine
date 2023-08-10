@@ -8,6 +8,7 @@
 #include <stdint.h>
 
 #include <algorithm>
+#include <memory>
 #include <utility>
 
 #include "base/bind.h"
@@ -62,6 +63,7 @@ const char DefaultSearchManager::kSuggestionsURLPostParams[] =
     "suggestions_url_post_params";
 const char DefaultSearchManager::kImageURLPostParams[] =
     "image_url_post_params";
+const char DefaultSearchManager::kSideSearchParam[] = "side_search_param";
 
 const char DefaultSearchManager::kSafeForAutoReplace[] = "safe_for_autoreplace";
 const char DefaultSearchManager::kInputEncodings[] = "input_encodings";
@@ -76,6 +78,10 @@ const char DefaultSearchManager::kCreatedByPolicy[] = "created_by_policy";
 const char DefaultSearchManager::kDisabledByPolicy[] = "disabled_by_policy";
 const char DefaultSearchManager::kCreatedFromPlayAPI[] =
     "created_from_play_api";
+const char DefaultSearchManager::kPreconnectToSearchUrl[] =
+    "preconnect_to_search_url";
+const char DefaultSearchManager::kIsActive[] = "is_active";
+const char DefaultSearchManager::kStarterPackId[] = "starter_pack_id";
 
 DefaultSearchManager::DefaultSearchManager(
     PrefService* pref_service,
@@ -161,10 +167,7 @@ DefaultSearchManager::GetDefaultSearchEngineIgnoringExtensions() const {
   const base::Value* user_value =
       pref_service_->GetUserPrefValue(kDefaultSearchProviderDataPrefName);
   if (user_value && user_value->is_dict()) {
-    const base::DictionaryValue* dict_value = nullptr;
-    user_value->GetAsDictionary(&dict_value);
-    DCHECK(dict_value);
-    auto turl_data = TemplateURLDataFromDictionary(*dict_value);
+    auto turl_data = TemplateURLDataFromDictionary(*user_value);
     if (turl_data)
       return turl_data;
   }
@@ -191,7 +194,7 @@ const TemplateURLData* DefaultSearchManager::GetFallbackSearchEngine() const {
 void DefaultSearchManager::SetUserSelectedDefaultSearchEngine(
     const TemplateURLData& data) {
   if (!pref_service_) {
-    prefs_default_search_.reset(new TemplateURLData(data));
+    prefs_default_search_ = std::make_unique<TemplateURLData>(data);
     MergePrefsDataWithPrepopulated();
     NotifyObserver();
     return;
@@ -284,17 +287,16 @@ void DefaultSearchManager::LoadDefaultSearchEngineFromPrefs() {
   const PrefService::Preference* pref =
       pref_service_->FindPreference(kDefaultSearchProviderDataPrefName);
   DCHECK(pref);
-  default_search_controlled_by_policy_ = pref->IsManaged();
+  default_search_controlled_by_policy_ =
+      pref->IsManaged() || pref->IsRecommended();
 
-  const base::DictionaryValue* url_dict =
+  const base::Value* url_dict =
       pref_service_->GetDictionary(kDefaultSearchProviderDataPrefName);
-  if (url_dict->empty())
+  if (url_dict->DictEmpty())
     return;
 
   if (default_search_controlled_by_policy_) {
-    bool disabled_by_policy = false;
-    if (url_dict->GetBoolean(kDisabledByPolicy, &disabled_by_policy) &&
-        disabled_by_policy)
+    if (url_dict->FindBoolKey(kDisabledByPolicy).value_or(false))
       return;
   }
 

@@ -4,11 +4,27 @@
 
 #include "third_party/blink/public/common/manifest/manifest_util.h"
 
+#include "base/no_destructor.h"
 #include "base/strings/string_util.h"
+#include "third_party/blink/public/common/manifest/manifest.h"
+#include "third_party/blink/public/common/permissions_policy/permissions_policy.h"
 #include "third_party/blink/public/mojom/manifest/capture_links.mojom.h"
 #include "third_party/blink/public/mojom/manifest/display_mode.mojom.h"
+#include "third_party/blink/public/mojom/manifest/manifest.mojom.h"
 
 namespace blink {
+
+bool IsEmptyManifest(const mojom::Manifest& manifest) {
+  static base::NoDestructor<mojom::ManifestPtr> empty_manifest_ptr_storage;
+  mojom::ManifestPtr& empty_manifest = *empty_manifest_ptr_storage;
+  if (!empty_manifest)
+    empty_manifest = mojom::Manifest::New();
+  return manifest == *empty_manifest;
+}
+
+bool IsEmptyManifest(const mojom::ManifestPtr& manifest) {
+  return !manifest || IsEmptyManifest(*manifest);
+}
 
 std::string DisplayModeToString(blink::mojom::DisplayMode display) {
   switch (display) {
@@ -24,6 +40,8 @@ std::string DisplayModeToString(blink::mojom::DisplayMode display) {
       return "fullscreen";
     case blink::mojom::DisplayMode::kWindowControlsOverlay:
       return "window-controls-overlay";
+    case blink::mojom::DisplayMode::kTabbed:
+      return "tabbed";
   }
   return "";
 }
@@ -39,6 +57,8 @@ blink::mojom::DisplayMode DisplayModeFromString(const std::string& display) {
     return blink::mojom::DisplayMode::kFullscreen;
   if (base::LowerCaseEqualsASCII(display, "window-controls-overlay"))
     return blink::mojom::DisplayMode::kWindowControlsOverlay;
+  if (base::LowerCaseEqualsASCII(display, "tabbed"))
+    return blink::mojom::DisplayMode::kTabbed;
   return blink::mojom::DisplayMode::kUndefined;
 }
 
@@ -107,6 +127,51 @@ mojom::CaptureLinks CaptureLinksFromString(const std::string& capture_links) {
   if (base::LowerCaseEqualsASCII(capture_links, "existing-client-navigate"))
     return mojom::CaptureLinks::kExistingClientNavigate;
   return mojom::CaptureLinks::kUndefined;
+}
+
+mojom::HandleLinks HandleLinksFromString(const std::string& handle_links) {
+  if (base::LowerCaseEqualsASCII(handle_links, "auto"))
+    return mojom::HandleLinks::kAuto;
+  if (base::LowerCaseEqualsASCII(handle_links, "preferred"))
+    return mojom::HandleLinks::kPreferred;
+  if (base::LowerCaseEqualsASCII(handle_links, "not-preferred"))
+    return mojom::HandleLinks::kNotPreferred;
+  return mojom::HandleLinks::kUndefined;
+}
+
+bool ParsedRouteTo::operator==(const ParsedRouteTo& other) const {
+  auto AsTuple = [](const auto& item) {
+    return std::tie(item.route_to, item.legacy_existing_client_value);
+  };
+  return AsTuple(*this) == AsTuple(other);
+}
+
+bool ParsedRouteTo::operator!=(const ParsedRouteTo& other) const {
+  return !(*this == other);
+}
+
+absl::optional<ParsedRouteTo> RouteToFromString(const std::string& route_to) {
+  using RouteTo = Manifest::LaunchHandler::RouteTo;
+  if (base::LowerCaseEqualsASCII(route_to, "auto"))
+    return ParsedRouteTo{/*.route_to =*/ RouteTo::kAuto};
+  if (base::LowerCaseEqualsASCII(route_to, "new-client"))
+    return ParsedRouteTo{/*.route_to =*/ RouteTo::kNewClient};
+  if (base::LowerCaseEqualsASCII(route_to, "existing-client"))
+    return ParsedRouteTo{/*.route_to =*/ RouteTo::kAuto, /*.legacy_existing_client_value =*/ true};
+  if (base::LowerCaseEqualsASCII(route_to, "existing-client-navigate"))
+    return ParsedRouteTo{/*.route_to =*/ RouteTo::kExistingClientNavigate};
+  if (base::LowerCaseEqualsASCII(route_to, "existing-client-retain"))
+    return ParsedRouteTo{/*.route_to =*/ RouteTo::kExistingClientRetain};
+  return absl::nullopt;
+}
+
+absl::optional<NavigateExistingClient> NavigateExistingClientFromString(
+    const std::string& navigate_existing_client) {
+  if (base::LowerCaseEqualsASCII(navigate_existing_client, "always"))
+    return NavigateExistingClient::kAlways;
+  if (base::LowerCaseEqualsASCII(navigate_existing_client, "never"))
+    return NavigateExistingClient::kNever;
+  return absl::nullopt;
 }
 
 }  // namespace blink

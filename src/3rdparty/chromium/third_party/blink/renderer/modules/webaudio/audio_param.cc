@@ -27,14 +27,21 @@
 
 #include "build/build_config.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
+#include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/modules/webaudio/audio_graph_tracer.h"
 #include "third_party/blink/renderer/modules/webaudio/audio_node.h"
 #include "third_party/blink/renderer/modules/webaudio/audio_node_output.h"
 #include "third_party/blink/renderer/platform/audio/audio_utilities.h"
 #include "third_party/blink/renderer/platform/audio/vector_math.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
-#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/wtf/math_extras.h"
+
+#if defined(ARCH_CPU_X86_FAMILY)
+#include <xmmintrin.h>
+#elif defined(CPU_ARM_NEON)
+#include <arm_neon.h>
+#endif
 
 namespace blink {
 
@@ -57,7 +64,9 @@ AudioParamHandler::AudioParamHandler(BaseAudioContext& context,
       min_value_(min_value),
       max_value_(max_value),
       summing_bus_(
-          AudioBus::Create(1, audio_utilities::kRenderQuantumFrames, false)) {
+          AudioBus::Create(1,
+                           GetDeferredTaskHandler().RenderQuantumFrames(),
+                           false)) {
   // An AudioParam needs the destination handler to run the timeline.  But the
   // destination may have been destroyed (e.g. page gone), so the destination is
   // null.  However, if the destination is gone, the AudioParam will never get
@@ -161,13 +170,13 @@ float AudioParamHandler::Value() {
   // Update value for timeline.
   float v = IntrinsicValue();
   if (GetDeferredTaskHandler().IsAudioThread()) {
-    bool has_value;
-    float timeline_value;
-    std::tie(has_value, timeline_value) = timeline_.ValueForContextTime(
-        DestinationHandler(), v, MinValue(), MaxValue());
+    auto [has_value, timeline_value] = timeline_.ValueForContextTime(
+        DestinationHandler(), v, MinValue(), MaxValue(),
+        GetDeferredTaskHandler().RenderQuantumFrames());
 
-    if (has_value)
+    if (has_value) {
       v = timeline_value;
+    }
   }
 
   SetIntrinsicValue(v);
@@ -175,7 +184,7 @@ float AudioParamHandler::Value() {
 }
 
 void AudioParamHandler::SetIntrinsicValue(float new_value) {
-  new_value = clampTo(new_value, min_value_, max_value_);
+  new_value = ClampTo(new_value, min_value_, max_value_);
   intrinsic_value_.store(new_value, std::memory_order_relaxed);
 }
 
@@ -190,10 +199,9 @@ float AudioParamHandler::SmoothedValue() {
 bool AudioParamHandler::Smooth() {
   // If values have been explicitly scheduled on the timeline, then use the
   // exact value.  Smoothing effectively is performed by the timeline.
-  bool use_timeline_value = false;
-  float value;
-  std::tie(use_timeline_value, value) = timeline_.ValueForContextTime(
-      DestinationHandler(), IntrinsicValue(), MinValue(), MaxValue());
+  auto [use_timeline_value, value] = timeline_.ValueForContextTime(
+      DestinationHandler(), IntrinsicValue(), MinValue(), MaxValue(),
+      GetDeferredTaskHandler().RenderQuantumFrames());
 
   float smoothed_value = timeline_.SmoothedValue();
   if (smoothed_value == value) {
@@ -211,8 +219,9 @@ bool AudioParamHandler::Smooth() {
     // If we get close enough then snap to actual value.
     // FIXME: the threshold needs to be adjustable depending on range - but
     // this is OK general purpose value.
-    if (fabs(smoothed_value - value) < kSnapThreshold)
+    if (fabs(smoothed_value - value) < kSnapThreshold) {
       smoothed_value = value;
+    }
     timeline_.SetSmoothedValue(smoothed_value);
   }
 
@@ -257,13 +266,15 @@ static void HandleNaNValues(float* values,
   }
 #elif defined(CPU_ARM_NEON)
   if (number_of_values >= 4) {
-    const uint32x4_t defaults = vcvtq_u32_f32(vdupq_n_f32(default_value));
+    uint32x4_t defaults =
+        vcvtq_u32_f32(vdupq_n_f32(default_value));
     for (k = 0; k < number_of_values; k += 4) {
       float32x4_t v = vld1q_f32(values + k);
       // Returns true (all ones) if v is not NaN
       uint32x4_t is_not_nan = vceqq_f32(v, v);
       // Get the parts that are not NaN
-      uint32x4_t result = vandq_u32(is_not_nan, vcvtq_u32_f32(v));
+      uint32x4_t result =
+          vandq_u32(is_not_nan, vcvtq_u32_f32(v));
       // Replace the parts that are NaN with the default and merge with previous
       // result.  (Note: vbic_u32(x, y) = x and not y)
       result = vorrq_u32(result, vbicq_u32(defaults, is_not_nan));
@@ -295,14 +306,14 @@ void AudioParamHandler::CalculateFinalValues(float* values,
     CalculateTimelineValues(values, number_of_values);
   } else {
     // Calculate control-rate (k-rate) intrinsic value.
-    bool has_value;
     float value = IntrinsicValue();
-    float timeline_value;
-    std::tie(has_value, timeline_value) = timeline_.ValueForContextTime(
-        DestinationHandler(), value, MinValue(), MaxValue());
+    auto [has_value, timeline_value] = timeline_.ValueForContextTime(
+        DestinationHandler(), value, MinValue(), MaxValue(),
+        GetDeferredTaskHandler().RenderQuantumFrames());
 
-    if (has_value)
+    if (has_value) {
       value = timeline_value;
+    }
 
     for (unsigned k = 0; k < number_of_values; ++k) {
       values[k] = value;
@@ -314,7 +325,7 @@ void AudioParamHandler::CalculateFinalValues(float* values,
   // together (unity-gain summing junction).  Note that connections would
   // normally be mono, but we mix down to mono if necessary.
   if (NumberOfRenderingConnections() > 0) {
-    DCHECK_LE(number_of_values, audio_utilities::kRenderQuantumFrames);
+    DCHECK_LE(number_of_values, GetDeferredTaskHandler().RenderQuantumFrames());
 
     // If we're not sample accurate, we only need one value, so make the summing
     // bus have length 1.  When the connections are added in, only the first
@@ -328,7 +339,7 @@ void AudioParamHandler::CalculateFinalValues(float* values,
 
       // Render audio from this output.
       AudioBus* connection_bus =
-          output->Pull(nullptr, audio_utilities::kRenderQuantumFrames);
+          output->Pull(nullptr, GetDeferredTaskHandler().RenderQuantumFrames());
 
       // Sum, with unity-gain.
       summing_bus_->SumFrom(*connection_bus);
@@ -366,7 +377,7 @@ void AudioParamHandler::CalculateTimelineValues(float* values,
                                                 unsigned number_of_values) {
   // Calculate values for this render quantum.  Normally
   // |numberOfValues| will equal to
-  // audio_utilities::kRenderQuantumFrames (the render quantum size).
+  // GetDeferredTaskHandler().RenderQuantumFrames() (the render quantum size).
   double sample_rate = DestinationHandler().SampleRate();
   size_t start_frame = DestinationHandler().CurrentSampleFrame();
   size_t end_frame = start_frame + number_of_values;
@@ -375,7 +386,8 @@ void AudioParamHandler::CalculateTimelineValues(float* values,
   // Pass in the current value as default value.
   SetIntrinsicValue(timeline_.ValuesForFrameRange(
       start_frame, end_frame, IntrinsicValue(), values, number_of_values,
-      sample_rate, sample_rate, MinValue(), MaxValue()));
+      sample_rate, sample_rate, MinValue(), MaxValue(),
+      GetDeferredTaskHandler().RenderQuantumFrames()));
 }
 
 // ----------------------------------------------------------------
@@ -434,7 +446,8 @@ float AudioParam::value() const {
 }
 
 void AudioParam::WarnIfOutsideRange(const String& param_method, float value) {
-  if (value < minValue() || value > maxValue()) {
+  if (Context()->GetExecutionContext() &&
+      (value < minValue() || value > maxValue())) {
     Context()->GetExecutionContext()->AddConsoleMessage(
         MakeGarbageCollected<ConsoleMessage>(
             mojom::ConsoleMessageSource::kJavaScript,
@@ -567,9 +580,7 @@ AudioParam* AudioParam::setValueCurveAtTime(const Vector<float>& curve,
   // Find the first value in the curve (if any) that is outside the
   // nominal range.  It's probably not necessary to produce a warning
   // on every value outside the nominal range.
-  for (unsigned k = 0; k < curve.size(); ++k) {
-    float value = curve[k];
-
+  for (float value : curve) {
     if (value < min || value > max) {
       WarnIfOutsideRange("setValueCurveAtTime value", value);
       break;

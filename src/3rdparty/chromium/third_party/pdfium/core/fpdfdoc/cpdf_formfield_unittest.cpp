@@ -8,7 +8,6 @@
 
 #include "constants/form_fields.h"
 #include "constants/form_flags.h"
-#include "core/fpdfapi/page/cpdf_docpagedata.h"
 #include "core/fpdfapi/page/cpdf_pagemodule.h"
 #include "core/fpdfapi/parser/cpdf_array.h"
 #include "core/fpdfapi/parser/cpdf_dictionary.h"
@@ -18,10 +17,11 @@
 #include "core/fpdfapi/parser/cpdf_number.h"
 #include "core/fpdfapi/parser/cpdf_reference.h"
 #include "core/fpdfapi/parser/cpdf_string.h"
-#include "core/fpdfapi/render/cpdf_docrenderdata.h"
+#include "core/fpdfapi/parser/cpdf_test_document.h"
 #include "core/fpdfdoc/cpdf_interactiveform.h"
+#include "core/fxcrt/fx_memory.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/base/stl_util.h"
+#include "third_party/base/containers/contains.h"
 
 namespace {
 
@@ -29,15 +29,10 @@ namespace {
 // CPDF_Document.
 class ScopedCPDF_PageModule {
  public:
+  FX_STACK_ALLOCATED();
+
   ScopedCPDF_PageModule() { CPDF_PageModule::Create(); }
   ~ScopedCPDF_PageModule() { CPDF_PageModule::Destroy(); }
-};
-
-class CPDF_TestEmptyDocument final : public CPDF_Document {
- public:
-  CPDF_TestEmptyDocument()
-      : CPDF_Document(std::make_unique<CPDF_DocRenderData>(),
-                      std::make_unique<CPDF_DocPageData>()) {}
 };
 
 void TestMultiselectFieldDict(RetainPtr<CPDF_Array> opt_array,
@@ -57,7 +52,7 @@ void TestMultiselectFieldDict(RetainPtr<CPDF_Array> opt_array,
   form_dict->SetFor(pdfium::form_fields::kV, values);
   form_dict->SetFor("I", selected_indices);
 
-  CPDF_TestEmptyDocument doc;
+  CPDF_TestDocument doc;
   CPDF_InteractiveForm form(&doc);
   CPDF_FormField form_field(&form, form_dict.Get());
   EXPECT_EQ(expected_use_indices, form_field.UseSelectedIndicesObject());

@@ -4,23 +4,23 @@
 
 #include "components/download/public/common/download_schedule.h"
 
-#include "base/optional.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace download {
 namespace {
 
 TEST(DownloadScheduleTest, CtorAndCopy) {
-  DownloadSchedule download_schedule(false, base::nullopt);
+  DownloadSchedule download_schedule(false, absl::nullopt);
   EXPECT_FALSE(download_schedule.only_on_wifi());
-  EXPECT_EQ(download_schedule.start_time(), base::nullopt);
+  EXPECT_EQ(download_schedule.start_time(), absl::nullopt);
 
-  download_schedule = DownloadSchedule(true, base::nullopt);
+  download_schedule = DownloadSchedule(true, absl::nullopt);
   EXPECT_TRUE(download_schedule.only_on_wifi());
-  EXPECT_EQ(download_schedule.start_time(), base::nullopt);
+  EXPECT_EQ(download_schedule.start_time(), absl::nullopt);
 
-  auto time = base::make_optional(
-      base::Time::FromDeltaSinceWindowsEpoch(base::TimeDelta::FromDays(1)));
+  auto time = absl::make_optional(
+      base::Time::FromDeltaSinceWindowsEpoch(base::Days(1)));
   download_schedule = DownloadSchedule(false, time);
   EXPECT_FALSE(download_schedule.only_on_wifi());
   EXPECT_EQ(download_schedule.start_time(), time);

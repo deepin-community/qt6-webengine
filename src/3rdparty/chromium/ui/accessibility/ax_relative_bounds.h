@@ -7,13 +7,13 @@
 
 #include <stdint.h>
 
+#include <iosfwd>
 #include <memory>
-#include <ostream>
 
 #include "ui/accessibility/ax_base_export.h"
 #include "ui/accessibility/ax_enums.mojom-forward.h"
 #include "ui/gfx/geometry/rect_f.h"
-#include "ui/gfx/transform.h"
+#include "ui/gfx/geometry/transform.h"
 
 namespace ui {
 

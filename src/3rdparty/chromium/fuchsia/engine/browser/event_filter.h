@@ -6,9 +6,7 @@
 #define FUCHSIA_ENGINE_BROWSER_EVENT_FILTER_H_
 
 #include <fuchsia/web/cpp/fidl.h>
-#include <memory>
 
-#include "base/macros.h"
 #include "fuchsia/engine/web_engine_export.h"
 #include "ui/events/event_handler.h"
 #include "ui/events/types/event_type.h"

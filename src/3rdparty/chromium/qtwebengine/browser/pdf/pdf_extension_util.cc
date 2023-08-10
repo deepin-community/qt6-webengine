@@ -120,7 +120,6 @@ static void AddPdfViewerStrings(base::Value* dict) {
     {"tooltipDownload", IDS_PDF_TOOLTIP_DOWNLOAD},
     {"tooltipPrint", IDS_PDF_TOOLTIP_PRINT},
     {"tooltipRotateCCW", IDS_PDF_TOOLTIP_ROTATE_CCW},
-    {"tooltipRotateCW", IDS_PDF_TOOLTIP_ROTATE_CW},
     {"tooltipThumbnails", IDS_PDF_TOOLTIP_THUMBNAILS},
     {"zoomTextInputAriaLabel", IDS_PDF_ZOOM_TEXT_INPUT_ARIA_LABEL},
   };
@@ -147,13 +146,6 @@ void AddStrings(PdfViewerContext context, base::Value* dict) {
 }
 
 void AddAdditionalData(base::Value* dict) {
-  dict->SetKey("documentPropertiesEnabled",
-               base::Value(base::FeatureList::IsEnabled(
-                   chrome_pdf::features::kPdfViewerDocumentProperties)));
-  dict->SetKey("presentationModeEnabled",
-               base::Value(base::FeatureList::IsEnabled(
-                   chrome_pdf::features::kPdfViewerPresentationMode)));
-
   dict->SetKey("printingEnabled", base::Value(false));
   dict->SetKey("pdfAnnotationsEnabled", base::Value(false));
 }

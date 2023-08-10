@@ -9,10 +9,12 @@
 #include <stdint.h>
 #include <winsock2.h>
 
+#include <atomic>
 #include <memory>
+#include <set>
 
 #include "base/gtest_prod_util.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/thread_checker.h"
@@ -68,6 +70,9 @@ class NET_EXPORT QwaveApi {
  public:
   QwaveApi();
 
+  QwaveApi(const QwaveApi&) = delete;
+  QwaveApi& operator=(const QwaveApi&) = delete;
+
   static QwaveApi* GetDefault();
 
   virtual bool qwave_supported() const;
@@ -101,8 +106,6 @@ class NET_EXPORT QwaveApi {
   AddSocketToFlowFn add_socket_to_flow_func_;
   RemoveSocketFromFlowFn remove_socket_from_flow_func_;
   SetFlowFn set_flow_func_;
-
-  DISALLOW_COPY_AND_ASSIGN(QwaveApi);
 };
 
 //-----------------------------------------------------------------------------
@@ -117,6 +120,10 @@ class NET_EXPORT QwaveApi {
 class NET_EXPORT DscpManager {
  public:
   DscpManager(QwaveApi* api, SOCKET socket);
+
+  DscpManager(const DscpManager&) = delete;
+  DscpManager& operator=(const DscpManager&) = delete;
+
   ~DscpManager();
 
   // Remembers the latest |dscp| so PrepareToSend can add remote addresses to
@@ -135,7 +142,7 @@ class NET_EXPORT DscpManager {
                               base::WeakPtr<DscpManager> dscp_manager,
                               HANDLE handle);
 
-  QwaveApi* const api_;
+  const raw_ptr<QwaveApi> api_;
   const SOCKET socket_;
 
   DiffServCodePoint dscp_value_ = DSCP_NO_CHANGE;
@@ -147,28 +154,28 @@ class NET_EXPORT DscpManager {
   // 0 means no flow has been constructed.
   QOS_FLOWID flow_id_ = 0;
   base::WeakPtrFactory<DscpManager> weak_ptr_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(DscpManager);
 };
 
 //-----------------------------------------------------------------------------
 
 class NET_EXPORT UDPSocketWin : public base::win::ObjectWatcher::Delegate {
  public:
+  // BindType is ignored. Windows has an option to do random binds, so
+  // UDPSocketWin sets that whenever connecting a socket.
   UDPSocketWin(DatagramSocket::BindType bind_type,
                net::NetLog* net_log,
                const net::NetLogSource& source);
+
+  UDPSocketWin(const UDPSocketWin&) = delete;
+  UDPSocketWin& operator=(const UDPSocketWin&) = delete;
+
   ~UDPSocketWin() override;
 
   // Opens the socket.
   // Returns a net error code.
   int Open(AddressFamily address_family);
 
-  // Binds this socket to |network|. All data traffic on the socket will be sent
-  // and received via |network|. Must be called before Connect(). This call will
-  // fail if |network| has disconnected. Communication using this socket will
-  // fail if |network| disconnects.
-  // Returns a net error code.
+  // Not implemented. Returns ERR_NOT_IMPLEMENTED.
   int BindToNetwork(NetworkChangeNotifier::NetworkHandle network);
 
   // Connects the socket to connect with a certain |address|.
@@ -249,8 +256,8 @@ class NET_EXPORT UDPSocketWin : public base::win::ObjectWatcher::Delegate {
 
   // Requests that packets sent by this socket not be fragment, either locally
   // by the host, or by routers (via the DF bit in the IPv4 packet header).
-  // May not be supported by all platforms. Returns a return a network error
-  // code if there was a problem, but the socket will still be usable. Can not
+  // May not be supported by all platforms. Returns a network error code if
+  // there was a problem, but the socket will still be usable. Can not
   // return ERR_IO_PENDING.
   int SetDoNotFragment();
 
@@ -416,8 +423,6 @@ class NET_EXPORT UDPSocketWin : public base::win::ObjectWatcher::Delegate {
   // Bind().
   int SetMulticastOptions();
   int DoBind(const IPEndPoint& address);
-  // Binds to a random port on |address|.
-  int RandomBind(const IPAddress& address);
 
   // This is provided to allow QwaveApi mocking in tests. |UDPSocketWin| method
   // implementations should call |GetQwaveApi()| instead of
@@ -438,10 +443,6 @@ class NET_EXPORT UDPSocketWin : public base::win::ObjectWatcher::Delegate {
   // Multicast socket options cached for SetMulticastOption.
   // Cannot be used after Bind().
   int multicast_time_to_live_;
-
-  // How to do source port binding, used only when UDPSocket is part of
-  // UDPClientSocket, since UDPServerSocket provides Bind.
-  DatagramSocket::BindType bind_type_;
 
   // These are mutable since they're just cached copies to make
   // GetPeerAddress/GetLocalAddress smarter.
@@ -469,7 +470,7 @@ class NET_EXPORT UDPSocketWin : public base::win::ObjectWatcher::Delegate {
   int read_iobuffer_len_;
   int write_iobuffer_len_;
 
-  IPEndPoint* recv_from_address_;
+  raw_ptr<IPEndPoint> recv_from_address_;
 
   // Cached copy of the current address we're sending to, if any.  Used for
   // logging.
@@ -495,8 +496,6 @@ class NET_EXPORT UDPSocketWin : public base::win::ObjectWatcher::Delegate {
   // Used to prevent null dereferences in OnObjectSignaled, when passing an
   // error to both read and write callbacks. Cleared in Close()
   base::WeakPtrFactory<UDPSocketWin> event_pending_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(UDPSocketWin);
 };
 
 //-----------------------------------------------------------------------------

@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <string.h>
 
+#include <sys/mman.h>
 #include <memory>
 
 #include "base/at_exit.h"
@@ -12,7 +13,6 @@
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
-#include "base/macros.h"
 #include "base/memory/unsafe_shared_memory_region.h"
 #include "base/path_service.h"
 #include "base/rand_util.h"
@@ -24,6 +24,7 @@
 #include "base/test/test_timeouts.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "base/time/time.h"
 #include "build/build_config.h"
 #include "components/chromeos_camera/gpu_jpeg_encode_accelerator_factory.h"
 #include "components/chromeos_camera/jpeg_encode_accelerator.h"
@@ -274,6 +275,10 @@ class JpegClient : public JpegEncodeAccelerator::Client {
              const std::vector<TestImage*>& test_images,
              media::test::ClientStateNotification<ClientState>* note,
              size_t exif_size);
+
+  JpegClient(const JpegClient&) = delete;
+  JpegClient& operator=(const JpegClient&) = delete;
+
   ~JpegClient() override;
   void CreateJpegEncoder();
   void DestroyJpegEncoder();
@@ -290,6 +295,8 @@ class JpegClient : public JpegEncodeAccelerator::Client {
   TestImage* GetTestImage(int32_t bitstream_buffer_id);
   void PrepareMemory(int32_t bitstream_buffer_id);
   void SetState(ClientState new_state);
+  void OnInitialize(
+      chromeos_camera::JpegEncodeAccelerator::Status initialize_result);
   void SaveToFile(TestImage* test_image, size_t hw_size, size_t sw_size);
   bool CompareHardwareAndSoftwareResults(int width,
                                          int height,
@@ -349,7 +356,7 @@ class JpegClient : public JpegEncodeAccelerator::Client {
   // Used to create Gpu memory buffer for DMA-buf encoding tests.
   std::unique_ptr<gpu::GpuMemoryBufferManager> gpu_memory_buffer_manager_;
 
-  DISALLOW_COPY_AND_ASSIGN(JpegClient);
+  base::WeakPtrFactory<JpegClient> weak_factory_{this};
 };
 
 JpegClient::JpegClient(const std::vector<TestImage*>& test_aligned_images,
@@ -385,14 +392,20 @@ void JpegClient::CreateJpegEncoder() {
     SetState(ClientState::ERROR);
     return;
   }
+  encoder_->InitializeAsync(this, base::BindOnce(&JpegClient::OnInitialize,
+                                                 weak_factory_.GetWeakPtr()));
+}
 
-  JpegEncodeAccelerator::Status status = encoder_->Initialize(this);
-  if (status != JpegEncodeAccelerator::ENCODE_OK) {
-    LOG(ERROR) << "JpegEncodeAccelerator::Initialize() failed: " << status;
-    SetState(ClientState::ERROR);
+void JpegClient::OnInitialize(
+    chromeos_camera::JpegEncodeAccelerator::Status initialize_result) {
+  if (initialize_result ==
+      ::chromeos_camera::JpegEncodeAccelerator::ENCODE_OK) {
+    SetState(ClientState::INITIALIZED);
     return;
   }
-  SetState(ClientState::INITIALIZED);
+
+  LOG(ERROR) << "JpegEncodeAccelerator::InitializeAsync() failed";
+  SetState(ClientState::ERROR);
 }
 
 void JpegClient::DestroyJpegEncoder() {
@@ -416,7 +429,7 @@ void JpegClient::VideoFrameReady(int32_t buffer_id, size_t hw_encoded_size) {
     // |hw_out_frame_| should only be mapped once.
     auto mapper =
         media::GenericDmaBufVideoFrameMapper::Create(hw_out_frame_->format());
-    hw_out_frame_ = mapper->Map(hw_out_frame_);
+    hw_out_frame_ = mapper->Map(hw_out_frame_, PROT_READ | PROT_WRITE);
   }
 
   size_t sw_encoded_size = 0;
@@ -662,7 +675,7 @@ void JpegClient::StartEncodeDmaBuf(int32_t bitstream_buffer_id) {
   auto input_buffer = gpu_memory_buffer_manager_->CreateGpuMemoryBuffer(
       test_image->visible_size, gfx::BufferFormat::YUV_420_BIPLANAR,
       gfx::BufferUsage::VEA_READ_CAMERA_AND_CPU_READ_WRITE,
-      gpu::kNullSurfaceHandle);
+      gpu::kNullSurfaceHandle, nullptr);
   ASSERT_EQ(input_buffer->Map(), true);
 
   uint8_t* plane_buf[2] = {static_cast<uint8_t*>(input_buffer->memory(0)),
@@ -682,7 +695,8 @@ void JpegClient::StartEncodeDmaBuf(int32_t bitstream_buffer_id) {
 
   auto output_buffer = gpu_memory_buffer_manager_->CreateGpuMemoryBuffer(
       gfx::Size(kJpegMaxSize, 1), gfx::BufferFormat::R_8,
-      gfx::BufferUsage::CAMERA_AND_CPU_READ_WRITE, gpu::kNullSurfaceHandle);
+      gfx::BufferUsage::CAMERA_AND_CPU_READ_WRITE, gpu::kNullSurfaceHandle,
+      nullptr);
   ASSERT_EQ(output_buffer->Map(), true);
   hw_out_frame_ = GetVideoFrameFromGpuMemoryBuffer(
       output_buffer.get(), test_image->visible_size, media::PIXEL_FORMAT_MJPEG);
@@ -695,6 +709,11 @@ void JpegClient::StartEncodeDmaBuf(int32_t bitstream_buffer_id) {
 }
 
 class JpegEncodeAcceleratorTest : public ::testing::Test {
+ public:
+  JpegEncodeAcceleratorTest(const JpegEncodeAcceleratorTest&) = delete;
+  JpegEncodeAcceleratorTest& operator=(const JpegEncodeAcceleratorTest&) =
+      delete;
+
  protected:
   JpegEncodeAcceleratorTest() {}
 
@@ -710,9 +729,6 @@ class JpegEncodeAcceleratorTest : public ::testing::Test {
   // owned by JpegEncodeAcceleratorTestEnvironment.
   std::vector<TestImage*> test_aligned_images_;
   std::vector<TestImage*> test_unaligned_images_;
-
- protected:
-  DISALLOW_COPY_AND_ASSIGN(JpegEncodeAcceleratorTest);
 };
 
 void JpegEncodeAcceleratorTest::TestEncode(size_t num_concurrent_encoders,
@@ -813,10 +829,18 @@ void JpegEncodeAcceleratorTest::TestEncode(size_t num_concurrent_encoders,
         FROM_HERE, base::BindOnce(&JpegClient::DestroyJpegEncoder,
                                   base::Unretained(clients[i].get())));
   }
+  auto destroy_clients_task = base::BindOnce(
+      [](std::vector<std::unique_ptr<JpegClient>> clients) { clients.clear(); },
+      std::move(clients));
+  encoder_thread.task_runner()->PostTask(FROM_HERE,
+                                         std::move(destroy_clients_task));
   encoder_thread.Stop();
   VLOG(1) << "Exit TestEncode";
 }
 
+// We may need to keep the VAAPI shared memory path for Linux-based Chrome VCD.
+// Some of our older boards are still running on the Linux VCD.
+#if BUILDFLAG(USE_VAAPI)
 TEST_F(JpegEncodeAcceleratorTest, SimpleEncode) {
   for (size_t i = 0; i < g_env->repeat_; i++) {
     for (auto& image : g_env->image_data_user_) {
@@ -855,6 +879,7 @@ TEST_F(JpegEncodeAcceleratorTest, CodedSizeAlignment) {
   TestEncode(/*num_concurrent_encoders=*/1u, /*is_dma=*/false,
              /*exif_size=*/0u);
 }
+#endif
 
 TEST_F(JpegEncodeAcceleratorTest, SimpleDmaEncode) {
   for (size_t i = 0; i < g_env->repeat_; i++) {

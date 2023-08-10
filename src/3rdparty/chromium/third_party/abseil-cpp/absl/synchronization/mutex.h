@@ -457,11 +457,9 @@ class ABSL_LOCKABLE Mutex {
 
   // Post()/Wait() versus associated PerThreadSem; in class for required
   // friendship with PerThreadSem.
-  static inline void IncrementSynchSem(Mutex *mu,
-                                       base_internal::PerThreadSynch *w);
-  static inline bool DecrementSynchSem(
-      Mutex *mu, base_internal::PerThreadSynch *w,
-      synchronization_internal::KernelTimeout t);
+  static void IncrementSynchSem(Mutex *mu, base_internal::PerThreadSynch *w);
+  static bool DecrementSynchSem(Mutex *mu, base_internal::PerThreadSynch *w,
+                                synchronization_internal::KernelTimeout t);
 
   // slow path acquire
   void LockSlowLoop(SynchWaitParams *waitp, int flags);
@@ -780,9 +778,9 @@ class Condition {
 //
 // Usage to wake T is:
 //       mu.Lock();
-//      // process data, possibly establishing C
-//      if (C) { cv->Signal(); }
-//      mu.Unlock();
+//       // process data, possibly establishing C
+//       if (C) { cv->Signal(); }
+//       mu.Unlock();
 //
 // If C may be useful to more than one waiter, use `SignalAll()` instead of
 // `Signal()`.
@@ -986,14 +984,15 @@ inline Condition::Condition(const T *object,
 // Register a hook for profiling support.
 //
 // The function pointer registered here will be called whenever a mutex is
-// contended.  The callback is given the absl/base/cycleclock.h timestamp when
-// waiting began.
+// contended.  The callback is given the cycles for which waiting happened (as
+// measured by //absl/base/internal/cycleclock.h, and which may not
+// be real "cycle" counts.)
 //
 // Calls to this function do not race or block, but there is no ordering
 // guaranteed between calls to this function and call to the provided hook.
 // In particular, the previously registered hook may still be called for some
 // time after this function returns.
-void RegisterMutexProfiler(void (*fn)(int64_t wait_timestamp));
+void RegisterMutexProfiler(void (*fn)(int64_t wait_cycles));
 
 // Register a hook for Mutex tracing.
 //

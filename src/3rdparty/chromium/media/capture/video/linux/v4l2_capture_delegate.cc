@@ -13,14 +13,11 @@
 
 #include <utility>
 
-#if !defined(OS_OPENBSD)
-#include <linux/version.h>
-#endif
-
 #include "base/bind.h"
 #include "base/posix/eintr_wrapper.h"
 #include "build/build_config.h"
 #include "media/base/bind_to_current_loop.h"
+#include "media/base/video_frame.h"
 #include "media/base/video_types.h"
 #include "media/capture/mojom/image_capture_types.h"
 #include "media/capture/video/blob_utils.h"
@@ -222,7 +219,7 @@ VideoPixelFormat V4L2CaptureDelegate::V4l2FourCcToChromiumPixelFormat(
 std::vector<uint32_t> V4L2CaptureDelegate::GetListOfUsableFourCcs(
     bool prefer_mjpeg) {
   std::vector<uint32_t> supported_formats;
-  supported_formats.reserve(base::size(kSupportedFormatsAndPlanarity));
+  supported_formats.reserve(std::size(kSupportedFormatsAndPlanarity));
 
   // Duplicate MJPEG on top of the list depending on |prefer_mjpeg|.
   if (prefer_mjpeg)
@@ -348,12 +345,9 @@ void V4L2CaptureDelegate::AllocateAndStart(
 
   // Set anti-banding/anti-flicker to 50/60Hz. May fail due to not supported
   // operation (|errno| == EINVAL in this case) or plain failure.
-  if ((power_line_frequency_ == V4L2_CID_POWER_LINE_FREQUENCY_50HZ)
-      || (power_line_frequency_ == V4L2_CID_POWER_LINE_FREQUENCY_60HZ)
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,2,0)
-      || (power_line_frequency_ == V4L2_CID_POWER_LINE_FREQUENCY_AUTO)
-#endif
-    ) {
+  if ((power_line_frequency_ == V4L2_CID_POWER_LINE_FREQUENCY_50HZ) ||
+      (power_line_frequency_ == V4L2_CID_POWER_LINE_FREQUENCY_60HZ) ||
+      (power_line_frequency_ == V4L2_CID_POWER_LINE_FREQUENCY_AUTO)) {
     struct v4l2_control control = {};
     control.id = V4L2_CID_POWER_LINE_FREQUENCY;
     control.value = power_line_frequency_;
@@ -934,7 +928,9 @@ void V4L2CaptureDelegate::DoCapture() {
       client_->OnFrameDropped(
           VideoCaptureFrameDropReason::kV4L2BufferErrorFlagWasSet);
 #endif
-    } else if (buffer.bytesused < capture_format_.ImageAllocationSize()) {
+    } else if (buffer.bytesused <
+               media::VideoFrame::AllocationSize(capture_format_.pixel_format,
+                                                 capture_format_.frame_size)) {
       LOG(ERROR) << "Dequeued v4l2 buffer contains invalid length ("
                  << buffer.bytesused << " bytes).";
       buffer.bytesused = 0;
@@ -978,7 +974,9 @@ void V4L2CaptureDelegate::DoCapture() {
 
 bool V4L2CaptureDelegate::StopStream() {
   DCHECK(v4l2_task_runner_->BelongsToCurrentThread());
-  DCHECK(is_capturing_);
+  if (!is_capturing_)
+    return false;
+
   is_capturing_ = false;
 
   // The order is important: stop streaming, clear |buffer_pool_|,
@@ -1007,7 +1005,6 @@ void V4L2CaptureDelegate::SetErrorState(VideoCaptureError error,
                                         const base::Location& from_here,
                                         const std::string& reason) {
   DCHECK(v4l2_task_runner_->BelongsToCurrentThread());
-  is_capturing_ = false;
   client_->OnError(error, from_here, reason);
 }
 

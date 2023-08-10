@@ -16,7 +16,9 @@
 #include "base/files/scoped_file.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/task_runner_util.h"
+#include "base/task/task_runner_util.h"
+#include "ui/ozone/platform/wayland/test/test_gtk_primary_selection.h"
+#include "ui/ozone/platform/wayland/test/test_zwp_primary_selection.h"
 
 namespace wl {
 
@@ -30,6 +32,8 @@ TestWaylandServerThread::TestWaylandServerThread()
                    base::WaitableEvent::InitialState::NOT_SIGNALED),
       resume_event_(base::WaitableEvent::ResetPolicy::AUTOMATIC,
                     base::WaitableEvent::InitialState::NOT_SIGNALED),
+      compositor_v4_(4),
+      compositor_v3_(3),
       controller_(FROM_HERE) {}
 
 TestWaylandServerThread::~TestWaylandServerThread() {
@@ -44,7 +48,7 @@ TestWaylandServerThread::~TestWaylandServerThread() {
   Stop();
 }
 
-bool TestWaylandServerThread::Start(uint32_t shell_version) {
+bool TestWaylandServerThread::Start(const ServerConfig& config) {
   display_.reset(wl_display_create());
   if (!display_)
     return false;
@@ -58,11 +62,18 @@ bool TestWaylandServerThread::Start(uint32_t shell_version) {
 
   if (wl_display_init_shm(display_.get()) < 0)
     return false;
-  if (!compositor_.Initialize(display_.get()))
-    return false;
+  if (config.compositor_version == CompositorVersion::kV3) {
+    if (!compositor_v3_.Initialize(display_.get()))
+      return false;
+  } else {
+    if (!compositor_v4_.Initialize(display_.get()))
+      return false;
+  }
   if (!sub_compositor_.Initialize(display_.get()))
     return false;
   if (!viewporter_.Initialize(display_.get()))
+    return false;
+  if (!alpha_compositing_.Initialize(display_.get()))
     return false;
   if (!output_.Initialize(display_.get()))
     return false;
@@ -70,20 +81,29 @@ bool TestWaylandServerThread::Start(uint32_t shell_version) {
 
   if (!data_device_manager_.Initialize(display_.get()))
     return false;
+  if (!SetupPrimarySelectionManager(config.primary_selection_protocol))
+    return false;
+
   if (!seat_.Initialize(display_.get()))
     return false;
-  if (shell_version == 6) {
+  if (config.shell_version == ShellVersion::kV6) {
     if (!zxdg_shell_v6_.Initialize(display_.get()))
       return false;
-  } else if (shell_version == 7) {
+  } else {
     if (!xdg_shell_.Initialize(display_.get()))
       return false;
-  } else {
-    NOTREACHED() << "Unsupported shell version: " << shell_version;
   }
+  if (!zcr_text_input_extension_v1_.Initialize(display_.get()))
+    return false;
   if (!zwp_text_input_manager_v1_.Initialize(display_.get()))
     return false;
+  if (!zwp_linux_explicit_synchronization_v1_.Initialize(display_.get()))
+    return false;
   if (!zwp_linux_dmabuf_v1_.Initialize(display_.get()))
+    return false;
+  if (!overlay_prioritizer_.Initialize(display_.get()))
+    return false;
+  if (!wp_pointer_gestures_.Initialize(display_.get()))
     return false;
 
   client_ = wl_client_create(display_.get(), server_fd.release());
@@ -93,7 +113,7 @@ bool TestWaylandServerThread::Start(uint32_t shell_version) {
   base::Thread::Options options;
   options.message_pump_factory = base::BindRepeating(
       &TestWaylandServerThread::CreateMessagePump, base::Unretained(this));
-  if (!base::Thread::StartWithOptions(options))
+  if (!base::Thread::StartWithOptions(std::move(options)))
     return false;
 
   setenv("WAYLAND_SOCKET", base::NumberToString(client_fd.release()).c_str(),
@@ -121,6 +141,12 @@ MockWpPresentation* TestWaylandServerThread::EnsureWpPresentation() {
   return nullptr;
 }
 
+TestSurfaceAugmenter* TestWaylandServerThread::EnsureSurfaceAugmenter() {
+  if (surface_augmenter_.Initialize(display_.get()))
+    return &surface_augmenter_;
+  return nullptr;
+}
+
 // By default, just make sure primary screen has bounds set. Otherwise delegates
 // it, making it possible to emulate different scenarios, such as, multi-screen,
 // lazy configuration, arbitrary ordering of the outputs metadata sending, etc.
@@ -131,6 +157,21 @@ void TestWaylandServerThread::SetupOutputs() {
   }
   if (output_.GetRect().IsEmpty())
     output_.SetRect(gfx::Rect{0, 0, 800, 600});
+}
+
+bool TestWaylandServerThread::SetupPrimarySelectionManager(
+    PrimarySelectionProtocol protocol) {
+  switch (protocol) {
+    case PrimarySelectionProtocol::kNone:
+      return true;
+    case PrimarySelectionProtocol::kZwp:
+      primary_selection_device_manager_.reset(CreateTestSelectionManagerZwp());
+      break;
+    case PrimarySelectionProtocol::kGtk:
+      primary_selection_device_manager_.reset(CreateTestSelectionManagerGtk());
+      break;
+  }
+  return primary_selection_device_manager_->Initialize(display_.get());
 }
 
 void TestWaylandServerThread::DoPause() {

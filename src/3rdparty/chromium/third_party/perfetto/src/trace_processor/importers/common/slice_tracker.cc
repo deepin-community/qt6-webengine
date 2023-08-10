@@ -20,17 +20,13 @@
 
 #include "src/trace_processor/importers/common/process_tracker.h"
 #include "src/trace_processor/importers/common/slice_tracker.h"
+#include "src/trace_processor/importers/common/slice_translation_table.h"
 #include "src/trace_processor/importers/common/track_tracker.h"
 #include "src/trace_processor/storage/trace_storage.h"
 #include "src/trace_processor/types/trace_processor_context.h"
 
 namespace perfetto {
 namespace trace_processor {
-namespace {
-// Slices which have been opened but haven't been closed yet will be marked
-// with this duration placeholder.
-constexpr int64_t kPendingDuration = -1;
-}  // namespace
 
 SliceTracker::SliceTracker(TraceProcessorContext* context)
     : legacy_unnestable_begin_count_string_id_(
@@ -41,11 +37,13 @@ SliceTracker::SliceTracker(TraceProcessorContext* context)
 
 SliceTracker::~SliceTracker() = default;
 
-base::Optional<uint32_t> SliceTracker::Begin(int64_t timestamp,
-                                             TrackId track_id,
-                                             StringId category,
-                                             StringId name,
-                                             SetArgsCallback args_callback) {
+base::Optional<SliceId> SliceTracker::Begin(int64_t timestamp,
+                                            TrackId track_id,
+                                            StringId category,
+                                            StringId raw_name,
+                                            SetArgsCallback args_callback) {
+  const StringId name =
+      context_->slice_translation_table->TranslateName(raw_name);
   tables::SliceTable::Row row(timestamp, kPendingDuration, track_id, category,
                               name);
   return StartSlice(timestamp, track_id, args_callback, [this, &row]() {
@@ -55,6 +53,10 @@ base::Optional<uint32_t> SliceTracker::Begin(int64_t timestamp,
 
 void SliceTracker::BeginLegacyUnnestable(tables::SliceTable::Row row,
                                          SetArgsCallback args_callback) {
+  if (row.name) {
+    row.name = context_->slice_translation_table->TranslateName(*row.name);
+  }
+
   // Ensure that the duration is pending for this row.
   // TODO(lalitm): change this to eventually use null instead of -1.
   row.dur = kPendingDuration;
@@ -62,8 +64,8 @@ void SliceTracker::BeginLegacyUnnestable(tables::SliceTable::Row row,
   // Double check that if we've seen this track in the past, it was also
   // marked as unnestable then.
 #if PERFETTO_DCHECK_IS_ON()
-  auto it = stacks_.find(row.track_id);
-  PERFETTO_DCHECK(it == stacks_.end() || it->second.is_legacy_unnestable);
+  auto* it = stacks_.Find(row.track_id);
+  PERFETTO_DCHECK(!it || it->is_legacy_unnestable);
 #endif
 
   // Ensure that StartSlice knows that this track is unnestable.
@@ -74,124 +76,44 @@ void SliceTracker::BeginLegacyUnnestable(tables::SliceTable::Row row,
   });
 }
 
-void SliceTracker::BeginGpu(tables::GpuSliceTable::Row row,
-                            SetArgsCallback args_callback) {
-  // Ensure that the duration is pending for this row.
-  // TODO(lalitm): change this to eventually use null instead of -1.
-  row.dur = kPendingDuration;
-
-  StartSlice(row.ts, row.track_id, args_callback, [this, &row]() {
-    return context_->storage->mutable_gpu_slice_table()->Insert(row).id;
-  });
-}
-
-void SliceTracker::BeginFrameEvent(tables::GraphicsFrameSliceTable::Row row,
-                                   SetArgsCallback args_callback) {
-  // Ensure that the duration is pending for this row.
-  // TODO(lalitm): change this to eventually use null instead of -1.
-  row.dur = kPendingDuration;
-
-  StartSlice(row.ts, row.track_id, args_callback, [this, &row]() {
-    return context_->storage->mutable_graphics_frame_slice_table()
-        ->Insert(row)
-        .id;
-  });
-}
-
-SliceId SliceTracker::BeginFrameTimeline(
-    tables::ExpectedFrameTimelineSliceTable::Row row,
-    SetArgsCallback args_callback) {
-  // Ensure that the duration is pending for this row.
-  // TODO(lalitm): change this to eventually use null instead of -1.
-  row.dur = kPendingDuration;
-
-  SliceId id;
-  StartSlice(row.ts, row.track_id, args_callback, [this, &row, &id]() {
-    id = context_->storage->mutable_expected_frame_timeline_slice_table()
-             ->Insert(row)
-             .id;
-    return id;
-  });
-  return id;
-}
-
-SliceId SliceTracker::BeginFrameTimeline(
-    tables::ActualFrameTimelineSliceTable::Row row,
-    SetArgsCallback args_callback) {
-  // Ensure that the duration is pending for this row.
-  // TODO(lalitm): change this to eventually use null instead of -1.
-  row.dur = kPendingDuration;
-
-  SliceId id;
-  StartSlice(row.ts, row.track_id, args_callback, [this, &row, &id]() {
-    id = context_->storage->mutable_actual_frame_timeline_slice_table()
-             ->Insert(row)
-             .id;
-    return id;
-  });
-  return id;
-}
-
-base::Optional<uint32_t> SliceTracker::Scoped(int64_t timestamp,
-                                              TrackId track_id,
-                                              StringId category,
-                                              StringId name,
-                                              int64_t duration,
-                                              SetArgsCallback args_callback) {
+base::Optional<SliceId> SliceTracker::Scoped(int64_t timestamp,
+                                             TrackId track_id,
+                                             StringId category,
+                                             StringId raw_name,
+                                             int64_t duration,
+                                             SetArgsCallback args_callback) {
   PERFETTO_DCHECK(duration >= 0);
 
+  const StringId name =
+      context_->slice_translation_table->TranslateName(raw_name);
   tables::SliceTable::Row row(timestamp, duration, track_id, category, name);
   return StartSlice(timestamp, track_id, args_callback, [this, &row]() {
     return context_->storage->mutable_slice_table()->Insert(row).id;
   });
 }
 
-void SliceTracker::ScopedGpu(const tables::GpuSliceTable::Row& row,
-                             SetArgsCallback args_callback) {
-  PERFETTO_DCHECK(row.dur >= 0);
-
-  StartSlice(row.ts, TrackId(row.track_id), args_callback, [this, &row]() {
-    return context_->storage->mutable_gpu_slice_table()->Insert(row).id;
-  });
-}
-
-SliceId SliceTracker::ScopedFrameEvent(
-    const tables::GraphicsFrameSliceTable::Row& row,
-    SetArgsCallback args_callback) {
-  PERFETTO_DCHECK(row.dur >= 0);
-
-  SliceId id;
-  StartSlice(row.ts, TrackId(row.track_id), args_callback, [this, &row, &id]() {
-    id =
-        context_->storage->mutable_graphics_frame_slice_table()->Insert(row).id;
-    return id;
-  });
-  return id;
-}
-
-base::Optional<uint32_t> SliceTracker::End(int64_t timestamp,
-                                           TrackId track_id,
-                                           StringId category,
-                                           StringId name,
-                                           SetArgsCallback args_callback) {
+base::Optional<SliceId> SliceTracker::End(int64_t timestamp,
+                                          TrackId track_id,
+                                          StringId category,
+                                          StringId raw_name,
+                                          SetArgsCallback args_callback) {
+  const StringId name =
+      context_->slice_translation_table->TranslateName(raw_name);
   auto finder = [this, category, name](const SlicesStack& stack) {
     return MatchingIncompleteSliceIndex(stack, name, category);
   };
-  auto slice_id = CompleteSlice(timestamp, track_id, args_callback, finder);
-  if (!slice_id)
-    return base::nullopt;
-  return context_->storage->slice_table().id().IndexOf(*slice_id);
+  return CompleteSlice(timestamp, track_id, args_callback, finder);
 }
 
 base::Optional<uint32_t> SliceTracker::AddArgs(TrackId track_id,
                                                StringId category,
                                                StringId name,
                                                SetArgsCallback args_callback) {
-  auto it = stacks_.find(track_id);
-  if (it == stacks_.end())
+  auto* it = stacks_.Find(track_id);
+  if (!it)
     return base::nullopt;
 
-  auto& stack = it->second.slice_stack;
+  auto& stack = it->slice_stack;
   if (stack.empty())
     return base::nullopt;
 
@@ -209,33 +131,7 @@ base::Optional<uint32_t> SliceTracker::AddArgs(TrackId track_id,
   return slice_idx;
 }
 
-base::Optional<SliceId> SliceTracker::EndGpu(int64_t ts,
-                                             TrackId t_id,
-                                             SetArgsCallback args_callback) {
-  return CompleteSlice(ts, t_id, args_callback, [](const SlicesStack& stack) {
-    return static_cast<uint32_t>(stack.size() - 1);
-  });
-}
-
-base::Optional<SliceId> SliceTracker::EndFrameEvent(
-    int64_t ts,
-    TrackId t_id,
-    SetArgsCallback args_callback) {
-  return CompleteSlice(ts, t_id, args_callback, [](const SlicesStack& stack) {
-    return static_cast<uint32_t>(stack.size() - 1);
-  });
-}
-
-base::Optional<SliceId> SliceTracker::EndFrameTimeline(
-    int64_t ts,
-    TrackId t_id,
-    SetArgsCallback args_callback) {
-  return CompleteSlice(ts, t_id, args_callback, [](const SlicesStack& stack) {
-    return static_cast<uint32_t>(stack.size() - 1);
-  });
-}
-
-base::Optional<uint32_t> SliceTracker::StartSlice(
+base::Optional<SliceId> SliceTracker::StartSlice(
     int64_t timestamp,
     TrackId track_id,
     SetArgsCallback args_callback,
@@ -267,10 +163,6 @@ base::Optional<uint32_t> SliceTracker::StartSlice(
   MaybeCloseStack(timestamp, stack, track_id);
 
   const uint8_t depth = static_cast<uint8_t>(stack->size());
-  if (depth >= std::numeric_limits<uint8_t>::max()) {
-    PERFETTO_DFATAL("Slices with too large depth found.");
-    return base::nullopt;
-  }
   int64_t parent_stack_id =
       depth == 0 ? 0 : slices->stack_id()[stack->back().row];
   base::Optional<tables::SliceTable::Id> parent_id =
@@ -279,6 +171,14 @@ base::Optional<uint32_t> SliceTracker::StartSlice(
 
   SliceId id = inserter();
   uint32_t slice_idx = *slices->id().IndexOf(id);
+  if (depth >= std::numeric_limits<uint8_t>::max()) {
+    auto last_slice_name = slices->name().GetString(stack->back().row);
+    auto current_slice_name = slices->name().GetString(slice_idx);
+    PERFETTO_DLOG("Last slice: %s", last_slice_name.c_str());
+    PERFETTO_DLOG("Current slice: %s", current_slice_name.c_str());
+    PERFETTO_DFATAL("Slices with too large depth found.");
+    return base::nullopt;
+  }
   StackPush(track_id, slice_idx);
 
   // Post fill all the relevant columns. All the other columns should have
@@ -294,7 +194,7 @@ base::Optional<uint32_t> SliceTracker::StartSlice(
     auto bound_inserter = tracker->AddArgsTo(id);
     args_callback(&bound_inserter);
   }
-  return slice_idx;
+  return id;
 }
 
 base::Optional<SliceId> SliceTracker::CompleteSlice(
@@ -309,11 +209,11 @@ base::Optional<SliceId> SliceTracker::CompleteSlice(
   }
   prev_timestamp_ = timestamp;
 
-  auto it = stacks_.find(track_id);
-  if (it == stacks_.end())
+  auto it = stacks_.Find(track_id);
+  if (!it)
     return base::nullopt;
 
-  TrackInfo& track_info = it->second;
+  TrackInfo& track_info = *it;
   SlicesStack& stack = track_info.slice_stack;
   MaybeCloseStack(timestamp, &stack, track_id);
   if (stack.empty())
@@ -367,13 +267,16 @@ base::Optional<uint32_t> SliceTracker::MatchingIncompleteSliceIndex(
     uint32_t slice_idx = stack[static_cast<size_t>(i)].row;
     if (slices->dur()[slice_idx] != kPendingDuration)
       continue;
-    const StringId& other_category = slices->category()[slice_idx];
-    if (!category.is_null() &&
-        (other_category.is_null() || category != other_category))
+    base::Optional<StringId> other_category = slices->category()[slice_idx];
+    if (!category.is_null() && (!other_category || other_category->is_null() ||
+                                category != other_category)) {
       continue;
-    const StringId& other_name = slices->name()[slice_idx];
-    if (!name.is_null() && !other_name.is_null() && name != other_name)
+    }
+    base::Optional<StringId> other_name = slices->name()[slice_idx];
+    if (!name.is_null() && other_name && !other_name->is_null() &&
+        name != other_name) {
       continue;
+    }
     return static_cast<uint32_t>(i);
   }
   return base::nullopt;
@@ -387,7 +290,7 @@ void SliceTracker::FlushPendingSlices() {
   // TODO(eseckler): Reconsider whether we want to close pending slices by
   // setting their duration to |trace_end - event_start|. Might still want some
   // additional way of flagging these events as "incomplete" to the UI.
-  stacks_.clear();
+  stacks_.Clear();
 }
 
 void SliceTracker::SetOnSliceBeginCallback(OnSliceBeginCallback callback) {
@@ -396,10 +299,10 @@ void SliceTracker::SetOnSliceBeginCallback(OnSliceBeginCallback callback) {
 
 base::Optional<SliceId> SliceTracker::GetTopmostSliceOnTrack(
     TrackId track_id) const {
-  const auto iter = stacks_.find(track_id);
-  if (iter == stacks_.end())
+  const auto* iter = stacks_.Find(track_id);
+  if (!iter)
     return base::nullopt;
-  const auto& stack = iter->second.slice_stack;
+  const auto& stack = iter->slice_stack;
   if (stack.empty())
     return base::nullopt;
   uint32_t slice_idx = stack.back().row;
@@ -472,8 +375,8 @@ int64_t SliceTracker::GetStackHash(const SlicesStack& stack) {
   base::Hash hash;
   for (size_t i = 0; i < stack.size(); i++) {
     uint32_t slice_idx = stack[i].row;
-    hash.Update(slices.category()[slice_idx].raw_id());
-    hash.Update(slices.name()[slice_idx].raw_id());
+    hash.Update(slices.category()[slice_idx].value_or(kNullStringId).raw_id());
+    hash.Update(slices.name()[slice_idx].value_or(kNullStringId).raw_id());
   }
 
   // For clients which don't have an integer type (i.e. Javascript), returning

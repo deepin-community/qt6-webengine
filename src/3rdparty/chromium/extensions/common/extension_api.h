@@ -10,9 +10,11 @@
 #include <string>
 
 #include "base/gtest_prod_util.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/singleton.h"
 #include "base/strings/string_piece.h"
+#include "base/synchronization/lock.h"
+#include "base/thread_annotations.h"
 #include "base/values.h"
 #include "extensions/common/features/feature.h"
 #include "extensions/common/features/feature_provider.h"
@@ -72,12 +74,16 @@ class ExtensionAPI {
     ~OverrideSharedInstanceForTest();
 
    private:
-    ExtensionAPI* original_api_;
+    raw_ptr<ExtensionAPI> original_api_;
   };
 
   // Creates a completely clean instance. Configure using
   // RegisterDependencyProvider before use.
   ExtensionAPI();
+
+  ExtensionAPI(const ExtensionAPI&) = delete;
+  ExtensionAPI& operator=(const ExtensionAPI&) = delete;
+
   virtual ~ExtensionAPI();
 
   // Add a FeatureProvider for APIs. The features are used to specify
@@ -105,7 +111,8 @@ class ExtensionAPI {
                                     const Extension* extension,
                                     Feature::Context context,
                                     const GURL& url,
-                                    CheckAliasStatus check_alias);
+                                    CheckAliasStatus check_alias,
+                                    int context_id);
 
   // Determines whether an API, or any parts of that API, can be exposed to
   // |context|.
@@ -117,7 +124,8 @@ class ExtensionAPI {
                                       const Extension* extension,
                                       Feature::Context context,
                                       const GURL& url,
-                                      CheckAliasStatus check_alias);
+                                      CheckAliasStatus check_alias,
+                                      int context_id);
 
   // Gets the StringPiece for the schema specified by |api_name|.
   base::StringPiece GetSchemaStringPiece(const std::string& api_name);
@@ -160,23 +168,31 @@ class ExtensionAPI {
                                          const Feature& feature,
                                          const Extension* extension,
                                          Feature::Context context,
-                                         const GURL& url);
-
-  bool default_configuration_initialized_;
+                                         const GURL& url,
+                                         int context_id);
 
   // Loads a schema.
   void LoadSchema(const std::string& name, const base::StringPiece& schema);
 
+  // Same as GetSchemaStringPiece() but doesn't acquire |lock_|.
+  base::StringPiece GetSchemaStringPieceUnsafe(const std::string& api_name);
+
+  // Same as GetAPINameFromFullName() but doesn't acquire |lock_|.
+  std::string GetAPINameFromFullNameUnsafe(const std::string& full_name,
+                                           std::string* child_name);
+
+  bool default_configuration_initialized_ = false;
+
+  base::Lock lock_;
+
   // Schemas for each namespace.
   using SchemaMap =
       std::map<std::string, std::unique_ptr<const base::DictionaryValue>>;
-  SchemaMap schemas_;
+  SchemaMap schemas_ GUARDED_BY(lock_);
 
   // FeatureProviders used for resolving dependencies.
   typedef std::map<std::string, const FeatureProvider*> FeatureProviderMap;
   FeatureProviderMap dependency_providers_;
-
-  DISALLOW_COPY_AND_ASSIGN(ExtensionAPI);
 };
 
 }  // namespace extensions

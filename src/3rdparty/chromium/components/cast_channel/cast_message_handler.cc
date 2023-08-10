@@ -9,6 +9,8 @@
 #include <vector>
 
 #include "base/bind.h"
+#include "base/containers/cxx20_erase.h"
+#include "base/observer_list.h"
 #include "base/rand_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/time/default_tick_clock.h"
@@ -20,7 +22,7 @@ namespace cast_channel {
 namespace {
 
 // The max launch timeout amount for session launch requests.
-constexpr base::TimeDelta kLaunchMaxTimeout = base::TimeDelta::FromMinutes(2);
+constexpr base::TimeDelta kLaunchMaxTimeout = base::Minutes(2);
 
 // The max size of Cast Message is 64KB.
 constexpr int kMaxCastMessagePayload = 64 * 1024;
@@ -207,7 +209,7 @@ void CastMessageHandler::LaunchSession(
     const std::string& app_id,
     base::TimeDelta launch_timeout,
     const std::vector<std::string>& supported_app_types,
-    const base::Optional<base::Value>& app_params,
+    const absl::optional<base::Value>& app_params,
     LaunchSessionCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   CastSocket* socket = socket_service_->GetSocket(channel_id);
@@ -240,7 +242,7 @@ void CastMessageHandler::LaunchSession(
 void CastMessageHandler::StopSession(
     int channel_id,
     const std::string& session_id,
-    const base::Optional<std::string>& client_id,
+    const absl::optional<std::string>& client_id,
     ResultCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   CastSocket* socket = socket_service_->GetSocket(channel_id);
@@ -286,7 +288,7 @@ Result CastMessageHandler::SendAppMessage(int channel_id,
   return SendCastMessage(channel_id, message);
 }
 
-base::Optional<int> CastMessageHandler::SendMediaRequest(
+absl::optional<int> CastMessageHandler::SendMediaRequest(
     int channel_id,
     const base::Value& body,
     const std::string& source_id,
@@ -296,7 +298,7 @@ base::Optional<int> CastMessageHandler::SendMediaRequest(
   CastSocket* socket = socket_service_->GetSocket(channel_id);
   if (!socket) {
     DVLOG(2) << __func__ << ": socket not found: " << channel_id;
-    return base::nullopt;
+    return absl::nullopt;
   }
 
   int request_id = NextRequestId();
@@ -351,10 +353,10 @@ void CastMessageHandler::OnError(const CastSocket& socket,
 void CastMessageHandler::OnMessage(const CastSocket& socket,
                                    const CastMessage& message) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  // TODO(jrw): Splitting internal messages into a separate code path with a
-  // separate data type is pretty questionable, because it causes duplicated
-  // code paths in the downstream logic (manifested as separate OnAppMessage and
-  // OnInternalMessage methods).
+  // TODO(crbug.com/1291736): Splitting internal messages into a separate code
+  // path with a separate data type is pretty questionable, because it causes
+  // duplicated code paths in the downstream logic (manifested as separate
+  // OnAppMessage and OnInternalMessage methods).
   if (IsCastReservedNamespace(message.namespace_())) {
     if (message.payload_type() ==
         cast::channel::CastMessage_PayloadType_STRING) {
@@ -407,7 +409,7 @@ void CastMessageHandler::HandleCastInternalMessage(
     return;
   }
 
-  base::Optional<int> request_id = GetRequestIdFromResponse(payload);
+  absl::optional<int> request_id = GetRequestIdFromResponse(payload);
   if (request_id) {
     auto requests_it = pending_requests_.find(channel_id);
     if (requests_it != pending_requests_.end())

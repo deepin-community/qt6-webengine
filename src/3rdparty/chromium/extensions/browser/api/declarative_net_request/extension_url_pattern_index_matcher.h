@@ -7,6 +7,7 @@
 
 #include <vector>
 
+#include "base/memory/raw_ptr.h"
 #include "components/url_pattern_index/url_pattern_index.h"
 #include "extensions/browser/api/declarative_net_request/ruleset_matcher_base.h"
 
@@ -26,11 +27,16 @@ class ExtensionUrlPatternIndexMatcher final : public RulesetMatcherBase {
                                   const UrlPatternIndexList* index_list,
                                   const ExtensionMetadataList* metadata_list);
 
+  ExtensionUrlPatternIndexMatcher(const ExtensionUrlPatternIndexMatcher&) =
+      delete;
+  ExtensionUrlPatternIndexMatcher& operator=(
+      const ExtensionUrlPatternIndexMatcher&) = delete;
+
   // RulesetMatcherBase override:
   ~ExtensionUrlPatternIndexMatcher() override;
   std::vector<RequestAction> GetModifyHeadersActions(
       const RequestParams& params,
-      base::Optional<uint64_t> min_priority) const override;
+      absl::optional<uint64_t> min_priority) const override;
   bool IsExtraHeadersMatcher() const override {
     return is_extra_headers_matcher_;
   }
@@ -40,14 +46,14 @@ class ExtensionUrlPatternIndexMatcher final : public RulesetMatcherBase {
   using UrlPatternIndexMatcher = url_pattern_index::UrlPatternIndexMatcher;
 
   // RulesetMatcherBase override:
-  base::Optional<RequestAction> GetAllowAllRequestsAction(
+  absl::optional<RequestAction> GetAllowAllRequestsAction(
       const RequestParams& params) const override;
-  base::Optional<RequestAction> GetBeforeRequestActionIgnoringAncestors(
+  absl::optional<RequestAction> GetBeforeRequestActionIgnoringAncestors(
       const RequestParams& params) const override;
 
   // Returns the highest priority action from
   // |flat::IndexType_before_request_except_allow_all_requests| index.
-  base::Optional<RequestAction> GetBeforeRequestActionHelper(
+  absl::optional<RequestAction> GetBeforeRequestActionHelper(
       const RequestParams& params) const;
 
   const url_pattern_index::flat::UrlRule* GetMatchingRule(
@@ -60,7 +66,7 @@ class ExtensionUrlPatternIndexMatcher final : public RulesetMatcherBase {
       const RequestParams& params,
       flat::IndexType index) const;
 
-  const ExtensionMetadataList* const metadata_list_;
+  const raw_ptr<const ExtensionMetadataList> metadata_list_;
 
   // UrlPatternIndexMatchers corresponding to entries in flat::IndexType.
   const std::vector<UrlPatternIndexMatcher> matchers_;
@@ -68,8 +74,6 @@ class ExtensionUrlPatternIndexMatcher final : public RulesetMatcherBase {
   const bool is_extra_headers_matcher_;
 
   const size_t rules_count_;
-
-  DISALLOW_COPY_AND_ASSIGN(ExtensionUrlPatternIndexMatcher);
 };
 
 }  // namespace declarative_net_request

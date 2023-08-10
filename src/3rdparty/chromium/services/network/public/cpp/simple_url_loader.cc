@@ -10,18 +10,18 @@
 #include <utility>
 
 #include "base/bind.h"
+#include "base/callback.h"
 #include "base/check_op.h"
 #include "base/debug/alias.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/location.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/sequence_checker.h"
-#include "base/sequenced_task_runner.h"
 #include "base/strings/string_piece.h"
-#include "base/task/post_task.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
 #include "base/threading/sequenced_task_runner_handle.h"
@@ -40,7 +40,9 @@
 #include "services/network/public/cpp/data_element.h"
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/simple_url_loader_stream_consumer.h"
+#include "services/network/public/cpp/simple_url_loader_throttle.h"
 #include "services/network/public/mojom/data_pipe_getter.mojom.h"
+#include "services/network/public/mojom/early_hints.mojom.h"
 #include "services/network/public/mojom/url_loader.mojom.h"
 #include "services/network/public/mojom/url_loader_factory.mojom.h"
 #include "services/network/public/mojom/url_response_head.mojom.h"
@@ -77,6 +79,11 @@ class StringUploadDataPipeGetter : public mojom::DataPipeGetter {
  public:
   explicit StringUploadDataPipeGetter(const std::string& upload_string)
       : upload_string_(upload_string) {}
+
+  StringUploadDataPipeGetter(const StringUploadDataPipeGetter&) = delete;
+  StringUploadDataPipeGetter& operator=(const StringUploadDataPipeGetter&) =
+      delete;
+
   ~StringUploadDataPipeGetter() override = default;
 
   // Returns a mojo::PendingRemote<mojom::DataPipeGetter> for a new upload
@@ -134,7 +141,7 @@ class StringUploadDataPipeGetter : public mojom::DataPipeGetter {
           std::min(static_cast<size_t>(32 * 1024),
                    upload_string_.length() - write_position_));
       if (write_size == 0) {
-        // Upload is done. Close the uplaod body pipe and wait for another call
+        // Upload is done. Close the upload body pipe and wait for another call
         // to Read().
         ResetBodyPipe();
         return;
@@ -177,8 +184,6 @@ class StringUploadDataPipeGetter : public mojom::DataPipeGetter {
   size_t write_position_ = 0;
 
   const std::string upload_string_;
-
-  DISALLOW_COPY_AND_ASSIGN(StringUploadDataPipeGetter);
 };
 
 class BodyHandler;
@@ -188,6 +193,10 @@ class SimpleURLLoaderImpl : public SimpleURLLoader,
  public:
   SimpleURLLoaderImpl(std::unique_ptr<ResourceRequest> resource_request,
                       const net::NetworkTrafficAnnotationTag& annotation_tag);
+
+  SimpleURLLoaderImpl(const SimpleURLLoaderImpl&) = delete;
+  SimpleURLLoaderImpl& operator=(const SimpleURLLoaderImpl&) = delete;
+
   ~SimpleURLLoaderImpl() override;
 
   // SimpleURLLoader implementation.
@@ -232,19 +241,22 @@ class SimpleURLLoaderImpl : public SimpleURLLoader,
   void SetURLLoaderFactoryOptions(uint32_t options) override;
   void SetRequestID(int32_t request_id) override;
   void SetTimeoutDuration(base::TimeDelta timeout_duration) override;
+  void SetAllowBatching() override;
 
   int NetError() const override;
   const mojom::URLResponseHead* ResponseInfo() const override;
-  const base::Optional<URLLoaderCompletionStatus>& CompletionStatus()
+  const absl::optional<URLLoaderCompletionStatus>& CompletionStatus()
       const override;
   const GURL& GetFinalURL() const override;
   bool LoadedFromCache() const override;
   int64_t GetContentSize() const override;
+  int GetNumRetries() const override;
+  SimpleURLLoaderThrottle* GetThrottleForTesting() override;  // IN-TEST
 
   // Called by BodyHandler when the BodyHandler body handler is done. If |error|
   // is not net::OK, some error occurred reading or consuming the body. If it is
   // net::OK, the pipe was closed and all data received was successfully
-  // handled. This could indicate an error, concellation, or completion. To
+  // handled. This could indicate an error, cancellation, or completion. To
   // determine which case this is, the size will also be compared to the size
   // reported in URLLoaderCompletionStatus(), if
   // URLLoaderCompletionStatus indicates a success.
@@ -286,12 +298,14 @@ class SimpleURLLoaderImpl : public SimpleURLLoader,
 
     mojom::URLResponseHeadPtr response_info;
 
-    base::Optional<URLLoaderCompletionStatus> completion_status;
+    absl::optional<URLLoaderCompletionStatus> completion_status;
   };
 
   // Prepares internal state to start a request, and then calls StartRequest().
   // Only used for the initial request (Not retries).
   void Start(mojom::URLLoaderFactory* url_loader_factory);
+
+  void OnReadyToStart();
 
   // Starts a request. Used for both the initial request and retries, if any.
   void StartRequest(mojom::URLLoaderFactory* url_loader_factory);
@@ -301,7 +315,9 @@ class SimpleURLLoaderImpl : public SimpleURLLoader,
   void Retry();
 
   // mojom::URLLoaderClient implementation;
-  void OnReceiveResponse(mojom::URLResponseHeadPtr response_head) override;
+  void OnReceiveEarlyHints(network::mojom::EarlyHintsPtr early_hints) override;
+  void OnReceiveResponse(mojom::URLResponseHeadPtr response_head,
+                         mojo::ScopedDataPipeConsumerHandle body) override;
   void OnReceiveRedirect(const net::RedirectInfo& redirect_info,
                          mojom::URLResponseHeadPtr response_head) override;
   void OnReceiveCachedMetadata(mojo_base::BigBuffer data) override;
@@ -348,6 +364,7 @@ class SimpleURLLoaderImpl : public SimpleURLLoader,
   int retry_mode_ = RETRY_NEVER;
   uint32_t url_loader_factory_options_ = 0;
   int32_t request_id_ = 0;
+  int num_retries_ = 0;
 
   // The next values contain all the information required to restart the
   // request.
@@ -377,11 +394,11 @@ class SimpleURLLoaderImpl : public SimpleURLLoader,
   // of zero means do not set a timeout.
   base::TimeDelta timeout_duration_ = base::TimeDelta();
 
+  std::unique_ptr<SimpleURLLoaderThrottle> throttle_;
+
   SEQUENCE_CHECKER(sequence_checker_);
 
   base::WeakPtrFactory<SimpleURLLoaderImpl> weak_ptr_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(SimpleURLLoaderImpl);
 };
 
 // Utility class to drive the pipe reading a response body. Can be created on
@@ -392,6 +409,9 @@ class BodyReader {
   class Delegate {
    public:
     Delegate() {}
+
+    Delegate(const Delegate&) = delete;
+    Delegate& operator=(const Delegate&) = delete;
 
     // The specified amount of data was read from the pipe. The Delegate should
     // return net::OK to continue reading, or a value indicating an error if the
@@ -411,16 +431,16 @@ class BodyReader {
     virtual void OnDone(net::Error error, int64_t total_bytes) = 0;
 
    protected:
-    virtual ~Delegate() {}
-
-   private:
-    DISALLOW_COPY_AND_ASSIGN(Delegate);
+    virtual ~Delegate() = default;
   };
 
   BodyReader(Delegate* delegate, int64_t max_body_size)
       : delegate_(delegate), max_body_size_(max_body_size) {
     DCHECK_GE(max_body_size_, 0);
   }
+
+  BodyReader(const BodyReader&) = delete;
+  BodyReader& operator=(const BodyReader&) = delete;
 
   // Makes the reader start reading from |body_data_pipe|. May only be called
   // once. The reader will continuously to try to read from the pipe (without
@@ -552,7 +572,7 @@ class BodyReader {
   mojo::ScopedDataPipeConsumerHandle body_data_pipe_;
   std::unique_ptr<mojo::SimpleWatcher> handle_watcher_;
 
-  Delegate* const delegate_;
+  const raw_ptr<Delegate> delegate_;
 
   const int64_t max_body_size_;
   int64_t total_bytes_read_ = 0;
@@ -564,8 +584,6 @@ class BodyReader {
   net::Error pending_error_ = net::OK;
 
   base::WeakPtrFactory<BodyReader> weak_ptr_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(BodyReader);
 };
 
 // Class to drive the pipe for reading the body, handle the results of the body
@@ -579,7 +597,11 @@ class BodyHandler {
               bool want_download_progress)
       : simple_url_loader_(simple_url_loader),
         want_download_progress_(want_download_progress) {}
-  virtual ~BodyHandler() {}
+
+  BodyHandler(const BodyHandler&) = delete;
+  BodyHandler& operator=(const BodyHandler&) = delete;
+
+  virtual ~BodyHandler() = default;
 
   // Called by SimpleURLLoader with the data pipe received from the URLLoader.
   // The BodyHandler is responsible for reading from it and monitoring it for
@@ -615,10 +637,8 @@ class BodyHandler {
   }
 
  private:
-  SimpleURLLoaderImpl* const simple_url_loader_;
+  const raw_ptr<SimpleURLLoaderImpl> simple_url_loader_;
   bool const want_download_progress_;
-
-  DISALLOW_COPY_AND_ASSIGN(BodyHandler);
 };
 
 // BodyHandler implementation for consuming the response as a string.
@@ -634,7 +654,10 @@ class SaveToStringBodyHandler : public BodyHandler,
         max_body_size_(max_body_size),
         body_as_string_callback_(std::move(body_as_string_callback)) {}
 
-  ~SaveToStringBodyHandler() override {}
+  SaveToStringBodyHandler(const SaveToStringBodyHandler&) = delete;
+  SaveToStringBodyHandler& operator=(const SaveToStringBodyHandler&) = delete;
+
+  ~SaveToStringBodyHandler() override = default;
 
   // BodyHandler implementation:
 
@@ -687,8 +710,6 @@ class SaveToStringBodyHandler : public BodyHandler,
   SimpleURLLoader::BodyAsStringCallback body_as_string_callback_;
 
   std::unique_ptr<BodyReader> body_reader_;
-
-  DISALLOW_COPY_AND_ASSIGN(SaveToStringBodyHandler);
 };
 
 // BodyHandler that discards the response body.
@@ -700,7 +721,10 @@ class HeadersOnlyBodyHandler : public BodyHandler, public BodyReader::Delegate {
       : BodyHandler(simple_url_loader, false /* no download progress */),
         headers_only_callback_(std::move(headers_only_callback)) {}
 
-  ~HeadersOnlyBodyHandler() override {}
+  HeadersOnlyBodyHandler(const HeadersOnlyBodyHandler&) = delete;
+  HeadersOnlyBodyHandler& operator=(const HeadersOnlyBodyHandler&) = delete;
+
+  ~HeadersOnlyBodyHandler() override = default;
 
   // BodyHandler implementation
   void OnStartLoadingResponseBody(
@@ -739,8 +763,6 @@ class HeadersOnlyBodyHandler : public BodyHandler, public BodyReader::Delegate {
 
   SimpleURLLoader::HeadersOnlyCallback headers_only_callback_;
   std::unique_ptr<BodyReader> body_reader_;
-
-  DISALLOW_COPY_AND_ASSIGN(HeadersOnlyBodyHandler);
 };
 
 // BodyHandler implementation for saving the response to a file
@@ -771,6 +793,9 @@ class SaveToFileBodyHandler : public BodyHandler {
                                   weak_ptr_factory_.GetWeakPtr())
             : base::RepeatingCallback<void(int64_t)>());
   }
+
+  SaveToFileBodyHandler(const SaveToFileBodyHandler&) = delete;
+  SaveToFileBodyHandler& operator=(const SaveToFileBodyHandler&) = delete;
 
   ~SaveToFileBodyHandler() override {
     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -865,6 +890,9 @@ class SaveToFileBodyHandler : public BodyHandler {
       DCHECK(body_handler_task_runner_->RunsTasksInCurrentSequence());
       DCHECK(create_temp_file_ || !path_.empty());
     }
+
+    FileWriter(const FileWriter&) = delete;
+    FileWriter& operator=(const FileWriter&) = delete;
 
     // Starts reading from |body_data_pipe| and writing to the file.
     void StartWriting(mojo::ScopedDataPipeConsumerHandle body_data_pipe,
@@ -1011,7 +1039,7 @@ class SaveToFileBodyHandler : public BodyHandler {
       }
     }
 
-    // These are set on cosntruction and accessed on both task runners.
+    // These are set on construction and accessed on both task runners.
     const scoped_refptr<base::SequencedTaskRunner> body_handler_task_runner_;
     const scoped_refptr<base::SequencedTaskRunner> file_writer_task_runner_;
 
@@ -1036,8 +1064,6 @@ class SaveToFileBodyHandler : public BodyHandler {
     // True if a file was successfully created. Set to false when the file is
     // destroyed.
     bool owns_file_ = false;
-
-    DISALLOW_COPY_AND_ASSIGN(FileWriter);
   };
 
   // Called by FileWriter::Destroy after deleting a partially downloaded file.
@@ -1064,8 +1090,6 @@ class SaveToFileBodyHandler : public BodyHandler {
   SEQUENCE_CHECKER(sequence_checker_);
 
   base::WeakPtrFactory<SaveToFileBodyHandler> weak_ptr_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(SaveToFileBodyHandler);
 };
 
 // Class to handle streaming data to the consumer as it arrives
@@ -1078,7 +1102,11 @@ class DownloadAsStreamBodyHandler : public BodyHandler,
       : BodyHandler(simple_url_loader, want_download_progress),
         stream_consumer_(stream_consumer) {}
 
-  ~DownloadAsStreamBodyHandler() override {}
+  DownloadAsStreamBodyHandler(const DownloadAsStreamBodyHandler&) = delete;
+  DownloadAsStreamBodyHandler& operator=(const DownloadAsStreamBodyHandler&) =
+      delete;
+
+  ~DownloadAsStreamBodyHandler() override = default;
 
   // BodyHandler implementation:
 
@@ -1142,15 +1170,13 @@ class DownloadAsStreamBodyHandler : public BodyHandler,
     body_reader_->Resume();
   }
 
-  SimpleURLLoaderStreamConsumer* stream_consumer_;
+  raw_ptr<SimpleURLLoaderStreamConsumer> stream_consumer_;
 
   std::unique_ptr<BodyReader> body_reader_;
 
   bool in_recursive_call_ = false;
 
   base::WeakPtrFactory<DownloadAsStreamBodyHandler> weak_ptr_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(DownloadAsStreamBodyHandler);
 };
 
 SimpleURLLoaderImpl::SimpleURLLoaderImpl(
@@ -1385,6 +1411,12 @@ void SimpleURLLoaderImpl::SetTimeoutDuration(base::TimeDelta timeout_duration) {
   timeout_duration_ = timeout_duration;
 }
 
+void SimpleURLLoaderImpl::SetAllowBatching() {
+  // Check if a request has not yet been started.
+  DCHECK(!body_handler_);
+  throttle_ = std::make_unique<SimpleURLLoaderThrottle>();
+}
+
 int SimpleURLLoaderImpl::NetError() const {
   // Should only be called once the request is complete.
   DCHECK(request_state_->finished);
@@ -1410,13 +1442,21 @@ int64_t SimpleURLLoaderImpl::GetContentSize() const {
   return request_state_->received_body_size;
 }
 
+int SimpleURLLoaderImpl::GetNumRetries() const {
+  return num_retries_;
+}
+
+SimpleURLLoaderThrottle* SimpleURLLoaderImpl::GetThrottleForTesting() {
+  return throttle_.get();
+}
+
 const mojom::URLResponseHead* SimpleURLLoaderImpl::ResponseInfo() const {
   // Should only be called once the request is complete.
   DCHECK(request_state_->finished);
   return request_state_->response_info.get();
 }
 
-const base::Optional<URLLoaderCompletionStatus>&
+const absl::optional<URLLoaderCompletionStatus>&
 SimpleURLLoaderImpl::CompletionStatus() const {
   // Should only be called once the request is complete.
   DCHECK(request_state_->finished);
@@ -1434,7 +1474,7 @@ void SimpleURLLoaderImpl::OnBodyHandlerDone(net::Error error,
     // Reset the completion status since the contained metrics like encoded body
     // length and net error are not reliable when the body itself was not
     // successfully completed.
-    request_state_->completion_status = base::nullopt;
+    request_state_->completion_status = absl::nullopt;
     // When |allow_partial_results_| is true, a valid body|file_path is
     // passed to the completion callback even in the case of failures.
     // For consistency, it makes sense to also hold the actual decompressed
@@ -1482,7 +1522,7 @@ void SimpleURLLoaderImpl::FinishWithResult(int net_error) {
 
   client_receiver_.reset();
   url_loader_.reset();
-  timeout_timer_.Stop();
+  timeout_timer_.AbandonAndStop();
 
   request_state_->finished = true;
   request_state_->net_error = net_error;
@@ -1511,8 +1551,8 @@ void SimpleURLLoaderImpl::Start(mojom::URLLoaderFactory* url_loader_factory) {
   DCHECK(!url_loader_);
   DCHECK(!request_state_->body_started);
 
-  // If retries are enabled, stash the information needed to retry a request.
-  if (remaining_retries_ > 0) {
+  // Stash the information if retries are enabled or the request can be batched.
+  if (remaining_retries_ > 0 || throttle_) {
     // Clone the URLLoaderFactory, to avoid any dependencies on its lifetime.
     // Results in an easier to use API, with no shutdown ordering requirements,
     // at the cost of some resources.
@@ -1520,7 +1560,19 @@ void SimpleURLLoaderImpl::Start(mojom::URLLoaderFactory* url_loader_factory) {
         url_loader_factory_remote_.BindNewPipeAndPassReceiver());
   }
 
+  if (throttle_) {
+    throttle_->NotifyWhenReady(base::BindOnce(
+        &SimpleURLLoaderImpl::OnReadyToStart, weak_ptr_factory_.GetWeakPtr()));
+    return;
+  }
+
   StartRequest(url_loader_factory);
+}
+
+void SimpleURLLoaderImpl::OnReadyToStart() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  DCHECK(url_loader_factory_remote_);
+  StartRequest(url_loader_factory_remote_.get());
 }
 
 void SimpleURLLoaderImpl::StartRequest(
@@ -1540,7 +1592,7 @@ void SimpleURLLoaderImpl::StartRequest(
         string_upload_data_pipe_getter_->GetRemoteForNewUpload());
   }
   url_loader_factory->CreateLoaderAndStart(
-      url_loader_.BindNewPipeAndPassReceiver(), 0 /* routing_id */, request_id_,
+      url_loader_.BindNewPipeAndPassReceiver(), request_id_,
       url_loader_factory_options_, *resource_request_,
       client_receiver_.BindNewPipeAndPassRemote(),
       net::MutableNetworkTrafficAnnotationTag(annotation_tag_));
@@ -1567,6 +1619,7 @@ void SimpleURLLoaderImpl::Retry() {
   DCHECK(url_loader_factory_remote_);
   DCHECK_GT(remaining_retries_, 0);
   --remaining_retries_;
+  ++num_retries_;
 
   client_receiver_.reset();
   url_loader_.reset();
@@ -1577,8 +1630,12 @@ void SimpleURLLoaderImpl::Retry() {
       url_loader_factory_remote_.get()));
 }
 
+void SimpleURLLoaderImpl::OnReceiveEarlyHints(
+    network::mojom::EarlyHintsPtr early_hints) {}
+
 void SimpleURLLoaderImpl::OnReceiveResponse(
-    mojom::URLResponseHeadPtr response_head) {
+    mojom::URLResponseHeadPtr response_head,
+    mojo::ScopedDataPipeConsumerHandle body) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (request_state_->response_info) {
     // The final headers have already been received, so the URLLoader is
@@ -1589,7 +1646,7 @@ void SimpleURLLoaderImpl::OnReceiveResponse(
 
   // Assume a 200 response unless headers were received indicating otherwise.
   // No headers indicates this was not a real HTTP response (Could be a file
-  // URL, FTP, response could have been provided by something else, etc).
+  // URL, chrome URL, response could have been provided by something else, etc).
   int response_code = 200;
   if (response_head->headers)
     response_code = response_head->headers->response_code();
@@ -1602,9 +1659,8 @@ void SimpleURLLoaderImpl::OnReceiveResponse(
     return;
   }
 
+  base::WeakPtr<SimpleURLLoaderImpl> weak_this = weak_ptr_factory_.GetWeakPtr();
   if (on_response_started_callback_) {
-    base::WeakPtr<SimpleURLLoaderImpl> weak_this =
-        weak_ptr_factory_.GetWeakPtr();
     // Copy |final_url_| to a stack allocated GURL so it remains valid even if
     // the callback deletes |this|.
     GURL final_url = final_url_;
@@ -1615,8 +1671,15 @@ void SimpleURLLoaderImpl::OnReceiveResponse(
   }
 
   request_state_->response_info = std::move(response_head);
-  if (!allow_http_error_results_ && response_code / 100 != 2)
+  if (!allow_http_error_results_ && response_code / 100 != 2) {
     FinishWithResult(net::ERR_HTTP_RESPONSE_CODE_FAILURE);
+    return;
+  }
+
+  if (!weak_this)
+    return;
+  if (body)
+    OnStartLoadingResponseBody(std::move(body));
 }
 
 void SimpleURLLoaderImpl::OnReceiveRedirect(
@@ -1692,7 +1755,7 @@ void SimpleURLLoaderImpl::OnComplete(const URLLoaderCompletionStatus& status) {
   // URLLoader is violating the API contract.
   if (request_state_->net_error == net::OK && !request_state_->body_started) {
     request_state_->net_error = net::ERR_UNEXPECTED;
-    request_state_->completion_status = base::nullopt;
+    request_state_->completion_status = absl::nullopt;
   }
 
   MaybeComplete();
@@ -1711,7 +1774,7 @@ void SimpleURLLoaderImpl::OnMojoDisconnect() {
 
   request_state_->request_completed = true;
   request_state_->net_error = net::ERR_FAILED;
-  request_state_->completion_status = base::nullopt;
+  request_state_->completion_status = absl::nullopt;
 
   // Wait to receive any pending data on the data pipe before reporting the
   // failure.
@@ -1760,14 +1823,14 @@ void SimpleURLLoaderImpl::MaybeComplete() {
         request_state_->received_body_size) {
       // The body pipe was closed before it received the entire body.
       request_state_->net_error = net::ERR_FAILED;
-      request_state_->completion_status = base::nullopt;
+      request_state_->completion_status = absl::nullopt;
     } else {
       // The caller provided more data through the pipe than it reported in
       // URLLoaderCompletionStatus, so the URLLoader is violating the
       // API contract. Just fail the request and delete the retained completion
       // status.
       request_state_->net_error = net::ERR_UNEXPECTED;
-      request_state_->completion_status = base::nullopt;
+      request_state_->completion_status = absl::nullopt;
     }
   }
 

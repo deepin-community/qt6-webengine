@@ -180,8 +180,8 @@ class RTCRtpReceiverImpl::RTCRtpReceiverInternal
   }
 
   Vector<std::unique_ptr<RTCRtpSource>> GetSources() {
-    // The webrtc_recever_ is a proxy, so this is a blocking call to the webrtc
-    // signalling thread.
+    // The `webrtc_recever_` is a PROXY and GetSources block-invokes to its
+    // secondary thread, which is the WebRTC worker thread.
     auto webrtc_sources = webrtc_receiver_->GetSources();
     Vector<std::unique_ptr<RTCRtpSource>> sources(
         static_cast<WTF::wtf_size_t>(webrtc_sources.size()));
@@ -204,7 +204,7 @@ class RTCRtpReceiverImpl::RTCRtpReceiverInternal
         webrtc_receiver_->GetParameters());
   }
 
-  void SetJitterBufferMinimumDelay(base::Optional<double> delay_seconds) {
+  void SetJitterBufferMinimumDelay(absl::optional<double> delay_seconds) {
     webrtc_receiver_->SetJitterBufferMinimumDelay(
         blink::ToAbslOptional(delay_seconds));
   }
@@ -230,7 +230,8 @@ class RTCRtpReceiverImpl::RTCRtpReceiverInternal
       RTCStatsReportCallback callback,
       const Vector<webrtc::NonStandardGroupId>& exposed_group_ids) {
     native_peer_connection_->GetStats(
-        webrtc_receiver_.get(),
+        rtc::scoped_refptr<webrtc::RtpReceiverInterface>(
+            webrtc_receiver_.get()),
         CreateRTCStatsCollectorCallback(main_task_runner_, std::move(callback),
                                         exposed_group_ids));
   }
@@ -346,7 +347,7 @@ std::unique_ptr<webrtc::RtpParameters> RTCRtpReceiverImpl::GetParameters()
 }
 
 void RTCRtpReceiverImpl::SetJitterBufferMinimumDelay(
-    base::Optional<double> delay_seconds) {
+    absl::optional<double> delay_seconds) {
   internal_->SetJitterBufferMinimumDelay(delay_seconds);
 }
 
@@ -411,13 +412,13 @@ webrtc::RTCError RTCRtpReceiverOnlyTransceiver::SetDirection(
   return webrtc::RTCError::OK();
 }
 
-base::Optional<webrtc::RtpTransceiverDirection>
+absl::optional<webrtc::RtpTransceiverDirection>
 RTCRtpReceiverOnlyTransceiver::CurrentDirection() const {
   NOTIMPLEMENTED();
   return webrtc::RtpTransceiverDirection::kSendOnly;
 }
 
-base::Optional<webrtc::RtpTransceiverDirection>
+absl::optional<webrtc::RtpTransceiverDirection>
 RTCRtpReceiverOnlyTransceiver::FiredDirection() const {
   NOTIMPLEMENTED();
   return webrtc::RtpTransceiverDirection::kSendOnly;

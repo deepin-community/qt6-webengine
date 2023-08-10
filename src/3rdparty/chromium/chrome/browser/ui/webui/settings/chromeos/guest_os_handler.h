@@ -7,9 +7,9 @@
 
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observation.h"
-#include "chrome/browser/chromeos/plugin_vm/plugin_vm_manager.h"
-#include "chrome/browser/chromeos/plugin_vm/plugin_vm_manager_factory.h"
-#include "chrome/browser/chromeos/usb/cros_usb_detector.h"
+#include "chrome/browser/ash/plugin_vm/plugin_vm_manager.h"
+#include "chrome/browser/ash/plugin_vm/plugin_vm_manager_factory.h"
+#include "chrome/browser/ash/usb/cros_usb_detector.h"
 #include "chrome/browser/ui/webui/settings/settings_page_ui_handler.h"
 
 class Profile;
@@ -37,14 +37,14 @@ class GuestOsHandler : public ::settings::SettingsPageUIHandler,
   // Callback for the "getSharedPathsDisplayText" message.  Converts actual
   // paths in chromeos to values suitable to display to users.
   // E.g. /home/chronos/u-<hash>/Downloads/foo => "Downloads > foo".
-  void HandleGetGuestOsSharedPathsDisplayText(const base::ListValue* args);
+  void HandleGetGuestOsSharedPathsDisplayText(const base::Value::List& args);
   // Remove a specified path from being shared.
-  void HandleRemoveGuestOsSharedPath(const base::ListValue* args);
+  void HandleRemoveGuestOsSharedPath(const base::Value::List& args);
   // Called when the shared USB devices page is ready.
   void HandleNotifyGuestOsSharedUsbDevicesPageReady(
-      const base::ListValue* args);
+      const base::Value::List& args);
   // Set the share state of a USB device.
-  void HandleSetGuestOsUsbDeviceShared(const base::ListValue* args);
+  void HandleSetGuestOsUsbDeviceShared(const base::Value::List& args);
 
   void OnGuestOsSharedPathRemoved(const std::string& callback_id,
                                   const std::string& path,

@@ -9,7 +9,6 @@
 
 #include <memory>
 
-#include "base/macros.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
 
@@ -28,10 +27,17 @@ void DispatchVolumeListChangeEvent(content::BrowserContext* browser_context);
 class ChromeFileSystemDelegate : public FileSystemDelegate {
  public:
   ChromeFileSystemDelegate();
+
+  ChromeFileSystemDelegate(const ChromeFileSystemDelegate&) = delete;
+  ChromeFileSystemDelegate& operator=(const ChromeFileSystemDelegate&) = delete;
+
   ~ChromeFileSystemDelegate() override;
 
   // FileSystemDelegate:
   base::FilePath GetDefaultDirectory() override;
+  base::FilePath GetManagedSaveAsDirectory(
+      content::BrowserContext* browser_context,
+      const Extension& extension) override;
   bool ShowSelectFileDialog(
       scoped_refptr<ExtensionFunction> extension_function,
       ui::SelectFileDialog::Type type,
@@ -40,7 +46,7 @@ class ChromeFileSystemDelegate : public FileSystemDelegate {
       FileSystemDelegate::FilesSelectedCallback files_selected_callback,
       base::OnceClosure file_selection_canceled_callback) override;
   void ConfirmSensitiveDirectoryAccess(bool has_write_permission,
-                                       const base::string16& app_name,
+                                       const std::u16string& app_name,
                                        content::WebContents* web_contents,
                                        base::OnceClosure on_accept,
                                        base::OnceClosure on_cancel) override;
@@ -64,9 +70,6 @@ class ChromeFileSystemDelegate : public FileSystemDelegate {
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
   SavedFilesServiceInterface* GetSavedFilesService(
       content::BrowserContext* browser_context) override;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(ChromeFileSystemDelegate);
 };
 
 }  // namespace extensions

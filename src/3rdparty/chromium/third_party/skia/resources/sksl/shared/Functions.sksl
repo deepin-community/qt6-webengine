@@ -2,7 +2,7 @@
 
 uniform half4 colorGreen, colorRed;
 
-float foo(float2 v) {
+float foo(in const float2 v) {
     return v.x * v.y;
 }
 
@@ -13,7 +13,7 @@ void bar(inout float x) {
     x = foo(float2(y[0], y[1]));
 }
 
-half4 main() {
+half4 main(float2 coords) {
     float x = 10;
     bar(x);
     return x == 200 ? colorGreen : colorRed;

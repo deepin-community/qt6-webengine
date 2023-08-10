@@ -13,7 +13,6 @@
 
 #include "base/check.h"
 #include "base/compiler_specific.h"
-#include "base/macros.h"
 
 template <class T>
 class scoped_refptr;
@@ -172,7 +171,7 @@ scoped_refptr<T> WrapRefCounted(T* t) {
 //   to another component (if a component merely needs to use t on the stack
 //   without keeping a ref: pass t as a raw T*).
 template <class T>
-class scoped_refptr {
+class TRIVIAL_ABI scoped_refptr {
  public:
   typedef T element_type;
 
@@ -255,7 +254,7 @@ class scoped_refptr {
 
   // Returns the owned pointer (if any), releasing ownership to the caller. The
   // caller is responsible for managing the lifetime of the reference.
-  T* release() WARN_UNUSED_RESULT;
+  [[nodiscard]] T* release();
 
   void swap(scoped_refptr& r) noexcept { std::swap(ptr_, r.ptr_); }
 

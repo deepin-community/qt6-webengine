@@ -12,6 +12,7 @@
 #define PC_STREAM_COLLECTION_H_
 
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "api/peer_connection_interface.h"
@@ -22,16 +23,12 @@ namespace webrtc {
 class StreamCollection : public StreamCollectionInterface {
  public:
   static rtc::scoped_refptr<StreamCollection> Create() {
-    rtc::RefCountedObject<StreamCollection>* implementation =
-        new rtc::RefCountedObject<StreamCollection>();
-    return implementation;
+    return rtc::make_ref_counted<StreamCollection>();
   }
 
   static rtc::scoped_refptr<StreamCollection> Create(
       StreamCollection* streams) {
-    rtc::RefCountedObject<StreamCollection>* implementation =
-        new rtc::RefCountedObject<StreamCollection>(streams);
-    return implementation;
+    return rtc::make_ref_counted<StreamCollection>(streams);
   }
 
   virtual size_t count() { return media_streams_.size(); }
@@ -70,13 +67,13 @@ class StreamCollection : public StreamCollectionInterface {
     return NULL;
   }
 
-  void AddStream(MediaStreamInterface* stream) {
+  void AddStream(rtc::scoped_refptr<MediaStreamInterface> stream) {
     for (StreamVector::iterator it = media_streams_.begin();
          it != media_streams_.end(); ++it) {
       if ((*it)->id().compare(stream->id()) == 0)
         return;
     }
-    media_streams_.push_back(stream);
+    media_streams_.push_back(std::move(stream));
   }
 
   void RemoveStream(MediaStreamInterface* remove_stream) {

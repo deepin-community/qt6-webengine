@@ -4,27 +4,28 @@
 
 #include "third_party/blink/renderer/core/streams/readable_stream.h"
 
-#include "base/optional.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/blink/renderer/bindings/core/v8/readable_stream_default_reader_or_readable_stream_byob_reader.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_function.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_value.h"
+#include "third_party/blink/renderer/bindings/core/v8/to_v8_traits.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_testing.h"
-#include "third_party/blink/renderer/bindings/core/v8/v8_extras_test_utils.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_iterator_result_value.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_readable_stream.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_readable_stream_get_reader_options.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_union_readablestreambyobreader_readablestreamdefaultreader.h"
 #include "third_party/blink/renderer/core/messaging/message_channel.h"
 #include "third_party/blink/renderer/core/streams/readable_stream_default_controller_with_script_scope.h"
 #include "third_party/blink/renderer/core/streams/readable_stream_default_reader.h"
 #include "third_party/blink/renderer/core/streams/readable_stream_transferring_optimizer.h"
 #include "third_party/blink/renderer/core/streams/test_underlying_source.h"
+#include "third_party/blink/renderer/core/streams/test_utils.h"
 #include "third_party/blink/renderer/core/streams/underlying_source_base.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
 #include "third_party/blink/renderer/platform/bindings/string_resource.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 #include "v8/include/v8.h"
 
@@ -35,20 +36,21 @@ namespace {
 // Web platform tests test ReadableStream more thoroughly from scripts.
 class ReadableStreamTest : public testing::Test {
  public:
-  ReadableStreamTest() {}
+  ReadableStreamTest() = default;
 
-  base::Optional<String> ReadAll(V8TestingScope& scope,
+  absl::optional<String> ReadAll(V8TestingScope& scope,
                                  ReadableStream* stream) {
     ScriptState* script_state = scope.GetScriptState();
     v8::Isolate* isolate = script_state->GetIsolate();
     v8::Local<v8::Context> context = script_state->GetContext();
-    v8::Local<v8::Value> v8_stream = ToV8(stream, context->Global(), isolate);
+    v8::Local<v8::Value> v8_stream =
+        ToV8Traits<ReadableStream>::ToV8(script_state, stream).ToLocalChecked();
     v8::Local<v8::Object> global = context->Global();
     bool set_result = false;
     if (!global->Set(context, V8String(isolate, "stream"), v8_stream)
              .To(&set_result)) {
       ADD_FAILURE();
-      return base::nullopt;
+      return absl::nullopt;
     }
 
     const char script[] =
@@ -71,14 +73,14 @@ readAll(stream);
 
     if (EvalWithPrintingError(&scope, script).IsEmpty()) {
       ADD_FAILURE();
-      return base::nullopt;
+      return absl::nullopt;
     }
 
     while (true) {
       v8::Local<v8::Value> result;
       if (!global->Get(context, V8String(isolate, "result")).ToLocal(&result)) {
         ADD_FAILURE();
-        return base::nullopt;
+        return absl::nullopt;
       }
       if (!result->IsUndefined()) {
         DCHECK(result->IsString());
@@ -93,7 +95,7 @@ readAll(stream);
       v8::MicrotasksScope::PerformCheckpoint(isolate);
     }
     NOTREACHED();
-    return base::nullopt;
+    return absl::nullopt;
   }
 };
 
@@ -140,9 +142,9 @@ TEST_F(ReadableStreamTest, CreateWithUnderlyingSourceOnly) {
   auto* underlying_source =
       MakeGarbageCollected<TestUnderlyingSource>(scope.GetScriptState());
   ScriptValue js_underlying_source = ScriptValue(
-      scope.GetIsolate(),
-      ToV8(underlying_source, scope.GetScriptState()->GetContext()->Global(),
-           scope.GetIsolate()));
+      scope.GetIsolate(), ToV8Traits<TestUnderlyingSource>::ToV8(
+                              scope.GetScriptState(), underlying_source)
+                              .ToLocalChecked());
 
   EXPECT_FALSE(underlying_source->IsStartCalled());
 
@@ -159,9 +161,9 @@ TEST_F(ReadableStreamTest, CreateWithFullArguments) {
   auto* underlying_source =
       MakeGarbageCollected<TestUnderlyingSource>(scope.GetScriptState());
   ScriptValue js_underlying_source = ScriptValue(
-      scope.GetIsolate(),
-      ToV8(underlying_source, scope.GetScriptState()->GetContext()->Global(),
-           scope.GetIsolate()));
+      scope.GetIsolate(), ToV8Traits<TestUnderlyingSource>::ToV8(
+                              scope.GetScriptState(), underlying_source)
+                              .ToLocalChecked());
   ScriptValue js_empty_strategy = EvalWithPrintingError(&scope, "{}");
   ASSERT_FALSE(js_empty_strategy.IsEmpty());
   ReadableStream* stream =
@@ -177,9 +179,9 @@ TEST_F(ReadableStreamTest, CreateWithPathologicalStrategy) {
   auto* underlying_source =
       MakeGarbageCollected<TestUnderlyingSource>(scope.GetScriptState());
   ScriptValue js_underlying_source = ScriptValue(
-      scope.GetIsolate(),
-      ToV8(underlying_source, scope.GetScriptState()->GetContext()->Global(),
-           scope.GetIsolate()));
+      scope.GetIsolate(), ToV8Traits<TestUnderlyingSource>::ToV8(
+                              scope.GetScriptState(), underlying_source)
+                              .ToLocalChecked());
   ScriptValue js_pathological_strategy =
       EvalWithPrintingError(&scope, "({get size() { throw Error('e'); }})");
   ASSERT_FALSE(js_pathological_strategy.IsEmpty());
@@ -200,9 +202,10 @@ TEST_F(ReadableStreamTest, GetReader) {
 
   auto* underlying_source =
       MakeGarbageCollected<TestUnderlyingSource>(script_state);
-  ScriptValue js_underlying_source = ScriptValue(
-      isolate,
-      ToV8(underlying_source, script_state->GetContext()->Global(), isolate));
+  ScriptValue js_underlying_source =
+      ScriptValue(isolate, ToV8Traits<TestUnderlyingSource>::ToV8(
+                               scope.GetScriptState(), underlying_source)
+                               .ToLocalChecked());
   ReadableStream* stream = ReadableStream::Create(
       script_state, js_underlying_source, ASSERT_NO_EXCEPTION);
   ASSERT_TRUE(stream);
@@ -221,6 +224,14 @@ TEST_F(ReadableStreamTest, GetReader) {
   reader->read(script_state, ASSERT_NO_EXCEPTION);
 
   EXPECT_TRUE(stream->IsDisturbed());
+}
+
+// Regression test for https://crbug.com/1187774
+TEST_F(ReadableStreamTest, TypeStringEquality) {
+  V8TestingScope scope;
+  ScriptValue byte_stream =
+      EvalWithPrintingError(&scope, "new ReadableStream({type: 'b' + 'ytes'})");
+  EXPECT_FALSE(byte_stream.IsEmpty());
 }
 
 // Testing getReader with mode BYOB.
@@ -242,10 +253,11 @@ TEST_F(ReadableStreamTest, GetBYOBReader) {
   auto* options = ReadableStreamGetReaderOptions::Create();
   options->setMode("byob");
 
-  ReadableStreamDefaultReaderOrReadableStreamBYOBReader return_value;
-  stream->getReader(script_state, options, return_value, ASSERT_NO_EXCEPTION);
-  ReadableStreamBYOBReader* reader =
-      return_value.GetAsReadableStreamBYOBReader();
+  ReadableStreamBYOBReader* reader = nullptr;
+  if (const auto* result =
+          stream->getReader(script_state, options, ASSERT_NO_EXCEPTION)) {
+    reader = result->GetAsReadableStreamBYOBReader();
+  }
   ASSERT_TRUE(reader);
 
   EXPECT_TRUE(stream->locked());
@@ -266,9 +278,10 @@ TEST_F(ReadableStreamTest, Cancel) {
 
   auto* underlying_source =
       MakeGarbageCollected<TestUnderlyingSource>(script_state);
-  ScriptValue js_underlying_source = ScriptValue(
-      isolate,
-      ToV8(underlying_source, script_state->GetContext()->Global(), isolate));
+  ScriptValue js_underlying_source =
+      ScriptValue(isolate, ToV8Traits<TestUnderlyingSource>::ToV8(
+                               scope.GetScriptState(), underlying_source)
+                               .ToLocalChecked());
   ReadableStream* stream = ReadableStream::Create(
       script_state, js_underlying_source, ASSERT_NO_EXCEPTION);
   ASSERT_TRUE(stream);
@@ -291,9 +304,10 @@ TEST_F(ReadableStreamTest, CancelWithNull) {
 
   auto* underlying_source =
       MakeGarbageCollected<TestUnderlyingSource>(script_state);
-  ScriptValue js_underlying_source = ScriptValue(
-      isolate,
-      ToV8(underlying_source, script_state->GetContext()->Global(), isolate));
+  ScriptValue js_underlying_source =
+      ScriptValue(isolate, ToV8Traits<TestUnderlyingSource>::ToV8(
+                               scope.GetScriptState(), underlying_source)
+                               .ToLocalChecked());
   ReadableStream* stream = ReadableStream::Create(
       script_state, js_underlying_source, ASSERT_NO_EXCEPTION);
   ASSERT_TRUE(stream);
@@ -319,9 +333,10 @@ TEST_F(ReadableStreamTest, Tee) {
 
   auto* underlying_source =
       MakeGarbageCollected<TestUnderlyingSource>(script_state);
-  ScriptValue js_underlying_source = ScriptValue(
-      isolate,
-      ToV8(underlying_source, script_state->GetContext()->Global(), isolate));
+  ScriptValue js_underlying_source =
+      ScriptValue(isolate, ToV8Traits<TestUnderlyingSource>::ToV8(
+                               scope.GetScriptState(), underlying_source)
+                               .ToLocalChecked());
   ReadableStream* stream = ReadableStream::Create(
       script_state, js_underlying_source, ASSERT_NO_EXCEPTION);
   ASSERT_TRUE(stream);
@@ -448,7 +463,7 @@ TEST_F(ReadableStreamTest, Serialize) {
   underlying_source->Close();
 
   EXPECT_EQ(ReadAll(scope, transferred),
-            base::make_optional<String>("hello, bye"));
+            absl::make_optional<String>("hello, bye"));
 }
 
 TEST_F(ReadableStreamTest, DeserializeWithNullOptimizer) {
@@ -479,7 +494,7 @@ TEST_F(ReadableStreamTest, DeserializeWithNullOptimizer) {
   underlying_source->Close();
 
   EXPECT_EQ(ReadAll(scope, transferred),
-            base::make_optional<String>("hello, bye"));
+            absl::make_optional<String>("hello, bye"));
 }
 
 TEST_F(ReadableStreamTest, DeserializeWithTestOptimizer) {
@@ -510,7 +525,7 @@ TEST_F(ReadableStreamTest, DeserializeWithTestOptimizer) {
   underlying_source->Close();
 
   EXPECT_EQ(ReadAll(scope, transferred),
-            base::make_optional<String>("hello, byefoo, bar"));
+            absl::make_optional<String>("hello, byefoo, bar"));
 }
 
 TEST_F(ReadableStreamTest, GarbageCollectJavaScriptUnderlyingSource) {
@@ -537,7 +552,7 @@ TEST_F(ReadableStreamTest, GarbageCollectJavaScriptUnderlyingSource) {
 TEST_F(ReadableStreamTest, GarbageCollectCPlusPlusUnderlyingSource) {
   class NoopUnderlyingSource : public UnderlyingSourceBase {
    public:
-    NoopUnderlyingSource(ScriptState* script_state)
+    explicit NoopUnderlyingSource(ScriptState* script_state)
         : UnderlyingSourceBase(script_state) {}
   };
 

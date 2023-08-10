@@ -8,11 +8,10 @@
 #include <memory>
 #include <string>
 
-#include "base/containers/flat_set.h"
-#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "content/browser/devtools/protocol/devtools_domain_handler.h"
 #include "content/browser/devtools/protocol/storage.h"
+#include "content/browser/interest_group/interest_group_manager_impl.h"
 
 namespace storage {
 class QuotaOverrideHandle;
@@ -24,9 +23,15 @@ class StoragePartition;
 namespace protocol {
 
 class StorageHandler : public DevToolsDomainHandler,
-                       public Storage::Backend {
+                       public Storage::Backend,
+                       private content::InterestGroupManagerImpl::
+                           InterestGroupObserverInterface {
  public:
-  StorageHandler();
+  explicit StorageHandler(bool client_is_trusted);
+
+  StorageHandler(const StorageHandler&) = delete;
+  StorageHandler& operator=(const StorageHandler&) = delete;
+
   ~StorageHandler() override;
 
   // content::protocol::DevToolsDomainHandler
@@ -73,23 +78,41 @@ class StorageHandler : public DevToolsDomainHandler,
 
   void GetTrustTokens(
       std::unique_ptr<GetTrustTokensCallback> callback) override;
+  void ClearTrustTokens(
+      const std::string& issuerOrigin,
+      std::unique_ptr<ClearTrustTokensCallback> callback) override;
+
+  void GetInterestGroupDetails(
+      const std::string& owner_origin_string,
+      const std::string& name,
+      std::unique_ptr<GetInterestGroupDetailsCallback> callback) override;
+
+  Response SetInterestGroupTracking(bool enable) override;
 
  private:
   // See definition for lifetime information.
   class CacheStorageObserver;
   class IndexedDBObserver;
+  class InterestGroupObserver;
 
   // Not thread safe.
   CacheStorageObserver* GetCacheStorageObserver();
   IndexedDBObserver* GetIndexedDBObserver();
+
+  // content::InterestGroupManagerImpl::InterestGroupObserverInterface
+  void OnInterestGroupAccessed(
+      const base::Time& accessTime,
+      InterestGroupManagerImpl::InterestGroupObserverInterface::AccessType type,
+      const std::string& owner_origin,
+      const std::string& name) override;
 
   void NotifyCacheStorageListChanged(const std::string& origin);
   void NotifyCacheStorageContentChanged(const std::string& origin,
                                         const std::string& name);
   void NotifyIndexedDBListChanged(const std::string& origin);
   void NotifyIndexedDBContentChanged(const std::string& origin,
-                                     const base::string16& database_name,
-                                     const base::string16& object_store_name);
+                                     const std::u16string& database_name,
+                                     const std::u16string& object_store_name);
 
   Response FindStoragePartition(const Maybe<std::string>& browser_context_id,
                                 StoragePartition** storage_partition);
@@ -101,10 +124,9 @@ class StorageHandler : public DevToolsDomainHandler,
 
   // Exposes the API for managing storage quota overrides.
   std::unique_ptr<storage::QuotaOverrideHandle> quota_override_handle_;
+  bool client_is_trusted_;
 
   base::WeakPtrFactory<StorageHandler> weak_ptr_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(StorageHandler);
 };
 
 }  // namespace protocol

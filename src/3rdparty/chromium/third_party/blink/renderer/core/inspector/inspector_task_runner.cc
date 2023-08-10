@@ -6,6 +6,7 @@
 
 #include "third_party/blink/renderer/core/inspector/thread_debugger.h"
 #include "third_party/blink/renderer/platform/scheduler/public/post_cross_thread_task.h"
+#include "third_party/blink/renderer/platform/wtf/cross_thread_copier_base.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
 
 namespace blink {
@@ -28,10 +29,10 @@ void InspectorTaskRunner::Dispose() {
   isolate_task_runner_ = nullptr;
 }
 
-void InspectorTaskRunner::AppendTask(Task task) {
+bool InspectorTaskRunner::AppendTask(Task task) {
   MutexLocker lock(mutex_);
   if (disposed_)
-    return;
+    return false;
   interrupting_task_queue_.push_back(std::move(task));
   PostCrossThreadTask(
       *isolate_task_runner_, FROM_HERE,
@@ -42,13 +43,15 @@ void InspectorTaskRunner::AppendTask(Task task) {
     AddRef();
     isolate_->RequestInterrupt(&V8InterruptCallback, this);
   }
+  return true;
 }
 
-void InspectorTaskRunner::AppendTaskDontInterrupt(Task task) {
+bool InspectorTaskRunner::AppendTaskDontInterrupt(Task task) {
   MutexLocker lock(mutex_);
   if (disposed_)
-    return;
+    return false;
   PostCrossThreadTask(*isolate_task_runner_, FROM_HERE, std::move(task));
+  return true;
 }
 
 InspectorTaskRunner::Task InspectorTaskRunner::TakeNextInterruptingTask() {

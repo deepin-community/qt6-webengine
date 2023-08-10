@@ -81,11 +81,12 @@ void StartupPagesHandler::OnModelChanged() {
   std::vector<GURL> urls = startup_custom_pages_table_model_.GetURLs();
   for (int i = 0; i < page_count; ++i) {
     std::unique_ptr<base::DictionaryValue> entry(new base::DictionaryValue());
-    entry->SetString("title", startup_custom_pages_table_model_.GetText(i, 0));
-    entry->SetString("url", urls[i].spec());
-    entry->SetString("tooltip",
-                     startup_custom_pages_table_model_.GetTooltip(i));
-    entry->SetInteger("modelIndex", i);
+    entry->SetStringKey("title",
+                        startup_custom_pages_table_model_.GetText(i, 0));
+    entry->SetStringKey("url", urls[i].spec());
+    entry->SetStringKey("tooltip",
+                        startup_custom_pages_table_model_.GetTooltip(i));
+    entry->SetIntKey("modelIndex", i);
     startup_pages.Append(std::move(entry));
   }
 
@@ -104,46 +105,41 @@ void StartupPagesHandler::OnItemsRemoved(int start, int length) {
   OnModelChanged();
 }
 
-void StartupPagesHandler::HandleAddStartupPage(const base::ListValue* args) {
-  CHECK_EQ(2U, args->GetSize());
+void StartupPagesHandler::HandleAddStartupPage(const base::Value::List& args) {
+  CHECK_EQ(2U, args.size());
+  const base::Value& callback_id = args[0];
 
-  const base::Value* callback_id;
-  CHECK(args->Get(0, &callback_id));
-
-  std::string url_string;
-  CHECK(args->GetString(1, &url_string));
-
-  GURL url;
-  if (!settings_utils::FixupAndValidateStartupPage(url_string, &url)) {
-    ResolveJavascriptCallback(*callback_id, base::Value(false));
-    return;
-  }
-
-  int row_count = startup_custom_pages_table_model_.RowCount();
-  int index;
-  if (!args->GetInteger(1, &index) || index > row_count)
-    index = row_count;
-
-  startup_custom_pages_table_model_.Add(index, url);
-  SaveStartupPagesPref();
-  ResolveJavascriptCallback(*callback_id, base::Value(true));
-}
-
-void StartupPagesHandler::HandleEditStartupPage(const base::ListValue* args) {
-  CHECK_EQ(args->GetSize(), 3U);
-  const base::Value* callback_id;
-  CHECK(args->Get(0, &callback_id));
-  int index;
-  CHECK(args->GetInteger(1, &index));
-
-  if (index < 0 || index > startup_custom_pages_table_model_.RowCount()) {
-    RejectJavascriptCallback(*callback_id, base::Value());
+  if (!args[1].is_string()) {
     NOTREACHED();
     return;
   }
 
-  std::string url_string;
-  CHECK(args->GetString(2, &url_string));
+  std::string url_string = args[1].GetString();
+
+  GURL url;
+  if (!settings_utils::FixupAndValidateStartupPage(url_string, &url)) {
+    ResolveJavascriptCallback(callback_id, base::Value(false));
+    return;
+  }
+
+  startup_custom_pages_table_model_.Add(
+      startup_custom_pages_table_model_.RowCount(), url);
+  SaveStartupPagesPref();
+  ResolveJavascriptCallback(callback_id, base::Value(true));
+}
+
+void StartupPagesHandler::HandleEditStartupPage(const base::Value::List& args) {
+  CHECK_EQ(args.size(), 3U);
+  const base::Value& callback_id = args[0];
+  int index = args[1].GetInt();
+
+  if (index < 0 || index >= startup_custom_pages_table_model_.RowCount()) {
+    RejectJavascriptCallback(callback_id, base::Value());
+    NOTREACHED();
+    return;
+  }
+
+  std::string url_string = args[2].GetString();
 
   GURL fixed_url;
   if (settings_utils::FixupAndValidateStartupPage(url_string, &fixed_url)) {
@@ -151,23 +147,25 @@ void StartupPagesHandler::HandleEditStartupPage(const base::ListValue* args) {
     urls[index] = fixed_url;
     startup_custom_pages_table_model_.SetURLs(urls);
     SaveStartupPagesPref();
-    ResolveJavascriptCallback(*callback_id, base::Value(true));
+    ResolveJavascriptCallback(callback_id, base::Value(true));
   } else {
-    ResolveJavascriptCallback(*callback_id, base::Value(false));
+    ResolveJavascriptCallback(callback_id, base::Value(false));
   }
 }
 
 void StartupPagesHandler::HandleOnStartupPrefsPageLoad(
-    const base::ListValue* args) {
+    const base::Value::List& args) {
   AllowJavascript();
 }
 
-void StartupPagesHandler::HandleRemoveStartupPage(const base::ListValue* args) {
-  int selected_index;
-  if (!args->GetInteger(0, &selected_index)) {
+void StartupPagesHandler::HandleRemoveStartupPage(
+    const base::Value::List& args) {
+  CHECK_EQ(args.size(), 1u);
+  if (!args[0].is_int()) {
     NOTREACHED();
     return;
   }
+  int selected_index = args[0].GetInt();
 
   if (selected_index < 0 ||
       selected_index >= startup_custom_pages_table_model_.RowCount()) {
@@ -180,7 +178,7 @@ void StartupPagesHandler::HandleRemoveStartupPage(const base::ListValue* args) {
 }
 
 void StartupPagesHandler::HandleSetStartupPagesToCurrentPages(
-    const base::ListValue* args) {
+    const base::Value::List& args) {
   startup_custom_pages_table_model_.SetToCurrentlyOpenPages(
       web_ui()->GetWebContents());
   SaveStartupPagesPref();

@@ -24,6 +24,10 @@ class AutomationAXTreeWrapper : public ui::AXTreeObserver,
  public:
   AutomationAXTreeWrapper(ui::AXTreeID tree_id,
                           AutomationInternalCustomBindings* owner);
+
+  AutomationAXTreeWrapper(const AutomationAXTreeWrapper&) = delete;
+  AutomationAXTreeWrapper& operator=(const AutomationAXTreeWrapper&) = delete;
+
   ~AutomationAXTreeWrapper() override;
 
   // Returns the AutomationAXTreeWrapper that lists |tree_id| as one of its
@@ -32,6 +36,17 @@ class AutomationAXTreeWrapper : public ui::AXTreeObserver,
 
   static std::map<ui::AXTreeID, AutomationAXTreeWrapper*>&
   GetChildTreeIDReverseMap();
+
+  // Multiroot tree lookup.
+  static ui::AXNode* GetParentTreeNodeForAppID(
+      const std::string& app_id,
+      const AutomationInternalCustomBindings* owner);
+  static AutomationAXTreeWrapper* GetParentTreeWrapperForAppID(
+      const std::string& app_id,
+      const AutomationInternalCustomBindings* owner);
+  static std::vector<ui::AXNode*> GetChildTreeNodesForAppID(
+      const std::string& app_id,
+      const AutomationInternalCustomBindings* owner);
 
   ui::AXTree* tree() { return &tree_; }
   AutomationInternalCustomBindings* owner() { return owner_; }
@@ -46,6 +61,9 @@ class AutomationAXTreeWrapper : public ui::AXTreeObserver,
 
   // Returns true if this is the desktop tree.
   bool IsDesktopTree() const;
+
+  // Returns whether this tree is scaled by a device scale factor.
+  bool HasDeviceScaleFactor() const;
 
   // Returns whether |node_id| is the focused node in this tree. Accounts for
   // cases where this tree itself is not focused. Behaves similarly to
@@ -64,6 +82,20 @@ class AutomationAXTreeWrapper : public ui::AXTreeObserver,
 
   int32_t accessibility_focused_id() { return accessibility_focused_id_; }
 
+  // Gets the parent tree wrapper.
+  AutomationAXTreeWrapper* GetParentTree();
+
+  // Gets the first tree wrapper with an unignored root. This can be |this| tree
+  // wrapper or an ancestor. A root is ignored if the tree has valid nodes with
+  // a valid ax::mojom::StringAttribute::kChildTreeNodeAppId making the tree
+  // have multiple roots.
+  AutomationAXTreeWrapper* GetTreeWrapperWithUnignoredRoot();
+
+  // Gets a parent tree wrapper by following the first valid parent tree node
+  // app id. Useful if this tree contains app ids that always reference the same
+  // parent tree.
+  AutomationAXTreeWrapper* GetParentTreeFromAnyAppID();
+
   // Updates or gets this wrapper with the latest state of listeners in js.
   void EventListenerAdded(api::automation::EventType event_type,
                           ui::AXNode* node);
@@ -71,6 +103,10 @@ class AutomationAXTreeWrapper : public ui::AXTreeObserver,
                             ui::AXNode* node);
   bool HasEventListener(api::automation::EventType event_type,
                         ui::AXNode* node);
+
+  // Indicates whether this tree is ignored due to a hosting ancestor tree/node
+  // being ignored.
+  bool IsTreeIgnored();
 
   // AXTreeManager overrides.
   ui::AXNode* GetNodeFromTree(const ui::AXTreeID tree_id,
@@ -80,13 +116,20 @@ class AutomationAXTreeWrapper : public ui::AXTreeObserver,
   ui::AXTreeID GetParentTreeID() const override;
   ui::AXNode* GetRootAsAXNode() const override;
   ui::AXNode* GetParentNodeFromParentTreeAsAXNode() const override;
+  std::string ToString() const override;
 
  private:
   // AXTreeObserver overrides.
   void OnNodeDataChanged(ui::AXTree* tree,
                          const ui::AXNodeData& old_node_data,
                          const ui::AXNodeData& new_node_data) override;
+  void OnStringAttributeChanged(ui::AXTree* tree,
+                                ui::AXNode* node,
+                                ax::mojom::StringAttribute attr,
+                                const std::string& old_value,
+                                const std::string& new_value) override;
   void OnNodeWillBeDeleted(ui::AXTree* tree, ui::AXNode* node) override;
+  void OnNodeCreated(ui::AXTree* tree, ui::AXNode* node) override;
   void OnAtomicUpdateFinished(ui::AXTree* tree,
                               bool root_changed,
                               const std::vector<Change>& changes) override;
@@ -108,7 +151,9 @@ class AutomationAXTreeWrapper : public ui::AXTreeObserver,
   // Maps a node to a set containing events for which the node has listeners.
   std::map<int32_t, std::set<api::automation::EventType>> node_id_to_events_;
 
-  DISALLOW_COPY_AND_ASSIGN(AutomationAXTreeWrapper);
+  // A collection of all nodes with
+  // ax::mojom::StringAttribute::kAppId set.
+  std::set<std::string> all_tree_node_app_ids_;
 };
 
 }  // namespace extensions

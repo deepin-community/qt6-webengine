@@ -15,9 +15,41 @@ class GPURenderPipelineDescriptor;
 class ExceptionState;
 class ScriptState;
 
+struct OwnedFragmentState {
+ public:
+  OwnedFragmentState() = default;
+
+  //  This struct should be non-copyable non-movable because it contains
+  //  self-referencing pointers that would be invalidated when moved / copied.
+  OwnedFragmentState(const OwnedFragmentState& desc) = delete;
+  OwnedFragmentState(OwnedFragmentState&& desc) = delete;
+  OwnedFragmentState& operator=(const OwnedFragmentState& desc) = delete;
+  OwnedFragmentState& operator=(OwnedFragmentState&& desc) = delete;
+
+  WGPUFragmentState dawn_desc = {};
+  std::string entry_point;
+  std::unique_ptr<WGPUColorTargetState[]> targets;
+  Vector<WGPUBlendState> blend_states;
+};
+
+struct OwnedPrimitiveState {
+ public:
+  OwnedPrimitiveState() = default;
+
+  //  This struct should be non-copyable non-movable because it contains
+  //  self-referencing pointers that would be invalidated when moved / copied.
+  OwnedPrimitiveState(const OwnedPrimitiveState& desc) = delete;
+  OwnedPrimitiveState(OwnedPrimitiveState&& desc) = delete;
+  OwnedPrimitiveState& operator=(const OwnedPrimitiveState& desc) = delete;
+  OwnedPrimitiveState& operator=(OwnedPrimitiveState&& desc) = delete;
+
+  WGPUPrimitiveState dawn_desc = {};
+  WGPUPrimitiveDepthClampingState depth_clamping_state = {};
+};
+
 struct OwnedRenderPipelineDescriptor {
  public:
-  OwnedRenderPipelineDescriptor() : dawn_desc({}) {}
+  OwnedRenderPipelineDescriptor() = default;
 
   //  This struct should be non-copyable non-movable because it contains
   //  self-referencing pointers that would be invalidated when moved / copied.
@@ -29,19 +61,18 @@ struct OwnedRenderPipelineDescriptor {
   OwnedRenderPipelineDescriptor& operator=(
       OwnedRenderPipelineDescriptor&& desc) = delete;
 
-  WGPURenderPipelineDescriptor dawn_desc;
+  WGPURenderPipelineDescriptor dawn_desc = {};
   std::string label;
-  OwnedProgrammableStageDescriptor vertex_stage_info;
-  OwnedProgrammableStageDescriptor fragment_stage_info;
-  WGPUVertexStateDescriptor vertex_state;
-  Vector<WGPUVertexBufferLayoutDescriptor> vertex_buffer_layouts;
-  Vector<WGPUVertexAttributeDescriptor> vertex_attributes;
-  WGPURasterizationStateDescriptor rasterization_state;
-  WGPUDepthStencilStateDescriptor depth_stencil_state;
-  std::unique_ptr<WGPUColorStateDescriptor[]> color_states;
+  std::string vertex_entry_point;
+  std::unique_ptr<WGPUVertexBufferLayout[]> buffers;
+  std::unique_ptr<std::unique_ptr<WGPUVertexAttribute[]>[]> attributes;
+  OwnedPrimitiveState primitive;
+  WGPUDepthStencilState depth_stencil;
+  OwnedFragmentState fragment;
 };
 
 void ConvertToDawnType(v8::Isolate* isolate,
+                       GPUDevice* device,
                        const GPURenderPipelineDescriptor* webgpu_desc,
                        OwnedRenderPipelineDescriptor* dawn_desc_info,
                        ExceptionState& exception_state);
@@ -57,10 +88,16 @@ class GPURenderPipeline : public DawnObject<WGPURenderPipeline> {
   explicit GPURenderPipeline(GPUDevice* device,
                              WGPURenderPipeline render_pipeline);
 
+  GPURenderPipeline(const GPURenderPipeline&) = delete;
+  GPURenderPipeline& operator=(const GPURenderPipeline&) = delete;
+
   GPUBindGroupLayout* getBindGroupLayout(uint32_t index);
 
  private:
-  DISALLOW_COPY_AND_ASSIGN(GPURenderPipeline);
+  void setLabelImpl(const String& value) override {
+    std::string utf8_label = value.Utf8();
+    GetProcs().renderPipelineSetLabel(GetHandle(), utf8_label.c_str());
+  }
 };
 
 }  // namespace blink

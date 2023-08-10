@@ -31,6 +31,10 @@
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
+namespace base {
+class FilePath;
+}
+
 namespace blink {
 
 namespace test {
@@ -95,10 +99,10 @@ class LineReader {
 
  private:
   String text_;
-  size_t index_;
+  wtf_size_t index_;
 };
 
 }  // namespace test
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_RENDERER_PLATFORM_TESTING_UNIT_TEST_HELPERS_H_

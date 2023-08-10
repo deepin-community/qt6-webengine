@@ -8,8 +8,6 @@
 #include <memory>
 #include <string>
 
-#include "base/macros.h"
-#include "base/strings/string16.h"
 #include "base/values.h"
 #include "url/gurl.h"
 
@@ -39,6 +37,10 @@ class LocalizedError {
     bool auto_fetch_allowed = false;
   };
 
+  LocalizedError() = delete;
+  LocalizedError(const LocalizedError&) = delete;
+  LocalizedError& operator=(const LocalizedError&) = delete;
+
   // Returns a |PageState| that describes the elements that should be shown on
   // on HTTP errors, like 404 or connection reset.
   static PageState GetPageState(
@@ -54,19 +56,28 @@ class LocalizedError {
       bool auto_fetch_feature_enabled,
       bool is_kiosk_mode,  // whether device is currently in single app (kiosk)
                            // mode
+      const std::string& locale,
+      bool is_blocked_by_extension);
+
+  // Returns a |PageState| that describes the elements that should be shown on
+  // when default offline page is shown.
+  static PageState GetPageStateForOverriddenErrorPage(
+      base::Value string_dict,
+      int error_code,
+      const std::string& error_domain,
+      const GURL& failed_url,
       const std::string& locale);
 
   // Returns a description of the encountered error.
-  static base::string16 GetErrorDetails(const std::string& error_domain,
+  static std::u16string GetErrorDetails(const std::string& error_domain,
                                         int error_code,
                                         bool is_secure_dns_network_error,
                                         bool is_post);
 
   // Returns true if an error page exists for the specified parameters.
   static bool HasStrings(const std::string& error_domain, int error_code);
- private:
 
-  DISALLOW_IMPLICIT_CONSTRUCTORS(LocalizedError);
+  static bool IsOfflineError(const std::string& error_domain, int error_code);
 };
 
 }  // namespace error_page

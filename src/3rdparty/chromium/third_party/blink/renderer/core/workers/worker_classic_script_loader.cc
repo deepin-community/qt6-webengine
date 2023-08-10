@@ -50,7 +50,6 @@
 #include "third_party/blink/renderer/platform/network/content_security_policy_response_headers.h"
 #include "third_party/blink/renderer/platform/network/http_names.h"
 #include "third_party/blink/renderer/platform/network/network_utils.h"
-#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/weborigin/referrer.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
 
@@ -115,10 +114,6 @@ void WorkerClassicScriptLoader::LoadSynchronously(
 
   ResourceRequest request(url);
   request.SetHttpMethod(http_names::kGET);
-  request.SetExternalRequestStateFromRequestorAddressSpace(
-      fetch_client_settings_object_fetcher_->GetProperties()
-          .GetFetchClientSettingsObject()
-          .GetAddressSpace());
   request.SetRequestContext(request_context);
   request.SetRequestDestination(destination);
 
@@ -160,10 +155,6 @@ void WorkerClassicScriptLoader::LoadTopLevelScriptAsynchronously(
   is_top_level_script_ = true;
   ResourceRequest request(url);
   request.SetHttpMethod(http_names::kGET);
-  request.SetExternalRequestStateFromRequestorAddressSpace(
-      fetch_client_settings_object_fetcher_->GetProperties()
-          .GetFetchClientSettingsObject()
-          .GetAddressSpace());
   request.SetRequestContext(request_context);
   request.SetRequestDestination(destination);
   request.SetMode(request_mode);
@@ -240,7 +231,6 @@ void WorkerClassicScriptLoader::DidReceiveResponse(
   identifier_ = identifier;
   response_url_ = response.ResponseUrl();
   response_encoding_ = response.TextEncodingName();
-  app_cache_id_ = response.AppCacheID();
   response_address_space_ = response.AddressSpace();
 
   referrer_policy_ = response.HttpHeaderField(http_names::kReferrerPolicy);
@@ -283,13 +273,13 @@ void WorkerClassicScriptLoader::DidFinishLoading(uint64_t identifier) {
   NotifyFinished();
 }
 
-void WorkerClassicScriptLoader::DidFail(const ResourceError& error) {
+void WorkerClassicScriptLoader::DidFail(uint64_t, const ResourceError& error) {
   need_to_cancel_ = false;
   canceled_ = error.IsCancellation();
   NotifyError();
 }
 
-void WorkerClassicScriptLoader::DidFailRedirectCheck() {
+void WorkerClassicScriptLoader::DidFailRedirectCheck(uint64_t) {
   // When didFailRedirectCheck() is called, the ResourceLoader for the script
   // is not canceled yet. So we don't reset |m_needToCancel| here.
   NotifyError();
@@ -369,8 +359,8 @@ void WorkerClassicScriptLoader::ProcessContentSecurityPolicy(
       !response.CurrentRequestUrl().ProtocolIs("file") &&
       !response.CurrentRequestUrl().ProtocolIs("filesystem")) {
     content_security_policy_ = MakeGarbageCollected<ContentSecurityPolicy>();
-    content_security_policy_->DidReceiveHeaders(
-        ContentSecurityPolicyResponseHeaders(response));
+    content_security_policy_->AddPolicies(ParseContentSecurityPolicyHeaders(
+        ContentSecurityPolicyResponseHeaders(response)));
   }
 }
 

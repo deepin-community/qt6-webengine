@@ -4,13 +4,16 @@
 
 #include "third_party/blink/renderer/platform/graphics/video_frame_image_util.h"
 
+#include "base/logging.h"
 #include "build/build_config.h"
 #include "components/viz/common/gpu/raster_context_provider.h"
-#include "components/viz/common/resources/single_release_callback.h"
+#include "components/viz/common/resources/release_callback.h"
+#include "gpu/command_buffer/client/raster_interface.h"
 #include "gpu/config/gpu_feature_info.h"
 #include "media/base/video_frame.h"
 #include "media/base/video_types.h"
 #include "media/base/video_util.h"
+#include "media/base/wait_and_replace_sync_token_client.h"
 #include "media/renderers/paint_canvas_video_renderer.h"
 #include "third_party/blink/renderer/platform/graphics/accelerated_static_bitmap_image.h"
 #include "third_party/blink/renderer/platform/graphics/canvas_resource_provider.h"
@@ -18,6 +21,7 @@
 #include "third_party/blink/renderer/platform/graphics/static_bitmap_image.h"
 #include "third_party/skia/include/core/SkColorSpace.h"
 #include "third_party/skia/include/core/SkImageInfo.h"
+#include "third_party/skia/include/gpu/GrDriverBugWorkarounds.h"
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/geometry/rect_f.h"
 
@@ -25,24 +29,15 @@ namespace blink {
 
 namespace {
 
-scoped_refptr<viz::RasterContextProvider> GetRasterContextProvider() {
-  auto wrapper = SharedGpuContext::ContextProviderWrapper();
-  if (!wrapper)
-    return nullptr;
-
-  if (auto* provider = wrapper->ContextProvider())
-    return base::WrapRefCounted(provider->RasterContextProvider());
-
-  return nullptr;
-}
-
 bool CanUseZeroCopyImages(const media::VideoFrame& frame) {
   // SharedImage optimization: create AcceleratedStaticBitmapImage directly.
   // Disabled on Android because the hardware decode implementation may neuter
   // frames, which would violate ImageBitmap requirements.
   // TODO(sandersd): Handle YUV pixel formats.
   // TODO(sandersd): Handle high bit depth formats.
-#if defined(OS_ANDROID)
+  // TODO(crbug.com/1203713): Figure out why macOS zero copy ends up with y-flip
+  // images in zero copy mode.
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_MAC)
   return false;
 #else
   return frame.NumTextures() == 1 &&
@@ -73,6 +68,59 @@ bool ShouldCreateAcceleratedImages(
 
 }  // namespace
 
+ImageOrientationEnum VideoTransformationToImageOrientation(
+    media::VideoTransformation transform) {
+  if (!transform.mirrored) {
+    switch (transform.rotation) {
+      case media::VIDEO_ROTATION_0:
+        return ImageOrientationEnum::kOriginTopLeft;
+      case media::VIDEO_ROTATION_90:
+        return ImageOrientationEnum::kOriginRightTop;
+      case media::VIDEO_ROTATION_180:
+        return ImageOrientationEnum::kOriginBottomRight;
+      case media::VIDEO_ROTATION_270:
+        return ImageOrientationEnum::kOriginLeftBottom;
+    }
+  }
+
+  switch (transform.rotation) {
+    case media::VIDEO_ROTATION_0:
+      return ImageOrientationEnum::kOriginTopRight;
+    case media::VIDEO_ROTATION_90:
+      return ImageOrientationEnum::kOriginLeftTop;
+    case media::VIDEO_ROTATION_180:
+      return ImageOrientationEnum::kOriginBottomLeft;
+    case media::VIDEO_ROTATION_270:
+      return ImageOrientationEnum::kOriginRightBottom;
+  }
+}
+
+media::VideoTransformation ImageOrientationToVideoTransformation(
+    ImageOrientationEnum orientation) {
+  switch (orientation) {
+    case ImageOrientationEnum::kOriginTopLeft:
+      return media::kNoTransformation;
+    case ImageOrientationEnum::kOriginTopRight:
+      return media::VideoTransformation(media::VIDEO_ROTATION_0,
+                                        /*mirrored=*/true);
+    case ImageOrientationEnum::kOriginBottomRight:
+      return media::VIDEO_ROTATION_180;
+    case ImageOrientationEnum::kOriginBottomLeft:
+      return media::VideoTransformation(media::VIDEO_ROTATION_180,
+                                        /*mirrored=*/true);
+    case ImageOrientationEnum::kOriginLeftTop:
+      return media::VideoTransformation(media::VIDEO_ROTATION_90,
+                                        /*mirrored=*/true);
+    case ImageOrientationEnum::kOriginRightTop:
+      return media::VIDEO_ROTATION_90;
+    case ImageOrientationEnum::kOriginRightBottom:
+      return media::VideoTransformation(media::VIDEO_ROTATION_270,
+                                        /*mirrored=*/true);
+    case ImageOrientationEnum::kOriginLeftBottom:
+      return media::VIDEO_ROTATION_270;
+  };
+}
+
 bool WillCreateAcceleratedImagesFromVideoFrame(const media::VideoFrame* frame) {
   return CanUseZeroCopyImages(*frame) ||
          ShouldCreateAcceleratedImages(GetRasterContextProvider().get());
@@ -83,10 +131,13 @@ scoped_refptr<StaticBitmapImage> CreateImageFromVideoFrame(
     bool allow_zero_copy_images,
     CanvasResourceProvider* resource_provider,
     media::PaintCanvasVideoRenderer* video_renderer,
-    const gfx::Rect& dest_rect) {
+    const gfx::Rect& dest_rect,
+    bool prefer_tagged_orientation) {
   DCHECK(frame);
+  const auto transform =
+      frame->metadata().transformation.value_or(media::kNoTransformation);
   if (allow_zero_copy_images && dest_rect.IsEmpty() &&
-      CanUseZeroCopyImages(*frame)) {
+      transform == media::kNoTransformation && CanUseZeroCopyImages(*frame)) {
     // TODO(sandersd): Do we need to be able to handle limited-range RGB? It
     // may never happen, and SkColorSpace doesn't know about it.
     auto sk_color_space =
@@ -99,14 +150,22 @@ scoped_refptr<StaticBitmapImage> CreateImageFromVideoFrame(
         kN32_SkColorType, kUnpremul_SkAlphaType, std::move(sk_color_space));
 
     // Hold a ref by storing it in the release callback.
-    auto release_callback = viz::SingleReleaseCallback::Create(
-        WTF::Bind([](scoped_refptr<media::VideoFrame> frame,
-                     const gpu::SyncToken& sync_token, bool is_lost) {},
-                  frame));
+    auto release_callback = WTF::Bind(
+        [](scoped_refptr<media::VideoFrame> frame,
+           base::WeakPtr<WebGraphicsContext3DProviderWrapper> context_provider,
+           const gpu::SyncToken& sync_token, bool is_lost) {
+          if (is_lost || !context_provider)
+            return;
+          auto* ri = context_provider->ContextProvider()->RasterInterface();
+          media::WaitAndReplaceSyncTokenClient client(ri);
+          frame->UpdateReleaseSyncToken(&client);
+        },
+        frame, SharedGpuContext::ContextProviderWrapper());
 
     return AcceleratedStaticBitmapImage::CreateFromCanvasMailbox(
         frame->mailbox_holder(0).mailbox, frame->mailbox_holder(0).sync_token,
-        0u, sk_image_info, frame->mailbox_holder(0).texture_target, true,
+        0u, sk_image_info, frame->mailbox_holder(0).texture_target,
+        frame->metadata().texture_origin_is_top_left,
         // Pass nullptr for |context_provider_wrapper|, because we don't
         // know which context the mailbox came from. It is used only to
         // detect when the mailbox is invalid due to context loss, and is
@@ -117,7 +176,11 @@ scoped_refptr<StaticBitmapImage> CreateImageFromVideoFrame(
         // |is_cross_thread|.
         base::PlatformThreadRef(),
         // The task runner is only used for |release_callback|.
-        Thread::Current()->GetTaskRunner(), std::move(release_callback));
+        Thread::Current()->GetTaskRunner(), std::move(release_callback),
+        /*supports_display_compositing=*/true,
+        // TODO(junov): Figure out how to determine whether frame is an
+        // overlay candidate. StorageType info seems insufficient.
+        /*is_overlay_candidate=*/false);
   }
 
   gfx::Rect final_dest_rect = dest_rect;
@@ -126,12 +189,15 @@ scoped_refptr<StaticBitmapImage> CreateImageFromVideoFrame(
     const auto& visible_rect = frame->visible_rect();
     final_dest_rect =
         gfx::Rect(0, 0, visible_rect.width(), visible_rect.height());
+    if (transform.rotation == media::VIDEO_ROTATION_90 ||
+        transform.rotation == media::VIDEO_ROTATION_270) {
+      final_dest_rect.Transpose();
+    }
   } else if (!resource_provider) {
     DLOG(ERROR) << "An external CanvasResourceProvider must be provided when "
                    "providing a custom destination rect.";
     return nullptr;
-  } else if (!gfx::Rect(gfx::Size(resource_provider->Size()))
-                  .Contains(final_dest_rect)) {
+  } else if (!gfx::Rect(resource_provider->Size()).Contains(final_dest_rect)) {
     DLOG(ERROR)
         << "Provided CanvasResourceProvider is too small. Expected at least "
         << final_dest_rect.ToString() << " got "
@@ -140,7 +206,7 @@ scoped_refptr<StaticBitmapImage> CreateImageFromVideoFrame(
   }
 
   auto raster_context_provider = GetRasterContextProvider();
-  const auto resource_provider_size = IntSize(final_dest_rect.size());
+  const auto resource_provider_size = final_dest_rect.size();
   std::unique_ptr<CanvasResourceProvider> local_resource_provider;
   if (!resource_provider) {
     local_resource_provider = CreateResourceProviderForVideoFrame(
@@ -153,12 +219,20 @@ scoped_refptr<StaticBitmapImage> CreateImageFromVideoFrame(
     resource_provider = local_resource_provider.get();
   }
 
-  if (!DrawVideoFrameIntoResourceProvider(std::move(frame), resource_provider,
-                                          raster_context_provider.get(),
-                                          final_dest_rect, video_renderer)) {
+  if (resource_provider->IsAccelerated())
+    prefer_tagged_orientation = false;
+
+  if (!DrawVideoFrameIntoResourceProvider(
+          std::move(frame), resource_provider, raster_context_provider.get(),
+          final_dest_rect, video_renderer,
+          /*ignore_video_transformation=*/prefer_tagged_orientation)) {
     return nullptr;
   }
-  return resource_provider->Snapshot();
+
+  return resource_provider->Snapshot(
+      prefer_tagged_orientation
+          ? VideoTransformationToImageOrientation(transform)
+          : ImageOrientationEnum::kDefault);
 }
 
 bool DrawVideoFrameIntoResourceProvider(
@@ -166,10 +240,11 @@ bool DrawVideoFrameIntoResourceProvider(
     CanvasResourceProvider* resource_provider,
     viz::RasterContextProvider* raster_context_provider,
     const gfx::Rect& dest_rect,
-    media::PaintCanvasVideoRenderer* video_renderer) {
+    media::PaintCanvasVideoRenderer* video_renderer,
+    bool ignore_video_transformation) {
   DCHECK(frame);
   DCHECK(resource_provider);
-  DCHECK(gfx::Rect(gfx::Size(resource_provider->Size())).Contains(dest_rect));
+  DCHECK(gfx::Rect(resource_provider->Size()).Contains(dest_rect));
 
   if (frame->HasTextures()) {
     if (!raster_context_provider) {
@@ -187,7 +262,7 @@ bool DrawVideoFrameIntoResourceProvider(
 
   cc::PaintFlags media_flags;
   media_flags.setAlpha(0xFF);
-  media_flags.setFilterQuality(kLow_SkFilterQuality);
+  media_flags.setFilterQuality(cc::PaintFlags::FilterQuality::kLow);
   media_flags.setBlendMode(SkBlendMode::kSrc);
 
   std::unique_ptr<media::PaintCanvasVideoRenderer> local_video_renderer;
@@ -201,27 +276,68 @@ bool DrawVideoFrameIntoResourceProvider(
   if (frame->HasGpuMemoryBuffer() && !frame->IsMappable() &&
       !resource_provider->IsAccelerated()) {
     frame = media::ConvertToMemoryMappedFrame(std::move(frame));
+    if (!frame) {
+      DLOG(ERROR) << "Failed to map VideoFrame.";
+      return false;
+    }
   }
 
   video_renderer->Paint(
-      frame.get(), resource_provider->Canvas(), gfx::RectF(dest_rect),
-      media_flags,
-      frame->metadata().transformation.value_or(media::kNoTransformation),
+      frame.get(), resource_provider->Canvas(/*needs_will_draw*/ true),
+      gfx::RectF(dest_rect), media_flags,
+      ignore_video_transformation
+          ? media::kNoTransformation
+          : frame->metadata().transformation.value_or(media::kNoTransformation),
       raster_context_provider);
   return true;
 }
 
+void DrawVideoFrameIntoCanvas(scoped_refptr<media::VideoFrame> frame,
+                              cc::PaintCanvas* canvas,
+                              cc::PaintFlags& flags,
+                              bool ignore_video_transformation) {
+  viz::RasterContextProvider* raster_context_provider = nullptr;
+  if (auto wrapper = SharedGpuContext::ContextProviderWrapper()) {
+    if (auto* context_provider = wrapper->ContextProvider())
+      raster_context_provider = context_provider->RasterContextProvider();
+  }
+
+  const gfx::RectF dest_rect(frame->natural_size().width(),
+                             frame->natural_size().height());
+
+  media::PaintCanvasVideoRenderer video_renderer;
+  auto transformation =
+      ignore_video_transformation
+          ? media::kNoTransformation
+          : frame->metadata().transformation.value_or(media::kNoTransformation);
+  video_renderer.Paint(frame, canvas, dest_rect, flags, transformation,
+                       raster_context_provider);
+}
+
+scoped_refptr<viz::RasterContextProvider> GetRasterContextProvider() {
+  auto wrapper = SharedGpuContext::ContextProviderWrapper();
+  if (!wrapper)
+    return nullptr;
+
+  if (auto* provider = wrapper->ContextProvider())
+    return base::WrapRefCounted(provider->RasterContextProvider());
+
+  return nullptr;
+}
+
 std::unique_ptr<CanvasResourceProvider> CreateResourceProviderForVideoFrame(
-    IntSize size,
+    gfx::Size size,
     viz::RasterContextProvider* raster_context_provider) {
   if (!ShouldCreateAcceleratedImages(raster_context_provider)) {
     return CanvasResourceProvider::CreateBitmapProvider(
-        size, kLow_SkFilterQuality, CanvasResourceParams(),
+        SkImageInfo::MakeN32Premul(size.width(), size.height()),
+        cc::PaintFlags::FilterQuality::kLow,
         CanvasResourceProvider::ShouldInitialize::kNo);
   }
 
   return CanvasResourceProvider::CreateSharedImageProvider(
-      size, kLow_SkFilterQuality, CanvasResourceParams(),
+      SkImageInfo::MakeN32Premul(size.width(), size.height()),
+      cc::PaintFlags::FilterQuality::kLow,
       CanvasResourceProvider::ShouldInitialize::kNo,
       SharedGpuContext::ContextProviderWrapper(), RasterMode::kGPU,
       false,  // Origin of GL texture is bottom left on screen

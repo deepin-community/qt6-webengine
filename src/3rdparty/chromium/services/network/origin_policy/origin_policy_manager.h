@@ -12,14 +12,14 @@
 
 #include "base/component_export.h"
 #include "base/containers/unique_ptr_adapters.h"
-#include "base/macros.h"
-#include "base/optional.h"
+#include "base/memory/raw_ptr.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/receiver_set.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "services/network/origin_policy/origin_policy_constants.h"
 #include "services/network/public/mojom/origin_policy_manager.mojom.h"
 #include "services/network/public/mojom/url_loader_factory.mojom.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace net {
 class IsolationInfo;
@@ -41,6 +41,10 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) OriginPolicyManager
   // The |owner_network_context| is the owner of this object and it needs to
   // always outlive this object.
   explicit OriginPolicyManager(NetworkContext* owner_network_context);
+
+  OriginPolicyManager(const OriginPolicyManager&) = delete;
+  OriginPolicyManager& operator=(const OriginPolicyManager&) = delete;
+
   ~OriginPolicyManager() override;
 
   // Bind a receiver to this object.  Mojo messages coming through the
@@ -50,7 +54,7 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) OriginPolicyManager
   // mojom::OriginPolicyManager
   void RetrieveOriginPolicy(const url::Origin& origin,
                             const net::IsolationInfo& isolation_info,
-                            const base::Optional<std::string>& header,
+                            const absl::optional<std::string>& header,
                             RetrieveOriginPolicyCallback callback) override;
   void AddExceptionFor(const url::Origin& origin) override;
 
@@ -77,7 +81,7 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) OriginPolicyManager
 
   // Owner of this object. It needs to always outlive this object.
   // Used for queueing reports and creating a URLLoaderFactory.
-  NetworkContext* const owner_network_context_;
+  const raw_ptr<NetworkContext> owner_network_context_;
 
   // Exempted origins are added using AddExceptionFor.
   std::set<url::Origin> exempted_origins_;
@@ -95,8 +99,6 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) OriginPolicyManager
   // of origin_policy_fetchers_ will be destroyed before the receiver they are
   // on is destroyed.
   mojo::ReceiverSet<mojom::OriginPolicyManager> receivers_;
-
-  DISALLOW_COPY_AND_ASSIGN(OriginPolicyManager);
 };
 
 }  // namespace network

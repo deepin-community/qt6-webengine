@@ -20,7 +20,6 @@
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "components/nacl/common/buildflags.h"
-#include "content/common/frame_messages.h"
 #include "content/public/renderer/content_renderer_client.h"
 #include "content/renderer/pepper/host_dispatcher_wrapper.h"
 #include "content/renderer/pepper/host_globals.h"
@@ -105,12 +104,9 @@
 #include "ppapi/c/private/ppb_ext_crx_file_system_private.h"
 #include "ppapi/c/private/ppb_file_io_private.h"
 #include "ppapi/c/private/ppb_file_ref_private.h"
-#include "ppapi/c/private/ppb_find_private.h"
-#include "ppapi/c/private/ppb_flash_font_file.h"
 #include "ppapi/c/private/ppb_host_resolver_private.h"
 #include "ppapi/c/private/ppb_instance_private.h"
 #include "ppapi/c/private/ppb_isolated_file_system_private.h"
-#include "ppapi/c/private/ppb_pdf.h"
 #include "ppapi/c/private/ppb_proxy_private.h"
 #include "ppapi/c/private/ppb_tcp_server_socket_private.h"
 #include "ppapi/c/private/ppb_tcp_socket_private.h"
@@ -191,7 +187,7 @@ void CallOnMainThread(int delay_in_msec,
   if (callback.func) {
     PpapiGlobals::Get()->GetMainThreadMessageLoop()->PostDelayedTask(
         FROM_HERE, base::BindOnce(callback.func, callback.user_data, result),
-        base::TimeDelta::FromMilliseconds(delay_in_msec));
+        base::Milliseconds(delay_in_msec));
   }
 }
 
@@ -296,9 +292,7 @@ const void* InternalGetInterface(const char* name) {
     return ppapi::thunk::Get##iface_struct##_Thunk();
 
 #include "ppapi/thunk/interfaces_ppb_private.h"
-#include "ppapi/thunk/interfaces_ppb_private_flash.h"
 #include "ppapi/thunk/interfaces_ppb_private_no_permissions.h"
-#include "ppapi/thunk/interfaces_ppb_private_pdf.h"
 #include "ppapi/thunk/interfaces_ppb_public_dev.h"
 #include "ppapi/thunk/interfaces_ppb_public_dev_channel.h"
 #include "ppapi/thunk/interfaces_ppb_public_socket.h"
@@ -665,7 +659,7 @@ bool PluginModule::InitializeModule(
 scoped_refptr<PluginModule> PluginModule::Create(
     RenderFrameImpl* render_frame,
     const WebPluginInfo& webplugin_info,
-    const base::Optional<url::Origin>& origin_lock,
+    const absl::optional<url::Origin>& origin_lock,
     bool* pepper_plugin_was_registered,
     scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
   *pepper_plugin_was_registered = true;
@@ -701,13 +695,10 @@ scoped_refptr<PluginModule> PluginModule::Create(
   mojo::ScopedMessagePipeHandle channel_handle;
   base::ProcessId peer_pid = 0;
   int plugin_child_id = 0;
-  mojom::PepperIOHost* io_host =
-      PepperBrowserConnection::Get(render_frame)->GetIOHost();
-  if (!io_host) {
-    // Couldn't be initialized.
-    return scoped_refptr<PluginModule>();
-  }
-  io_host->OpenChannelToPepperPlugin(
+
+  auto* browser_connection = PepperBrowserConnection::Get(render_frame);
+  mojom::PepperHost* host = browser_connection->GetHost();
+  host->OpenChannelToPepperPlugin(
       render_frame->GetWebFrame()->GetSecurityOrigin(), path, origin_lock,
       &channel_handle, &peer_pid, &plugin_child_id);
   if (!channel_handle.is_valid()) {

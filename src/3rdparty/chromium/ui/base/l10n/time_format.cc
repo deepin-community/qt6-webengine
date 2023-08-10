@@ -8,7 +8,6 @@
 
 #include "base/check_op.h"
 #include "base/component_export.h"
-#include "base/i18n/uchar.h"
 #include "base/lazy_instance.h"
 #include "base/notreached.h"
 #include "base/numerics/safe_conversions.h"
@@ -19,7 +18,6 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/strings/grit/ui_strings.h"
 
-using base::TimeDelta;
 using ui::TimeFormat;
 
 namespace ui {
@@ -29,13 +27,13 @@ base::LazyInstance<FormatterContainer>::Leaky g_container =
     LAZY_INSTANCE_INITIALIZER;
 
 // static
-base::string16 TimeFormat::Simple(TimeFormat::Format format,
+std::u16string TimeFormat::Simple(TimeFormat::Format format,
                                   TimeFormat::Length length,
                                   const base::TimeDelta& delta) {
   return Detailed(format, length, 0, delta);
 }
 
-base::string16 TimeFormat::SimpleWithMonthAndYear(TimeFormat::Format format,
+std::u16string TimeFormat::SimpleWithMonthAndYear(TimeFormat::Format format,
                                                   TimeFormat::Length length,
                                                   const base::TimeDelta& delta,
                                                   bool with_month_and_year) {
@@ -44,39 +42,39 @@ base::string16 TimeFormat::SimpleWithMonthAndYear(TimeFormat::Format format,
 }
 
 // static
-base::string16 TimeFormat::Detailed(TimeFormat::Format format,
+std::u16string TimeFormat::Detailed(TimeFormat::Format format,
                                     TimeFormat::Length length,
                                     int cutoff,
                                     const base::TimeDelta& delta) {
   return DetailedWithMonthAndYear(format, length, cutoff, delta, false);
 }
 
-base::string16 TimeFormat::DetailedWithMonthAndYear(
+std::u16string TimeFormat::DetailedWithMonthAndYear(
     TimeFormat::Format format,
     TimeFormat::Length length,
     int cutoff,
     const base::TimeDelta& delta,
     bool with_month_and_year) {
-  DCHECK_GE(delta, TimeDelta());
+  DCHECK_GE(delta, base::TimeDelta());
 
   // Negative cutoff: always use two-value format.
   if (cutoff < 0)
     cutoff = std::numeric_limits<int>::max();
 
-  constexpr TimeDelta kMinute = TimeDelta::FromMinutes(1);
-  constexpr TimeDelta kHour = TimeDelta::FromHours(1);
-  constexpr TimeDelta kDay = TimeDelta::FromDays(1);
+  constexpr base::TimeDelta kMinute = base::Minutes(1);
+  constexpr base::TimeDelta kHour = base::Hours(1);
+  constexpr base::TimeDelta kDay = base::Days(1);
 
   // Simplify one year to be 365 days.
-  constexpr TimeDelta kYear = 365 * kDay;
+  constexpr base::TimeDelta kYear = 365 * kDay;
 
   // An average month is a twelfth of a year.
-  constexpr TimeDelta kMonth = kYear / 12;
+  constexpr base::TimeDelta kMonth = kYear / 12;
 
-  constexpr TimeDelta kHalfSecond = TimeDelta::FromSeconds(1) / 2;
-  constexpr TimeDelta kHalfMinute = kMinute / 2;
-  constexpr TimeDelta kHalfHour = kHour / 2;
-  constexpr TimeDelta kHalfDay = kDay / 2;
+  constexpr base::TimeDelta kHalfSecond = base::Seconds(1) / 2;
+  constexpr base::TimeDelta kHalfMinute = kMinute / 2;
+  constexpr base::TimeDelta kHalfHour = kHour / 2;
+  constexpr base::TimeDelta kHalfDay = kDay / 2;
 
   // Rationale: Start by determining major (first) unit, then add minor (second)
   // unit if mandated by |cutoff|.
@@ -143,32 +141,30 @@ base::string16 TimeFormat::DetailedWithMonthAndYear(
 
   const int capacity = time_string.length() + 1;
   DCHECK_GT(capacity, 1);
-  base::string16 result;
+  std::u16string result;
   UErrorCode error = U_ZERO_ERROR;
-  time_string.extract(
-      base::i18n::ToUCharPtr(base::WriteInto(&result, capacity)), capacity,
-      error);
+  time_string.extract(base::WriteInto(&result, capacity), capacity, error);
   DCHECK(U_SUCCESS(error));
   return result;
 }
 
 // static
-base::string16 TimeFormat::RelativeDate(
+std::u16string TimeFormat::RelativeDate(
     const base::Time& time,
     const base::Time* optional_midnight_today) {
   const base::Time midnight_today = optional_midnight_today
                                         ? *optional_midnight_today
                                         : base::Time::Now().LocalMidnight();
-  constexpr TimeDelta kDay = TimeDelta::FromDays(1);
+  constexpr base::TimeDelta kDay = base::Days(1);
   const base::Time tomorrow = midnight_today + kDay;
   const base::Time yesterday = midnight_today - kDay;
   if (time >= tomorrow)
-    return base::string16();
+    return std::u16string();
   if (time >= midnight_today)
     return l10n_util::GetStringUTF16(IDS_PAST_TIME_TODAY);
   return (time >= yesterday)
              ? l10n_util::GetStringUTF16(IDS_PAST_TIME_YESTERDAY)
-             : base::string16();
+             : std::u16string();
 }
 
 }  // namespace ui

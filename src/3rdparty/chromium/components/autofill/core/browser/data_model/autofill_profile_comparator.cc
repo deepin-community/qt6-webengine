@@ -10,19 +10,20 @@
 #include "base/i18n/case_conversion.h"
 #include "base/i18n/char_iterator.h"
 #include "base/i18n/unicodestring.h"
-#include "base/optional.h"
+#include "base/ranges/algorithm.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversion_utils.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/autofill/core/browser/address_rewriter.h"
 #include "components/autofill/core/browser/autofill_data_util.h"
-#include "components/autofill/core/browser/autofill_metrics.h"
 #include "components/autofill/core/browser/data_model/autofill_structured_address_utils.h"
 #include "components/autofill/core/browser/geo/autofill_country.h"
 #include "components/autofill/core/browser/geo/state_names.h"
+#include "components/autofill/core/browser/metrics/autofill_metrics.h"
 #include "components/autofill/core/common/autofill_clock.h"
 #include "components/autofill/core/common/autofill_features.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/libphonenumber/phonenumber_api.h"
 
 using base::UTF16ToUTF8;
@@ -32,7 +33,7 @@ using i18n::phonenumbers::PhoneNumberUtil;
 namespace autofill {
 namespace {
 
-const base::char16 kSpace[] = {L' ', L'\0'};
+constexpr char16_t kSpace[] = u" ";
 
 bool ContainsNewline(base::StringPiece16 text) {
   return text.find('\n') != base::StringPiece16::npos;
@@ -108,7 +109,7 @@ class NormalizingIterator {
   // previous character was punctuation or white space so that one or more
   // consecutive embedded punctuation and white space characters can be
   // collapsed to a single white space.
-  bool previous_was_skippable_;
+  bool previous_was_skippable_ = false;
 
   // True if punctuation and white space within the string should be collapsed
   // to a single white space.
@@ -120,8 +121,7 @@ class NormalizingIterator {
 NormalizingIterator::NormalizingIterator(
     const base::StringPiece16& text,
     AutofillProfileComparator::WhitespaceSpec whitespace_spec)
-    : previous_was_skippable_(false),
-      collapse_skippable_(whitespace_spec ==
+    : collapse_skippable_(whitespace_spec ==
                           AutofillProfileComparator::RETAIN_WHITESPACE),
       iter_(text) {
   int32_t character = iter_.get();
@@ -192,29 +192,112 @@ int32_t NormalizingIterator::GetNextChar() {
 // Copies the address line information and structured tokens from |source| to
 // |target|.
 void CopyAddressLineInformationFromProfile(const AutofillProfile& source,
-                                           Address* target) {
-  ServerFieldTypeSet types_to_copy;
-  if (base::FeatureList::IsEnabled(
-          features::kAutofillAddressEnhancementVotes)) {
-    types_to_copy = {
-        ADDRESS_HOME_STREET_ADDRESS,        ADDRESS_HOME_STREET_NAME,
-        ADDRESS_HOME_DEPENDENT_STREET_NAME, ADDRESS_HOME_HOUSE_NUMBER,
-        ADDRESS_HOME_PREMISE_NAME,          ADDRESS_HOME_SUBPREMISE};
-  } else {
-    types_to_copy = {ADDRESS_HOME_STREET_ADDRESS};
-  }
+                                           Address& target) {
+  target.SetRawInfo(ADDRESS_HOME_STREET_ADDRESS,
+                    source.GetRawInfo(ADDRESS_HOME_STREET_ADDRESS));
+}
 
-  for (const auto& type : types_to_copy)
-    target->SetRawInfo(type, source.GetRawInfo(type));
+// Sorts |profiles| by frecency.
+void SortProfilesByFrecency(std::vector<AutofillProfile*>* profiles) {
+  base::Time comparison_time = AutofillClock::Now();
+  std::sort(
+      profiles->begin(), profiles->end(),
+      [comparison_time](const AutofillProfile* a, const AutofillProfile* b) {
+        return a->HasGreaterFrecencyThan(b, comparison_time);
+      });
 }
 
 }  // namespace
+
+// The values corresponding to those types are visible in the settings.
+ServerFieldTypeSet GetUserVisibleTypes() {
+  static const ServerFieldTypeSet user_visibe_type = {
+      NAME_FULL,
+      NAME_HONORIFIC_PREFIX,
+      ADDRESS_HOME_STREET_ADDRESS,
+      ADDRESS_HOME_CITY,
+      ADDRESS_HOME_DEPENDENT_LOCALITY,
+      ADDRESS_HOME_STATE,
+      ADDRESS_HOME_ZIP,
+      ADDRESS_HOME_COUNTRY,
+      EMAIL_ADDRESS,
+      PHONE_HOME_WHOLE_NUMBER,
+      COMPANY_NAME};
+  return user_visibe_type;
+}
+
+bool ProfileValueDifference::operator==(
+    const ProfileValueDifference& right) const {
+  return (type == right.type) && (first_value == right.first_value) &&
+         (second_value == right.second_value);
+}
 
 AutofillProfileComparator::AutofillProfileComparator(
     const base::StringPiece& app_locale)
     : app_locale_(app_locale.data(), app_locale.size()) {}
 
 AutofillProfileComparator::~AutofillProfileComparator() = default;
+
+std::vector<ProfileValueDifference>
+AutofillProfileComparator::GetProfileDifference(
+    const AutofillProfile& first_profile,
+    const AutofillProfile& second_profile,
+    ServerFieldTypeSet types,
+    const std::string& app_locale) {
+  std::vector<ProfileValueDifference> difference;
+  difference.reserve(types.size());
+
+  for (auto type : types) {
+    const std::u16string& first_value = first_profile.GetInfo(type, app_locale);
+    const std::u16string& second_value =
+        second_profile.GetInfo(type, app_locale);
+    if (first_value != second_value) {
+      difference.emplace_back(
+          ProfileValueDifference{type, first_value, second_value});
+    }
+  }
+  return difference;
+}
+
+base::flat_map<ServerFieldType, std::pair<std::u16string, std::u16string>>
+AutofillProfileComparator::GetProfileDifferenceMap(
+    const AutofillProfile& first_profile,
+    const AutofillProfile& second_profile,
+    ServerFieldTypeSet types,
+    const std::string& app_locale) {
+  std::vector<
+      std::pair<ServerFieldType, std::pair<std::u16string, std::u16string>>>
+      result;
+  result.reserve(types.size());
+
+  for (auto& diff : AutofillProfileComparator::GetProfileDifference(
+           first_profile, second_profile, types, app_locale)) {
+    result.push_back(
+        {diff.type,
+         {std::move(diff.first_value), std::move(diff.second_value)}});
+  }
+  return base::flat_map<ServerFieldType,
+                        std::pair<std::u16string, std::u16string>>(
+      std::move(result));
+}
+
+std::vector<ProfileValueDifference>
+AutofillProfileComparator::GetSettingsVisibleProfileDifference(
+    const AutofillProfile& first_profile,
+    const AutofillProfile& second_profile,
+    const std::string& app_locale) {
+  return GetProfileDifference(first_profile, second_profile,
+                              GetUserVisibleTypes(), app_locale);
+}
+
+base::flat_map<ServerFieldType, std::pair<std::u16string, std::u16string>>
+AutofillProfileComparator::GetSettingsVisibleProfileDifferenceMap(
+    const AutofillProfile& first_profile,
+    const AutofillProfile& second_profile,
+    const std::string& app_locale) {
+  return GetProfileDifferenceMap(first_profile, second_profile,
+                                 GetUserVisibleTypes(), app_locale);
+}
 
 bool AutofillProfileComparator::Compare(base::StringPiece16 text1,
                                         base::StringPiece16 text2,
@@ -261,7 +344,7 @@ bool AutofillProfileComparator::HasOnlySkippableCharacters(
       .End();
 }
 
-base::string16 AutofillProfileComparator::NormalizeForComparison(
+std::u16string AutofillProfileComparator::NormalizeForComparison(
     base::StringPiece16 text,
     AutofillProfileComparator::WhitespaceSpec whitespace_spec) {
   // This algorithm is not designed to be perfect, we could get arbitrarily
@@ -280,7 +363,7 @@ base::string16 AutofillProfileComparator::NormalizeForComparison(
   //
   // 3. Remove diacritics (accents and other non-spacing marks) and perform
   //    case folding to lower-case.
-  base::string16 result;
+  std::u16string result;
   result.reserve(text.length());
   bool previous_was_whitespace = (whitespace_spec == RETAIN_WHITESPACE);
   for (base::i18n::UTF16CharIterator iter(text); !iter.end(); iter.Advance()) {
@@ -339,12 +422,12 @@ bool AutofillProfileComparator::AreMergeable(const AutofillProfile& p1,
 
 bool AutofillProfileComparator::MergeNames(const AutofillProfile& p1,
                                            const AutofillProfile& p2,
-                                           NameInfo* name_info) const {
+                                           NameInfo& name_info) const {
   DCHECK(HaveMergeableNames(p1, p2));
 
   const AutofillType kFullName(NAME_FULL);
-  const base::string16 full_name_1 = p1.GetInfo(kFullName, app_locale_);
-  const base::string16 full_name_2 = p2.GetInfo(kFullName, app_locale_);
+  const std::u16string full_name_1 = p1.GetInfo(kFullName, app_locale_);
+  const std::u16string full_name_2 = p2.GetInfo(kFullName, app_locale_);
 
   // At this state it is already determined that the two names are mergeable.
   // This can mean of of the following things:
@@ -355,22 +438,22 @@ bool AutofillProfileComparator::MergeNames(const AutofillProfile& p1,
   // name. Note, p1 is the newer profile.
   if (structured_address::StructuredNamesEnabled()) {
     // First, set info to the original profile.
-    *name_info = p2.GetNameInfo();
+    name_info = p2.GetNameInfo();
     // If the name of the |p1| is empty, just keep the state of p2.
     if (HasOnlySkippableCharacters(full_name_1))
       return true;
     // Vice verse set name to the one of |p1| if |p2| has an empty name
     if (HasOnlySkippableCharacters(full_name_2)) {
-      *name_info = p1.GetNameInfo();
+      name_info = p1.GetNameInfo();
       return true;
     }
     // Try to apply a direct merging.
-    if (name_info->MergeStructuredName(p1.GetNameInfo()))
+    if (name_info.MergeStructuredName(p1.GetNameInfo()))
       return true;
     // If the name in |p2| is a variant of |p1| use the one in |p1|.
     if (IsNameVariantOf(NormalizeForComparison(full_name_1),
                         NormalizeForComparison(full_name_2))) {
-      *name_info = p1.GetNameInfo();
+      name_info = p1.GetNameInfo();
       return true;
     }
     // The only left case is that |p1| is a variant of |p2|.
@@ -378,7 +461,7 @@ bool AutofillProfileComparator::MergeNames(const AutofillProfile& p1,
                            NormalizeForComparison(full_name_1)));
     return true;
   }
-  const base::string16* best_name = nullptr;
+  const std::u16string* best_name = nullptr;
   if (HasOnlySkippableCharacters(full_name_1)) {
     // p1 has no name, so use the name from p2.
     best_name = &full_name_2;
@@ -399,20 +482,20 @@ bool AutofillProfileComparator::MergeNames(const AutofillProfile& p1,
     best_name = &full_name_2;
   }
 
-  name_info->SetInfo(AutofillType(NAME_FULL), *best_name, app_locale_);
+  name_info.SetInfo(AutofillType(NAME_FULL), *best_name, app_locale_);
   return true;
 }
 
 bool AutofillProfileComparator::MergeCJKNames(const AutofillProfile& p1,
                                               const AutofillProfile& p2,
-                                              NameInfo* info) const {
+                                              NameInfo& info) const {
   DCHECK(data_util::IsCJKName(p1.GetInfo(NAME_FULL, app_locale_)));
   DCHECK(data_util::IsCJKName(p2.GetInfo(NAME_FULL, app_locale_)));
 
   struct Name {
-    base::string16 given;
-    base::string16 surname;
-    base::string16 full;
+    std::u16string given;
+    std::u16string surname;
+    std::u16string full;
   };
 
   Name name1 = {p1.GetRawInfo(NAME_FIRST), p1.GetRawInfo(NAME_LAST),
@@ -452,32 +535,32 @@ bool AutofillProfileComparator::MergeCJKNames(const AutofillProfile& p1,
       name_parts_candidate->surname.empty()) {
     // The name was not split correctly into a given/surname, so use the logic
     // from |SplitName()|.
-    info->SetInfo(AutofillType(NAME_FULL), full_name_candidate->full,
-                  app_locale_);
+    info.SetInfo(AutofillType(NAME_FULL), full_name_candidate->full,
+                 app_locale_);
   } else {
     // The name was already split into a given/surname, so keep those intact.
     if (!full_name_candidate->full.empty()) {
-      info->SetRawInfo(NAME_FULL, full_name_candidate->full);
+      info.SetRawInfo(NAME_FULL, full_name_candidate->full);
     }
-    info->SetRawInfo(NAME_FIRST, name_parts_candidate->given);
-    info->SetRawInfo(NAME_LAST, name_parts_candidate->surname);
+    info.SetRawInfo(NAME_FIRST, name_parts_candidate->given);
+    info.SetRawInfo(NAME_LAST, name_parts_candidate->surname);
   }
 
   return true;
 }
 
 bool AutofillProfileComparator::IsNameVariantOf(
-    const base::string16& full_name_1,
-    const base::string16& full_name_2) const {
+    const std::u16string& full_name_1,
+    const std::u16string& full_name_2) const {
   data_util::NameParts name_1_parts = data_util::SplitName(full_name_1);
 
   // Build the variants of full_name_1`s given, middle and family names.
   //
   // TODO(rogerm): Figure out whether or not we should break apart a compound
   // family name into variants (crbug/619051)
-  const std::set<base::string16> given_name_variants =
+  const std::set<std::u16string> given_name_variants =
       GetNamePartVariants(name_1_parts.given);
-  const std::set<base::string16> middle_name_variants =
+  const std::set<std::u16string> middle_name_variants =
       GetNamePartVariants(name_1_parts.middle);
   base::StringPiece16 family_name = name_1_parts.family;
 
@@ -485,7 +568,7 @@ bool AutofillProfileComparator::IsNameVariantOf(
   // match the full name from profile 1.
   for (const auto& given_name : given_name_variants) {
     for (const auto& middle_name : middle_name_variants) {
-      base::string16 candidate = base::CollapseWhitespace(
+      std::u16string candidate = base::CollapseWhitespace(
           base::JoinString({given_name, middle_name, family_name}, kSpace),
           true);
       if (candidate == full_name_2)
@@ -496,10 +579,10 @@ bool AutofillProfileComparator::IsNameVariantOf(
   // Also check if the name is just composed of the user's initials. For
   // example, "thomas jefferson miller" could be composed as "tj miller".
   if (!name_1_parts.given.empty() && !name_1_parts.middle.empty()) {
-    base::string16 initials;
+    std::u16string initials;
     initials.push_back(name_1_parts.given[0]);
     initials.push_back(name_1_parts.middle[0]);
-    base::string16 candidate = base::CollapseWhitespace(
+    std::u16string candidate = base::CollapseWhitespace(
         base::JoinString({initials, family_name}, kSpace), true);
     if (candidate == full_name_2)
       return true;
@@ -512,13 +595,13 @@ bool AutofillProfileComparator::IsNameVariantOf(
 bool AutofillProfileComparator::MergeEmailAddresses(
     const AutofillProfile& p1,
     const AutofillProfile& p2,
-    EmailInfo* email_info) const {
+    EmailInfo& email_info) const {
   DCHECK(HaveMergeableEmailAddresses(p1, p2));
 
   const AutofillType kEmailAddress(EMAIL_ADDRESS);
-  const base::string16& e1 = p1.GetInfo(kEmailAddress, app_locale_);
-  const base::string16& e2 = p2.GetInfo(kEmailAddress, app_locale_);
-  const base::string16* best = nullptr;
+  const std::u16string& e1 = p1.GetInfo(kEmailAddress, app_locale_);
+  const std::u16string& e2 = p2.GetInfo(kEmailAddress, app_locale_);
+  const std::u16string* best = nullptr;
 
   if (e1.empty()) {
     best = &e2;
@@ -528,18 +611,18 @@ bool AutofillProfileComparator::MergeEmailAddresses(
     best = p2.use_date() > p1.use_date() ? &e2 : &e1;
   }
 
-  email_info->SetInfo(kEmailAddress, *best, app_locale_);
+  email_info.SetInfo(kEmailAddress, *best, app_locale_);
   return true;
 }
 
 bool AutofillProfileComparator::MergeCompanyNames(
     const AutofillProfile& p1,
     const AutofillProfile& p2,
-    CompanyInfo* company_info) const {
+    CompanyInfo& company_info) const {
   const AutofillType kCompanyName(COMPANY_NAME);
-  const base::string16& c1 = p1.GetInfo(kCompanyName, app_locale_);
-  const base::string16& c2 = p2.GetInfo(kCompanyName, app_locale_);
-  const base::string16* best = nullptr;
+  const std::u16string& c1 = p1.GetInfo(kCompanyName, app_locale_);
+  const std::u16string& c2 = p2.GetInfo(kCompanyName, app_locale_);
+  const std::u16string* best = nullptr;
 
   DCHECK(HaveMergeableCompanyNames(p1, p2))
       << "Company names are not mergeable: '" << c1 << "' vs '" << c2 << "'";
@@ -562,32 +645,32 @@ bool AutofillProfileComparator::MergeCompanyNames(
       break;
   }
 
-  company_info->SetInfo(kCompanyName, *best, app_locale_);
+  company_info.SetInfo(kCompanyName, *best, app_locale_);
   return true;
 }
 
 bool AutofillProfileComparator::MergePhoneNumbers(
     const AutofillProfile& p1,
     const AutofillProfile& p2,
-    PhoneNumber* phone_number) const {
+    PhoneNumber& phone_number) const {
   const ServerFieldType kWholePhoneNumber = PHONE_HOME_WHOLE_NUMBER;
-  const base::string16& s1 = p1.GetRawInfo(kWholePhoneNumber);
-  const base::string16& s2 = p2.GetRawInfo(kWholePhoneNumber);
+  const std::u16string& s1 = p1.GetRawInfo(kWholePhoneNumber);
+  const std::u16string& s2 = p2.GetRawInfo(kWholePhoneNumber);
 
   DCHECK(HaveMergeablePhoneNumbers(p1, p2))
       << "Phone numbers are not mergeable: '" << s1 << "' vs '" << s2 << "'";
 
   if (HasOnlySkippableCharacters(s1) && HasOnlySkippableCharacters(s2)) {
-    phone_number->SetRawInfo(kWholePhoneNumber, base::string16());
+    phone_number.SetRawInfo(kWholePhoneNumber, std::u16string());
   }
 
   if (HasOnlySkippableCharacters(s1)) {
-    phone_number->SetRawInfo(kWholePhoneNumber, s2);
+    phone_number.SetRawInfo(kWholePhoneNumber, s2);
     return true;
   }
 
   if (HasOnlySkippableCharacters(s2) || s1 == s2) {
-    phone_number->SetRawInfo(kWholePhoneNumber, s1);
+    phone_number.SetRawInfo(kWholePhoneNumber, s1);
     return true;
   }
 
@@ -657,57 +740,57 @@ bool AutofillProfileComparator::MergePhoneNumbers(
     new_number = new_number.substr(offset);
   }
 
-  phone_number->SetRawInfo(kWholePhoneNumber, UTF8ToUTF16(new_number));
+  phone_number.SetRawInfo(kWholePhoneNumber, UTF8ToUTF16(new_number));
   return true;
 }
 
 bool AutofillProfileComparator::MergeAddresses(const AutofillProfile& p1,
                                                const AutofillProfile& p2,
-                                               Address* address) const {
+                                               Address& address) const {
   DCHECK(HaveMergeableAddresses(p1, p2));
 
   // TODO(crbug.com/1130194): Clean legacy implementation once structured
   // addresses are fully launched.
   if (structured_address::StructuredAddressesEnabled()) {
     // Note that p1 is the newer address. Using p2 as the base.
-    *address = p2.GetAddress();
-    return address->MergeStructuredAddress(p1.GetAddress(),
-                                           p2.use_date() < p1.use_date());
+    address = p2.GetAddress();
+    return address.MergeStructuredAddress(p1.GetAddress(),
+                                          p2.use_date() < p1.use_date());
   }
 
   // One of the countries is empty or they are the same modulo case, so we just
   // have to find the non-empty one, if any.
   const AutofillType kCountryCode(HTML_TYPE_COUNTRY_CODE, HTML_MODE_NONE);
-  const base::string16& country_code =
+  const std::u16string& country_code =
       base::i18n::ToUpper(GetNonEmptyOf(p1, p2, kCountryCode));
-  address->SetInfo(kCountryCode, country_code, app_locale_);
+  address.SetInfo(kCountryCode, country_code, app_locale_);
 
   // One of the zip codes is empty, they are the same, or one is a substring
   // of the other. We prefer the most recently used zip code.
   const AutofillType kZipCode(ADDRESS_HOME_ZIP);
-  const base::string16& zip1 = p1.GetInfo(kZipCode, app_locale_);
-  const base::string16& zip2 = p2.GetInfo(kZipCode, app_locale_);
+  const std::u16string& zip1 = p1.GetInfo(kZipCode, app_locale_);
+  const std::u16string& zip2 = p2.GetInfo(kZipCode, app_locale_);
   if (zip1.empty()) {
-    address->SetInfo(kZipCode, zip2, app_locale_);
+    address.SetInfo(kZipCode, zip2, app_locale_);
   } else if (zip2.empty()) {
-    address->SetInfo(kZipCode, zip1, app_locale_);
+    address.SetInfo(kZipCode, zip1, app_locale_);
   } else {
-    address->SetInfo(kZipCode, (p2.use_date() > p1.use_date() ? zip2 : zip1),
-                     app_locale_);
+    address.SetInfo(kZipCode, (p2.use_date() > p1.use_date() ? zip2 : zip1),
+                    app_locale_);
   }
 
   // One of the states is empty or one of the states has a subset of tokens from
   // the other. Pick the non-empty state that is shorter. This is usually the
   // abbreviated one.
   const AutofillType kState(ADDRESS_HOME_STATE);
-  const base::string16& state1 = p1.GetInfo(kState, app_locale_);
-  const base::string16& state2 = p2.GetInfo(kState, app_locale_);
+  const std::u16string& state1 = p1.GetInfo(kState, app_locale_);
+  const std::u16string& state2 = p2.GetInfo(kState, app_locale_);
 
   if (base::FeatureList::IsEnabled(
           features::kAutofillUseAlternativeStateNameMap)) {
     // Holds information about the state string that is going to be used as the
     // state value in the merged profile.
-    base::string16 candidate_state = state1;
+    std::u16string candidate_state = state1;
 
     // Cases where the |state2| is used as the state value in the merged
     // profile:
@@ -733,16 +816,15 @@ bool AutofillProfileComparator::MergeAddresses(const AutofillProfile& p1,
       }
     }
 
-    address->SetInfo(kState, candidate_state, app_locale_);
+    address.SetInfo(kState, candidate_state, app_locale_);
   } else {
     if (state1.empty()) {
-      address->SetInfo(kState, state2, app_locale_);
+      address.SetInfo(kState, state2, app_locale_);
     } else if (state2.empty()) {
-      address->SetInfo(kState, state1, app_locale_);
+      address.SetInfo(kState, state1, app_locale_);
     } else {
-      address->SetInfo(kState,
-                       (state2.size() < state1.size() ? state2 : state1),
-                       app_locale_);
+      address.SetInfo(kState, (state2.size() < state1.size() ? state2 : state1),
+                      app_locale_);
     }
   }
 
@@ -752,12 +834,12 @@ bool AutofillProfileComparator::MergeAddresses(const AutofillProfile& p1,
   // the other. Pick the city name with more tokens; this is usually the most
   // explicit one.
   const AutofillType kCity(ADDRESS_HOME_CITY);
-  const base::string16& city1 = p1.GetInfo(kCity, app_locale_);
-  const base::string16& city2 = p2.GetInfo(kCity, app_locale_);
+  const std::u16string& city1 = p1.GetInfo(kCity, app_locale_);
+  const std::u16string& city2 = p2.GetInfo(kCity, app_locale_);
   if (city1.empty()) {
-    address->SetInfo(kCity, city2, app_locale_);
+    address.SetInfo(kCity, city2, app_locale_);
   } else if (city2.empty()) {
-    address->SetInfo(kCity, city1, app_locale_);
+    address.SetInfo(kCity, city1, app_locale_);
   } else {
     // Prefer the one with more tokens, making sure to apply address
     // normalization and rewriting before doing the comparison.
@@ -768,16 +850,16 @@ bool AutofillProfileComparator::MergeAddresses(const AutofillProfile& p1,
       case SAME_TOKENS:
         // They have the same set of unique tokens. Let's pick the more recently
         // used one.
-        address->SetInfo(kCity, (p2.use_date() > p1.use_date() ? city2 : city1),
-                         app_locale_);
+        address.SetInfo(kCity, (p2.use_date() > p1.use_date() ? city2 : city1),
+                        app_locale_);
         break;
       case S1_CONTAINS_S2:
         // city1 has more unique tokens than city2.
-        address->SetInfo(kCity, city1, app_locale_);
+        address.SetInfo(kCity, city1, app_locale_);
         break;
       case S2_CONTAINS_S1:
         // city2 has more unique tokens than city1.
-        address->SetInfo(kCity, city2, app_locale_);
+        address.SetInfo(kCity, city2, app_locale_);
         break;
       case DIFFERENT_TOKENS:
       default:
@@ -793,12 +875,12 @@ bool AutofillProfileComparator::MergeAddresses(const AutofillProfile& p1,
   // subset of tokens from the other. Pick the locality name with more tokens;
   // this is usually the most explicit one.
   const AutofillType kDependentLocality(ADDRESS_HOME_DEPENDENT_LOCALITY);
-  const base::string16& locality1 = p1.GetInfo(kDependentLocality, app_locale_);
-  const base::string16& locality2 = p2.GetInfo(kDependentLocality, app_locale_);
+  const std::u16string& locality1 = p1.GetInfo(kDependentLocality, app_locale_);
+  const std::u16string& locality2 = p2.GetInfo(kDependentLocality, app_locale_);
   if (locality1.empty()) {
-    address->SetInfo(kDependentLocality, locality2, app_locale_);
+    address.SetInfo(kDependentLocality, locality2, app_locale_);
   } else if (locality2.empty()) {
-    address->SetInfo(kDependentLocality, locality1, app_locale_);
+    address.SetInfo(kDependentLocality, locality1, app_locale_);
   } else {
     // Prefer the one with more tokens, making sure to apply address
     // normalization and rewriting before doing the comparison.
@@ -809,18 +891,17 @@ bool AutofillProfileComparator::MergeAddresses(const AutofillProfile& p1,
       case SAME_TOKENS:
         // They have the same set of unique tokens. Let's pick the more recently
         // used one.
-        address->SetInfo(
-            kDependentLocality,
-            (p2.use_date() > p1.use_date() ? locality2 : locality1),
-            app_locale_);
+        address.SetInfo(kDependentLocality,
+                        (p2.use_date() > p1.use_date() ? locality2 : locality1),
+                        app_locale_);
         break;
       case S1_CONTAINS_S2:
         // locality1 has more unique tokens than locality2.
-        address->SetInfo(kDependentLocality, locality1, app_locale_);
+        address.SetInfo(kDependentLocality, locality1, app_locale_);
         break;
       case S2_CONTAINS_S1:
         // locality2 has more unique tokens than locality1.
-        address->SetInfo(kDependentLocality, locality2, app_locale_);
+        address.SetInfo(kDependentLocality, locality2, app_locale_);
         break;
       case DIFFERENT_TOKENS:
       default:
@@ -835,23 +916,23 @@ bool AutofillProfileComparator::MergeAddresses(const AutofillProfile& p1,
   // One of the sorting codes is empty, they are the same, or one is a substring
   // of the other. We prefer the most recently used sorting code.
   const AutofillType kSortingCode(ADDRESS_HOME_SORTING_CODE);
-  const base::string16& sorting1 = p1.GetInfo(kSortingCode, app_locale_);
-  const base::string16& sorting2 = p2.GetInfo(kSortingCode, app_locale_);
+  const std::u16string& sorting1 = p1.GetInfo(kSortingCode, app_locale_);
+  const std::u16string& sorting2 = p2.GetInfo(kSortingCode, app_locale_);
   if (sorting1.empty()) {
-    address->SetInfo(kSortingCode, sorting2, app_locale_);
+    address.SetInfo(kSortingCode, sorting2, app_locale_);
   } else if (sorting2.empty()) {
-    address->SetInfo(kSortingCode, sorting1, app_locale_);
+    address.SetInfo(kSortingCode, sorting1, app_locale_);
   } else {
-    address->SetInfo(kSortingCode,
-                     (p2.use_date() > p1.use_date() ? sorting2 : sorting1),
-                     app_locale_);
+    address.SetInfo(kSortingCode,
+                    (p2.use_date() > p1.use_date() ? sorting2 : sorting1),
+                    app_locale_);
   }
 
   // One of the addresses is empty or one of the addresses has a subset of
   // tokens from the other. Prefer the more verbosely expressed one.
   const AutofillType kStreetAddress(ADDRESS_HOME_STREET_ADDRESS);
-  const base::string16& address1 = p1.GetInfo(kStreetAddress, app_locale_);
-  const base::string16& address2 = p2.GetInfo(kStreetAddress, app_locale_);
+  const std::u16string& address1 = p1.GetInfo(kStreetAddress, app_locale_);
+  const std::u16string& address2 = p2.GetInfo(kStreetAddress, app_locale_);
   // If one of the addresses is empty then use the other.
   if (address1.empty()) {
     CopyAddressLineInformationFromProfile(p2, address);
@@ -901,6 +982,86 @@ bool AutofillProfileComparator::MergeAddresses(const AutofillProfile& p1,
     }
   }
   return true;
+}
+
+bool AutofillProfileComparator::MergeBirthdates(const AutofillProfile& p1,
+                                                const AutofillProfile& p2,
+                                                Birthdate& birthdate) const {
+  if (!base::FeatureList::IsEnabled(
+          features::kAutofillEnableCompatibilitySupportForBirthdates)) {
+    return true;
+  }
+  DCHECK(HaveMergeableBirthdates(p1, p2));
+
+  for (ServerFieldType component : Birthdate::GetRawComponents()) {
+    const std::u16string& component1 = p1.GetInfo(component, app_locale_);
+    const std::u16string& component2 = p2.GetInfo(component, app_locale_);
+    birthdate.SetInfo(component, component1.empty() ? component2 : component1,
+                      app_locale_);
+  }
+
+  return true;
+}
+
+bool AutofillProfileComparator::ProfilesHaveDifferentSettingsVisibleValues(
+    const AutofillProfile& p1,
+    const AutofillProfile& p2) {
+
+  // Return true if at least one value corresponding to the settings visible
+  // types is different between the two profiles.
+  return base::ranges::any_of(GetUserVisibleTypes(), [&](const auto type) {
+    return p1.GetRawInfo(type) != p2.GetRawInfo(type);
+  });
+}
+
+bool AutofillProfileComparator::IsMergeCandidate(
+    const AutofillProfile& existing_profile,
+    const AutofillProfile& new_profile,
+    const std::string& app_locale) {
+  // If the existing profile is not mergeable with the new profile, it is
+  // certainly not a merge candidate.
+  if (!AreMergeable(existing_profile, new_profile)) {
+    return false;
+  }
+
+  // Merge the two profiles. The return value from |MergeDataFrom()| indicates
+  // if the existing profile was modified during the merge.
+  AutofillProfile merged_profile = existing_profile;
+  if (!merged_profile.MergeDataFrom(new_profile, app_locale)) {
+    return false;
+  }
+
+  // If the two profiles have at least one settings-visible value that is
+  // different, |existing_profile| is a merge candidate.
+  return ProfilesHaveDifferentSettingsVisibleValues(merged_profile,
+                                                    existing_profile);
+}
+
+// static
+absl::optional<AutofillProfile>
+AutofillProfileComparator::GetAutofillProfileMergeCandidate(
+    const AutofillProfile& new_profile,
+    const std::vector<AutofillProfile*>& existing_profiles,
+    const std::string& app_locale) {
+  // Make a copy of the existing profiles for this function to have no side
+  // effects.
+  std::vector<AutofillProfile*> existing_profiles_copies = existing_profiles;
+
+  // Sort the profiles by frecency.
+  SortProfilesByFrecency(&existing_profiles_copies);
+
+  // Find and return the first profile that classifies as a merge candidate. If
+  // not profile classifies, return |absl::nullopt|.
+  AutofillProfileComparator comparator(app_locale);
+  auto merge_candidate = base::ranges::find_if(
+      existing_profiles_copies, [&](const AutofillProfile* existing_profile) {
+        return comparator.IsMergeCandidate(*existing_profile, new_profile,
+                                           app_locale);
+      });
+
+  return merge_candidate != existing_profiles_copies.end()
+             ? absl::make_optional(**merge_candidate)
+             : absl::nullopt;
 }
 
 // static
@@ -1004,19 +1165,19 @@ AutofillProfileComparator::CompareTokens(base::StringPiece16 s1,
   return DIFFERENT_TOKENS;
 }
 
-base::string16 AutofillProfileComparator::GetNonEmptyOf(
+std::u16string AutofillProfileComparator::GetNonEmptyOf(
     const AutofillProfile& p1,
     const AutofillProfile& p2,
     AutofillType t) const {
-  const base::string16& s1 = p1.GetInfo(t, app_locale_);
+  const std::u16string& s1 = p1.GetInfo(t, app_locale_);
   if (!s1.empty())
     return s1;
   return p2.GetInfo(t, app_locale_);
 }
 
 // static
-std::set<base::string16> AutofillProfileComparator::GetNamePartVariants(
-    const base::string16& name_part) {
+std::set<std::u16string> AutofillProfileComparator::GetNamePartVariants(
+    const std::u16string& name_part) {
   const size_t kMaxSupportedSubNames = 8;
 
   std::vector<base::StringPiece16> sub_names = base::SplitStringPiece(
@@ -1027,7 +1188,7 @@ std::set<base::string16> AutofillProfileComparator::GetNamePartVariants(
     return {name_part};
 
   // Start with the empty string as a variant.
-  std::set<base::string16> variants = {{}};
+  std::set<std::u16string> variants = {{}};
 
   // For each sub-name, add a variant of all the already existing variants that
   // appends this sub-name and one that appends the initial of this sub-name.
@@ -1035,8 +1196,8 @@ std::set<base::string16> AutofillProfileComparator::GetNamePartVariants(
   for (const auto& sub_name : sub_names) {
     if (sub_name.empty())
       continue;
-    std::vector<base::string16> new_variants;
-    for (const base::string16& variant : variants) {
+    std::vector<std::u16string> new_variants;
+    for (const std::u16string& variant : variants) {
       new_variants.push_back(base::CollapseWhitespace(
           base::JoinString({variant, sub_name}, kSpace), true));
       new_variants.push_back(base::CollapseWhitespace(
@@ -1047,7 +1208,7 @@ std::set<base::string16> AutofillProfileComparator::GetNamePartVariants(
 
   // As a common case, also add the variant that just concatenates all of the
   // initials.
-  base::string16 initials;
+  std::u16string initials;
   for (const auto& sub_name : sub_names) {
     if (sub_name.empty())
       continue;
@@ -1062,8 +1223,8 @@ std::set<base::string16> AutofillProfileComparator::GetNamePartVariants(
 bool AutofillProfileComparator::HaveMergeableNames(
     const AutofillProfile& p1,
     const AutofillProfile& p2) const {
-  base::string16 full_name_1 = p1.GetInfo(NAME_FULL, app_locale_);
-  base::string16 full_name_2 = p2.GetInfo(NAME_FULL, app_locale_);
+  std::u16string full_name_1 = p1.GetInfo(NAME_FULL, app_locale_);
+  std::u16string full_name_2 = p2.GetInfo(NAME_FULL, app_locale_);
 
   if (HasOnlySkippableCharacters(full_name_1) ||
       HasOnlySkippableCharacters(full_name_2) ||
@@ -1077,8 +1238,8 @@ bool AutofillProfileComparator::HaveMergeableNames(
       structured_address::AreStringTokenEquivalent(full_name_1, full_name_2))
     return true;
 
-  base::string16 canon_full_name_1 = NormalizeForComparison(full_name_1);
-  base::string16 canon_full_name_2 = NormalizeForComparison(full_name_2);
+  std::u16string canon_full_name_1 = NormalizeForComparison(full_name_1);
+  std::u16string canon_full_name_2 = NormalizeForComparison(full_name_2);
 
   // Is it reasonable to merge the names from p1 and p2.
   bool result = IsNameVariantOf(canon_full_name_1, canon_full_name_2) ||
@@ -1089,8 +1250,8 @@ bool AutofillProfileComparator::HaveMergeableNames(
 bool AutofillProfileComparator::HaveMergeableEmailAddresses(
     const AutofillProfile& p1,
     const AutofillProfile& p2) const {
-  const base::string16& email_1 = p1.GetInfo(EMAIL_ADDRESS, app_locale_);
-  const base::string16& email_2 = p2.GetInfo(EMAIL_ADDRESS, app_locale_);
+  const std::u16string& email_1 = p1.GetInfo(EMAIL_ADDRESS, app_locale_);
+  const std::u16string& email_2 = p2.GetInfo(EMAIL_ADDRESS, app_locale_);
   return email_1.empty() || email_2.empty() ||
          case_insensitive_compare_.StringsEqual(email_1, email_2);
 }
@@ -1098,8 +1259,8 @@ bool AutofillProfileComparator::HaveMergeableEmailAddresses(
 bool AutofillProfileComparator::HaveMergeableCompanyNames(
     const AutofillProfile& p1,
     const AutofillProfile& p2) const {
-  const base::string16& company_name_1 = p1.GetInfo(COMPANY_NAME, app_locale_);
-  const base::string16& company_name_2 = p2.GetInfo(COMPANY_NAME, app_locale_);
+  const std::u16string& company_name_1 = p1.GetInfo(COMPANY_NAME, app_locale_);
+  const std::u16string& company_name_2 = p2.GetInfo(COMPANY_NAME, app_locale_);
   return HasOnlySkippableCharacters(company_name_1) ||
          HasOnlySkippableCharacters(company_name_2) ||
          CompareTokens(NormalizeForComparison(company_name_1),
@@ -1112,8 +1273,8 @@ bool AutofillProfileComparator::HaveMergeablePhoneNumbers(
     const AutofillProfile& p2) const {
   // We work with the raw phone numbers to avoid losing any helpful information
   // as we parse.
-  const base::string16& raw_phone_1 = p1.GetRawInfo(PHONE_HOME_WHOLE_NUMBER);
-  const base::string16& raw_phone_2 = p2.GetRawInfo(PHONE_HOME_WHOLE_NUMBER);
+  const std::u16string& raw_phone_1 = p1.GetRawInfo(PHONE_HOME_WHOLE_NUMBER);
+  const std::u16string& raw_phone_2 = p2.GetRawInfo(PHONE_HOME_WHOLE_NUMBER);
 
   // Are the two phone numbers trivially mergeable?
   if (HasOnlySkippableCharacters(raw_phone_1) ||
@@ -1156,8 +1317,8 @@ bool AutofillProfileComparator::HaveMergeableAddresses(
   // If the address are not in the same country, then they're not the same. If
   // one of the address countries is unknown/invalid the comparison continues.
   const AutofillType kCountryCode(HTML_TYPE_COUNTRY_CODE, HTML_MODE_NONE);
-  const base::string16& country1 = p1.GetInfo(kCountryCode, app_locale_);
-  const base::string16& country2 = p2.GetInfo(kCountryCode, app_locale_);
+  const std::u16string& country1 = p1.GetInfo(kCountryCode, app_locale_);
+  const std::u16string& country2 = p2.GetInfo(kCountryCode, app_locale_);
   if (!country1.empty() && !country2.empty() &&
       !case_insensitive_compare_.StringsEqual(country1, country2)) {
     return false;
@@ -1168,13 +1329,13 @@ bool AutofillProfileComparator::HaveMergeableAddresses(
   // If the addresses are definitely not in the same zip/area code then we're
   // done. Otherwise,the comparison continues.
   const AutofillType kZipCode(ADDRESS_HOME_ZIP);
-  const base::string16& zip1 = NormalizeForComparison(
+  const std::u16string& zip1 = NormalizeForComparison(
       p1.GetInfo(kZipCode, app_locale_), DISCARD_WHITESPACE);
-  const base::string16& zip2 = NormalizeForComparison(
+  const std::u16string& zip2 = NormalizeForComparison(
       p2.GetInfo(kZipCode, app_locale_), DISCARD_WHITESPACE);
   if (!zip1.empty() && !zip2.empty() &&
-      zip1.find(zip2) == base::string16::npos &&
-      zip2.find(zip1) == base::string16::npos) {
+      zip1.find(zip2) == std::u16string::npos &&
+      zip2.find(zip1) == std::u16string::npos) {
     return false;
   }
 
@@ -1204,9 +1365,9 @@ bool AutofillProfileComparator::HaveMergeableAddresses(
   bool use_alternative_state_name_map_enabled = base::FeatureList::IsEnabled(
       features::kAutofillUseAlternativeStateNameMap);
   if (use_alternative_state_name_map_enabled) {
-    base::Optional<AlternativeStateNameMap::CanonicalStateName>
+    absl::optional<AlternativeStateNameMap::CanonicalStateName>
         canonical_name_state1 = p1.GetAddress().GetCanonicalizedStateName();
-    base::Optional<AlternativeStateNameMap::CanonicalStateName>
+    absl::optional<AlternativeStateNameMap::CanonicalStateName>
         canonical_name_state2 = p2.GetAddress().GetCanonicalizedStateName();
     if (canonical_name_state1 && canonical_name_state2) {
       if (canonical_name_state1.value() == canonical_name_state2.value())
@@ -1217,9 +1378,9 @@ bool AutofillProfileComparator::HaveMergeableAddresses(
   }
 
   if (!use_alternative_state_name_map_enabled || !canonical_state_names_match) {
-    base::string16 state1 = rewriter.Rewrite(
+    std::u16string state1 = rewriter.Rewrite(
         NormalizeForComparison(p1.GetInfo(kState, app_locale_)));
-    base::string16 state2 = rewriter.Rewrite(
+    std::u16string state2 = rewriter.Rewrite(
         NormalizeForComparison(p2.GetInfo(kState, app_locale_)));
     if (CompareTokens(state1, state2) == DIFFERENT_TOKENS) {
       return false;
@@ -1235,9 +1396,9 @@ bool AutofillProfileComparator::HaveMergeableAddresses(
   // that the two city strings are intended to have the same meaning. This
   // handles the cases where we have a city vs one of its suburbs.
   const AutofillType kCity(ADDRESS_HOME_CITY);
-  const base::string16& city1 =
+  const std::u16string& city1 =
       rewriter.Rewrite(NormalizeForComparison(p1.GetInfo(kCity, app_locale_)));
-  const base::string16& city2 =
+  const std::u16string& city2 =
       rewriter.Rewrite(NormalizeForComparison(p2.GetInfo(kCity, app_locale_)));
   if (CompareTokens(city1, city2) == DIFFERENT_TOKENS) {
     return false;
@@ -1248,9 +1409,9 @@ bool AutofillProfileComparator::HaveMergeableAddresses(
   // Heuristic: Dependent Localities are mergeable if one is a (possibly empty)
   // bag of words subset of the other.
   const AutofillType kDependentLocality(ADDRESS_HOME_DEPENDENT_LOCALITY);
-  const base::string16& locality1 = rewriter.Rewrite(
+  const std::u16string& locality1 = rewriter.Rewrite(
       NormalizeForComparison(p1.GetInfo(kDependentLocality, app_locale_)));
-  const base::string16& locality2 = rewriter.Rewrite(
+  const std::u16string& locality2 = rewriter.Rewrite(
       NormalizeForComparison(p2.GetInfo(kDependentLocality, app_locale_)));
   if (CompareTokens(locality1, locality2) == DIFFERENT_TOKENS) {
     return false;
@@ -1262,13 +1423,13 @@ bool AutofillProfileComparator::HaveMergeableAddresses(
   // substring of the other, post normalization and whitespace removed. This
   // is similar to postal/zip codes.
   const AutofillType kSortingCode(ADDRESS_HOME_SORTING_CODE);
-  const base::string16& sorting1 = NormalizeForComparison(
+  const std::u16string& sorting1 = NormalizeForComparison(
       p1.GetInfo(kSortingCode, app_locale_), DISCARD_WHITESPACE);
-  const base::string16& sorting2 = NormalizeForComparison(
+  const std::u16string& sorting2 = NormalizeForComparison(
       p2.GetInfo(kSortingCode, app_locale_), DISCARD_WHITESPACE);
   if (!sorting1.empty() && !sorting2.empty() &&
-      sorting1.find(sorting2) == base::string16::npos &&
-      sorting2.find(sorting1) == base::string16::npos) {
+      sorting1.find(sorting2) == std::u16string::npos &&
+      sorting2.find(sorting1) == std::u16string::npos) {
     return false;
   }
 
@@ -1276,15 +1437,31 @@ bool AutofillProfileComparator::HaveMergeableAddresses(
   // --------
   // Heuristic: Street addresses are mergeable if one is a (possibly empty) bag
   // of words subset of the other.
-  const base::string16& address1 = rewriter.Rewrite(NormalizeForComparison(
+  const std::u16string& address1 = rewriter.Rewrite(NormalizeForComparison(
       p1.GetInfo(ADDRESS_HOME_STREET_ADDRESS, app_locale_)));
-  const base::string16& address2 = rewriter.Rewrite(NormalizeForComparison(
+  const std::u16string& address2 = rewriter.Rewrite(NormalizeForComparison(
       p2.GetInfo(ADDRESS_HOME_STREET_ADDRESS, app_locale_)));
   if (CompareTokens(address1, address2) == DIFFERENT_TOKENS) {
     return false;
   }
 
   return true;
+}
+
+bool AutofillProfileComparator::HaveMergeableBirthdates(
+    const AutofillProfile& p1,
+    const AutofillProfile& p2) const {
+  if (!base::FeatureList::IsEnabled(
+          features::kAutofillEnableCompatibilitySupportForBirthdates)) {
+    return true;
+  }
+  return base::ranges::all_of(
+      Birthdate::GetRawComponents(), [&](ServerFieldType component) {
+        const std::u16string& component1 = p1.GetInfo(component, app_locale_);
+        const std::u16string& component2 = p2.GetInfo(component, app_locale_);
+        return component1.empty() || component2.empty() ||
+               component1 == component2;
+      });
 }
 
 }  // namespace autofill

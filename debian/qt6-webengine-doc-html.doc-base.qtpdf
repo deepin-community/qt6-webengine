@@ -1,0 +1,9 @@
+Document: qt6-pdf-manual
+Title: Qt 6 PDF
+Author: The Qt Company Ltd
+Abstract: This is the HTML documentation for Qt 6 PDF
+Section: Programming/C++
+
+Format: HTML
+Index: /usr/share/doc/qt6-webengine-doc-html/html/qtpdf/qtpdf-index.html
+Files: /usr/share/doc/qt6-webengine-doc-html/html/qtpdf/*.html

@@ -10,6 +10,7 @@
 #include "ui/gfx/mojom/buffer_types_mojom_traits.h"
 #include "ui/gfx/mojom/color_space_mojom_traits.h"
 #include "ui/gfx/mojom/display_color_spaces.mojom-shared.h"
+#include "ui/gfx/mojom/hdr_static_metadata_mojom_traits.h"
 
 namespace mojo {
 
@@ -29,10 +30,13 @@ struct COMPONENT_EXPORT(GFX_SHARED_MOJOM_TRAITS)
       const gfx::DisplayColorSpaces& input);
   static base::span<const gfx::BufferFormat> buffer_formats(
       const gfx::DisplayColorSpaces& input);
-  static float sdr_white_level(const gfx::DisplayColorSpaces& input) {
-    return input.GetSDRWhiteLevel();
+  static float sdr_max_luminance_nits(const gfx::DisplayColorSpaces& input) {
+    return input.GetSDRMaxLuminanceNits();
   }
-
+  static float hdr_max_luminance_relative(
+      const gfx::DisplayColorSpaces& input) {
+    return input.GetHDRMaxLuminanceRelative();
+  }
   static bool Read(gfx::mojom::DisplayColorSpacesDataView data,
                    gfx::DisplayColorSpaces* out);
 };

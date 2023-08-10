@@ -10,10 +10,9 @@
 #include "content/browser/service_worker/service_worker_cache_writer.h"
 #include "content/browser/service_worker/service_worker_context_core.h"
 #include "content/browser/service_worker/service_worker_version.h"
-#include "content/browser/url_loader_factory_getter.h"
-#include "content/common/service_worker/service_worker_utils.h"
 #include "net/base/ip_endpoint.h"
 #include "net/cert/cert_status_flags.h"
+#include "services/network/public/cpp/features.h"
 #include "services/network/public/mojom/url_response_head.mojom.h"
 #include "third_party/blink/public/common/mime_util/mime_util.h"
 
@@ -53,7 +52,7 @@ ServiceWorkerInstalledScriptLoader::~ServiceWorkerInstalledScriptLoader() =
 
 void ServiceWorkerInstalledScriptLoader::OnStarted(
     network::mojom::URLResponseHeadPtr response_head,
-    base::Optional<mojo_base::BigBuffer> metadata,
+    absl::optional<mojo_base::BigBuffer> metadata,
     mojo::ScopedDataPipeConsumerHandle body_handle,
     mojo::ScopedDataPipeConsumerHandle metadata_handle) {
   DCHECK(response_head);
@@ -75,11 +74,17 @@ void ServiceWorkerInstalledScriptLoader::OnStarted(
             *response_head));
   }
 
-  client_->OnReceiveResponse(std::move(response_head));
+  client_->OnReceiveResponse(
+      std::move(response_head),
+      base::FeatureList::IsEnabled(network::features::kCombineResponseBody)
+          ? std::move(body_handle_)
+          : mojo::ScopedDataPipeConsumerHandle());
   if (metadata) {
     client_->OnReceiveCachedMetadata(std::move(*metadata));
   }
-  client_->OnStartLoadingResponseBody(std::move(body_handle_));
+
+  if (!base::FeatureList::IsEnabled(network::features::kCombineResponseBody))
+    client_->OnStartLoadingResponseBody(std::move(body_handle_));
   // We continue in OnFinished().
 }
 
@@ -112,7 +117,7 @@ void ServiceWorkerInstalledScriptLoader::FollowRedirect(
     const std::vector<std::string>& removed_headers,
     const net::HttpRequestHeaders& modified_headers,
     const net::HttpRequestHeaders& modified_cors_exempt_headers,
-    const base::Optional<GURL>& new_url) {
+    const absl::optional<GURL>& new_url) {
   // This class never returns a redirect response to its client, so should never
   // be asked to follow one.
   NOTREACHED();

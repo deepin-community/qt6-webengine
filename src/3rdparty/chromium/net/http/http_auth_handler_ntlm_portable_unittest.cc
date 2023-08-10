@@ -2,11 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
 #include <string>
 
 #include "base/base64.h"
 #include "base/containers/span.h"
-#include "base/stl_util.h"
+#include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
@@ -28,6 +29,8 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/platform_test.h"
+#include "url/gurl.h"
+#include "url/scheme_host_port.h"
 
 namespace net {
 
@@ -35,26 +38,26 @@ class HttpAuthHandlerNtlmPortableTest : public PlatformTest {
  public:
   // Test input value defined in [MS-NLMP] Section 4.2.1.
   HttpAuthHandlerNtlmPortableTest() {
-    http_auth_preferences_.reset(new MockAllowHttpAuthPreferences());
+    http_auth_preferences_ = std::make_unique<MockAllowHttpAuthPreferences>();
     // Disable NTLMv2 for this end to end test because it's not possible
     // to mock all the required dependencies for NTLMv2 from here. These
     // tests are only of the overall flow, and the detailed tests of the
     // contents of the protocol messages are in ntlm_client_unittest.cc
     http_auth_preferences_->set_ntlm_v2_enabled(false);
-    factory_.reset(new HttpAuthHandlerNTLM::Factory());
+    factory_ = std::make_unique<HttpAuthHandlerNTLM::Factory>();
     factory_->set_http_auth_preferences(http_auth_preferences_.get());
     creds_ = AuthCredentials(
-        ntlm::test::kNtlmDomain + base::ASCIIToUTF16("\\") + ntlm::test::kUser,
+        base::StrCat({ntlm::test::kNtlmDomain, u"\\", ntlm::test::kUser}),
         ntlm::test::kPassword);
   }
 
   int CreateHandler() {
-    GURL gurl("https://foo.com");
+    url::SchemeHostPort scheme_host_port(GURL("https://foo.com"));
     SSLInfo null_ssl_info;
 
     return factory_->CreateAuthHandlerFromString(
         "NTLM", HttpAuth::AUTH_SERVER, null_ssl_info, NetworkIsolationKey(),
-        gurl, NetLogWithSource(), nullptr, &auth_handler_);
+        scheme_host_port, NetLogWithSource(), nullptr, &auth_handler_);
   }
 
   std::string CreateNtlmAuthHeader(base::span<const uint8_t> buffer) {
@@ -115,7 +118,7 @@ class HttpAuthHandlerNtlmPortableTest : public PlatformTest {
   // no assumptions about the underlying encoding. This will fail if there
   // are an odd number of bytes in the payload.
   void ReadString16Payload(ntlm::NtlmBufferReader* reader,
-                           base::string16* str) {
+                           std::u16string* str) {
     ntlm::SecurityBuffer sec_buf;
     EXPECT_TRUE(reader->ReadSecurityBuffer(&sec_buf));
     EXPECT_EQ(0, sec_buf.length % 2);
@@ -129,8 +132,7 @@ class HttpAuthHandlerNtlmPortableTest : public PlatformTest {
     }
 #endif
 
-    str->assign(reinterpret_cast<const base::char16*>(raw.data()),
-                raw.size() / 2);
+    str->assign(reinterpret_cast<const char16_t*>(raw.data()), raw.size() / 2);
   }
 
   int GetGenerateAuthTokenResult() {
@@ -232,7 +234,7 @@ TEST_F(HttpAuthHandlerNtlmPortableTest, NtlmV1AuthenticationSuccess) {
   // Validate the authenticate message
   std::string decoded;
   ASSERT_TRUE(DecodeChallenge(token, &decoded));
-  ASSERT_EQ(base::size(ntlm::test::kExpectedAuthenticateMsgSpecResponseV1),
+  ASSERT_EQ(std::size(ntlm::test::kExpectedAuthenticateMsgSpecResponseV1),
             decoded.size());
   ASSERT_EQ(0, memcmp(decoded.data(),
                       ntlm::test::kExpectedAuthenticateMsgSpecResponseV1,

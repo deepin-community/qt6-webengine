@@ -11,7 +11,9 @@
 #include "mojo/public/cpp/system/simple_watcher.h"
 #include "services/network/public/mojom/chunked_data_pipe_getter.mojom-blink.h"
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/platform/heap/member.h"
+#include "third_party/blink/renderer/platform/heap/prefinalizer.h"
 #include "third_party/blink/renderer/platform/loader/fetch/bytes_consumer.h"
 
 namespace base {
@@ -24,6 +26,8 @@ class CORE_EXPORT BytesUploader
     : public GarbageCollected<BytesUploader>,
       public BytesConsumer::Client,
       public network::mojom::blink::ChunkedDataPipeGetter {
+  USING_PRE_FINALIZER(BytesUploader, Dispose);
+
  public:
   BytesUploader(
       BytesConsumer* consumer,
@@ -51,6 +55,8 @@ class CORE_EXPORT BytesUploader
   void Close();
   // TODO(yoichio): Add a string parameter and show it on console.
   void CloseOnError();
+
+  void Dispose();
 
   Member<BytesConsumer> consumer_;
   mojo::Receiver<network::mojom::blink::ChunkedDataPipeGetter> receiver_;

@@ -25,6 +25,10 @@
 #    include <os/log.h>
 #endif
 
+#if defined(ANGLE_PLATFORM_WINDOWS)
+#    include <windows.h>
+#endif
+
 #include "anglebase/no_destructor.h"
 #include "common/Optional.h"
 #include "common/angleutils.h"
@@ -130,13 +134,15 @@ std::mutex &GetDebugMutex()
 }
 
 ScopedPerfEventHelper::ScopedPerfEventHelper(gl::Context *context, angle::EntryPoint entryPoint)
-    : mContext(context), mEntryPoint(entryPoint), mFunctionName(nullptr)
+    : mContext(context), mEntryPoint(entryPoint), mFunctionName(nullptr), mCalledBeginEvent(false)
 {}
 
 ScopedPerfEventHelper::~ScopedPerfEventHelper()
 {
-    // EGL_Terminate() can set g_debugAnnotator to nullptr; must call DebugAnnotationsActive() here
-    if (mFunctionName && DebugAnnotationsActive())
+    // EGL_Initialize() and EGL_Terminate() can change g_debugAnnotator.  Must check the value of
+    // g_debugAnnotator and whether ScopedPerfEventHelper::begin() initiated a begine that must be
+    // ended now.
+    if (DebugAnnotationsInitialized() && mCalledBeginEvent)
     {
         g_debugAnnotator->endEvent(mContext, mFunctionName, mEntryPoint);
     }
@@ -156,6 +162,7 @@ void ScopedPerfEventHelper::begin(const char *format, ...)
     ANGLE_LOG(EVENT) << std::string(&buffer[0], len);
     if (DebugAnnotationsInitialized())
     {
+        mCalledBeginEvent = true;
         g_debugAnnotator->beginEvent(mContext, mEntryPoint, mFunctionName, buffer.data());
     }
 }
@@ -225,7 +232,7 @@ void Trace(LogSeverity severity, const char *message)
     }
 
     if (severity == LOG_FATAL || severity == LOG_ERR || severity == LOG_WARN ||
-#if defined(ANGLE_ENABLE_TRACE_ANDROID_LOGCAT)
+#if defined(ANGLE_ENABLE_TRACE_ANDROID_LOGCAT) || defined(ANGLE_ENABLE_TRACE_EVENTS)
         severity == LOG_EVENT ||
 #endif
         severity == LOG_INFO)
@@ -326,14 +333,14 @@ std::string LogMessage::getMessage() const
 }
 
 #if defined(ANGLE_PLATFORM_WINDOWS)
-priv::FmtHexHelper<HRESULT> FmtHR(HRESULT value)
+priv::FmtHexHelper<HRESULT, char> FmtHR(HRESULT value)
 {
-    return priv::FmtHexHelper<HRESULT>("HRESULT: ", value);
+    return priv::FmtHexHelper<HRESULT, char>("HRESULT: ", value);
 }
 
-priv::FmtHexHelper<DWORD> FmtErr(DWORD value)
+priv::FmtHexHelper<DWORD, char> FmtErr(DWORD value)
 {
-    return priv::FmtHexHelper<DWORD>("error: ", value);
+    return priv::FmtHexHelper<DWORD, char>("error: ", value);
 }
 #endif  // defined(ANGLE_PLATFORM_WINDOWS)
 

@@ -10,7 +10,7 @@
 
 #include "base/i18n/time_formatting.h"
 #include "base/notreached.h"
-#include "base/stl_util.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "components/strings/grit/components_chromium_strings.h"
 #include "components/strings/grit/components_strings.h"
@@ -42,13 +42,15 @@ const CrashesUILocalizedString kCrashesUILocalizedStrings[] = {
 };
 
 const size_t kCrashesUILocalizedStringsCount =
-    base::size(kCrashesUILocalizedStrings);
+    std::size(kCrashesUILocalizedStrings);
 
 const char kCrashesUICrashesJS[] = "crashes.js";
+const char kCrashesUICrashesCSS[] = "crashes.css";
+const char kCrashesUISadTabSVG[] = "sadtab.svg";
 const char kCrashesUIRequestCrashList[] = "requestCrashList";
 const char kCrashesUIRequestCrashUpload[] = "requestCrashUpload";
 const char kCrashesUIShortProductName[] = "shortProductName";
-const char kCrashesUIUpdateCrashList[] = "updateCrashList";
+const char kCrashesUIUpdateCrashList[] = "update-crash-list";
 const char kCrashesUIRequestSingleCrashUpload[] = "requestSingleCrashUpload";
 
 std::string UploadInfoStateAsString(UploadList::UploadInfo::State state) {
@@ -73,18 +75,20 @@ void UploadListToValue(UploadList* upload_list, base::ListValue* out_value) {
 
   for (const auto& info : crashes) {
     std::unique_ptr<base::DictionaryValue> crash(new base::DictionaryValue());
-    crash->SetString("id", info.upload_id);
+    crash->SetStringKey("id", info.upload_id);
     if (info.state == UploadList::UploadInfo::State::Uploaded) {
-      crash->SetString("upload_time",
-                       base::TimeFormatFriendlyDateAndTime(info.upload_time));
+      crash->SetStringKey("upload_time",
+                          base::UTF16ToUTF8(base::TimeFormatFriendlyDateAndTime(
+                              info.upload_time)));
     }
     if (!info.capture_time.is_null()) {
-      crash->SetString("capture_time",
-                       base::TimeFormatFriendlyDateAndTime(info.capture_time));
+      crash->SetStringKey("capture_time",
+                          base::UTF16ToUTF8(base::TimeFormatFriendlyDateAndTime(
+                              info.capture_time)));
     }
-    crash->SetString("local_id", info.local_id);
-    crash->SetString("state", UploadInfoStateAsString(info.state));
-    crash->SetString("file_size", info.file_size);
+    crash->SetStringKey("local_id", info.local_id);
+    crash->SetStringKey("state", UploadInfoStateAsString(info.state));
+    crash->SetStringKey("file_size", base::UTF16ToUTF8(info.file_size));
     out_value->Append(std::move(crash));
   }
 }

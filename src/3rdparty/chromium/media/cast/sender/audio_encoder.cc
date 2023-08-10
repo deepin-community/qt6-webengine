@@ -15,8 +15,7 @@
 #include "base/callback_helpers.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/macros.h"
-#include "base/stl_util.h"
+#include "base/memory/raw_ptr.h"
 #include "base/sys_byteorder.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
@@ -25,11 +24,11 @@
 #include "media/cast/common/rtp_time.h"
 #include "media/cast/constants.h"
 
-#if !defined(OS_IOS)
+#if !BUILDFLAG(IS_IOS)
 #include "third_party/opus/src/include/opus.h"
 #endif
 
-#if defined(OS_MAC)
+#if BUILDFLAG(IS_MAC)
 #include <AudioToolbox/AudioToolbox.h>
 #endif
 
@@ -64,8 +63,8 @@ class AudioEncoder::ImplBase
         samples_per_frame_(samples_per_frame),
         callback_(std::move(callback)),
         operational_status_(STATUS_UNINITIALIZED),
-        frame_duration_(base::TimeDelta::FromSecondsD(
-            double{samples_per_frame_} / sampling_rate)),
+        frame_duration_(base::Seconds(static_cast<double>(samples_per_frame_) /
+                                      sampling_rate)),
         buffer_fill_end_(0),
         frame_id_(FrameId::first()),
         samples_dropped_from_buffer_(0) {
@@ -77,6 +76,9 @@ class AudioEncoder::ImplBase
       operational_status_ = STATUS_INVALID_CONFIGURATION;
     }
   }
+
+  ImplBase(const ImplBase&) = delete;
+  ImplBase& operator=(const ImplBase&) = delete;
 
   OperationalStatus InitializationResult() const {
     return operational_status_;
@@ -148,19 +150,19 @@ class AudioEncoder::ImplBase
       audio_frame->rtp_timestamp = frame_rtp_timestamp_;
       audio_frame->reference_time = frame_capture_time_;
 
-      TRACE_EVENT_ASYNC_BEGIN2("cast.stream", "Audio Encode", audio_frame.get(),
-                               "frame_id", frame_id_.lower_32_bits(),
-                               "rtp_timestamp",
-                               frame_rtp_timestamp_.lower_32_bits());
+      TRACE_EVENT_NESTABLE_ASYNC_BEGIN2(
+          "cast.stream", "Audio Encode", TRACE_ID_LOCAL(audio_frame.get()),
+          "frame_id", frame_id_.lower_32_bits(), "rtp_timestamp",
+          frame_rtp_timestamp_.lower_32_bits());
       if (EncodeFromFilledBuffer(&audio_frame->data)) {
         // Compute encoder utilization as the real-world time elapsed divided
         // by the signal duration.
         audio_frame->encoder_utilization =
             (base::TimeTicks::Now() - start_time) / frame_duration_;
 
-        TRACE_EVENT_ASYNC_END1("cast.stream", "Audio Encode", audio_frame.get(),
-                               "encoder_utilization",
-                               audio_frame->encoder_utilization);
+        TRACE_EVENT_NESTABLE_ASYNC_END1(
+            "cast.stream", "Audio Encode", TRACE_ID_LOCAL(audio_frame.get()),
+            "encoder_utilization", audio_frame->encoder_utilization);
 
         audio_frame->encode_completion_time =
             cast_environment_->Clock()->NowTicks();
@@ -227,11 +229,9 @@ class AudioEncoder::ImplBase
   // Set to non-zero to indicate the next output frame skipped over audio
   // samples in order to recover from an input underrun.
   int samples_dropped_from_buffer_;
-
-  DISALLOW_COPY_AND_ASSIGN(ImplBase);
 };
 
-#if !defined(OS_IOS)
+#if !BUILDFLAG(IS_IOS)
 class AudioEncoder::OpusImpl final : public AudioEncoder::ImplBase {
  public:
   OpusImpl(const scoped_refptr<CastEnvironment>& cast_environment,
@@ -269,9 +269,12 @@ class AudioEncoder::OpusImpl final : public AudioEncoder::ImplBase {
       // later versions.
       bitrate = OPUS_AUTO;
     }
-    CHECK_EQ(opus_encoder_ctl(opus_encoder_, OPUS_SET_BITRATE(bitrate)),
+    CHECK_EQ(opus_encoder_ctl(opus_encoder_.get(), OPUS_SET_BITRATE(bitrate)),
              OPUS_OK);
   }
+
+  OpusImpl(const OpusImpl&) = delete;
+  OpusImpl& operator=(const OpusImpl&) = delete;
 
  private:
   ~OpusImpl() final = default;
@@ -290,7 +293,7 @@ class AudioEncoder::OpusImpl final : public AudioEncoder::ImplBase {
     out->resize(kOpusMaxPayloadSize);
     const opus_int32 result = opus_encode_float(
         opus_encoder_, buffer_.get(), samples_per_frame_,
-        reinterpret_cast<uint8_t*>(base::data(*out)), kOpusMaxPayloadSize);
+        reinterpret_cast<uint8_t*>(std::data(*out)), kOpusMaxPayloadSize);
     if (result > 1) {
       out->resize(result);
       return true;
@@ -306,16 +309,16 @@ class AudioEncoder::OpusImpl final : public AudioEncoder::ImplBase {
 
   static bool IsValidFrameDuration(base::TimeDelta duration) {
     // See https://tools.ietf.org/html/rfc6716#section-2.1.4
-    return duration == base::TimeDelta::FromMicroseconds(2500) ||
-           duration == base::TimeDelta::FromMilliseconds(5) ||
-           duration == base::TimeDelta::FromMilliseconds(10) ||
-           duration == base::TimeDelta::FromMilliseconds(20) ||
-           duration == base::TimeDelta::FromMilliseconds(40) ||
-           duration == base::TimeDelta::FromMilliseconds(60);
+    return duration == base::Microseconds(2500) ||
+           duration == base::Milliseconds(5) ||
+           duration == base::Milliseconds(10) ||
+           duration == base::Milliseconds(20) ||
+           duration == base::Milliseconds(40) ||
+           duration == base::Milliseconds(60);
   }
 
   const std::unique_ptr<uint8_t[]> encoder_memory_;
-  OpusEncoder* const opus_encoder_;
+  const raw_ptr<OpusEncoder> opus_encoder_;
   const std::unique_ptr<float[]> buffer_;
 
   // This is the recommended value, according to documentation in
@@ -325,13 +328,11 @@ class AudioEncoder::OpusImpl final : public AudioEncoder::ImplBase {
   // Note: Whereas other RTP implementations do not, the cast library is
   // perfectly capable of transporting larger than MTU-sized audio frames.
   static const int kOpusMaxPayloadSize = 4000;
-
-  DISALLOW_COPY_AND_ASSIGN(OpusImpl);
 };
 #endif
 
-#if defined(OS_MAC)
-class AudioEncoder::AppleAacImpl : public AudioEncoder::ImplBase {
+#if BUILDFLAG(IS_MAC)
+class AudioEncoder::AppleAacImpl final : public AudioEncoder::ImplBase {
   // AAC-LC has two access unit sizes (960 and 1024). The Apple encoder only
   // supports the latter.
   static const int kAccessUnitSamples = 1024;
@@ -369,8 +370,11 @@ class AudioEncoder::AppleAacImpl : public AudioEncoder::ImplBase {
     ImplBase::operational_status_ = STATUS_INITIALIZED;
   }
 
+  AppleAacImpl(const AppleAacImpl&) = delete;
+  AppleAacImpl& operator=(const AppleAacImpl&) = delete;
+
  private:
-  ~AppleAacImpl() final { Teardown(); }
+  ~AppleAacImpl() override { Teardown(); }
 
   // Destroys the existing audio converter and file, if any.
   void Teardown() {
@@ -700,10 +704,8 @@ class AudioEncoder::AppleAacImpl : public AudioEncoder::ImplBase {
 
   // The number of access units emitted so far by the encoder.
   uint64_t num_access_units_;
-
-  DISALLOW_COPY_AND_ASSIGN(AppleAacImpl);
 };
-#endif  // defined(OS_MAC)
+#endif  // BUILDFLAG(IS_MAC)
 
 class AudioEncoder::Pcm16Impl final : public AudioEncoder::ImplBase {
  public:
@@ -722,6 +724,9 @@ class AudioEncoder::Pcm16Impl final : public AudioEncoder::ImplBase {
       return;
     operational_status_ = STATUS_INITIALIZED;
   }
+
+  Pcm16Impl(const Pcm16Impl&) = delete;
+  Pcm16Impl& operator=(const Pcm16Impl&) = delete;
 
  private:
   ~Pcm16Impl() final = default;
@@ -748,8 +753,6 @@ class AudioEncoder::Pcm16Impl final : public AudioEncoder::ImplBase {
 
  private:
   const std::unique_ptr<int16_t[]> buffer_;
-
-  DISALLOW_COPY_AND_ASSIGN(Pcm16Impl);
 };
 
 AudioEncoder::AudioEncoder(
@@ -764,18 +767,18 @@ AudioEncoder::AudioEncoder(
   // as all calls to InsertAudio() are by the same thread.
   insert_thread_checker_.DetachFromThread();
   switch (codec) {
-#if !defined(OS_IOS)
+#if !BUILDFLAG(IS_IOS)
     case CODEC_AUDIO_OPUS:
       impl_ = new OpusImpl(cast_environment, num_channels, sampling_rate,
                            bitrate, std::move(frame_encoded_callback));
       break;
 #endif
-#if defined(OS_MAC)
+#if BUILDFLAG(IS_MAC)
     case CODEC_AUDIO_AAC:
       impl_ = new AppleAacImpl(cast_environment, num_channels, sampling_rate,
                                bitrate, std::move(frame_encoded_callback));
       break;
-#endif  // defined(OS_MAC)
+#endif  // BUILDFLAG(IS_MAC)
     case CODEC_AUDIO_PCM16:
       impl_ = new Pcm16Impl(cast_environment, num_channels, sampling_rate,
                             std::move(frame_encoded_callback));

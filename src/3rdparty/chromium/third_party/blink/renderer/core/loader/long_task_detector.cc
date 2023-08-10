@@ -4,8 +4,10 @@
 
 #include "third_party/blink/renderer/core/loader/long_task_detector.h"
 
+#include "base/time/time.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread.h"
+#include "third_party/blink/renderer/platform/wtf/wtf.h"
 
 namespace blink {
 
@@ -49,10 +51,7 @@ void LongTaskDetector::DidProcessTask(base::TimeTicks start_time,
     return;
 
   iterating_ = true;
-  // We copy `observers_` because it might be mutated in OnLongTaskDetected,
-  // and container mutation is not allowed during iteration.
-  const HeapHashSet<Member<LongTaskObserver>> observers = observers_;
-  for (auto& observer : observers) {
+  for (auto& observer : observers_) {
     observer->OnLongTaskDetected(start_time, end_time);
   }
   iterating_ = false;

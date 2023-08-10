@@ -4,6 +4,7 @@
 
 #include "chrome/browser/spellchecker/spellcheck_factory.h"
 
+#include "build/build_config.h"
 #ifndef TOOLKIT_QT
 #include "chrome/browser/profiles/incognito_helpers.h"
 #endif
@@ -55,11 +56,6 @@ void SpellcheckServiceFactory::RegisterProfilePrefs(
   user_prefs->RegisterListPref(spellcheck::prefs::kSpellCheckDictionaries);
   user_prefs->RegisterListPref(
       spellcheck::prefs::kSpellCheckForcedDictionaries);
-  // Continue registering kSpellCheckBlacklistedDictionaries for
-  // preference migration.
-  // TODO(crbug/1161062): Remove after M91.
-  user_prefs->RegisterListPref(
-      spellcheck::prefs::kSpellCheckBlacklistedDictionaries);
   user_prefs->RegisterListPref(
       spellcheck::prefs::kSpellCheckBlocklistedDictionaries);
   // Continue registering kSpellCheckDictionary for preference migration.
@@ -71,7 +67,7 @@ void SpellcheckServiceFactory::RegisterProfilePrefs(
 #endif
   user_prefs->RegisterBooleanPref(
       spellcheck::prefs::kSpellCheckUseSpellingService, false);
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   uint32_t flags = PrefRegistry::NO_REGISTRATION_FLAGS;
 #else
   uint32_t flags = user_prefs::PrefRegistrySyncable::SYNCABLE_PREF;

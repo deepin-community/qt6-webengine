@@ -39,9 +39,14 @@ The Manager object has a constructor and one main method called run.
 import fnmatch
 import json
 import logging
+import os
 import random
+import signal
 import sys
 import time
+import traceback
+
+from six.moves import range
 
 from blinkpy.common import exit_codes
 from blinkpy.common import path_finder
@@ -163,6 +168,17 @@ class Manager(object):
         should_retry_failures = self._options.num_retries > 0
 
         try:
+            if not self._port.host.platform.is_win():
+                _pid = os.getpid()
+                def sighandler(signum, frame):
+                    self._printer.write_update("Received SIGTERM in %d" % os.getpid())
+                    message = ''.join(traceback.format_stack(frame))
+                    self._printer.write_update(message)
+                    if os.getpid() == _pid:
+                        os.killpg(os.getpgrp(), signal.SIGINT)
+                    else:
+                        os.kill(os.getpid(), signal.SIGINT)
+                signal.signal(signal.SIGTERM, sighandler)
             self._start_servers(tests_to_run)
             if self._options.watch:
                 run_results = self._run_test_loop(tests_to_run, tests_to_skip)
@@ -171,6 +187,7 @@ class Manager(object):
                                                   should_retry_failures)
             initial_results, all_retry_results = run_results
         finally:
+            _log.info("Finally stop servers and clean up")
             self._stop_servers()
             self._clean_up_run()
 
@@ -254,8 +271,8 @@ class Manager(object):
 
     def _run_test_once(self, tests_to_run, tests_to_skip,
                        should_retry_failures):
-        num_workers = self._port.num_workers(
-            int(self._options.child_processes))
+        num_workers = int(
+            self._port.num_workers(int(self._options.child_processes)))
 
         initial_results = self._run_tests(
             tests_to_run, tests_to_skip, self._options.repeat_each,
@@ -269,7 +286,7 @@ class Manager(object):
         tests_to_retry = self._tests_to_retry(initial_results)
         all_retry_results = []
         if should_retry_failures and tests_to_retry:
-            for retry_attempt in xrange(1, self._options.num_retries + 1):
+            for retry_attempt in range(1, self._options.num_retries + 1):
                 if not tests_to_retry:
                     break
 
@@ -305,7 +322,7 @@ class Manager(object):
     def _collect_tests(self, args):
         return self._finder.find_tests(
             args,
-            test_list=self._options.test_list,
+            filter_files=self._options.test_list,
             fastest_percentile=self._options.fastest,
             filters=self._options.isolated_script_test_filter)
 
@@ -340,8 +357,8 @@ class Manager(object):
     def _test_input_for_file(self, test_file, retry_attempt):
         return TestInput(
             test_file,
-            self._options.slow_time_out_ms
-            if self._test_is_slow(test_file) else self._options.time_out_ms,
+            self._options.slow_timeout_ms
+            if self._test_is_slow(test_file) else self._options.timeout_ms,
             self._test_requires_lock(test_file),
             retry_attempt=retry_attempt)
 
@@ -352,7 +369,7 @@ class Manager(object):
         Perf tests are locked because heavy load caused by running other
         tests in parallel might cause some of them to time out.
         """
-        return self._is_http_test(test_file) or self._is_perf_test(test_file)
+        return self._is_perf_test(test_file)
 
     def _test_is_slow(self, test_file):
         if not self._expectations:
@@ -363,7 +380,7 @@ class Manager(object):
 
     def _needs_servers(self, test_names):
         return any(
-            self._test_requires_lock(test_name) for test_name in test_names)
+            self._is_http_test(test_name) for test_name in test_names)
 
     def _rename_results_folder(self):
         try:
@@ -450,9 +467,9 @@ class Manager(object):
                    retry_attempt=0):
 
         test_inputs = []
-        for _ in xrange(iterations):
+        for _ in range(iterations):
             for test in tests_to_run:
-                for _ in xrange(repeat_each):
+                for _ in range(repeat_each):
                     test_inputs.append(
                         self._test_input_for_file(test, retry_attempt))
         return self._runner.run_tests(self._expectations, test_inputs,
@@ -522,7 +539,7 @@ class Manager(object):
         test_failures.AbstractTestResultType.result_directory = self._results_directory
         test_failures.AbstractTestResultType.filesystem = self._filesystem
 
-        for test, result in run_results.unexpected_results_by_name.iteritems():
+        for test, result in run_results.unexpected_results_by_name.items():
             if result.type != ResultType.Crash:
                 continue
             for failure in result.failures:
@@ -535,7 +552,7 @@ class Manager(object):
 
         sample_files = self._port.look_for_new_samples(crashed_processes,
                                                        start_time) or {}
-        for test, sample_file in sample_files.iteritems():
+        for test, sample_file in sample_files.items():
             test_failures.AbstractTestResultType.test_name = test
             test_result = run_results.unexpected_results_by_name[test]
             artifact_relative_path = self._port.output_filename(
@@ -554,7 +571,7 @@ class Manager(object):
 
         new_crash_logs = self._port.look_for_new_crash_logs(
             crashed_processes, start_time) or {}
-        for test, (crash_log, crash_site) in new_crash_logs.iteritems():
+        for test, (crash_log, crash_site) in new_crash_logs.items():
             test_failures.AbstractTestResultType.test_name = test
             failure.crash_log = crash_log
             failure.has_log = self._port.output_contains_sanitizer_messages(
@@ -722,6 +739,6 @@ class Manager(object):
                                 int(result.total_run_time * 1000))
                 }
         stats_trie = {}
-        for name, value in stats.iteritems():
+        for name, value in stats.items():
             json_results_generator.add_path_to_trie(name, value, stats_trie)
         return stats_trie

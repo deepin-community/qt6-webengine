@@ -4,9 +4,10 @@
 
 #include "base/threading/sequence_bound.h"
 
+#include <functional>
 #include <utility>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
 #include "base/test/bind.h"
 #include "base/test/task_environment.h"
@@ -55,7 +56,7 @@ class SequenceBoundTest : public ::testing::Test {
     Derived(Value* ptr) : ptr_(ptr) { *ptr_ = kDerivedCtorValue; }
     ~Derived() override { *ptr_ = kDerivedDtorValue; }
     void SetValue(Value value) { *ptr_ = value; }
-    Value* ptr_;
+    raw_ptr<Value> ptr_;
   };
 
   // Another base class, which sets ints to different values.
@@ -64,7 +65,7 @@ class SequenceBoundTest : public ::testing::Test {
     Other(Value* ptr) : ptr_(ptr) { *ptr = kOtherCtorValue; }
     virtual ~Other() { *ptr_ = kOtherDtorValue; }
     void SetValue(Value value) { *ptr_ = value; }
-    Value* ptr_;
+    raw_ptr<Value> ptr_;
   };
 
   class MultiplyDerived : public Other, public Derived {
@@ -87,6 +88,9 @@ class BoxedValue {
  public:
   explicit BoxedValue(int initial_value) : value_(initial_value) {}
 
+  BoxedValue(const BoxedValue&) = delete;
+  BoxedValue& operator=(const BoxedValue&) = delete;
+
   ~BoxedValue() {
     if (destruction_callback_)
       std::move(destruction_callback_).Run();
@@ -102,11 +106,9 @@ class BoxedValue {
  private:
   int value_ = 0;
   base::OnceClosure destruction_callback_;
-
-  DISALLOW_COPY_AND_ASSIGN(BoxedValue);
 };
 
-#if defined(OS_IOS) && !TARGET_OS_SIMULATOR
+#if BUILDFLAG(IS_IOS) && !TARGET_OS_SIMULATOR
 #define MAYBE_ConstructAsyncCallReset FLAKY_ConstructAsyncCallReset
 #else
 #define MAYBE_ConstructAsyncCallReset ConstructAsyncCallReset
@@ -369,36 +371,27 @@ TEST_F(SequenceBoundTest, PostTaskWithThisObject) {
   constexpr int kTestValue2 = 42;
   base::SequenceBound<BoxedValue> value(task_runner_, kTestValue1);
   base::RunLoop loop;
+  value.PostTaskWithThisObject(base::BindLambdaForTesting(
+      [&](const BoxedValue& v) { EXPECT_EQ(kTestValue1, v.value()); }));
+  value.PostTaskWithThisObject(base::BindLambdaForTesting(
+      [&](BoxedValue* v) { v->set_value(kTestValue2); }));
   value.PostTaskWithThisObject(
-      FROM_HERE, base::BindLambdaForTesting([&](const BoxedValue& v) {
-        EXPECT_EQ(kTestValue1, v.value());
-      }));
-  value.PostTaskWithThisObject(
-      FROM_HERE, base::BindLambdaForTesting(
-                     [&](BoxedValue* v) { v->set_value(kTestValue2); }));
-  value.PostTaskWithThisObject(
-      FROM_HERE, base::BindLambdaForTesting([&](const BoxedValue& v) {
+      base::BindLambdaForTesting([&](const BoxedValue& v) {
         EXPECT_EQ(kTestValue2, v.value());
         loop.Quit();
       }));
   loop.Run();
 }
 
-TEST_F(SequenceBoundTest, ResetWithCallbackAfterDestruction) {
+TEST_F(SequenceBoundTest, SynchronouslyResetForTest) {
   base::SequenceBound<BoxedValue> value(task_runner_, 0);
 
-  // Verify that the callback passed to ResetWithCallbackAfterDestruction always
-  // does happen *after* destruction.
   bool destroyed = false;
   value.AsyncCall(&BoxedValue::set_destruction_callback)
       .WithArgs(base::BindLambdaForTesting([&] { destroyed = true; }));
 
-  base::RunLoop loop;
-  value.ResetWithCallbackAfterDestruction(base::BindLambdaForTesting([&] {
-    EXPECT_TRUE(destroyed);
-    loop.Quit();
-  }));
-  loop.Run();
+  value.SynchronouslyResetForTest();
+  EXPECT_TRUE(destroyed);
 }
 
 TEST_F(SequenceBoundTest, SmallObject) {
@@ -466,10 +459,10 @@ class IntArgVoidReturn {
   void set_loop(RunLoop* loop) { loop_ = loop; }
 
  private:
-  int* const method_called_with_;
-  int* const const_method_called_with_;
+  const raw_ptr<int> method_called_with_;
+  const raw_ptr<int> const_method_called_with_;
 
-  RunLoop* loop_ = nullptr;
+  raw_ptr<RunLoop> loop_ = nullptr;
 };
 
 class IntArgIntReturn {
@@ -621,6 +614,154 @@ TEST_F(SequenceBoundTest, AsyncCallIsConstQualified) {
   const SequenceBound<NoArgsVoidReturn> s(task_runner_);
   s.AsyncCall(&NoArgsVoidReturn::ConstMethod);
   s.AsyncCall(&NoArgsVoidReturn::Method);
+}
+
+class IgnoreResultTestHelperWithNoArgs {
+ public:
+  explicit IgnoreResultTestHelperWithNoArgs(RunLoop* loop, bool* called)
+      : loop_(loop), called_(called) {}
+
+  int ConstMethod() const {
+    if (loop_) {
+      loop_->Quit();
+    }
+    if (called_) {
+      *called_ = true;
+    }
+    return 0;
+  }
+
+  int Method() {
+    if (loop_) {
+      loop_->Quit();
+    }
+    if (called_) {
+      *called_ = true;
+    }
+    return 0;
+  }
+
+ private:
+  const raw_ptr<RunLoop> loop_ = nullptr;
+  const raw_ptr<bool> called_ = nullptr;
+};
+
+TEST_F(SequenceBoundTest, AsyncCallIgnoreResultNoArgs) {
+  {
+    RunLoop loop;
+    SequenceBound<IgnoreResultTestHelperWithNoArgs> s(task_runner_, &loop,
+                                                      nullptr);
+    s.AsyncCall(IgnoreResult(&IgnoreResultTestHelperWithNoArgs::ConstMethod));
+    loop.Run();
+  }
+
+  {
+    RunLoop loop;
+    SequenceBound<IgnoreResultTestHelperWithNoArgs> s(task_runner_, &loop,
+                                                      nullptr);
+    s.AsyncCall(IgnoreResult(&IgnoreResultTestHelperWithNoArgs::Method));
+    loop.Run();
+  }
+}
+
+TEST_F(SequenceBoundTest, AsyncCallIgnoreResultThen) {
+  {
+    RunLoop loop;
+    bool called = false;
+    SequenceBound<IgnoreResultTestHelperWithNoArgs> s(task_runner_, nullptr,
+                                                      &called);
+    s.AsyncCall(IgnoreResult(&IgnoreResultTestHelperWithNoArgs::ConstMethod))
+        .Then(BindLambdaForTesting([&] { loop.Quit(); }));
+    loop.Run();
+    EXPECT_TRUE(called);
+  }
+
+  {
+    RunLoop loop;
+    bool called = false;
+    SequenceBound<IgnoreResultTestHelperWithNoArgs> s(task_runner_, nullptr,
+                                                      &called);
+    s.AsyncCall(IgnoreResult(&IgnoreResultTestHelperWithNoArgs::Method))
+        .Then(BindLambdaForTesting([&] { loop.Quit(); }));
+    loop.Run();
+    EXPECT_TRUE(called);
+  }
+}
+
+class IgnoreResultTestHelperWithArgs {
+ public:
+  IgnoreResultTestHelperWithArgs(RunLoop* loop, int& value)
+      : loop_(loop), value_(value) {}
+
+  int ConstMethod(int arg) const {
+    value_ = arg;
+    if (loop_) {
+      loop_->Quit();
+    }
+    return arg;
+  }
+
+  int Method(int arg) {
+    value_ = arg;
+    if (loop_) {
+      loop_->Quit();
+    }
+    return arg;
+  }
+
+ private:
+  const raw_ptr<RunLoop> loop_ = nullptr;
+  int& value_;
+};
+
+TEST_F(SequenceBoundTest, AsyncCallIgnoreResultWithArgs) {
+  {
+    RunLoop loop;
+    int result = 0;
+    SequenceBound<IgnoreResultTestHelperWithArgs> s(task_runner_, &loop,
+                                                    std::ref(result));
+    s.AsyncCall(IgnoreResult(&IgnoreResultTestHelperWithArgs::ConstMethod))
+        .WithArgs(60);
+    loop.Run();
+    EXPECT_EQ(60, result);
+  }
+
+  {
+    RunLoop loop;
+    int result = 0;
+    SequenceBound<IgnoreResultTestHelperWithArgs> s(task_runner_, &loop,
+                                                    std::ref(result));
+    s.AsyncCall(IgnoreResult(&IgnoreResultTestHelperWithArgs::Method))
+        .WithArgs(06);
+    loop.Run();
+    EXPECT_EQ(06, result);
+  }
+}
+
+TEST_F(SequenceBoundTest, AsyncCallIgnoreResultWithArgsThen) {
+  {
+    RunLoop loop;
+    int result = 0;
+    SequenceBound<IgnoreResultTestHelperWithArgs> s(task_runner_, nullptr,
+                                                    std::ref(result));
+    s.AsyncCall(IgnoreResult(&IgnoreResultTestHelperWithArgs::ConstMethod))
+        .WithArgs(60)
+        .Then(BindLambdaForTesting([&] { loop.Quit(); }));
+    loop.Run();
+    EXPECT_EQ(60, result);
+  }
+
+  {
+    RunLoop loop;
+    int result = 0;
+    SequenceBound<IgnoreResultTestHelperWithArgs> s(task_runner_, nullptr,
+                                                    std::ref(result));
+    s.AsyncCall(IgnoreResult(&IgnoreResultTestHelperWithArgs::Method))
+        .WithArgs(06)
+        .Then(BindLambdaForTesting([&] { loop.Quit(); }));
+    loop.Run();
+    EXPECT_EQ(06, result);
+  }
 }
 
 // TODO(dcheng): Maybe use the nocompile harness here instead of being

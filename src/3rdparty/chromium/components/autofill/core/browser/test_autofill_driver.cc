@@ -25,8 +25,12 @@ bool TestAutofillDriver::IsIncognito() const {
   return is_incognito_;
 }
 
-bool TestAutofillDriver::IsInMainFrame() const {
-  return is_in_main_frame_;
+bool TestAutofillDriver::IsInAnyMainFrame() const {
+  return is_in_any_main_frame_;
+}
+
+bool TestAutofillDriver::IsPrerendering() const {
+  return false;
 }
 
 bool TestAutofillDriver::CanShowAutofillUi() const {
@@ -47,16 +51,27 @@ bool TestAutofillDriver::RendererIsAvailable() {
   return true;
 }
 
-#if !defined(OS_IOS)
-InternalAuthenticator*
+#if !BUILDFLAG(IS_IOS)
+webauthn::InternalAuthenticator*
 TestAutofillDriver::GetOrCreateCreditCardInternalAuthenticator() {
   return test_authenticator_.get();
 }
 #endif
 
-void TestAutofillDriver::SendFormDataToRenderer(int query_id,
-                                                RendererFormDataAction action,
-                                                const FormData& form_data) {
+std::vector<FieldGlobalId> TestAutofillDriver::FillOrPreviewForm(
+    int query_id,
+    mojom::RendererFormDataAction action,
+    const FormData& form_data,
+    const url::Origin& triggered_origin,
+    const base::flat_map<FieldGlobalId, ServerFieldType>& field_type_map) {
+  std::vector<FieldGlobalId> result;
+  for (const auto& [id, type] : field_type_map) {
+    if (!field_type_map_filter_ ||
+        field_type_map_filter_.Run(triggered_origin, id, type)) {
+      result.push_back(id);
+    }
+  }
+  return result;
 }
 
 void TestAutofillDriver::PropagateAutofillPredictions(
@@ -71,8 +86,8 @@ void TestAutofillDriver::SendAutofillTypePredictionsToRenderer(
 }
 
 void TestAutofillDriver::RendererShouldAcceptDataListSuggestion(
-    const base::string16& value) {
-}
+    const FieldGlobalId& field,
+    const std::u16string& value) {}
 
 void TestAutofillDriver::RendererShouldClearFilledSection() {}
 
@@ -80,34 +95,33 @@ void TestAutofillDriver::RendererShouldClearPreviewedForm() {
 }
 
 void TestAutofillDriver::RendererShouldFillFieldWithValue(
-    const base::string16& value) {
-}
+    const FieldGlobalId& field,
+    const std::u16string& value) {}
 
 void TestAutofillDriver::RendererShouldPreviewFieldWithValue(
-    const base::string16& value) {
-}
+    const FieldGlobalId& field,
+    const std::u16string& value) {}
 
 void TestAutofillDriver::RendererShouldSetSuggestionAvailability(
+    const FieldGlobalId& field,
     const mojom::AutofillState state) {}
 
 void TestAutofillDriver::PopupHidden() {
-}
-
-gfx::RectF TestAutofillDriver::TransformBoundingBoxToViewportCoordinates(
-    const gfx::RectF& bounding_box) {
-  return bounding_box;
 }
 
 net::IsolationInfo TestAutofillDriver::IsolationInfo() {
   return isolation_info_;
 }
 
+void TestAutofillDriver::SendFieldsEligibleForManualFillingToRenderer(
+    const std::vector<FieldGlobalId>& fields) {}
+
 void TestAutofillDriver::SetIsIncognito(bool is_incognito) {
   is_incognito_ = is_incognito;
 }
 
-void TestAutofillDriver::SetIsInMainFrame(bool is_in_main_frame) {
-  is_in_main_frame_ = is_in_main_frame;
+void TestAutofillDriver::SetIsInAnyMainFrame(bool is_in_any_main_frame) {
+  is_in_any_main_frame_ = is_in_any_main_frame;
 }
 
 void TestAutofillDriver::SetIsolationInfo(
@@ -115,14 +129,20 @@ void TestAutofillDriver::SetIsolationInfo(
   isolation_info_ = isolation_info;
 }
 
+void TestAutofillDriver::SetFieldTypeMapFilter(
+    base::RepeatingCallback<
+        bool(const url::Origin&, FieldGlobalId, ServerFieldType)> callback) {
+  field_type_map_filter_ = callback;
+}
+
 void TestAutofillDriver::SetSharedURLLoaderFactory(
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory) {
   test_shared_loader_factory_ = url_loader_factory;
 }
 
-#if !defined(OS_IOS)
+#if !BUILDFLAG(IS_IOS)
 void TestAutofillDriver::SetAuthenticator(
-    InternalAuthenticator* authenticator_) {
+    webauthn::InternalAuthenticator* authenticator_) {
   test_authenticator_.reset(authenticator_);
 }
 #endif

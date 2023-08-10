@@ -4,6 +4,7 @@
 
 #include "components/subresource_filter/content/common/ruleset_dealer.h"
 
+#include <memory>
 #include <vector>
 
 #include "base/files/file.h"
@@ -29,6 +30,11 @@ class SubresourceFilterRulesetDealerTest : public ::testing::Test {
  public:
   SubresourceFilterRulesetDealerTest() {}
 
+  SubresourceFilterRulesetDealerTest(
+      const SubresourceFilterRulesetDealerTest&) = delete;
+  SubresourceFilterRulesetDealerTest& operator=(
+      const SubresourceFilterRulesetDealerTest&) = delete;
+
  protected:
   void SetUp() override {
     ResetRulesetDealer();
@@ -50,7 +56,9 @@ class SubresourceFilterRulesetDealerTest : public ::testing::Test {
 
   RulesetDealer* ruleset_dealer() { return ruleset_dealer_.get(); }
 
-  void ResetRulesetDealer() { ruleset_dealer_.reset(new RulesetDealer); }
+  void ResetRulesetDealer() {
+    ruleset_dealer_ = std::make_unique<RulesetDealer>();
+  }
 
   bool has_cached_ruleset() const {
     return ruleset_dealer_->has_cached_ruleset();
@@ -61,8 +69,6 @@ class SubresourceFilterRulesetDealerTest : public ::testing::Test {
   testing::TestRulesetPair test_ruleset_pair_1_;
   testing::TestRulesetPair test_ruleset_pair_2_;
   std::unique_ptr<RulesetDealer> ruleset_dealer_;
-
-  DISALLOW_COPY_AND_ASSIGN(SubresourceFilterRulesetDealerTest);
 };
 
 TEST_F(SubresourceFilterRulesetDealerTest, NoRuleset) {

@@ -5,27 +5,46 @@
 #include "content/browser/handwriting/handwriting_recognition_service_impl_cros.h"
 
 #include <memory>
+#include <utility>
 
 #include "base/command_line.h"
 #include "base/memory/ptr_util.h"
+#include "build/chromeos_buildflags.h"
 #include "content/browser/handwriting/handwriting_recognizer_impl_cros.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/self_owned_receiver.h"
 #include "third_party/blink/public/mojom/handwriting/handwriting.mojom.h"
+
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+#include "ash/constants/ash_switches.h"
+#endif
+
+#if BUILDFLAG(IS_CHROMEOS_LACROS)
+#include "chromeos/lacros/lacros_service.h"
+#endif
 
 namespace content {
 
 namespace {
-// TODO(https://crbug.com/1168978): mlservice should provide an interface to
-// query this.
-constexpr char kOndeviceHandwritingSwitch[] = "ondevice_handwriting";
+
 // Currently, we do not consider that ondevice handwriting recognition may be
 // supported by the CrOS Downloadable Content (DLC) service other than on
 // rootfs.
 bool IsCrOSLibHandwritingRootfsEnabled() {
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+  // TODO(https://crbug.com/1168978): mlservice should provide an interface to
+  // query this.
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
-  return command_line->HasSwitch(kOndeviceHandwritingSwitch) &&
-         command_line->GetSwitchValueASCII(kOndeviceHandwritingSwitch) ==
-             "use_rootfs";
+  return command_line->HasSwitch(ash::switches::kOndeviceHandwritingSwitch) &&
+         command_line->GetSwitchValueASCII(
+             ash::switches::kOndeviceHandwritingSwitch) == "use_rootfs";
+#elif BUILDFLAG(IS_CHROMEOS_LACROS)
+  auto* service = chromeos::LacrosService::Get();
+  return service && service->init_params()->ondevice_handwriting_support ==
+                        crosapi::mojom::OndeviceHandwritingSupport::kUseRootfs;
+#else
+  return false;
+#endif
 }
 }  // namespace
 
@@ -46,53 +65,27 @@ void CrOSHandwritingRecognitionServiceImpl::CreateHandwritingRecognizer(
     handwriting::mojom::HandwritingModelConstraintPtr model_constraint,
     handwriting::mojom::HandwritingRecognitionService::
         CreateHandwritingRecognizerCallback callback) {
+  if (!IsCrOSLibHandwritingRootfsEnabled()) {
+    std::move(callback).Run(
+        handwriting::mojom::CreateHandwritingRecognizerResult::kNotSupported,
+        mojo::NullRemote());
+    return;
+  }
+
   CrOSHandwritingRecognizerImpl::Create(std::move(model_constraint),
                                         std::move(callback));
 }
 
-void CrOSHandwritingRecognitionServiceImpl::QueryHandwritingRecognizerSupport(
-    handwriting::mojom::HandwritingFeatureQueryPtr query,
-    QueryHandwritingRecognizerSupportCallback callback) {
-  auto query_result = handwriting::mojom::HandwritingFeatureQueryResult::New();
-  if (!query->languages.empty()) {
-    if (IsCrOSLibHandwritingRootfsEnabled()) {
-      query_result->languages =
-          handwriting::mojom::HandwritingFeatureStatus::kSupported;
-      for (const auto& lang : query->languages) {
-        // CrOS currently only supports two "languages".
-        // TODO(https://crbug.com/1166910): We may need a better language tag
-        // matching method (e.g. libicu's LocaleMatcher).
-        // TODO(https://crbug.com/1166910): Strictly speaking,
-        // "gesture_in_context" is not a kind of language. We may need a private
-        // tag for this, see the discussion:
-        // https://github.com/WICG/handwriting-recognition/issues/1#issuecomment-778917849.
-        if (lang != "en" && lang != "gesture_in_context") {
-          query_result->languages =
-              handwriting::mojom::HandwritingFeatureStatus::kNotSupported;
-          break;
-        }
-      }
-    } else {
-      query_result->languages =
-          handwriting::mojom::HandwritingFeatureStatus::kNotSupported;
-    }
-  }
-  if (query->alternatives) {
-    // CrOS's HWR model always supports alternatives.
-    query_result->alternatives =
-        IsCrOSLibHandwritingRootfsEnabled()
-            ? handwriting::mojom::HandwritingFeatureStatus::kSupported
-            : handwriting::mojom::HandwritingFeatureStatus::kNotSupported;
-  }
-  if (query->segmentation_result) {
-    // CrOS's HWR model always supports segmentation.
-    query_result->segmentation_result =
-        IsCrOSLibHandwritingRootfsEnabled()
-            ? handwriting::mojom::HandwritingFeatureStatus::kSupported
-            : handwriting::mojom::HandwritingFeatureStatus::kNotSupported;
+void CrOSHandwritingRecognitionServiceImpl::QueryHandwritingRecognizer(
+    handwriting::mojom::HandwritingModelConstraintPtr model_constraint,
+    QueryHandwritingRecognizerCallback callback) {
+  if (!IsCrOSLibHandwritingRootfsEnabled()) {
+    std::move(callback).Run(nullptr);
+    return;
   }
 
-  std::move(callback).Run(std::move(query_result));
+  std::move(callback).Run(CrOSHandwritingRecognizerImpl::GetModelDescriptor(
+      std::move(model_constraint)));
 }
 
 CrOSHandwritingRecognitionServiceImpl::CrOSHandwritingRecognitionServiceImpl() =

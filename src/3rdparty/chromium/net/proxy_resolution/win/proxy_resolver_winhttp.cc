@@ -7,7 +7,8 @@
 #include <windows.h>
 #include <winhttp.h>
 
-#include "base/macros.h"
+#include <memory>
+
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "net/base/net_errors.h"
@@ -15,7 +16,6 @@
 #include "net/proxy_resolution/proxy_resolver.h"
 #include "url/gurl.h"
 
-using base::TimeDelta;
 using base::TimeTicks;
 
 namespace net {
@@ -53,6 +53,10 @@ static Error WinHttpErrorToNetError(DWORD win_http_error) {
 class ProxyResolverWinHttp : public ProxyResolver {
  public:
   ProxyResolverWinHttp(const scoped_refptr<PacFileData>& script_data);
+
+  ProxyResolverWinHttp(const ProxyResolverWinHttp&) = delete;
+  ProxyResolverWinHttp& operator=(const ProxyResolverWinHttp&) = delete;
+
   ~ProxyResolverWinHttp() override;
 
   // ProxyResolver implementation:
@@ -71,8 +75,6 @@ class ProxyResolverWinHttp : public ProxyResolver {
   HINTERNET session_handle_;
 
   const GURL pac_url_;
-
-  DISALLOW_COPY_AND_ASSIGN(ProxyResolverWinHttp);
 };
 
 ProxyResolverWinHttp::ProxyResolverWinHttp(
@@ -120,7 +122,7 @@ int ProxyResolverWinHttp::GetProxyForURL(
   WINHTTP_AUTOPROXY_OPTIONS options = {0};
   options.fAutoLogonIfChallenged = FALSE;
   options.dwFlags = WINHTTP_AUTOPROXY_CONFIG_URL;
-  base::string16 pac_url16 = base::ASCIIToUTF16(pac_url_.spec());
+  std::u16string pac_url16 = base::ASCIIToUTF16(pac_url_.spec());
   options.lpszAutoConfigUrl = base::as_wcstr(pac_url16);
 
   WINHTTP_PROXY_INFO info = {0};
@@ -223,7 +225,7 @@ int ProxyResolverFactoryWinHttp::CreateProxyResolver(
     std::unique_ptr<ProxyResolver>* resolver,
     CompletionOnceCallback callback,
     std::unique_ptr<Request>* request) {
-  resolver->reset(new ProxyResolverWinHttp(pac_script));
+  *resolver = std::make_unique<ProxyResolverWinHttp>(pac_script);
   return OK;
 }
 

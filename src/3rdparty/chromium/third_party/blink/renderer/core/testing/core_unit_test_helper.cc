@@ -11,7 +11,7 @@
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/core/scroll/scrollbar_theme.h"
 #include "third_party/blink/renderer/core/typed_arrays/dom_array_buffer.h"
-#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/loader/fetch/memory_cache.h"
 #include "ui/events/blink/blink_event_util.h"
 
@@ -27,10 +27,9 @@ LocalFrame* SingleChildLocalFrameClient::CreateFrame(
   LocalFrame* child = MakeGarbageCollected<LocalFrame>(
       child_client, *parent_frame->GetPage(), owner_element, parent_frame,
       nullptr, FrameInsertType::kInsertInConstructor, LocalFrameToken(),
-      &parent_frame->window_agent_factory(), nullptr,
-      /* policy_container */ nullptr);
-  child->CreateView(IntSize(500, 500), Color::kTransparent);
-  child->Init(nullptr);
+      &parent_frame->window_agent_factory(), nullptr);
+  child->CreateView(gfx::Size(500, 500), Color::kTransparent);
+  child->Init(/*opener=*/nullptr, /*policy_container=*/nullptr);
 
   return child;
 }
@@ -43,7 +42,7 @@ void RenderingTestChromeClient::InjectGestureScrollEvent(
     LocalFrame& local_frame,
     WebGestureDevice device,
     const gfx::Vector2dF& delta,
-    ScrollGranularity granularity,
+    ui::ScrollGranularity granularity,
     CompositorElementId scrollable_area_element_id,
     WebInputEvent::Type injected_type) {
   // Directly handle injected gesture scroll events. In a real browser, these
@@ -92,11 +91,9 @@ HitTestResult::NodeSet RenderingTest::RectBasedHitTest(
 }
 
 void RenderingTest::SetUp() {
-  Page::PageClients page_clients;
-  FillWithEmptyClients(page_clients);
   GetChromeClient().SetUp();
-  page_clients.chrome_client = &GetChromeClient();
-  SetupPageWithClients(&page_clients, local_frame_client_, SettingOverrider());
+  SetupPageWithClients(&GetChromeClient(), local_frame_client_,
+                       SettingOverrider());
   EXPECT_TRUE(
       GetDocument().GetPage()->GetScrollbarTheme().UsesOverlayScrollbars());
 

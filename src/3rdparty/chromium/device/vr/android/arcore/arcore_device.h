@@ -13,14 +13,19 @@
 #include "base/android/jni_android.h"
 #include "base/bind.h"
 #include "base/callback.h"
-#include "base/macros.h"
-#include "base/optional.h"
 #include "device/vr/android/arcore/arcore_gl.h"
+#include "device/vr/public/cpp/xr_frame_sink_client.h"
 #include "device/vr/vr_device.h"
 #include "device/vr/vr_device_base.h"
+#include "gpu/ipc/common/surface_handle.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/gfx/geometry/size_f.h"
 #include "ui/gfx/native_widget_types.h"
+
+namespace ui {
+class WindowAndroid;
+}  // namespace ui
 
 namespace device {
 
@@ -38,7 +43,12 @@ class COMPONENT_EXPORT(VR_ARCORE) ArCoreDevice : public VRDeviceBase {
       std::unique_ptr<ArImageTransportFactory> ar_image_transport_factory,
       std::unique_ptr<MailboxToSurfaceBridgeFactory>
           mailbox_to_surface_bridge_factory,
-      std::unique_ptr<ArCoreSessionUtils> arcore_session_utils);
+      std::unique_ptr<ArCoreSessionUtils> arcore_session_utils,
+      XrFrameSinkClientFactory xr_frame_sink_client_factory);
+
+  ArCoreDevice(const ArCoreDevice&) = delete;
+  ArCoreDevice& operator=(const ArCoreDevice&) = delete;
+
   ~ArCoreDevice() override;
 
   // VRDeviceBase implementation.
@@ -54,6 +64,8 @@ class COMPONENT_EXPORT(VR_ARCORE) ArCoreDevice : public VRDeviceBase {
 
  private:
   void OnDrawingSurfaceReady(gfx::AcceleratedWidget window,
+                             gpu::SurfaceHandle surface_handle,
+                             ui::WindowAndroid* root_window,
                              display::Display::Rotation rotation,
                              const gfx::Size& frame_size);
   void OnDrawingSurfaceTouch(bool is_primary,
@@ -91,17 +103,19 @@ class COMPONENT_EXPORT(VR_ARCORE) ArCoreDevice : public VRDeviceBase {
 
   // Replies to the pending mojo RequestSession request.
   void CallDeferredRequestSessionCallback(
-      base::Optional<ArCoreGlInitializeResult> arcore_initialization_result);
+      absl::optional<ArCoreGlInitializeResult> arcore_initialization_result);
 
   // Tells the GL thread to initialize a GL context and other resources,
   // using the supplied window as a drawing surface.
   void RequestArCoreGlInitialization(gfx::AcceleratedWidget window,
+                                     gpu::SurfaceHandle surface_handle,
+                                     ui::WindowAndroid* root_window,
                                      int rotation,
                                      const gfx::Size& size);
 
   // Called when the GL thread's GL context initialization completes.
   void OnArCoreGlInitializationComplete(
-      base::Optional<ArCoreGlInitializeResult> arcore_initialization_result);
+      absl::optional<ArCoreGlInitializeResult> arcore_initialization_result);
 
   void OnCreateSessionCallback(
       mojom::XRRuntime::RequestSessionCallback deferred_callback,
@@ -113,8 +127,15 @@ class COMPONENT_EXPORT(VR_ARCORE) ArCoreDevice : public VRDeviceBase {
   std::unique_ptr<ArImageTransportFactory> ar_image_transport_factory_;
   std::unique_ptr<MailboxToSurfaceBridgeFactory> mailbox_bridge_factory_;
   std::unique_ptr<ArCoreSessionUtils> arcore_session_utils_;
+  XrFrameSinkClientFactory xr_frame_sink_client_factory_;
 
   std::unique_ptr<MailboxToSurfaceBridge> mailbox_bridge_;
+
+  // Because the FrameSinkClient needs to have a teardown method called on it
+  // before it is destructed, we need to own it rather than the ArCoreGl. Note
+  // that this *also* means that we need to guarantee that it outlives the Gl
+  // thread.
+  std::unique_ptr<XrFrameSinkClient> frame_sink_client_;
 
   // Encapsulates data with session lifetime.
   struct SessionState {
@@ -141,9 +162,15 @@ class COMPONENT_EXPORT(VR_ARCORE) ArCoreDevice : public VRDeviceBase {
     // empty, will be set only once the ArCoreGl has been initialized.
     std::unordered_set<device::mojom::XRSessionFeature> enabled_features_;
 
-    base::Optional<device::mojom::XRDepthConfig> depth_configuration_;
+    absl::optional<device::mojom::XRDepthConfig> depth_configuration_;
 
     std::vector<device::mojom::XRTrackedImagePtr> tracked_images_;
+
+    viz::FrameSinkId frame_sink_id_;
+
+    // Trace ID of the requestSession() call that resulted in creating this
+    // session state.
+    uint64_t request_session_trace_id_;
   };
 
   // This object is reset to initial values when ending a session. This helps
@@ -156,7 +183,6 @@ class COMPONENT_EXPORT(VR_ARCORE) ArCoreDevice : public VRDeviceBase {
 
   // Must be last.
   base::WeakPtrFactory<ArCoreDevice> weak_ptr_factory_{this};
-  DISALLOW_COPY_AND_ASSIGN(ArCoreDevice);
 };
 
 }  // namespace device

@@ -7,13 +7,14 @@
 #include <utility>
 
 #include "base/callback.h"
-#include "components/reporting/proto/record.pb.h"
-#include "components/reporting/proto/record_constants.pb.h"
+#include "components/reporting/proto/synced/record.pb.h"
+#include "components/reporting/proto/synced/record_constants.pb.h"
 #include "components/reporting/storage/storage_module_interface.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using ::testing::Invoke;
+using ::testing::WithArg;
 
 namespace reporting {
 namespace test {
@@ -21,6 +22,11 @@ namespace test {
 TestStorageModuleStrict::TestStorageModuleStrict() {
   ON_CALL(*this, AddRecord)
       .WillByDefault(Invoke(this, &TestStorageModule::AddRecordSuccessfully));
+  ON_CALL(*this, Flush)
+      .WillByDefault(
+          WithArg<1>(Invoke([](base::OnceCallback<void(Status)> callback) {
+            std::move(callback).Run(Status::StatusOK());
+          })));
 }
 
 TestStorageModuleStrict::~TestStorageModuleStrict() = default;

@@ -18,15 +18,15 @@
 
 #include "Surface.hpp"
 
-#include "main.h"
+#include "Context.hpp"
 #include "Display.h"
+#include "Main/FrameBuffer.hpp"
 #include "Texture.hpp"
 #include "common/Image.hpp"
-#include "Context.hpp"
 #include "common/debug.h"
-#include "Main/FrameBuffer.hpp"
+#include "main.h"
 
-#if defined(USE_X11)
+#if defined(SWIFTSHADER_USE_X11)
 #include "Main/libX11.hpp"
 #elif defined(_WIN32)
 #include <tchar.h>
@@ -77,10 +77,6 @@ bool Surface::initialize()
 			backBuffer = libGLESv2->createBackBuffer(width, height, config->mRenderTargetFormat, config->mSamples);
 		}
 	}
-	else if(libGLES_CM)
-	{
-		backBuffer = libGLES_CM->createBackBuffer(width, height, config->mRenderTargetFormat, config->mSamples);
-	}
 
 	if(!backBuffer)
 	{
@@ -94,10 +90,6 @@ bool Surface::initialize()
 		if(libGLESv2)
 		{
 			depthStencil = libGLESv2->createDepthStencil(width, height, config->mDepthStencilFormat, config->mSamples);
-		}
-		else if(libGLES_CM)
-		{
-			depthStencil = libGLES_CM->createDepthStencil(width, height, config->mDepthStencilFormat, config->mSamples);
 		}
 
 		if(!depthStencil)
@@ -346,7 +338,7 @@ bool WindowSurface::checkForResize()
 	#elif defined(__ANDROID__)
 		int windowWidth = ANativeWindow_getWidth(window);
 		int windowHeight = ANativeWindow_getHeight(window);
-	#elif defined(USE_X11)
+	#elif defined(SWIFTSHADER_USE_X11)
 		XWindowAttributes windowAttributes;
 		Status status = libX11->XGetWindowAttributes((::Display*)display->getNativeDisplay(), window, &windowAttributes);
 
@@ -408,10 +400,6 @@ bool WindowSurface::reset(int backBufferWidth, int backBufferHeight)
 		if(libGLESv2)
 		{
 			frameBuffer = libGLESv2->createFrameBuffer(display->getNativeDisplay(), window, width, height);
-		}
-		else if(libGLES_CM)
-		{
-			frameBuffer = libGLES_CM->createFrameBuffer(display->getNativeDisplay(), window, width, height);
 		}
 
 		if(!frameBuffer)

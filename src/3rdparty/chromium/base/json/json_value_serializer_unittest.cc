@@ -18,6 +18,7 @@
 #include "base/values.h"
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace base {
 
@@ -76,11 +77,11 @@ void CheckJSONIsStillTheSame(const Value& value) {
 }
 
 void ValidateJsonList(const std::string& json) {
-  Optional<Value> list = JSONReader::Read(json);
+  absl::optional<Value> list = JSONReader::Read(json);
   ASSERT_TRUE(list);
   ASSERT_TRUE(list->is_list());
-  ASSERT_EQ(1U, list->GetList().size());
-  const Value& elt = list->GetList()[0];
+  ASSERT_EQ(1U, list->GetListDeprecated().size());
+  const Value& elt = list->GetListDeprecated()[0];
   ASSERT_TRUE(elt.is_int());
   ASSERT_EQ(1, elt.GetInt());
 }
@@ -212,7 +213,7 @@ TEST(JSONValueDeserializerTest, AllowTrailingComma) {
   std::unique_ptr<Value> root_expected;
   root_expected = deserializer_expected.Deserialize(nullptr, nullptr);
   ASSERT_TRUE(root_expected);
-  ASSERT_TRUE(root->Equals(root_expected.get()));
+  ASSERT_EQ(*root, *root_expected);
 }
 
 TEST(JSONValueSerializerTest, Roundtrip) {
@@ -240,7 +241,7 @@ TEST(JSONValueSerializerTest, Roundtrip) {
   ASSERT_TRUE(mutable_serializer.Serialize(*root_dict));
   // JSON output uses a different newline style on Windows than on other
   // platforms.
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 #define JSON_NEWLINE "\r\n"
 #else
 #define JSON_NEWLINE "\n"
@@ -258,9 +259,9 @@ TEST(JSONValueSerializerTest, Roundtrip) {
 }
 
 TEST(JSONValueSerializerTest, StringEscape) {
-  string16 all_chars;
+  std::u16string all_chars;
   for (int i = 1; i < 256; ++i) {
-    all_chars += static_cast<char16>(i);
+    all_chars += static_cast<char16_t>(i);
   }
   // Generated in in Firefox using the following js (with an extra backslash for
   // double quote):
@@ -306,7 +307,7 @@ TEST(JSONValueSerializerTest, StringEscape) {
 TEST(JSONValueSerializerTest, UnicodeStrings) {
   // unicode string json -> escaped ascii text
   Value root(Value::Type::DICTIONARY);
-  string16 test(WideToUTF16(L"\x7F51\x9875"));
+  std::u16string test(u"\x7F51\x9875");
   root.SetStringKey("web", test);
 
   static const char kExpected[] = "{\"web\":\"\xE7\xBD\x91\xE9\xA1\xB5\"}";
@@ -329,7 +330,7 @@ TEST(JSONValueSerializerTest, UnicodeStrings) {
 TEST(JSONValueSerializerTest, HexStrings) {
   // hex string json -> escaped ascii text
   Value root(Value::Type::DICTIONARY);
-  string16 test(WideToUTF16(L"\x01\x02"));
+  std::u16string test(u"\x01\x02");
   root.SetStringKey("test", test);
 
   static const char kExpected[] = "{\"test\":\"\\u0001\\u0002\"}";
@@ -367,11 +368,11 @@ TEST(JSONValueSerializerTest, JSONReaderComments) {
   ValidateJsonList("[ 1 //// ,2\r\n ]");
 
   // It's ok to have a comment in a string.
-  Optional<Value> list = JSONReader::Read("[\"// ok\\n /* foo */ \"]");
+  absl::optional<Value> list = JSONReader::Read("[\"// ok\\n /* foo */ \"]");
   ASSERT_TRUE(list);
   ASSERT_TRUE(list->is_list());
-  ASSERT_EQ(1U, list->GetList().size());
-  const Value& elt = list->GetList()[0];
+  ASSERT_EQ(1U, list->GetListDeprecated().size());
+  const Value& elt = list->GetListDeprecated()[0];
   ASSERT_TRUE(elt.is_string());
   ASSERT_EQ("// ok\n /* foo */ ", elt.GetString());
 

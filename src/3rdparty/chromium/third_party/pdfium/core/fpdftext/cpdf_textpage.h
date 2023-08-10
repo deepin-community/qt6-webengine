@@ -15,11 +15,10 @@
 #include "core/fxcrt/cfx_widetextbuf.h"
 #include "core/fxcrt/fx_coordinates.h"
 #include "core/fxcrt/fx_memory_wrappers.h"
-#include "core/fxcrt/fx_string.h"
 #include "core/fxcrt/unowned_ptr.h"
-#include "third_party/base/optional.h"
+#include "core/fxcrt/widestring.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
-class CPDF_Font;
 class CPDF_FormObject;
 class CPDF_Page;
 class CPDF_TextObject;
@@ -46,7 +45,7 @@ class CPDF_TextPage {
     CharType m_CharType = CharType::kNormal;
     CFX_PointF m_Origin;
     CFX_FloatRect m_CharBox;
-    UnownedPtr<CPDF_TextObject> m_pTextObj;
+    UnownedPtr<const CPDF_TextObject> m_pTextObj;
     CFX_Matrix m_Matrix;
   };
 
@@ -98,7 +97,7 @@ class CPDF_TextPage {
     TransformedTextObject(const TransformedTextObject& that);
     ~TransformedTextObject();
 
-    UnownedPtr<CPDF_TextObject> m_pTextObj;
+    UnownedPtr<const CPDF_TextObject> m_pTextObj;
     CFX_Matrix m_formMatrix;
   };
 
@@ -115,7 +114,7 @@ class CPDF_TextPage {
   GenerateCharacter ProcessInsertObject(const CPDF_TextObject* pObj,
                                         const CFX_Matrix& formMatrix);
   const CharInfo* GetPrevCharInfo() const;
-  Optional<CharInfo> GenerateCharInfo(wchar_t unicode);
+  absl::optional<CharInfo> GenerateCharInfo(wchar_t unicode);
   bool IsSameAsPreTextObject(CPDF_TextObject* pTextObj,
                              const CPDF_PageObjectHolder* pObjList,
                              CPDF_PageObjectHolder::const_iterator iter) const;
@@ -131,7 +130,7 @@ class CPDF_TextPage {
       const CPDF_TextObject* pTextObj) const;
   TextOrientation FindTextlineFlowOrientation() const;
   void AppendGeneratedCharacter(wchar_t unicode, const CFX_Matrix& formMatrix);
-  void SwapTempTextBuf(int iCharListStartAppend, int iBufStartAppend);
+  void SwapTempTextBuf(size_t iCharListStartAppend, size_t iBufStartAppend);
   WideString GetTextByPredicate(
       const std::function<bool(const CharInfo&)>& predicate) const;
 
@@ -141,7 +140,7 @@ class CPDF_TextPage {
   std::deque<CharInfo> m_TempCharList;
   CFX_WideTextBuf m_TextBuf;
   CFX_WideTextBuf m_TempTextBuf;
-  UnownedPtr<CPDF_TextObject> m_pPrevTextObj;
+  UnownedPtr<const CPDF_TextObject> m_pPrevTextObj;
   CFX_Matrix m_PrevMatrix;
   const bool m_rtl;
   const CFX_Matrix m_DisplayMatrix;

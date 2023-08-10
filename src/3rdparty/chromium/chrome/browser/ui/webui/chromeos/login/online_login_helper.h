@@ -5,26 +5,28 @@
 #ifndef CHROME_BROWSER_UI_WEBUI_CHROMEOS_LOGIN_ONLINE_LOGIN_HELPER_H_
 #define CHROME_BROWSER_UI_WEBUI_CHROMEOS_LOGIN_ONLINE_LOGIN_HELPER_H_
 
+#include <memory>
 #include <string>
 
-#include "base/optional.h"
-#include "chrome/browser/chromeos/login/login_client_cert_usage_observer.h"
-#include "chrome/browser/chromeos/login/signin_partition_manager.h"
-#include "chrome/browser/chromeos/login/ui/login_display_host.h"
+#include "ash/components/login/auth/cryptohome_authenticator.h"
+// TODO(https://crbug.com/1164001): move to forward declaration
+#include "ash/components/login/auth/sync_trusted_vault_keys.h"
+// TODO(https://crbug.com/1164001): move to forward declaration
+#include "ash/components/login/auth/user_context.h"
+#include "chrome/browser/ash/login/login_client_cert_usage_observer.h"
+#include "chrome/browser/ash/login/signin_partition_manager.h"
+#include "chrome/browser/ash/login/ui/login_display_host.h"
+#include "chrome/browser/ash/login/ui/signin_ui.h"
 #include "chrome/browser/extensions/api/cookies/cookies_api.h"
-#include "chromeos/login/auth/cryptohome_authenticator.h"
 #include "components/login/base_screen_handler_utils.h"
 #include "components/user_manager/user_manager.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_ui.h"
 #include "google_apis/gaia/gaia_urls.h"
 #include "services/network/public/mojom/cookie_manager.mojom.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace chromeos {
-
-class SyncTrustedVaultKeys;
-class UserContext;
-
 namespace login {
 
 // A class that's used to specify the way how Gaia should be loaded.
@@ -75,11 +77,11 @@ bool BuildUserContextForGaiaSignIn(
     bool using_saml_api,
     const std::string& password,
     const SamlPasswordAttributes& password_attributes,
-    const base::Optional<SyncTrustedVaultKeys>& sync_trusted_vault_keys,
+    const absl::optional<SyncTrustedVaultKeys>& sync_trusted_vault_keys,
     const LoginClientCertUsageObserver&
         extension_provided_client_cert_usage_observer,
     UserContext* user_context,
-    std::string* error_message);
+    SigninError* error);
 
 }  // namespace login
 
@@ -88,7 +90,8 @@ bool BuildUserContextForGaiaSignIn(
 class OnlineLoginHelper : public network::mojom::CookieChangeListener {
  public:
   using OnCookieTimeoutCallback = base::OnceCallback<void(void)>;
-  using CompleteLoginCallback = base::OnceCallback<void(const UserContext&)>;
+  using CompleteLoginCallback =
+      base::OnceCallback<void(std::unique_ptr<UserContext>)>;
 
   explicit OnlineLoginHelper(
       std::string signin_partition_name,

@@ -8,7 +8,6 @@
 #include <vector>
 
 #include "base/bind.h"
-#include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/run_loop.h"
@@ -235,7 +234,8 @@ TEST_F(BluetoothAdvertisementBlueZTest, UnregisterAfterReleasedFailed) {
   ExpectSuccess();
   EXPECT_TRUE(advertisement);
 
-  observer_.reset(new TestBluetoothAdvertisementObserver(advertisement));
+  observer_ =
+      std::make_unique<TestBluetoothAdvertisementObserver>(advertisement);
   TriggerReleased(advertisement);
   EXPECT_TRUE(observer_->released());
 

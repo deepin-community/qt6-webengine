@@ -14,7 +14,6 @@
 #include "base/logging.h"
 #include "base/message_loop/message_pump_type.h"
 #include "base/run_loop.h"
-#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/stringprintf.h"
@@ -26,6 +25,7 @@
 #include "net/disk_cache/disk_cache_test_util.h"
 #include "net/http/http_cache.h"
 #include "net/http/http_response_headers.h"
+#include "net/http/http_response_info.h"
 #include "net/http/http_util.h"
 
 using disk_cache::Backend;
@@ -237,7 +237,7 @@ class StreamCommandMarshal final : public CommandMarshal {
       return "";
     std::cout.flush();
     size_t command_id = static_cast<size_t>(std::cin.get());
-    if (command_id >= base::size(kCommandNames)) {
+    if (command_id >= std::size(kCommandNames)) {
       ReturnFailure("Unknown command.");
       return "";
     }
@@ -753,8 +753,8 @@ int main(int argc, char* argv[]) {
   std::unique_ptr<Backend> cache_backend;
   net::TestCompletionCallback cb;
   int rv = disk_cache::CreateCacheBackend(
-      net::DISK_CACHE, backend_type, cache_path, INT_MAX,
-      disk_cache::ResetHandling::kNeverReset, nullptr, &cache_backend,
+      net::DISK_CACHE, backend_type, /*file_operations=*/nullptr, cache_path,
+      INT_MAX, disk_cache::ResetHandling::kNeverReset, nullptr, &cache_backend,
       cb.callback());
   if (cb.GetResult(rv) != net::OK) {
     std::cerr << "Invalid cache." << std::endl;

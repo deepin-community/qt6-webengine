@@ -299,10 +299,8 @@ bool SpatialNavigationController::Advance(
   if (!interest_node)
     return false;
 
-  interest_node->GetDocument()
-      .View()
-      ->UpdateLifecycleToCompositingCleanPlusScrolling(
-          DocumentUpdateReason::kSpatialNavigation);
+  interest_node->GetDocument().View()->UpdateAllLifecyclePhasesExceptPaint(
+      DocumentUpdateReason::kSpatialNavigation);
 
   Node* container = ScrollableAreaOrDocumentOf(interest_node);
 
@@ -510,14 +508,14 @@ void SpatialNavigationController::MoveInterestTo(Node* next_node) {
 }
 
 void SpatialNavigationController::DispatchMouseMoveAt(Element* element) {
-  FloatPoint event_position(-1, -1);
+  gfx::PointF event_position(-1, -1);
   if (element) {
-    event_position = RectInViewport(*element).Location();
-    event_position.Move(1, 1);
+    event_position = RectInViewport(*element).origin();
+    event_position.Offset(1, 1);
   }
 
   // TODO(bokan): Can we get better screen coordinates?
-  FloatPoint event_position_screen = event_position;
+  gfx::PointF event_position_screen = event_position;
   int click_count = 0;
   WebMouseEvent fake_mouse_move_event(
       WebInputEvent::Type::kMouseMove, event_position, event_position_screen,

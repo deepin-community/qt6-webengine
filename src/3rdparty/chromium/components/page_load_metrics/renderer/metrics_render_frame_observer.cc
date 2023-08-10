@@ -49,22 +49,20 @@ class MojoPageTimingSender : public PageTimingSender {
 
   ~MojoPageTimingSender() override = default;
 
-  void SendTiming(
-      const mojom::PageLoadTimingPtr& timing,
-      const mojom::FrameMetadataPtr& metadata,
-      mojom::PageLoadFeaturesPtr new_features,
-      std::vector<mojom::ResourceDataUpdatePtr> resources,
-      const mojom::FrameRenderDataUpdate& render_data,
-      const mojom::CpuTimingPtr& cpu_timing,
-      mojom::DeferredResourceCountsPtr new_deferred_resource_data,
-      mojom::InputTimingPtr input_timing_delta,
-      const blink::MobileFriendliness& mobile_friendliness) override {
+  void SendTiming(const mojom::PageLoadTimingPtr& timing,
+                  const mojom::FrameMetadataPtr& metadata,
+                  const std::vector<blink::UseCounterFeature>& new_features,
+                  std::vector<mojom::ResourceDataUpdatePtr> resources,
+                  const mojom::FrameRenderDataUpdate& render_data,
+                  const mojom::CpuTimingPtr& cpu_timing,
+                  mojom::InputTimingPtr input_timing_delta,
+                  const absl::optional<blink::MobileFriendliness>&
+                      mobile_friendliness) override {
     DCHECK(page_load_metrics_);
     page_load_metrics_->UpdateTiming(
         limited_sending_mode_ ? CreatePageLoadTiming() : timing->Clone(),
-        metadata->Clone(), std::move(new_features), std::move(resources),
-        render_data.Clone(), cpu_timing->Clone(),
-        std::move(new_deferred_resource_data), std::move(input_timing_delta),
+        metadata->Clone(), new_features, std::move(resources),
+        render_data.Clone(), cpu_timing->Clone(), std::move(input_timing_delta),
         std::move(mobile_friendliness));
   }
 
@@ -111,6 +109,16 @@ void MetricsRenderFrameObserver::DidObserveInputDelay(
   page_timing_metrics_sender_->DidObserveInputDelay(input_delay);
 }
 
+void MetricsRenderFrameObserver::DidObserveUserInteraction(
+    base::TimeDelta max_event_duration,
+    blink::UserInteractionType interaction_type) {
+  if (!page_timing_metrics_sender_ || HasNoRenderFrame()) {
+    return;
+  }
+  page_timing_metrics_sender_->DidObserveUserInteraction(max_event_duration,
+                                                         interaction_type);
+}
+
 void MetricsRenderFrameObserver::DidChangeCpuTiming(base::TimeDelta time) {
   if (!page_timing_metrics_sender_)
     return;
@@ -126,18 +134,9 @@ void MetricsRenderFrameObserver::DidObserveLoadingBehavior(
 }
 
 void MetricsRenderFrameObserver::DidObserveNewFeatureUsage(
-    blink::mojom::WebFeature feature) {
+    const blink::UseCounterFeature& feature) {
   if (page_timing_metrics_sender_)
     page_timing_metrics_sender_->DidObserveNewFeatureUsage(feature);
-}
-
-void MetricsRenderFrameObserver::DidObserveNewCssPropertyUsage(
-    blink::mojom::CSSSampleId css_property,
-    bool is_animated) {
-  if (page_timing_metrics_sender_) {
-    page_timing_metrics_sender_->DidObserveNewCssPropertyUsage(css_property,
-                                                               is_animated);
-  }
 }
 
 void MetricsRenderFrameObserver::DidObserveLayoutShift(
@@ -146,14 +145,6 @@ void MetricsRenderFrameObserver::DidObserveLayoutShift(
   if (page_timing_metrics_sender_)
     page_timing_metrics_sender_->DidObserveLayoutShift(score,
                                                        after_input_or_scroll);
-}
-
-void MetricsRenderFrameObserver::DidObserveInputForLayoutShiftTracking(
-    base::TimeTicks timestamp) {
-  if (page_timing_metrics_sender_) {
-    page_timing_metrics_sender_->DidObserveInputForLayoutShiftTracking(
-        timestamp);
-  }
 }
 
 void MetricsRenderFrameObserver::DidObserveLayoutNg(uint32_t all_block_count,
@@ -165,18 +156,11 @@ void MetricsRenderFrameObserver::DidObserveLayoutNg(uint32_t all_block_count,
         all_block_count, ng_block_count, all_call_count, ng_call_count);
 }
 
-void MetricsRenderFrameObserver::DidObserveLazyLoadBehavior(
-    blink::WebLocalFrameClient::LazyLoadBehavior lazy_load_behavior) {
-  if (page_timing_metrics_sender_)
-    page_timing_metrics_sender_->DidObserveLazyLoadBehavior(lazy_load_behavior);
-}
-
 void MetricsRenderFrameObserver::DidStartResponse(
     const GURL& response_url,
     int request_id,
     const network::mojom::URLResponseHead& response_head,
-    network::mojom::RequestDestination request_destination,
-    blink::PreviewsState previews_state) {
+    network::mojom::RequestDestination request_destination) {
   if (provisional_frame_resource_data_use_ &&
       blink::IsRequestDestinationFrame(request_destination)) {
     // TODO(rajendrant): This frame request might start before the provisional
@@ -259,7 +243,7 @@ void MetricsRenderFrameObserver::WillDetach() {
 
 void MetricsRenderFrameObserver::DidStartNavigation(
     const GURL& url,
-    base::Optional<blink::WebNavigationType> navigation_type) {
+    absl::optional<blink::WebNavigationType> navigation_type) {
   // Send current metrics, as we might create a new RenderFrame later due to
   // this navigation (that might end up in a different process entirely, and
   // won't notify us until the current RenderFrameHost in the browser changed).
@@ -543,7 +527,7 @@ MetricsRenderFrameObserver::Timing MetricsRenderFrameObserver::GetTiming()
     for (const auto& restore_timing : restore_timings) {
       double navigation_start = restore_timing.navigation_start;
       double first_paint = restore_timing.first_paint;
-      base::Optional<base::TimeDelta> first_input_delay =
+      absl::optional<base::TimeDelta> first_input_delay =
           restore_timing.first_input_delay;
 
       auto back_forward_cache_timing = mojom::BackForwardCacheTiming::New();
@@ -595,6 +579,10 @@ MetricsRenderFrameObserver::Timing MetricsRenderFrameObserver::GetTiming()
         perf.LargestImagePaint() == 0.0
             ? base::TimeDelta()
             : ClampDelta(perf.LargestImagePaint(), start);
+    timing->paint_timing->largest_contentful_paint->type =
+        perf.LargestContentfulPaintType();
+    timing->paint_timing->largest_contentful_paint->image_bpp =
+        perf.LargestContentfulPaintImageBPP();
   }
   if (perf.LargestTextPaintSize() > 0) {
     // LargestTextPaint and LargestTextPaintSize should be available at the
@@ -617,6 +605,8 @@ MetricsRenderFrameObserver::Timing MetricsRenderFrameObserver::GetTiming()
         perf.ExperimentalLargestImagePaint() == 0.0
             ? base::TimeDelta()
             : ClampDelta(perf.ExperimentalLargestImagePaint(), start);
+    timing->paint_timing->experimental_largest_contentful_paint->type =
+        perf.LargestContentfulPaintType();
   }
   if (perf.ExperimentalLargestTextPaintSize() > 0) {
     // ExperimentalLargestTextPaint and ExperimentalLargestTextPaintSize should
@@ -650,23 +640,32 @@ MetricsRenderFrameObserver::Timing MetricsRenderFrameObserver::GetTiming()
     // If we started parsing, record all parser durations such as the amount of
     // time blocked on script load, even if those values are zero.
     timing->parse_timing->parse_blocked_on_script_load_duration =
-        base::TimeDelta::FromSecondsD(perf.ParseBlockedOnScriptLoadDuration());
+        base::Seconds(perf.ParseBlockedOnScriptLoadDuration());
     timing->parse_timing
         ->parse_blocked_on_script_load_from_document_write_duration =
-        base::TimeDelta::FromSecondsD(
-            perf.ParseBlockedOnScriptLoadFromDocumentWriteDuration());
+        base::Seconds(perf.ParseBlockedOnScriptLoadFromDocumentWriteDuration());
     timing->parse_timing->parse_blocked_on_script_execution_duration =
-        base::TimeDelta::FromSecondsD(
-            perf.ParseBlockedOnScriptExecutionDuration());
+        base::Seconds(perf.ParseBlockedOnScriptExecutionDuration());
     timing->parse_timing
         ->parse_blocked_on_script_execution_from_document_write_duration =
-        base::TimeDelta::FromSecondsD(
+        base::Seconds(
             perf.ParseBlockedOnScriptExecutionFromDocumentWriteDuration());
   }
   if (perf.LastPortalActivatedPaint().has_value()) {
     timing->paint_timing->portal_activated_paint =
         *perf.LastPortalActivatedPaint();
   }
+  if (perf.PrerenderActivationStart().has_value())
+    timing->activation_start = perf.PrerenderActivationStart();
+
+  if (perf.UserTimingMarkFullyLoaded().has_value())
+    timing->user_timing_mark_fully_loaded = perf.UserTimingMarkFullyLoaded();
+
+  if (perf.UserTimingMarkFullyVisible().has_value())
+    timing->user_timing_mark_fully_visible = perf.UserTimingMarkFullyVisible();
+
+  if (perf.UserTimingMarkInteractive().has_value())
+    timing->user_timing_mark_interactive = perf.UserTimingMarkInteractive();
 
   return Timing(std::move(timing), monotonic_timing);
 }

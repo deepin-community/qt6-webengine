@@ -8,20 +8,15 @@
 #include <memory>
 
 #include "base/containers/flat_map.h"
-#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "base/single_thread_task_runner.h"
 #include "base/synchronization/lock.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/threading/thread.h"
 #include "media/capture/video/chromeos/camera_device_context.h"
 #include "media/capture/video/chromeos/display_rotation_observer.h"
 #include "media/capture/video/video_capture_device.h"
 #include "media/capture/video/video_capture_device_descriptor.h"
 #include "media/capture/video_capture_types.h"
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "media/capture/video/chromeos/ash/power_manager_client_proxy.h"
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
 namespace display {
 
@@ -36,20 +31,23 @@ class CameraDeviceDelegate;
 
 // Implementation of delegate for ChromeOS with CrOS camera HALv3.
 class CAPTURE_EXPORT VideoCaptureDeviceChromeOSDelegate final
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-    : public DisplayRotationObserver,
-      public PowerManagerClientProxy::Observer {
-#else
     : public DisplayRotationObserver {
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
  public:
+  VideoCaptureDeviceChromeOSDelegate() = delete;
+
   VideoCaptureDeviceChromeOSDelegate(
       scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
       const VideoCaptureDeviceDescriptor& device_descriptor,
       scoped_refptr<CameraHalDelegate> camera_hal_delegate,
       base::OnceClosure cleanup_callback);
 
+  VideoCaptureDeviceChromeOSDelegate(
+      const VideoCaptureDeviceChromeOSDelegate&) = delete;
+  VideoCaptureDeviceChromeOSDelegate& operator=(
+      const VideoCaptureDeviceChromeOSDelegate&) = delete;
+
   ~VideoCaptureDeviceChromeOSDelegate();
+
   void Shutdown();
   bool HasDeviceClient();
 
@@ -62,17 +60,13 @@ class CAPTURE_EXPORT VideoCaptureDeviceChromeOSDelegate final
   void SetPhotoOptions(mojom::PhotoSettingsPtr settings,
                        VideoCaptureDevice::SetPhotoOptionsCallback callback);
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  // Implementation of PowerManagerClientProxy::Observer.
-  void SuspendDone() final;
-  void SuspendImminent() final;
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+ private:
+  // Helper to interact with PowerManagerClient on DBus original thread.
+  class PowerManagerClientProxy;
 
   void OpenDevice();
-  void CloseDevice();
-
- private:
   void ReconfigureStreams();
+  void CloseDevice(base::UnguessableToken unblock_suspend_token);
 
   // DisplayRotationDelegate implementation.
   void SetDisplayRotation(const display::Display& display) final;
@@ -118,14 +112,10 @@ class CAPTURE_EXPORT VideoCaptureDeviceChromeOSDelegate final
 
   base::WaitableEvent device_closed_;
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
   scoped_refptr<PowerManagerClientProxy> power_manager_client_proxy_;
 
-  base::WeakPtrFactory<PowerManagerClientProxy::Observer> weak_ptr_factory_{
+  base::WeakPtrFactory<VideoCaptureDeviceChromeOSDelegate> weak_ptr_factory_{
       this};
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
-
-  DISALLOW_IMPLICIT_CONSTRUCTORS(VideoCaptureDeviceChromeOSDelegate);
 };
 
 }  // namespace media

@@ -13,10 +13,9 @@
 #include "base/feature_list.h"
 #include "base/json/json_reader.h"
 #include "base/logging.h"
+#include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/optional.h"
 #include "base/rand_util.h"
-#include "base/stl_util.h"
 #include "base/time/clock.h"
 #include "base/time/default_clock.h"
 #include "base/time/time.h"
@@ -28,6 +27,7 @@
 #include "net/base/url_util.h"
 #include "net/log/net_log.h"
 #include "net/reporting/reporting_service.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
@@ -128,7 +128,7 @@ const struct {
 void GetPhaseAndTypeFromNetError(Error error,
                                  std::string* phase_out,
                                  std::string* type_out) {
-  for (size_t i = 0; i < base::size(kErrorTypes); ++i) {
+  for (size_t i = 0; i < std::size(kErrorTypes); ++i) {
     DCHECK(kErrorTypes[i].phase != nullptr);
     DCHECK(kErrorTypes[i].type != nullptr);
     if (kErrorTypes[i].error == error) {
@@ -227,8 +227,9 @@ class NetworkErrorLoggingServiceImpl : public NetworkErrorLoggingService {
         base::Unretained(this), std::move(details), request_received_time));
   }
 
-  void RemoveBrowsingData(const base::RepeatingCallback<bool(const GURL&)>&
-                              origin_filter) override {
+  void RemoveBrowsingData(
+      const base::RepeatingCallback<bool(const url::Origin&)>& origin_filter)
+      override {
     // base::Unretained is safe because the callback gets stored in
     // task_backlog_, so the callback will not outlive |*this|.
     DoOrBacklogTask(
@@ -319,7 +320,7 @@ class NetworkErrorLoggingServiceImpl : public NetworkErrorLoggingService {
   // null. If |store_| is null, then NEL policies will be in-memory only.
   // The store is owned by the URLRequestContext because Reporting also needs
   // access to it.
-  PersistentNelStore* store_;
+  raw_ptr<PersistentNelStore> store_;
 
   // Set to true when we have told the store to load NEL policies. This is to
   // make sure we don't try to load policies multiple times.
@@ -479,7 +480,7 @@ class NetworkErrorLoggingServiceImpl : public NetworkErrorLoggingService {
     }
 
     bool success = (type == OK) && !IsHttpError(details);
-    const base::Optional<double> sampling_fraction =
+    const absl::optional<double> sampling_fraction =
         SampleAndReturnFraction(*policy, success);
     if (!sampling_fraction.has_value())
       return;
@@ -489,9 +490,11 @@ class NetworkErrorLoggingServiceImpl : public NetworkErrorLoggingService {
              << ", depth=" << details.reporting_upload_depth << ") for "
              << details.uri;
 
+    // A null reporting source token is used since this report is not associated
+    // with any particular document.
     reporting_service_->QueueReport(
-        details.uri, details.network_isolation_key, details.user_agent,
-        policy->report_to, kReportType,
+        details.uri, absl::nullopt, details.network_isolation_key,
+        details.user_agent, policy->report_to, kReportType,
         CreateReportBody(phase_string, type_string, sampling_fraction.value(),
                          details),
         details.reporting_upload_depth);
@@ -528,7 +531,7 @@ class NetworkErrorLoggingServiceImpl : public NetworkErrorLoggingService {
           RequestOutcome::kDiscardedIPAddressMismatch);
       return;
     }
-    const base::Optional<double> sampling_fraction =
+    const absl::optional<double> sampling_fraction =
         SampleAndReturnFraction(*policy, details.success);
     if (!sampling_fraction.has_value()) {
       RecordSignedExchangeRequestOutcome(
@@ -537,21 +540,23 @@ class NetworkErrorLoggingServiceImpl : public NetworkErrorLoggingService {
       return;
     }
 
+    // A null reporting source token is used since this report is not associated
+    // with any particular document.
     reporting_service_->QueueReport(
-        details.outer_url, details.network_isolation_key, details.user_agent,
-        policy->report_to, kReportType,
+        details.outer_url, absl::nullopt, details.network_isolation_key,
+        details.user_agent, policy->report_to, kReportType,
         CreateSignedExchangeReportBody(details, sampling_fraction.value()),
         0 /* depth */);
     RecordSignedExchangeRequestOutcome(RequestOutcome::kQueued);
   }
 
   void DoRemoveBrowsingData(
-      const base::RepeatingCallback<bool(const GURL&)>& origin_filter) {
+      const base::RepeatingCallback<bool(const url::Origin&)>& origin_filter) {
     DCHECK(initialized_);
     for (auto it = policies_.begin(); it != policies_.end();) {
       const NelPolicyKey& key = it->first;
       // Remove policies matching the filter.
-      if (origin_filter.Run(key.origin.GetURL())) {
+      if (origin_filter.Run(key.origin)) {
         it = RemovePolicy(it);
       } else {
         ++it;
@@ -591,52 +596,46 @@ class NetworkErrorLoggingServiceImpl : public NetworkErrorLoggingService {
     if (!value)
       return false;
 
-    const base::DictionaryValue* dict = nullptr;
-    if (!value->GetAsDictionary(&dict))
+    if (!value->is_dict())
       return false;
 
     // Max-Age property is missing or malformed.
-    if (!dict->HasKey(kMaxAgeKey))
-      return false;
-    int max_age_sec;
-    if (!dict->GetInteger(kMaxAgeKey, &max_age_sec))
-      return false;
+    int max_age_sec = value->FindIntKey(kMaxAgeKey).value_or(-1);
     if (max_age_sec < 0)
       return false;
 
     // Report-To property is missing or malformed.
     std::string report_to;
     if (max_age_sec > 0) {
-      if (!dict->HasKey(kReportToKey))
+      std::string* maybe_report_to = value->FindStringKey(kReportToKey);
+      if (!maybe_report_to)
         return false;
-      if (!dict->GetString(kReportToKey, &report_to))
-        return false;
+      report_to = *maybe_report_to;
     }
 
-    bool include_subdomains = false;
     // include_subdomains is optional and defaults to false, so it's okay if
     // GetBoolean fails.
-    dict->GetBoolean(kIncludeSubdomainsKey, &include_subdomains);
+    bool include_subdomains =
+        value->FindBoolKey(kIncludeSubdomainsKey).value_or(false);
 
     // TODO(chlily): According to the spec we should restrict these sampling
     // fractions to [0.0, 1.0].
-    double success_fraction = 0.0;
     // success_fraction is optional and defaults to 0.0, so it's okay if
     // GetDouble fails.
-    dict->GetDouble(kSuccessFractionKey, &success_fraction);
+    double success_fraction =
+        value->FindDoubleKey(kSuccessFractionKey).value_or(0.0);
 
-    double failure_fraction = 1.0;
     // failure_fraction is optional and defaults to 1.0, so it's okay if
     // GetDouble fails.
-    dict->GetDouble(kFailureFractionKey, &failure_fraction);
+    double failure_fraction =
+        value->FindDoubleKey(kFailureFractionKey).value_or(1.0);
 
     policy_out->report_to = report_to;
     policy_out->include_subdomains = include_subdomains;
     policy_out->success_fraction = success_fraction;
     policy_out->failure_fraction = failure_fraction;
-    policy_out->expires = max_age_sec > 0
-                              ? now + base::TimeDelta::FromSeconds(max_age_sec)
-                              : base::Time();
+    policy_out->expires =
+        max_age_sec > 0 ? now + base::Seconds(max_age_sec) : base::Time();
     return true;
   }
 
@@ -808,7 +807,8 @@ class NetworkErrorLoggingServiceImpl : public NetworkErrorLoggingService {
     body->SetInteger(kStatusCodeKey, details.status_code);
     body->SetInteger(kElapsedTimeKey, details.elapsed_time.InMilliseconds());
 
-    auto sxg_body = std::make_unique<base::DictionaryValue>();
+    auto* sxg_body = body->SetKey(kSignedExchangeBodyKey,
+                                  base::Value(base::Value::Type::DICTIONARY));
     sxg_body->SetKey(kOuterUrlKey, base::Value(details.outer_url.spec()));
     if (details.inner_url.is_valid())
       sxg_body->SetKey(kInnerUrlKey, base::Value(details.inner_url.spec()));
@@ -817,7 +817,6 @@ class NetworkErrorLoggingServiceImpl : public NetworkErrorLoggingService {
     if (details.cert_url.is_valid())
       cert_url_list.Append(base::Value(details.cert_url.spec()));
     sxg_body->SetKey(kCertUrlKey, std::move(cert_url_list));
-    body->SetDictionary(kSignedExchangeBodyKey, std::move(sxg_body));
 
     return std::move(body);
   }
@@ -828,7 +827,7 @@ class NetworkErrorLoggingServiceImpl : public NetworkErrorLoggingService {
   }
 
   // Returns a valid value of matching fraction iff the event should be sampled.
-  base::Optional<double> SampleAndReturnFraction(const NelPolicy& policy,
+  absl::optional<double> SampleAndReturnFraction(const NelPolicy& policy,
                                                  bool success) const {
     const double sampling_fraction =
         success ? policy.success_fraction : policy.failure_fraction;
@@ -836,12 +835,12 @@ class NetworkErrorLoggingServiceImpl : public NetworkErrorLoggingService {
     // Sampling fractions are often either 0.0 or 1.0, so in those cases we
     // can avoid having to call RandDouble().
     if (sampling_fraction <= 0.0)
-      return base::nullopt;
+      return absl::nullopt;
     if (sampling_fraction >= 1.0)
       return sampling_fraction;
 
     if (base::RandDouble() >= sampling_fraction)
-      return base::nullopt;
+      return absl::nullopt;
     return sampling_fraction;
   }
 

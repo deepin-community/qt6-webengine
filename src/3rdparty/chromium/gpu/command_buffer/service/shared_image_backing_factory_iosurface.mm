@@ -7,7 +7,6 @@
 #include "base/mac/scoped_cftyperef.h"
 #include "base/mac/scoped_nsobject.h"
 #include "base/memory/scoped_refptr.h"
-#include "base/optional.h"
 #include "components/viz/common/gpu/metal_context_provider.h"
 #include "components/viz/common/resources/resource_format_utils.h"
 #include "components/viz/common/resources/resource_sizes.h"
@@ -17,6 +16,7 @@
 #include "gpu/command_buffer/service/shared_image_representation.h"
 #include "gpu/command_buffer/service/skia_utils.h"
 #include "gpu/command_buffer/service/texture_manager.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/skia/include/core/SkPromiseImageTexture.h"
 #include "ui/gfx/mac/io_surface.h"
 #include "ui/gl/buildflags.h"
@@ -28,7 +28,7 @@
 // Usage of BUILDFLAG(USE_DAWN) needs to be after the include for
 // ui/gl/buildflags.h
 #if BUILDFLAG(USE_DAWN)
-#include <dawn_native/MetalBackend.h>
+#include <dawn/native/MetalBackend.h>
 #endif  // BUILDFLAG(USE_DAWN)
 
 namespace gpu {
@@ -96,7 +96,7 @@ class SharedImageRepresentationDawnIOSurface
         io_surface_(std::move(io_surface)),
         device_(device),
         wgpu_format_(wgpu_format),
-        dawn_procs_(dawn_native::GetProcs()) {
+        dawn_procs_(dawn::native::GetProcs()) {
     DCHECK(device_);
     DCHECK(io_surface_);
 
@@ -112,21 +112,30 @@ class SharedImageRepresentationDawnIOSurface
 
   WGPUTexture BeginAccess(WGPUTextureUsage usage) final {
     WGPUTextureDescriptor texture_descriptor = {};
-    texture_descriptor.nextInChain = nullptr;
     texture_descriptor.format = wgpu_format_;
     texture_descriptor.usage = usage;
     texture_descriptor.dimension = WGPUTextureDimension_2D;
-    texture_descriptor.size = {size().width(), size().height(), 1};
+    texture_descriptor.size = {static_cast<uint32_t>(size().width()),
+                               static_cast<uint32_t>(size().height()), 1};
     texture_descriptor.mipLevelCount = 1;
     texture_descriptor.sampleCount = 1;
 
-    dawn_native::metal::ExternalImageDescriptorIOSurface descriptor;
+    // We need to have internal usages of CopySrc for copies and
+    // RenderAttachment for clears.
+    WGPUDawnTextureInternalUsageDescriptor internalDesc = {};
+    internalDesc.chain.sType = WGPUSType_DawnTextureInternalUsageDescriptor;
+    internalDesc.internalUsage =
+        WGPUTextureUsage_CopySrc | WGPUTextureUsage_RenderAttachment;
+    texture_descriptor.nextInChain =
+        reinterpret_cast<WGPUChainedStruct*>(&internalDesc);
+
+    dawn::native::metal::ExternalImageDescriptorIOSurface descriptor;
     descriptor.cTextureDescriptor = &texture_descriptor;
     descriptor.isInitialized = IsCleared();
     descriptor.ioSurface = io_surface_.get();
     descriptor.plane = 0;
 
-    texture_ = dawn_native::metal::WrapIOSurface(device_, &descriptor);
+    texture_ = dawn::native::metal::WrapIOSurface(device_, &descriptor);
     return texture_;
   }
 
@@ -135,7 +144,7 @@ class SharedImageRepresentationDawnIOSurface
       return;
     }
 
-    if (dawn_native::IsTextureSubresourceInitialized(texture_, 0, 1, 0, 1)) {
+    if (dawn::native::IsTextureSubresourceInitialized(texture_, 0, 1, 0, 1)) {
       SetCleared();
     }
 
@@ -151,7 +160,7 @@ class SharedImageRepresentationDawnIOSurface
     // scheduling races between commands using the IOSurface on different APIs.
     // This is a blocking call but should be almost instant.
     TRACE_EVENT0("gpu", "SharedImageRepresentationDawnIOSurface::EndAccess");
-    dawn_native::metal::WaitForCommandsToBeScheduled(device_);
+    dawn::native::metal::WaitForCommandsToBeScheduled(device_);
 
     dawn_procs_.textureRelease(texture_);
     texture_ = nullptr;
@@ -213,7 +222,7 @@ SharedImageBackingFactoryIOSurface::ProduceDawn(
   if (!io_surface)
     return nullptr;
 
-  base::Optional<WGPUTextureFormat> wgpu_format =
+  absl::optional<WGPUTextureFormat> wgpu_format =
       viz::ToWGPUFormat(actual_format);
   if (wgpu_format.value() == WGPUTextureFormat_Undefined)
     return nullptr;

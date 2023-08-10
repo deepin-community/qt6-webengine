@@ -10,7 +10,7 @@
 
 #include "base/bind.h"
 #include "base/hash/hash.h"
-#include "base/single_thread_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/trace_event.h"
 #include "components/favicon/core/favicon_client.h"
@@ -207,7 +207,7 @@ void FaviconServiceImpl::SetImportedFavicons(
 
 void FaviconServiceImpl::AddPageNoVisitForBookmark(
     const GURL& url,
-    const base::string16& title) {
+    const std::u16string& title) {
   history_service_->AddPageNoVisitForBookmark(url, title);
 }
 

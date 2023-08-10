@@ -3,8 +3,8 @@
 # found in the LICENSE file.
 
 import("//build/config/chromeos/ui_mode.gni")
-import("//build/config/crypto.gni")
 import("//build/config/features.gni")
+import("//crypto/features.gni")
 
 if (is_chromeos_ash) {
   component("ownership") {
@@ -41,8 +41,6 @@ if (is_chromeos_ash) {
   source_set("unit_tests") {
     testonly = true
     sources = [ "owner_key_util_impl_unittest.cc" ]
-
-    configs += [ "//build/config/compiler:no_size_t_to_int_warning" ]
 
     deps = [
       ":ownership",

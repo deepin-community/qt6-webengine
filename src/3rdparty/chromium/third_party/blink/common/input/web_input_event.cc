@@ -12,10 +12,6 @@ constexpr int kButtonModifiers =
     WebInputEvent::kForwardButtonDown;
 }
 
-base::Optional<ui::ScrollInputType> WebInputEvent::GetScrollInputType() const {
-  return base::nullopt;
-}
-
 WebInputEvent::DispatchType WebInputEvent::MergeDispatchTypes(
     DispatchType type_1,
     DispatchType type_2) {
@@ -79,6 +75,8 @@ ui::EventType WebInputEvent::GetTypeAsUiEventType() const {
       return ui::EventType::ET_GESTURE_TAP;
     case WebInputEvent::Type::kGestureTapCancel:
       return ui::EventType::ET_GESTURE_TAP_CANCEL;
+    case WebInputEvent::Type::kGestureShortPress:
+      return ui::EventType::ET_GESTURE_SHORT_PRESS;
     case WebInputEvent::Type::kGestureLongPress:
       return ui::EventType::ET_GESTURE_LONG_PRESS;
     case WebInputEvent::Type::kGestureLongTap:

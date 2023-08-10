@@ -52,7 +52,7 @@ void ScrollAnimator::Start(float velocity_x, float velocity_y) {
   velocity_y_ = velocity_y;
   duration_ = -v / acceleration_;  // in seconds
   animation_ = std::make_unique<gfx::SlideAnimation>(this);
-  animation_->SetSlideDuration(base::TimeDelta::FromSecondsD(duration_));
+  animation_->SetSlideDuration(base::Seconds(duration_));
   animation_->Show();
 }
 
@@ -63,6 +63,7 @@ void ScrollAnimator::Stop() {
 
 void ScrollAnimator::AnimationEnded(const gfx::Animation* animation) {
   Stop();
+  delegate_->OnFlingScrollEnded();
 }
 
 void ScrollAnimator::AnimationProgressed(const gfx::Animation* animation) {

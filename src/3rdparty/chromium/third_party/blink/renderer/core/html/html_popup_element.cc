@@ -5,21 +5,33 @@
 #include "third_party/blink/renderer/core/html/html_popup_element.h"
 
 #include "third_party/blink/renderer/core/css/style_change_reason.h"
+#include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
-#include "third_party/blink/renderer/core/events/keyboard_event.h"
+#include "third_party/blink/renderer/core/dom/flat_tree_traversal.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/web_feature.h"
+#include "third_party/blink/renderer/core/html/forms/html_select_menu_element.h"
+#include "third_party/blink/renderer/core/layout/adjust_for_absolute_zoom.h"
+#include "third_party/blink/renderer/core/style/computed_style.h"
+#include "third_party/blink/renderer/platform/geometry/length.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
+#include "ui/gfx/geometry/rect.h"
+#include "ui/gfx/geometry/rect_f.h"
 
 namespace blink {
 
 HTMLPopupElement::HTMLPopupElement(Document& document)
-    : HTMLElement(html_names::kPopupTag, document), open_(false) {
+    : HTMLElement(html_names::kPopupTag, document),
+      open_(false),
+      had_initiallyopen_when_parsed_(false) {
   DCHECK(RuntimeEnabledFeatures::HTMLPopupElementEnabled());
   UseCounter::Count(document, WebFeature::kPopupElement);
+  SetHasCustomStyleCallbacks();
 }
 
-
 void HTMLPopupElement::MarkStyleDirty() {
+  // TODO(masonf): kPopupVisibilityChange can be deleted when this method
+  // is deleted - this is the only use.
   SetNeedsStyleRecalc(kLocalStyleChange,
                       StyleChangeReasonForTracing::Create(
                           style_change_reason::kPopupVisibilityChange));
@@ -32,9 +44,10 @@ bool HTMLPopupElement::open() const {
 void HTMLPopupElement::hide() {
   if (!open_)
     return;
+  open_ = false;
+  DCHECK(isConnected());
   GetDocument().HideAllPopupsUntil(this);
   PopPopupElement(this);
-  open_ = false;
   PseudoStateChanged(CSSSelector::kPseudoPopupOpen);
   MarkStyleDirty();
   ScheduleHideEvent();
@@ -49,25 +62,65 @@ void HTMLPopupElement::ScheduleHideEvent() {
 void HTMLPopupElement::show() {
   if (open_ || !isConnected())
     return;
-
-  // Only hide popups up to the anchor element's nearest shadow-including
-  // ancestor popup element.
-  HTMLPopupElement* parent_popup = nullptr;
-  if (Element* anchor = AnchorElement()) {
-    for (Node* ancestor = anchor; ancestor;
-         ancestor = ancestor->ParentOrShadowHostNode()) {
-      if (HTMLPopupElement* ancestor_popup =
-              DynamicTo<HTMLPopupElement>(ancestor)) {
-        parent_popup = ancestor_popup;
-        break;
-      }
-    }
-  }
-  GetDocument().HideAllPopupsUntil(parent_popup);
+  // Only hide popups up to this popup's ancestral popup.
+  GetDocument().HideAllPopupsUntil(NearestOpenAncestralPopup(this));
   open_ = true;
   PseudoStateChanged(CSSSelector::kPseudoPopupOpen);
   PushNewPopupElement(this);
   MarkStyleDirty();
+  SetPopupFocusOnShow();
+}
+
+bool HTMLPopupElement::IsKeyboardFocusable() const {
+  // Popup is not keyboard focusable.
+  return false;
+}
+bool HTMLPopupElement::IsMouseFocusable() const {
+  // Popup *is* mouse focusable.
+  return true;
+}
+
+namespace {
+void ShowInitiallyOpenPopup(HTMLPopupElement* popup) {
+  // If a <popup> has the initiallyopen attribute upon page
+  // load, and it is the first such popup, show it.
+  if (popup && popup->isConnected() && !popup->GetDocument().PopupShowing()) {
+    popup->show();
+  }
+}
+}  // namespace
+
+Node::InsertionNotificationRequest HTMLPopupElement::InsertedInto(
+    ContainerNode& insertion_point) {
+  HTMLElement::InsertedInto(insertion_point);
+
+  if (had_initiallyopen_when_parsed_) {
+    DCHECK(isConnected());
+    had_initiallyopen_when_parsed_ = false;
+    GetDocument()
+        .GetTaskRunner(TaskType::kDOMManipulation)
+        ->PostTask(FROM_HERE, WTF::Bind(&ShowInitiallyOpenPopup,
+                                        WrapWeakPersistent(this)));
+  }
+  return kInsertionDone;
+}
+
+void HTMLPopupElement::RemovedFrom(ContainerNode& insertion_point) {
+  // If a popup is removed from the document, make sure it gets
+  // removed from the popup element stack and the top layer.
+  if (insertion_point.isConnected()) {
+    insertion_point.GetDocument().HidePopupIfShowing(this);
+  }
+  HTMLElement::RemovedFrom(insertion_point);
+}
+
+void HTMLPopupElement::ParserDidSetAttributes() {
+  HTMLElement::ParserDidSetAttributes();
+
+  if (FastHasAttribute(html_names::kInitiallyopenAttr)) {
+    DCHECK(!isConnected());
+    had_initiallyopen_when_parsed_ = true;
+  }
 }
 
 void HTMLPopupElement::PushNewPopupElement(HTMLPopupElement* popup) {
@@ -82,67 +135,6 @@ void HTMLPopupElement::PopPopupElement(HTMLPopupElement* popup) {
   DCHECK(stack.back() == popup);
   stack.pop_back();
   GetDocument().RemoveFromTopLayer(popup);
-}
-
-HTMLPopupElement* HTMLPopupElement::TopmostPopupElement() {
-  auto& stack = GetDocument().PopupElementStack();
-  return stack.IsEmpty() ? nullptr : stack.back();
-}
-
-Element* HTMLPopupElement::AnchorElement() const {
-  const AtomicString& anchor_id = FastGetAttribute(html_names::kAnchorAttr);
-  if (anchor_id.IsNull())
-    return nullptr;
-  if (!IsInTreeScope())
-    return nullptr;
-  if (Element* anchor = GetTreeScope().getElementById(anchor_id))
-    return anchor;
-  return nullptr;
-}
-
-void HTMLPopupElement::HandleLightDismiss(const Event& event) {
-  auto* target_node = event.target()->ToNode();
-  if (!target_node)
-    return;
-  auto& document = target_node->GetDocument();
-  DCHECK(document.PopupShowing());
-  const AtomicString& event_type = event.type();
-  if (event_type == event_type_names::kClick) {
-    // We need to walk up from the clicked element to see if there
-    // is a parent popup, or the anchor for a popup. There can be
-    // multiple popups for a single anchor element, but we will
-    // stop on any of them. Therefore, just store the popup that
-    // is highest (last) on the popup stack for each anchor.
-    HeapHashMap<Member<const Element>, Member<const HTMLPopupElement>> anchors;
-    for (auto popup : document.PopupElementStack()) {
-      if (auto* anchor = popup->AnchorElement()) {
-        anchors.Set(anchor, popup);
-      }
-    }
-    const HTMLPopupElement* closest_popup_parent = nullptr;
-    for (Node* current_node = target_node; current_node;
-         current_node = current_node->parentNode()) {
-      if (auto* popup = DynamicTo<HTMLPopupElement>(current_node)) {
-        closest_popup_parent = popup;
-        break;
-      }
-      Element* current_element = DynamicTo<Element>(current_node);
-      if (current_element && anchors.Contains(current_element)) {
-        closest_popup_parent = anchors.at(current_element);
-        break;
-      }
-    }
-    document.HideAllPopupsUntil(closest_popup_parent);
-  } else if (event_type == event_type_names::kKeydown) {
-    const KeyboardEvent* key_event = DynamicTo<KeyboardEvent>(event);
-    if (key_event && key_event->key() == "Escape") {
-      // Escape key just pops the topmost <popup> off the stack.
-      document.HideTopmostPopupElement();
-    }
-  } else if (event_type == event_type_names::kScroll) {
-    // Close all popups upon scroll.
-    document.HideAllPopupsUntil(nullptr);
-  }
 }
 
 }  // namespace blink

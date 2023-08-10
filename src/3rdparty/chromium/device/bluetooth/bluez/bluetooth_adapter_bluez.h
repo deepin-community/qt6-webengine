@@ -15,7 +15,7 @@
 #include <vector>
 
 #include "base/containers/queue.h"
-#include "base/macros.h"
+#include "base/gtest_prod_util.h"
 #include "base/memory/weak_ptr.h"
 #include "base/timer/timer.h"
 #include "build/chromeos_buildflags.h"
@@ -27,6 +27,7 @@
 #include "device/bluetooth/bluetooth_gatt_service.h"
 #include "device/bluetooth/bluez/bluetooth_service_record_bluez.h"
 #include "device/bluetooth/dbus/bluetooth_adapter_client.h"
+#include "device/bluetooth/dbus/bluetooth_admin_policy_client.h"
 #include "device/bluetooth/dbus/bluetooth_agent_manager_client.h"
 #include "device/bluetooth/dbus/bluetooth_agent_service_provider.h"
 #include "device/bluetooth/dbus/bluetooth_battery_client.h"
@@ -35,10 +36,14 @@
 #include "device/bluetooth/dbus/bluetooth_profile_manager_client.h"
 #include "device/bluetooth/dbus/bluetooth_profile_service_provider.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#include "device/bluetooth/bluetooth_low_energy_scan_filter.h"
+#include "device/bluetooth/bluetooth_low_energy_scan_session.h"
+#include "device/bluetooth/dbus/bluetooth_advertisement_monitor_manager_client.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "services/data_decoder/public/mojom/ble_scan_parser.mojom.h"
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#include "third_party/abseil-cpp/absl/types/optional.h"
+#endif  // BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
 
 namespace base {
 class TimeDelta;
@@ -55,6 +60,10 @@ namespace bluez {
 class BluetoothBlueZTest;
 class BluetoothAdapterProfileBlueZ;
 class BluetoothAdvertisementBlueZ;
+#if BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
+class BluetoothAdvertisementMonitorApplicationServiceProvider;
+class BluetoothAdvertisementMonitorServiceProvider;
+#endif  // BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
 class BluetoothDeviceBlueZ;
 class BluetoothLocalGattCharacteristicBlueZ;
 class BluetoothLocalGattServiceBlueZ;
@@ -79,10 +88,14 @@ class BluetoothPairingBlueZ;
 class DEVICE_BLUETOOTH_EXPORT BluetoothAdapterBlueZ final
     : public device::BluetoothAdapter,
       public bluez::BluetoothAdapterClient::Observer,
+      public bluez::BluetoothAdminPolicyClient::Observer,
       public bluez::BluetoothBatteryClient::Observer,
       public bluez::BluetoothDeviceClient::Observer,
       public bluez::BluetoothInputClient::Observer,
       public bluez::BluetoothAgentManagerClient::Observer,
+#if BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
+      public bluez::BluetoothAdvertisementMonitorManagerClient::Observer,
+#endif  // BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
       public bluez::BluetoothAgentServiceProvider::Delegate {
  public:
   using ErrorCompletionCallback =
@@ -93,12 +106,15 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothAdapterBlueZ final
   using ServiceRecordErrorCallback =
       base::OnceCallback<void(BluetoothServiceRecordBlueZ::ErrorCode)>;
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
   using ScanRecordPtr = data_decoder::mojom::ScanRecordPtr;
   using ScanRecordCallback = base::OnceCallback<void(ScanRecordPtr)>;
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
 
   static scoped_refptr<BluetoothAdapterBlueZ> CreateAdapter();
+
+  BluetoothAdapterBlueZ(const BluetoothAdapterBlueZ&) = delete;
+  BluetoothAdapterBlueZ& operator=(const BluetoothAdapterBlueZ&) = delete;
 
   // BluetoothAdapter:
   void Initialize(base::OnceClosure callback) override;
@@ -151,12 +167,33 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothAdapterBlueZ final
 
   void ConnectDevice(
       const std::string& address,
-      const base::Optional<device::BluetoothDevice::AddressType>& address_type,
+      const absl::optional<device::BluetoothDevice::AddressType>& address_type,
       ConnectDeviceCallback callback,
       ErrorCallback error_callback) override;
 
   device::BluetoothLocalGattService* GetGattService(
       const std::string& identifier) const override;
+
+#if BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
+  void SetServiceAllowList(const UUIDList& uuids,
+                           base::OnceClosure callback,
+                           ErrorCallback error_callback) override;
+
+  LowEnergyScanSessionHardwareOffloadingStatus
+  GetLowEnergyScanSessionHardwareOffloadingStatus() override;
+
+  std::unique_ptr<device::BluetoothLowEnergyScanSession>
+  StartLowEnergyScanSession(
+      std::unique_ptr<device::BluetoothLowEnergyScanFilter> filter,
+      base::WeakPtr<device::BluetoothLowEnergyScanSession::Delegate> delegate)
+      override;
+#endif  // BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
+
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+  // Set the adapter name to one chosen from the system information. Only Ash
+  // needs to do this.
+  void SetStandardChromeOSAdapterName() override;
+#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
   // These functions are specifically for use with ARC. They have no need to
   // exist for other platforms, hence we're putting them directly in the BlueZ
@@ -192,7 +229,7 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothAdapterBlueZ final
                                          int16_t rssi,
                                          const std::vector<uint8_t>& eir);
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
   // Announce to observers advertisement received from |device|.
   void OnAdvertisementReceived(std::string device_address,
                                std::string device_name,
@@ -200,7 +237,7 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothAdapterBlueZ final
                                uint16_t device_appearance,
                                const dbus::ObjectPath& device_path,
                                ScanRecordPtr scan_record);
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
 
   // Announce to observers that |device| has changed its connected state.
   void NotifyDeviceConnectedStateChanged(BluetoothDeviceBlueZ* device,
@@ -297,6 +334,12 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothAdapterBlueZ final
   void AdapterPropertyChanged(const dbus::ObjectPath& object_path,
                               const std::string& property_name) override;
 
+  // bluez::BluetoothAdminPolicyClient::Observer override.
+  void AdminPolicyAdded(const dbus::ObjectPath& object_path) override;
+  void AdminPolicyRemoved(const dbus::ObjectPath& object_path) override;
+  void AdminPolicyPropertyChanged(const dbus::ObjectPath& object_path,
+                                  const std::string& property_name) override;
+
   // bluez::BluetoothBatteryClient::Observer override.
   void BatteryAdded(const dbus::ObjectPath& object_path) override;
   void BatteryRemoved(const dbus::ObjectPath& object_path) override;
@@ -316,6 +359,11 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothAdapterBlueZ final
   // bluez::BluetoothAgentManagerClient::Observer override.
   void AgentManagerAdded(const dbus::ObjectPath& object_path) override;
   void AgentManagerRemoved(const dbus::ObjectPath& object_path) override;
+
+#if BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
+  // bluez::BluetoothAdvertisementMonitorManagerClient::Observer override.
+  void SupportedAdvertisementMonitorFeaturesChanged() override;
+#endif  // BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
 
   // bluez::BluetoothAgentServiceProvider::Delegate override.
   void Released() override;
@@ -361,11 +409,6 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothAdapterBlueZ final
   // subsequently operate on that adapter until it is removed.
   void SetAdapter(const dbus::ObjectPath& object_path);
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  // Set the adapter name to one chosen from the system information.
-  void SetStandardChromeOSAdapterName();
-#endif
-
   // Remove the currently tracked adapter. IsPresent() will return false after
   // this is called.
   void RemoveAdapter();
@@ -401,10 +444,8 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothAdapterBlueZ final
       DiscoverySessionErrorCallback error_callback);
 
   // Called by dbus:: on completion of the D-Bus method call to start discovery.
-  void OnStartDiscovery(base::OnceClosure callback,
-                        DiscoverySessionErrorCallback error_callback);
-  void OnStartDiscoveryError(base::OnceClosure callback,
-                             DiscoverySessionErrorCallback error_callback,
+  void OnStartDiscovery(DiscoverySessionResultCallback callback);
+  void OnStartDiscoveryError(DiscoverySessionResultCallback callback,
                              const std::string& error_name,
                              const std::string& error_message);
 
@@ -414,16 +455,13 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothAdapterBlueZ final
                             const std::string& error_name,
                             const std::string& error_message);
 
-  void OnPreSetDiscoveryFilter(base::OnceClosure callback,
-                               DiscoverySessionErrorCallback error_callback);
+  void OnPreSetDiscoveryFilter(DiscoverySessionResultCallback callback);
   void OnPreSetDiscoveryFilterError(
-      base::OnceClosure callback,
       DiscoverySessionErrorCallback error_callback,
       device::UMABluetoothDiscoverySessionOutcome outcome);
   void OnSetDiscoveryFilter(base::OnceClosure callback,
                             DiscoverySessionErrorCallback error_callback);
-  void OnSetDiscoveryFilterError(base::OnceClosure callback,
-                                 DiscoverySessionErrorCallback error_callback,
+  void OnSetDiscoveryFilterError(DiscoverySessionErrorCallback error_callback,
                                  const std::string& error_name,
                                  const std::string& error_message);
 
@@ -480,11 +518,26 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothAdapterBlueZ final
                             const std::string& error_name,
                             const std::string& error_message);
 
+  // Updates |is_blocked_by_policy| field of a device based on its corresponding
+  // value in Admin Policy interface. Should be called when receiving events
+  // about admin policy addition, change, or removal.
+  void UpdateDeviceAdminPolicyFromAdminPolicyClient(
+      const dbus::ObjectPath& object_path);
+
   // Updates |battery_percentage| field of a device based on its corresponding
   // value in Battery interface. Should be called when receiving events about
   // battery object addition, change, or removal.
   void UpdateDeviceBatteryLevelFromBatteryClient(
       const dbus::ObjectPath& object_path);
+
+#if BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
+  void RegisterAdvertisementMonitorApplicationServiceProvider();
+  void OnRegisterAdvertisementMonitorApplicationServiceProvider();
+
+  // Unregister the underlying advertisement monitor through
+  // |advertisement_monitor_application_provider_|.
+  void OnLowEnergyScanSessionDestroyed(const std::string& session_id);
+#endif  // BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
 
   base::OnceClosure init_callback_;
 
@@ -546,7 +599,7 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothAdapterBlueZ final
   // crbug.com/687396.
   std::vector<scoped_refptr<BluetoothAdvertisementBlueZ>> advertisements_;
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
   // Timer used to schedule a second update to BlueZ's long term keys. This
   // second update is necessary in a first-time install situation, where field
   // trials might not yet have been available. By scheduling a second update
@@ -555,13 +608,24 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothAdapterBlueZ final
 
   // Pointer for parsing BLE advertising packets out of process.
   mojo::Remote<data_decoder::mojom::BleScanParser> ble_scan_parser_;
-#endif
+
+  std::unique_ptr<BluetoothAdvertisementMonitorApplicationServiceProvider>
+      advertisement_monitor_application_provider_;
+
+  bool is_advertisement_monitor_application_provider_registered_ = false;
+
+  // Used to queue up low energy scan sessions that need to be started as soon
+  // as the advertisement monitor application has been registered. The
+  // application can only be registered once the adapter has been set, so it is
+  // possible for clients to start scan sessions before the monitor application
+  // is registered.
+  base::queue<std::unique_ptr<BluetoothAdvertisementMonitorServiceProvider>>
+      pending_advertisement_monitors_;
+#endif  // BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
 
   // Note: This should remain the last member so it'll be destroyed and
   // invalidate its weak pointers before any other members are destroyed.
   base::WeakPtrFactory<BluetoothAdapterBlueZ> weak_ptr_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(BluetoothAdapterBlueZ);
 };
 
 }  // namespace bluez

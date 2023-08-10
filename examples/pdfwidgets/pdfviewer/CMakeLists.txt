@@ -1,34 +1,28 @@
-# Generated from pdfviewer.pro.
-
 cmake_minimum_required(VERSION 3.16)
 project(pdfviewer LANGUAGES CXX)
 
-set(CMAKE_INCLUDE_CURRENT_DIR ON)
-
 set(CMAKE_AUTOMOC ON)
-set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
 if(NOT DEFINED INSTALL_EXAMPLESDIR)
-  set(INSTALL_EXAMPLESDIR "examples")
+    set(INSTALL_EXAMPLESDIR "examples")
 endif()
 
 set(INSTALL_EXAMPLEDIR "${INSTALL_EXAMPLESDIR}/pdfwidgets/pdfviewer")
 
-find_package(Qt6 COMPONENTS Core)
-find_package(Qt6 COMPONENTS Gui)
-find_package(Qt6 COMPONENTS Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets PdfWidgets)
 
 qt_add_executable(pdfviewerwidgets
     main.cpp
     mainwindow.cpp mainwindow.h mainwindow.ui
-    pageselector.cpp pageselector.h
     zoomselector.cpp zoomselector.h
 )
+
 set_target_properties(pdfviewerwidgets PROPERTIES
     WIN32_EXECUTABLE TRUE
     MACOSX_BUNDLE TRUE
 )
+
 target_link_libraries(pdfviewerwidgets PUBLIC
     Qt::Core
     Qt::Gui
@@ -36,17 +30,19 @@ target_link_libraries(pdfviewerwidgets PUBLIC
     Qt::PdfWidgets
 )
 
-
 # Resources:
 set(resources_resource_files
-    "images/busy.png"
-    "images/fileopen.png"
-    "images/go-next-24.png"
-    "images/go-previous-24.png"
-    "images/zoom-in-24.png"
-    "images/zoom-in-32.png"
-    "images/zoom-out-24.png"
-    "images/zoom-out-32.png"
+    "images/zoom-fit-width.svgz"
+    "images/zoom-in.svgz"
+    "images/go-previous-view-page.svgz"
+    "images/zoom-original.svgz"
+    "images/go-previous-view.svgz"
+    "images/go-next-view-page.svgz"
+    "images/zoom-fit-best.svgz"
+    "images/zoom-out.svgz"
+    "images/zoom-previous.svgz"
+    "images/document-open.svgz"
+    "images/go-next-view.svgz"
 )
 
 qt_add_resources(pdfviewerwidgets "resources"

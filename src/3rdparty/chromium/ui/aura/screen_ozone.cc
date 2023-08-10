@@ -13,16 +13,25 @@
 
 namespace aura {
 
-ScreenOzone::ScreenOzone() {
-  platform_screen_ = ui::OzonePlatform::GetInstance()->CreateScreen();
-  if (!platform_screen_) {
-    NOTREACHED()
-        << "PlatformScreen is not implemented for this ozone platform.";
-  }
-}
+ScreenOzone::ScreenOzone() = default;
 
 ScreenOzone::~ScreenOzone() {
   display::Screen::SetScreenInstance(old_screen_);
+}
+
+void ScreenOzone::Initialize() {
+  auto* platform = ui::OzonePlatform::GetInstance();
+  platform_screen_ = platform->CreateScreen();
+  if (platform_screen_) {
+    // Gives a chance to the derived classes to do pre-early initialization.
+    OnBeforePlatformScreenInit();
+    // Separate `CreateScreen` from `InitScreen` so that synchronous observers
+    // that call into `Screen` functions below have a valid `platform_screen_`.
+    platform->InitScreen(platform_screen_.get());
+  } else {
+    NOTREACHED()
+        << "PlatformScreen is not implemented for this ozone platform.";
+  }
 }
 
 gfx::Point ScreenOzone::GetCursorScreenPoint() {
@@ -30,10 +39,13 @@ gfx::Point ScreenOzone::GetCursorScreenPoint() {
 }
 
 bool ScreenOzone::IsWindowUnderCursor(gfx::NativeWindow window) {
-  return GetWindowAtScreenPoint(GetCursorScreenPoint()) == window;
+  DCHECK(platform_screen_);
+  gfx::AcceleratedWidget widget = GetAcceleratedWidgetForWindow(window);
+  return platform_screen_->IsAcceleratedWidgetUnderCursor(widget);
 }
 
 gfx::NativeWindow ScreenOzone::GetWindowAtScreenPoint(const gfx::Point& point) {
+  DCHECK(platform_screen_);
   return GetNativeWindowFromAcceleratedWidget(
       platform_screen_->GetAcceleratedWidgetAtScreenPoint(point));
 }
@@ -41,6 +53,7 @@ gfx::NativeWindow ScreenOzone::GetWindowAtScreenPoint(const gfx::Point& point) {
 gfx::NativeWindow ScreenOzone::GetLocalProcessWindowAtPoint(
     const gfx::Point& point,
     const std::set<gfx::NativeWindow>& ignore) {
+  DCHECK(platform_screen_);
   std::set<gfx::AcceleratedWidget> ignore_top_level;
   for (auto* const window : ignore)
     ignore_top_level.emplace(window->GetHost()->GetAcceleratedWidget());
@@ -59,6 +72,7 @@ const std::vector<display::Display>& ScreenOzone::GetAllDisplays() const {
 
 display::Display ScreenOzone::GetDisplayNearestWindow(
     gfx::NativeWindow window) const {
+  DCHECK(platform_screen_);
   gfx::AcceleratedWidget widget = GetAcceleratedWidgetForWindow(window);
   if (!widget)
     return GetPrimaryDisplay();
@@ -85,9 +99,11 @@ display::Display ScreenOzone::GetPrimaryDisplay() const {
   return platform_screen_->GetPrimaryDisplay();
 }
 
-void ScreenOzone::SetScreenSaverSuspended(bool suspend) {
-  platform_screen_->SetScreenSaverSuspended(suspend);
+#if BUILDFLAG(IS_CHROMEOS_LACROS) || BUILDFLAG(IS_LINUX)
+bool ScreenOzone::SetScreenSaverSuspended(bool suspend) {
+  return platform_screen_->SetScreenSaverSuspended(suspend);
 }
+#endif  // BUILDFLAG(IS_CHROMEOS_LACROS) || BUILDFLAG(IS_LINUX)
 
 bool ScreenOzone::IsScreenSaverActive() const {
   return platform_screen_->IsScreenSaverActive();
@@ -109,9 +125,9 @@ std::string ScreenOzone::GetCurrentWorkspace() {
   return platform_screen_->GetCurrentWorkspace();
 }
 
-base::Value ScreenOzone::GetGpuExtraInfoAsListValue(
+std::vector<base::Value> ScreenOzone::GetGpuExtraInfo(
     const gfx::GpuExtraInfo& gpu_extra_info) {
-  return platform_screen_->GetGpuExtraInfoAsListValue(gpu_extra_info);
+  return platform_screen_->GetGpuExtraInfo(gpu_extra_info);
 }
 
 gfx::NativeWindow ScreenOzone::GetNativeWindowFromAcceleratedWidget(
@@ -130,5 +146,7 @@ gfx::AcceleratedWidget ScreenOzone::GetAcceleratedWidgetForWindow(
 
   return host->GetAcceleratedWidget();
 }
+
+void ScreenOzone::OnBeforePlatformScreenInit() {}
 
 }  // namespace aura

@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "base/bind.h"
+#include "base/no_destructor.h"
 #include "base/system/sys_info.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
@@ -18,6 +19,7 @@
 #include "content/browser/gpu/gpu_process_host.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/common/content_features.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 
 namespace content {
@@ -107,8 +109,8 @@ void CompositorDependenciesAndroid::CreateVizFrameSinkManager() {
 
   // Set up a pending request which will be run once we've successfully
   // connected to the GPU process.
-  pending_connect_viz_on_io_thread_ = base::BindOnce(
-      &CompositorDependenciesAndroid::ConnectVizFrameSinkManagerOnIOThread,
+  pending_connect_viz_on_main_thread_ = base::BindOnce(
+      &CompositorDependenciesAndroid::ConnectVizFrameSinkManagerOnMainThread,
       std::move(frame_sink_manager_receiver),
       std::move(frame_sink_manager_client),
       host_frame_sink_manager_.debug_renderer_settings());
@@ -125,18 +127,17 @@ viz::FrameSinkId CompositorDependenciesAndroid::AllocateFrameSinkId() {
 }
 
 void CompositorDependenciesAndroid::TryEstablishVizConnectionIfNeeded() {
-  if (!pending_connect_viz_on_io_thread_)
+  if (!pending_connect_viz_on_main_thread_)
     return;
-  GetIOThreadTaskRunner({})->PostTask(
-      FROM_HERE, std::move(pending_connect_viz_on_io_thread_));
+  std::move(pending_connect_viz_on_main_thread_).Run();
 }
 
-// Called on IO thread, after a GPU connection has already been established.
-// |gpu_process_host| should only be invalid if a channel has been
+// Called on the GpuProcessHost thread, after a GPU connection has already been
+// established. |gpu_process_host| should only be invalid if a channel has been
 // established and lost. In this case the ConnectionLost callback will be
 // re-run when the request is deleted (goes out of scope).
 // static
-void CompositorDependenciesAndroid::ConnectVizFrameSinkManagerOnIOThread(
+void CompositorDependenciesAndroid::ConnectVizFrameSinkManagerOnMainThread(
     mojo::PendingReceiver<viz::mojom::FrameSinkManager> receiver,
     mojo::PendingRemote<viz::mojom::FrameSinkManagerClient> client,
     const viz::DebugRendererSettings& debug_renderer_settings) {
@@ -155,7 +156,7 @@ void CompositorDependenciesAndroid::EnqueueLowEndBackgroundCleanup() {
         base::Unretained(this)));
     base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
         FROM_HERE, low_end_background_cleanup_task_.callback(),
-        base::TimeDelta::FromSeconds(5));
+        base::Seconds(5));
   }
 }
 

@@ -14,7 +14,6 @@
 
 #include "base/callback.h"
 #include "base/memory/scoped_refptr.h"
-#include "base/strings/string16.h"
 #include "build/build_config.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/eye_dropper.h"
@@ -23,10 +22,8 @@
 #include "content/public/browser/serial_chooser.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/window_container_type.mojom-forward.h"
-#include "third_party/blink/public/common/loader/previews_state.h"
 #include "third_party/blink/public/common/mediastream/media_stream_request.h"
 #include "third_party/blink/public/common/page/drag_operation.h"
-#include "third_party/blink/public/common/security/security_style.h"
 #include "third_party/blink/public/mojom/choosers/color_chooser.mojom-forward.h"
 #include "third_party/blink/public/mojom/frame/blocked_navigation_types.mojom.h"
 #include "third_party/blink/public/mojom/frame/fullscreen.mojom-forward.h"
@@ -36,7 +33,7 @@
 #include "ui/gfx/geometry/rect_f.h"
 #include "ui/gfx/native_widget_types.h"
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 #include "base/android/scoped_java_ref.h"
 #endif
 
@@ -63,13 +60,11 @@ class RenderFrameHost;
 class RenderWidgetHost;
 class SessionStorageNamespace;
 class SiteInstance;
-class WebContentsImpl;
 struct ContextMenuParams;
 struct DropData;
 struct MediaPlayerWatchTime;
 struct NativeWebKeyboardEvent;
 struct Referrer;
-struct SecurityStyleExplanations;
 }  // namespace content
 
 namespace device {
@@ -86,10 +81,6 @@ class Size;
 namespace url {
 class Origin;
 }
-
-namespace viz {
-class SurfaceId;
-}  // namespace viz
 
 namespace blink {
 class WebGestureEvent;
@@ -112,7 +103,11 @@ enum class PictureInPictureResult {
 };
 
 // Objects implement this interface to get notified about changes in the
-// WebContents and to provide necessary functionality.
+// WebContents and to provide necessary functionality. If a method doesn't
+// change state, e.g. has no return value, then it can move to
+// WebContentsObserver if many places want to observe the change. If the
+// implementation of one of the methods below would be shared by many or all of
+// WebContentsDelegate implementations then it can go on ContentBrowserClient.
 class CONTENT_EXPORT WebContentsDelegate {
  public:
   WebContentsDelegate();
@@ -132,7 +127,8 @@ class CONTENT_EXPORT WebContentsDelegate {
   // Allows the delegate to optionally cancel navigations that attempt to
   // transfer to a different process between the start of the network load and
   // commit.  Defaults to true.
-  virtual bool ShouldTransferNavigation(bool is_main_frame_navigation);
+  virtual bool ShouldAllowRendererInitiatedCrossProcessNavigation(
+      bool is_outermost_main_frame_navigation);
 
   // Called to inform the delegate that the WebContents's navigation state
   // changed. The |changed_flags| indicates the parts of the navigation state
@@ -165,10 +161,15 @@ class CONTENT_EXPORT WebContentsDelegate {
   // Notifies the delegate that this contents is starting or is done loading
   // some resource. The delegate should use this notification to represent
   // loading feedback. See WebContents::IsLoading()
-  // |to_different_document| will be true unless the load is a fragment
-  // navigation, or triggered by history.pushState/replaceState.
+  // |should_show_loading_ui| indicates whether a load start should be visible
+  // in UI elements. It is generally true for different-document navigations and
+  // false for most same-document navigations (because same-documents are
+  // typically instantaneous so there's no point in flickering the UI). The
+  // exception is the navigation API's transitionWhile(), which is the sole type
+  // of same-document navigation that is asynchronous, and therefore a UI change
+  // is sensible.
   virtual void LoadingStateChanged(WebContents* source,
-                                   bool to_different_document) {}
+                                   bool should_show_loading_ui) {}
 
   // Request the delegate to close this web contents, and do whatever cleanup
   // it needs to do.
@@ -197,9 +198,6 @@ class CONTENT_EXPORT WebContentsDelegate {
   // gestures.
   virtual bool CanOverscrollContent();
 
-  // Invoked prior to showing before unload handler confirmation dialog.
-  virtual void WillRunBeforeUnloadConfirm() {}
-
   // Returns true if javascript dialogs and unload alerts are suppressed.
   // Default is false.
   virtual bool ShouldSuppressDialogs(WebContents* source);
@@ -218,9 +216,9 @@ class CONTENT_EXPORT WebContentsDelegate {
   virtual bool DidAddMessageToConsole(
       WebContents* source,
       blink::mojom::ConsoleMessageLevel log_level,
-      const base::string16& message,
+      const std::u16string& message,
       int32_t line_no,
-      const base::string16& source_id);
+      const std::u16string& source_id);
 
   // Tells us that we've finished firing this tab's beforeunload event.
   // The proceed bool tells us whether the user chose to proceed closing the
@@ -257,17 +255,20 @@ class CONTENT_EXPORT WebContentsDelegate {
   virtual bool TakeFocus(WebContents* source,
                          bool reverse);
 
-  // Invoked when the page loses mouse capture.
-  virtual void LostCapture() {}
-
   // Asks the delegate if the given tab can download.
   // Invoking the |callback| synchronously is OK.
   virtual void CanDownload(const GURL& url,
                            const std::string& request_method,
                            base::OnceCallback<void(bool)> callback);
 
+  // Asks the delegate to open/show the context menu based on `params`.
+  //
+  // The `render_frame_host` represents the frame that requests the context menu
+  // (typically this frame is focused, but this is not necessarily the case -
+  // see https://crbug.com/1257907#c14).
+  //
   // Returns true if the context menu operation was handled by the delegate.
-  virtual bool HandleContextMenu(RenderFrameHost* render_frame_host,
+  virtual bool HandleContextMenu(RenderFrameHost& render_frame_host,
                                  const ContextMenuParams& params);
 
   // Allows delegates to handle keyboard events before sending to the renderer.
@@ -334,7 +335,7 @@ class CONTENT_EXPORT WebContentsDelegate {
       const GURL& opener_url,
       const std::string& frame_name,
       const GURL& target_url,
-      const std::string& partition_id,
+      const StoragePartitionConfig& partition_config,
       SessionStorageNamespace* session_storage_namespace);
 
   // Notifies the delegate about the creation of a new WebContents. This
@@ -387,22 +388,23 @@ class CONTENT_EXPORT WebContentsDelegate {
   virtual void RendererResponsive(WebContents* source,
                                   RenderWidgetHost* render_widget_host) {}
 
-  // Invoked when a main fram navigation occurs.
-  virtual void DidNavigateMainFramePostCommit(WebContents* source) {}
+  // Invoked when a primary main frame navigation occurs.
+  virtual void DidNavigatePrimaryMainFramePostCommit(WebContents* source) {}
 
   // Returns a pointer to a service to manage JavaScript dialogs. May return
   // nullptr in which case dialogs aren't shown.
   virtual JavaScriptDialogManager* GetJavaScriptDialogManager(
       WebContents* source);
 
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_MAC) || defined(TOOLKIT_QT)
   // Called when color chooser should open. Returns the opened color chooser.
-  // Returns nullptr if we failed to open the color chooser (e.g. when there is
-  // a ColorChooserDialog already open on Windows). Ownership of the returned
-  // pointer is transferred to the caller.
-  virtual ColorChooser* OpenColorChooser(
+  // Returns nullptr if we failed to open the color chooser. The color chooser
+  // is only supported/required for Android.
+  virtual std::unique_ptr<ColorChooser> OpenColorChooser(
       WebContents* web_contents,
       SkColor color,
       const std::vector<blink::mojom::ColorSuggestionPtr>& suggestions);
+#endif  // BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_MAC)
 
   // Called when an eye dropper should open. Returns the eye dropper window.
   // The eye dropper is responsible for calling listener->ColorSelected() or
@@ -435,8 +437,15 @@ class CONTENT_EXPORT WebContentsDelegate {
                                base::OnceCallback<void()> on_confirm,
                                base::OnceCallback<void()> on_cancel);
 
+  // Returns whether entering fullscreen with |EnterFullscreenModeForTab()| is
+  // allowed.
+  virtual bool CanEnterFullscreenModeForTab(
+      RenderFrameHost* requesting_frame,
+      const blink::mojom::FullscreenOptions& options);
+
   // Called when the renderer puts a tab into fullscreen mode.
   // |requesting_frame| is the specific content frame requesting fullscreen.
+  // |CanEnterFullscreenModeForTab()| must return true on entry.
   virtual void EnterFullscreenModeForTab(
       RenderFrameHost* requesting_frame,
       const blink::mojom::FullscreenOptions& options) {}
@@ -488,7 +497,7 @@ class CONTENT_EXPORT WebContentsDelegate {
                          int active_match_ordinal,
                          bool final_update) {}
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   // Provides the rects of the current find-in-page matches.
   // Sent as a reply to RequestFindMatchRects.
   virtual void FindMatchRectsReply(WebContents* web_contents,
@@ -547,7 +556,14 @@ class CONTENT_EXPORT WebContentsDelegate {
       WebContents* web_contents,
       blink::mojom::MediaStreamType type);
 
-#if defined(OS_ANDROID)
+  // Returns the human-readable name for title in Media Controls.
+  // If the returned value is an empty string, it means that there is no
+  // human-readable name.
+  // For example, this returns an extension name for title instead of extension
+  // url.
+  virtual std::string GetTitleForMediaControls(WebContents* web_contents);
+
+#if BUILDFLAG(IS_ANDROID)
   // Returns true if the given media should be blocked to load.
   virtual bool ShouldBlockMediaRequest(const GURL& url);
 
@@ -578,14 +594,6 @@ class CONTENT_EXPORT WebContentsDelegate {
   virtual bool SaveFrame(const GURL& url,
                          const Referrer& referrer,
                          content::RenderFrameHost* rfh);
-
-  // Can be overridden by a delegate to return the security style of the
-  // given |web_contents|, populating |security_style_explanations| to
-  // explain why the SecurityStyle was downgraded. Returns
-  // SecurityStyleUnknown if not overriden.
-  virtual blink::SecurityStyle GetSecurityStyle(
-      WebContents* web_contents,
-      SecurityStyleExplanations* security_style_explanations);
 
   // Called when a suspicious navigation of the main frame has been blocked.
   // Allows the delegate to provide some UI to let the user know about the
@@ -633,11 +641,6 @@ class CONTENT_EXPORT WebContentsDelegate {
   // top controls as a result of page gesture scrolling while in tablet mode.
   virtual void SetTopControlsGestureScrollInProgress(bool in_progress) {}
 
-  // Give WebContentsDelegates the opportunity to adjust the previews state.
-  virtual void AdjustPreviewsStateForNavigation(
-      WebContents* web_contents,
-      blink::PreviewsState* previews_state) {}
-
   // Requests to print an out-of-process subframe for the specified WebContents.
   // |rect| is the rectangular area where its content resides in its parent
   // frame. |document_cookie| is a unique id for a printed document associated
@@ -664,24 +667,22 @@ class CONTENT_EXPORT WebContentsDelegate {
   // entering Picture-in-Picture.
   // Returns the result of the enter request.
   virtual PictureInPictureResult EnterPictureInPicture(
-      WebContents* web_contents,
-      const viz::SurfaceId&,
-      const gfx::Size& natural_size);
+      WebContents* web_contents);
 
   // Updates the Picture-in-Picture controller with a signal that
   // Picture-in-Picture mode has ended.
   virtual void ExitPictureInPicture() {}
 
-#if defined(OS_ANDROID)
-  // Updates information to determine whether a user gesture should carryover to
-  // future navigations. This is needed so navigations within a certain
-  // timeframe of a request initiated by a gesture will be treated as if they
-  // were initiated by a gesture too, otherwise the navigation may be blocked.
-  virtual void UpdateUserGestureCarryoverInfo(WebContents* web_contents) {}
-#endif
-
   // Returns true if lazy loading of images and frames should be enabled.
   virtual bool ShouldAllowLazyLoad();
+
+  // Return true if the back forward cache is supported. This is not an
+  // indication that the cache will be used.
+  virtual bool IsBackForwardCacheSupported();
+
+  // Returns true if Prerender2 (see content/browser/prerender/README.md for
+  // details) is supported.
+  virtual bool IsPrerender2Supported(WebContents& web_contents);
 
   // Requests the delegate to replace |predecessor_contents| with
   // |portal_contents| in the container that holds |predecessor_contents|. If
@@ -732,6 +733,11 @@ class CONTENT_EXPORT WebContentsDelegate {
 
   // Returns a weak ptr to the web contents delegate.
   virtual base::WeakPtr<WebContentsDelegate> GetDelegateWeakPtr();
+
+  // Whether the WebContents is privileged.
+  // It's used to prevent drag and drop between privileged and non-privileged
+  // WebContents.
+  virtual bool IsPrivileged();
 
  protected:
   virtual ~WebContentsDelegate();

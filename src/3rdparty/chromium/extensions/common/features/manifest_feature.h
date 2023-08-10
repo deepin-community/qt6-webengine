@@ -5,8 +5,6 @@
 #ifndef EXTENSIONS_COMMON_FEATURES_MANIFEST_FEATURE_H_
 #define EXTENSIONS_COMMON_FEATURES_MANIFEST_FEATURE_H_
 
-#include <string>
-
 #include "extensions/common/features/simple_feature.h"
 
 namespace extensions {
@@ -20,11 +18,14 @@ class ManifestFeature : public SimpleFeature {
   // that a permission or manifest feature can declare dependency on other
   // manifest features.
 
-  Feature::Availability IsAvailableToContext(
+ protected:
+  Feature::Availability IsAvailableToContextImpl(
       const Extension* extension,
       Feature::Context context,
       const GURL& url,
-      Feature::Platform platform) const override;
+      Feature::Platform platform,
+      int context_id,
+      bool check_developer_mode) const override;
 };
 
 }  // namespace extensions

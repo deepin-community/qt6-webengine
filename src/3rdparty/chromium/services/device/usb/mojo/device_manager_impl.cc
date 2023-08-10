@@ -15,6 +15,7 @@
 #include "base/callback_helpers.h"
 #include "base/files/file_util.h"
 #include "base/memory/ptr_util.h"
+#include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
 #include "mojo/public/cpp/bindings/associated_remote.h"
 #include "services/device/public/cpp/usb/usb_utils.h"
@@ -25,10 +26,10 @@
 #include "services/device/usb/usb_device.h"
 #include "services/device/usb/usb_service.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "chromeos/dbus/permission_broker/permission_broker_client.h"
+#if BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#include "chromeos/dbus/permission_broker/permission_broker_client.h"  // nogncheck
 #include "services/device/usb/usb_device_linux.h"
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
 
 namespace device {
 namespace usb {
@@ -37,9 +38,9 @@ DeviceManagerImpl::DeviceManagerImpl()
     : DeviceManagerImpl(UsbService::Create()) {}
 
 DeviceManagerImpl::DeviceManagerImpl(std::unique_ptr<UsbService> usb_service)
-    : usb_service_(std::move(usb_service)), observer_(this) {
+    : usb_service_(std::move(usb_service)) {
   if (usb_service_)
-    observer_.Add(usb_service_.get());
+    observation_.Observe(usb_service_.get());
 }
 
 DeviceManagerImpl::~DeviceManagerImpl() = default;
@@ -67,10 +68,11 @@ void DeviceManagerImpl::GetDevices(mojom::UsbEnumerationOptionsPtr options,
 
 void DeviceManagerImpl::GetDevice(
     const std::string& guid,
+    const std::vector<uint8_t>& blocked_interface_classes,
     mojo::PendingReceiver<mojom::UsbDevice> device_receiver,
     mojo::PendingRemote<mojom::UsbDeviceClient> device_client) {
   return GetDeviceInternal(guid, std::move(device_receiver),
-                           std::move(device_client),
+                           std::move(device_client), blocked_interface_classes,
                            /*allow_security_key_requests=*/false);
 }
 
@@ -80,10 +82,11 @@ void DeviceManagerImpl::GetSecurityKeyDevice(
     mojo::PendingRemote<mojom::UsbDeviceClient> device_client) {
   return GetDeviceInternal(guid, std::move(device_receiver),
                            std::move(device_client),
+                           /*blocked_interface_classes=*/{},
                            /*allow_security_key_requests=*/true);
 }
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 void DeviceManagerImpl::RefreshDeviceInfo(const std::string& guid,
                                           RefreshDeviceInfoCallback callback) {
   scoped_refptr<UsbDevice> device = usb_service_->GetDevice(guid);
@@ -114,9 +117,9 @@ void DeviceManagerImpl::OnPermissionGrantedToRefresh(
 
   std::move(callback).Run(device->device_info().Clone());
 }
-#endif  // defined(OS_ANDROID)
+#endif  // BUILDFLAG(IS_ANDROID)
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
 void DeviceManagerImpl::CheckAccess(const std::string& guid,
                                     CheckAccessCallback callback) {
   scoped_refptr<UsbDevice> device = usb_service_->GetDevice(guid);
@@ -139,8 +142,7 @@ void DeviceManagerImpl::OpenFileDescriptor(
     LOG(ERROR) << "Was asked to open non-existent USB device: " << guid;
     std::move(callback).Run(base::File());
   } else {
-    auto copyable_callback =
-        base::AdaptCallbackForRepeating(std::move(callback));
+    auto split_callback = base::SplitOnceCallback(std::move(callback));
     auto devpath =
         static_cast<device::UsbDeviceLinux*>(device.get())->device_path();
 
@@ -149,9 +151,11 @@ void DeviceManagerImpl::OpenFileDescriptor(
     chromeos::PermissionBrokerClient::Get()->ClaimDevicePath(
         devpath, drop_privileges_mask, lifeline_fd.GetFD().get(),
         base::BindOnce(&DeviceManagerImpl::OnOpenFileDescriptor,
-                       weak_factory_.GetWeakPtr(), copyable_callback),
+                       weak_factory_.GetWeakPtr(),
+                       std::move(split_callback.first)),
         base::BindOnce(&DeviceManagerImpl::OnOpenFileDescriptorError,
-                       weak_factory_.GetWeakPtr(), copyable_callback));
+                       weak_factory_.GetWeakPtr(),
+                       std::move(split_callback.second)));
   }
 }
 
@@ -169,7 +173,7 @@ void DeviceManagerImpl::OnOpenFileDescriptorError(
              << message;
   std::move(callback).Run(base::File());
 }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
 
 void DeviceManagerImpl::SetClient(
     mojo::PendingAssociatedRemote<mojom::UsbDeviceManagerClient> client) {
@@ -210,7 +214,7 @@ void DeviceManagerImpl::OnDeviceRemoved(scoped_refptr<UsbDevice> device) {
 }
 
 void DeviceManagerImpl::WillDestroyUsbService() {
-  observer_.RemoveAll();
+  observation_.Reset();
   usb_service_ = nullptr;
 
   // Close all the connections.
@@ -222,13 +226,15 @@ void DeviceManagerImpl::GetDeviceInternal(
     const std::string& guid,
     mojo::PendingReceiver<mojom::UsbDevice> device_receiver,
     mojo::PendingRemote<mojom::UsbDeviceClient> device_client,
+    base::span<const uint8_t> blocked_interface_classes,
     bool allow_security_key_requests) {
   scoped_refptr<UsbDevice> device = usb_service_->GetDevice(guid);
   if (!device)
     return;
 
   DeviceImpl::Create(std::move(device), std::move(device_receiver),
-                     std::move(device_client), allow_security_key_requests);
+                     std::move(device_client), blocked_interface_classes,
+                     allow_security_key_requests);
 }
 
 }  // namespace usb

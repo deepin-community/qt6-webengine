@@ -4,6 +4,7 @@
 
 #include "third_party/blink/renderer/core/layout/svg/svg_content_container.h"
 
+#include "third_party/blink/renderer/core/layout/ng/svg/layout_ng_svg_text.h"
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_container.h"
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_foreign_object.h"
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_image.h"
@@ -39,8 +40,10 @@ void SVGContentContainer::Layout(const SVGContainerLayoutInfo& layout_info) {
     if (layout_info.scale_factor_changed) {
       // If the screen scaling factor changed we need to update the text
       // metrics (note: this also happens for layoutSizeChanged=true).
-      if (child->IsSVGText())
-        To<LayoutSVGText>(child)->SetNeedsTextMetricsUpdate();
+      if (auto* text = DynamicTo<LayoutSVGText>(child))
+        text->SetNeedsTextMetricsUpdate();
+      else if (auto* ng_text = DynamicTo<LayoutNGSVGText>(child))
+        ng_text->SetNeedsTextMetricsUpdate();
       force_child_layout = true;
     }
 
@@ -52,11 +55,13 @@ void SVGContentContainer::Layout(const SVGContainerLayoutInfo& layout_info) {
           // FIXME: this should be done on invalidation, not during layout.
           // When the layout size changed and when using relative values tell
           // the LayoutSVGShape to update its shape object
-          if (child->IsSVGShape()) {
-            To<LayoutSVGShape>(child)->SetNeedsShapeUpdate();
-          } else if (child->IsSVGText()) {
-            To<LayoutSVGText>(child)->SetNeedsTextMetricsUpdate();
-            To<LayoutSVGText>(child)->SetNeedsPositioningValuesUpdate();
+          if (auto* shape = DynamicTo<LayoutSVGShape>(child)) {
+            shape->SetNeedsShapeUpdate();
+          } else if (auto* text = DynamicTo<LayoutSVGText>(child)) {
+            text->SetNeedsTextMetricsUpdate();
+            text->SetNeedsPositioningValuesUpdate();
+          } else if (auto* ng_text = DynamicTo<LayoutNGSVGText>(child)) {
+            ng_text->SetNeedsTextMetricsUpdate();
           }
 
           force_child_layout = true;
@@ -111,15 +116,16 @@ bool SVGContentContainer::HitTest(HitTestResult& result,
 
 // Update a bounding box taking into account the validity of the other bounding
 // box.
-static inline void UpdateObjectBoundingBox(FloatRect& object_bounding_box,
-                                           bool& object_bounding_box_valid,
-                                           FloatRect other_bounding_box) {
+static inline void UpdateObjectBoundingBox(
+    gfx::RectF& object_bounding_box,
+    bool& object_bounding_box_valid,
+    const gfx::RectF& other_bounding_box) {
   if (!object_bounding_box_valid) {
     object_bounding_box = other_bounding_box;
     object_bounding_box_valid = true;
     return;
   }
-  object_bounding_box.UniteEvenIfEmpty(other_bounding_box);
+  object_bounding_box.UnionEvenIfEmpty(other_bounding_box);
 }
 
 static bool HasValidBoundingBoxForContainer(const LayoutObject& object) {
@@ -128,6 +134,8 @@ static bool HasValidBoundingBoxForContainer(const LayoutObject& object) {
 
   if (object.IsSVGText())
     return To<LayoutSVGText>(object).IsObjectBoundingBoxValid();
+  if (const auto* ng_text = DynamicTo<LayoutNGSVGText>(object))
+    return ng_text->IsObjectBoundingBoxValid();
 
   if (auto* svg_container = DynamicTo<LayoutSVGContainer>(object)) {
     return svg_container->IsObjectBoundingBoxValid() &&
@@ -143,8 +151,8 @@ static bool HasValidBoundingBoxForContainer(const LayoutObject& object) {
   return false;
 }
 
-static FloatRect ObjectBoundsForPropagation(const LayoutObject& object) {
-  FloatRect bounds = object.ObjectBoundingBox();
+static gfx::RectF ObjectBoundsForPropagation(const LayoutObject& object) {
+  gfx::RectF bounds = object.ObjectBoundingBox();
   // The local-to-parent transform for <foreignObject> contains a zoom inverse,
   // so we need to apply zoom to the bounding box that we use for propagation to
   // be in the correct coordinate space.
@@ -156,8 +164,8 @@ static FloatRect ObjectBoundsForPropagation(const LayoutObject& object) {
 bool SVGContentContainer::UpdateBoundingBoxes(bool& object_bounding_box_valid) {
   object_bounding_box_valid = false;
 
-  FloatRect object_bounding_box;
-  FloatRect stroke_bounding_box;
+  gfx::RectF object_bounding_box;
+  gfx::RectF stroke_bounding_box;
   for (LayoutObject* current = children_.FirstChild(); current;
        current = current->NextSibling()) {
     // Don't include elements that are not rendered.
@@ -167,7 +175,7 @@ bool SVGContentContainer::UpdateBoundingBoxes(bool& object_bounding_box_valid) {
     UpdateObjectBoundingBox(
         object_bounding_box, object_bounding_box_valid,
         transform.MapRect(ObjectBoundsForPropagation(*current)));
-    stroke_bounding_box.Unite(transform.MapRect(current->StrokeBoundingBox()));
+    stroke_bounding_box.Union(transform.MapRect(current->StrokeBoundingBox()));
   }
 
   bool changed = false;

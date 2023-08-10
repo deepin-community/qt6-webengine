@@ -23,7 +23,6 @@
 
 #include "base/check_op.h"
 #include "base/no_destructor.h"
-#include "base/stl_util.h"
 #include "base/strings/string_util_internal.h"
 #include "base/strings/utf_string_conversion_utils.h"
 #include "base/strings/utf_string_conversions.h"
@@ -71,7 +70,7 @@ std::string ToLowerASCII(StringPiece str) {
   return internal::ToLowerASCIIImpl(str);
 }
 
-string16 ToLowerASCII(StringPiece16 str) {
+std::u16string ToLowerASCII(StringPiece16 str) {
   return internal::ToLowerASCIIImpl(str);
 }
 
@@ -79,7 +78,7 @@ std::string ToUpperASCII(StringPiece str) {
   return internal::ToUpperASCIIImpl(str);
 }
 
-string16 ToUpperASCII(StringPiece16 str) {
+std::u16string ToUpperASCII(StringPiece16 str) {
   return internal::ToUpperASCIIImpl(str);
 }
 
@@ -106,15 +105,15 @@ const std::string& EmptyString() {
   return *s;
 }
 
-const string16& EmptyString16() {
-  static const base::NoDestructor<string16> s16;
+const std::u16string& EmptyString16() {
+  static const base::NoDestructor<std::u16string> s16;
   return *s16;
 }
 
 bool ReplaceChars(StringPiece16 input,
                   StringPiece16 replace_chars,
                   StringPiece16 replace_with,
-                  string16* output) {
+                  std::u16string* output) {
   return internal::ReplaceCharsT(input, replace_chars, replace_with, output);
 }
 
@@ -127,7 +126,7 @@ bool ReplaceChars(StringPiece input,
 
 bool RemoveChars(StringPiece16 input,
                  StringPiece16 remove_chars,
-                 string16* output) {
+                 std::u16string* output) {
   return internal::ReplaceCharsT(input, remove_chars, StringPiece16(), output);
 }
 
@@ -139,7 +138,7 @@ bool RemoveChars(StringPiece input,
 
 bool TrimString(StringPiece16 input,
                 StringPiece16 trim_chars,
-                string16* output) {
+                std::u16string* output) {
   return internal::TrimStringT(input, trim_chars, TRIM_ALL, output) !=
          TRIM_NONE;
 }
@@ -202,7 +201,7 @@ void TruncateUTF8ToByteSize(const std::string& input,
 
 TrimPositions TrimWhitespace(StringPiece16 input,
                              TrimPositions positions,
-                             string16* output) {
+                             std::u16string* output) {
   return internal::TrimStringT(input, StringPiece16(kWhitespaceUTF16),
                                positions, output);
 }
@@ -225,8 +224,8 @@ StringPiece TrimWhitespaceASCII(StringPiece input, TrimPositions positions) {
                                     positions);
 }
 
-string16 CollapseWhitespace(StringPiece16 text,
-                            bool trim_sequences_with_line_breaks) {
+std::u16string CollapseWhitespace(StringPiece16 text,
+                                  bool trim_sequences_with_line_breaks) {
   return internal::CollapseWhitespaceT(text, trim_sequences_with_line_breaks);
 }
 
@@ -331,34 +330,34 @@ static const char* const kByteStringsUnlocalized[] = {
   " PB"
 };
 
-string16 FormatBytesUnlocalized(int64_t bytes) {
+std::u16string FormatBytesUnlocalized(int64_t bytes) {
   double unit_amount = static_cast<double>(bytes);
   size_t dimension = 0;
   const int kKilo = 1024;
   while (unit_amount >= kKilo &&
-         dimension < base::size(kByteStringsUnlocalized) - 1) {
+         dimension < std::size(kByteStringsUnlocalized) - 1) {
     unit_amount /= kKilo;
     dimension++;
   }
 
   char buf[64];
   if (bytes != 0 && dimension > 0 && unit_amount < 100) {
-    base::snprintf(buf, base::size(buf), "%.1lf%s", unit_amount,
+    base::snprintf(buf, std::size(buf), "%.1lf%s", unit_amount,
                    kByteStringsUnlocalized[dimension]);
   } else {
-    base::snprintf(buf, base::size(buf), "%.0lf%s", unit_amount,
+    base::snprintf(buf, std::size(buf), "%.0lf%s", unit_amount,
                    kByteStringsUnlocalized[dimension]);
   }
 
   return ASCIIToUTF16(buf);
 }
 
-void ReplaceFirstSubstringAfterOffset(string16* str,
+void ReplaceFirstSubstringAfterOffset(std::u16string* str,
                                       size_t start_offset,
                                       StringPiece16 find_this,
                                       StringPiece16 replace_with) {
   internal::DoReplaceMatchesAfterOffset(
-      str, start_offset, internal::SubstringMatcher<string16>{find_this},
+      str, start_offset, internal::MakeSubstringMatcher(find_this),
       replace_with, internal::ReplaceType::REPLACE_FIRST);
 }
 
@@ -367,16 +366,16 @@ void ReplaceFirstSubstringAfterOffset(std::string* str,
                                       StringPiece find_this,
                                       StringPiece replace_with) {
   internal::DoReplaceMatchesAfterOffset(
-      str, start_offset, internal::SubstringMatcher<std::string>{find_this},
+      str, start_offset, internal::MakeSubstringMatcher(find_this),
       replace_with, internal::ReplaceType::REPLACE_FIRST);
 }
 
-void ReplaceSubstringsAfterOffset(string16* str,
+void ReplaceSubstringsAfterOffset(std::u16string* str,
                                   size_t start_offset,
                                   StringPiece16 find_this,
                                   StringPiece16 replace_with) {
   internal::DoReplaceMatchesAfterOffset(
-      str, start_offset, internal::SubstringMatcher<string16>{find_this},
+      str, start_offset, internal::MakeSubstringMatcher(find_this),
       replace_with, internal::ReplaceType::REPLACE_ALL);
 }
 
@@ -385,7 +384,7 @@ void ReplaceSubstringsAfterOffset(std::string* str,
                                   StringPiece find_this,
                                   StringPiece replace_with) {
   internal::DoReplaceMatchesAfterOffset(
-      str, start_offset, internal::SubstringMatcher<std::string>{find_this},
+      str, start_offset, internal::MakeSubstringMatcher(find_this),
       replace_with, internal::ReplaceType::REPLACE_ALL);
 }
 
@@ -393,7 +392,7 @@ char* WriteInto(std::string* str, size_t length_with_null) {
   return internal::WriteIntoT(str, length_with_null);
 }
 
-char16* WriteInto(string16* str, size_t length_with_null) {
+char16_t* WriteInto(std::u16string* str, size_t length_with_null) {
   return internal::WriteIntoT(str, length_with_null);
 }
 
@@ -401,7 +400,8 @@ std::string JoinString(span<const std::string> parts, StringPiece separator) {
   return internal::JoinStringT(parts, separator);
 }
 
-string16 JoinString(span<const string16> parts, StringPiece16 separator) {
+std::u16string JoinString(span<const std::u16string> parts,
+                          StringPiece16 separator) {
   return internal::JoinStringT(parts, separator);
 }
 
@@ -409,7 +409,8 @@ std::string JoinString(span<const StringPiece> parts, StringPiece separator) {
   return internal::JoinStringT(parts, separator);
 }
 
-string16 JoinString(span<const StringPiece16> parts, StringPiece16 separator) {
+std::u16string JoinString(span<const StringPiece16> parts,
+                          StringPiece16 separator) {
   return internal::JoinStringT(parts, separator);
 }
 
@@ -418,14 +419,15 @@ std::string JoinString(std::initializer_list<StringPiece> parts,
   return internal::JoinStringT(parts, separator);
 }
 
-string16 JoinString(std::initializer_list<StringPiece16> parts,
-                    StringPiece16 separator) {
+std::u16string JoinString(std::initializer_list<StringPiece16> parts,
+                          StringPiece16 separator) {
   return internal::JoinStringT(parts, separator);
 }
 
-string16 ReplaceStringPlaceholders(StringPiece16 format_string,
-                                   const std::vector<string16>& subst,
-                                   std::vector<size_t>* offsets) {
+std::u16string ReplaceStringPlaceholders(
+    StringPiece16 format_string,
+    const std::vector<std::u16string>& subst,
+    std::vector<size_t>* offsets) {
   return internal::DoReplaceStringPlaceholders(format_string, subst, offsets);
 }
 
@@ -435,11 +437,12 @@ std::string ReplaceStringPlaceholders(StringPiece format_string,
   return internal::DoReplaceStringPlaceholders(format_string, subst, offsets);
 }
 
-string16 ReplaceStringPlaceholders(const string16& format_string,
-                                   const string16& a,
-                                   size_t* offset) {
+std::u16string ReplaceStringPlaceholders(const std::u16string& format_string,
+                                         const std::u16string& a,
+                                         size_t* offset) {
   std::vector<size_t> offsets;
-  string16 result = ReplaceStringPlaceholders(format_string, {a}, &offsets);
+  std::u16string result =
+      ReplaceStringPlaceholders(format_string, {a}, &offsets);
 
   DCHECK_EQ(1U, offsets.size());
   if (offset)

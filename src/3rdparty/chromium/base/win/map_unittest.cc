@@ -6,10 +6,12 @@
 
 #include <windows.foundation.h>
 
+#include "base/memory/raw_ptr.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/win/core_winrt_util.h"
 #include "base/win/hstring_reference.h"
 #include "base/win/scoped_hstring.h"
+#include "base/win/scoped_winrt_initializer.h"
 #include "base/win/windows_version.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -234,7 +236,7 @@ class FakeMapChangedEventHandler
  private:
   ComPtr<IObservableMap<K, V>> map_;
   EventRegistrationToken token_;
-  IObservableMap<K, V>* sender_ = nullptr;
+  raw_ptr<IObservableMap<K, V>> sender_ = nullptr;
   CollectionChange change_ = CollectionChange_Reset;
   K key_ = 0;
 };
@@ -509,7 +511,8 @@ TEST(MapTest, Properties) {
     return;
 
   ASSERT_TRUE(ResolveCoreWinRT());
-  ASSERT_HRESULT_SUCCEEDED(base::win::RoInitialize(RO_INIT_MULTITHREADED));
+  ScopedWinrtInitializer winrt_initializer;
+  ASSERT_TRUE(winrt_initializer.Succeeded());
 
   auto map = Make<Map<HSTRING, IInspectable*>>();
 

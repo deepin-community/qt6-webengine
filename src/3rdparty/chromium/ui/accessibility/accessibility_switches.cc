@@ -13,14 +13,6 @@ namespace switches {
 const char kEnableExperimentalAccessibilityAutoclick[] =
     "enable-experimental-accessibility-autoclick";
 
-// Enables the experimental dictation extension on Chrome OS that hasn't
-// launched yet.
-const char kEnableExperimentalAccessibilityDictationExtension[] =
-    "enable-experimental-accessibility-dictation-extension";
-
-const char kEnableExperimentalAccessibilityDictationOffline[] =
-    "enable-experimental-accessibility-dictation-offline";
-
 // Enables support for visually debugging the accessibility labels
 // feature, which provides images descriptions for screen reader users.
 const char kEnableExperimentalAccessibilityLabelsDebugging[] =
@@ -40,23 +32,9 @@ const char kEnableExperimentalAccessibilityLanguageDetectionDynamic[] =
 const char kEnableExperimentalAccessibilitySwitchAccessText[] =
     "enable-experimental-accessibility-switch-access-text";
 
-// Enables Switch Access point scanning. This feature hasn't launched yet.
-const char kEnableSwitchAccessPointScanning[] =
-    "enable-switch-access-point-scanning";
-
-// Enables the Switch Access setup guide that hasn't launched yet.
-const char kEnableExperimentalAccessibilitySwitchAccessSetupGuide[] =
-    "enable-experimental-accessibility-switch-access-setup-guide";
-
-bool IsExperimentalAccessibilityDictationExtensionEnabled() {
-  return base::CommandLine::ForCurrentProcess()->HasSwitch(
-      ::switches::kEnableExperimentalAccessibilityDictationExtension);
-}
-
-bool IsExperimentalAccessibilityDictationOfflineEnabled() {
-  return base::CommandLine::ForCurrentProcess()->HasSwitch(
-      ::switches::kEnableExperimentalAccessibilityDictationOffline);
-}
+// Enables debug feature for drawing rectangle around magnified region, without
+// zooming in.
+const char kEnableMagnifierDebugDrawRect[] = "enable-magnifier-debug-draw-rect";
 
 bool IsExperimentalAccessibilityLanguageDetectionEnabled() {
   return base::CommandLine::ForCurrentProcess()->HasSwitch(
@@ -73,19 +51,19 @@ bool IsExperimentalAccessibilitySwitchAccessTextEnabled() {
       ::switches::kEnableExperimentalAccessibilitySwitchAccessText);
 }
 
-bool IsSwitchAccessPointScanningEnabled() {
+bool IsMagnifierDebugDrawRectEnabled() {
   return base::CommandLine::ForCurrentProcess()->HasSwitch(
-      ::switches::kEnableSwitchAccessPointScanning);
+      ::switches::kEnableMagnifierDebugDrawRect);
 }
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 // Enables UI Automation platform API in addition to the IAccessible API.
 const char kEnableExperimentalUIAutomation[] =
     "enable-experimental-ui-automation";
 #endif
 
 bool IsExperimentalAccessibilityPlatformUIAEnabled() {
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   return base::CommandLine::ForCurrentProcess()->HasSwitch(
       ::switches::kEnableExperimentalUIAutomation);
 #else

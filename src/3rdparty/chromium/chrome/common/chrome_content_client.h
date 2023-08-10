@@ -10,14 +10,13 @@
 #include <string>
 #include <vector>
 
-#include "base/compiler_specific.h"
 #include "base/files/file_path.h"
 #include "base/synchronization/lock.h"
+#include "build/branding_buildflags.h"
 #include "build/build_config.h"
 #include "chrome/common/buildflags.h"
 #include "components/nacl/common/buildflags.h"
 #include "content/public/common/content_client.h"
-#include "pdf/buildflags.h"
 #include "ppapi/buildflags/buildflags.h"
 
 #if BUILDFLAG(ENABLE_PLUGINS)
@@ -30,7 +29,7 @@ class OriginTrialPolicyImpl;
 
 class ChromeContentClient : public content::ContentClient {
  public:
-#if defined(GOOGLE_CHROME_BUILD)
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
   // |kNotPresent| is a placeholder plugin location for plugins that are not
   // currently present in this installation of Chrome, but which can be fetched
   // on-demand and therefore should still appear in navigator.plugins.
@@ -59,13 +58,6 @@ class ChromeContentClient : public content::ContentClient {
       content::PepperPluginInfo::PPP_ShutdownModuleFunc shutdown_module);
 #endif
 
-#if BUILDFLAG(ENABLE_PLUGINS) && BUILDFLAG(ENABLE_PDF)
-  static void SetPDFEntryFunctions(
-      content::PepperPluginInfo::GetInterfaceFunc get_interface,
-      content::PepperPluginInfo::PPP_InitializeModuleFunc initialize_module,
-      content::PepperPluginInfo::PPP_ShutdownModuleFunc shutdown_module);
-#endif
-
 #if BUILDFLAG(ENABLE_PLUGINS)
   // This returns the most recent plugin based on the plugin versions. In the
   // event of a tie, a debug plugin will be considered more recent than a
@@ -85,23 +77,25 @@ class ChromeContentClient : public content::ContentClient {
       std::vector<content::CdmInfo>* cdms,
       std::vector<media::CdmHostFilePath>* cdm_host_file_paths) override;
   void AddAdditionalSchemes(Schemes* schemes) override;
-  base::string16 GetLocalizedString(int message_id) override;
-  base::string16 GetLocalizedString(int message_id,
-                                    const base::string16& replacement) override;
-  base::StringPiece GetDataResource(int resource_id,
-                                    ui::ScaleFactor scale_factor) override;
+  std::u16string GetLocalizedString(int message_id) override;
+  std::u16string GetLocalizedString(int message_id,
+                                    const std::u16string& replacement) override;
+  base::StringPiece GetDataResource(
+      int resource_id,
+      ui::ResourceScaleFactor scale_factor) override;
   base::RefCountedMemory* GetDataResourceBytes(int resource_id) override;
+  std::string GetDataResourceString(int resource_id) override;
   gfx::Image& GetNativeImageNamed(int resource_id) override;
-#if defined(OS_MAC)
+#if BUILDFLAG(IS_MAC)
   base::FilePath GetChildProcessPath(
       int child_flags,
       const base::FilePath& helpers_path) override;
-#endif  // OS_MAC
+#endif  // BUILDFLAG(IS_MAC)
   std::string GetProcessTypeNameInEnglish(int type) override;
   blink::OriginTrialPolicy* GetOriginTrialPolicy() override;
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   media::MediaDrmBridgeClient* GetMediaDrmBridgeClient() override;
-#endif  // OS_ANDROID
+#endif  // BUILDFLAG(IS_ANDROID)
   void ExposeInterfacesToBrowser(
       scoped_refptr<base::SequencedTaskRunner> io_task_runner,
       mojo::BinderMap* binders) override;

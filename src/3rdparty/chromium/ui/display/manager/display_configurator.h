@@ -7,14 +7,12 @@
 
 #include <cstdint>
 #include <memory>
-#include <string>
 #include <vector>
 
-#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
-#include "base/optional.h"
 #include "base/timer/timer.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 #include "ui/display/manager/display_manager_export.h"
 #include "ui/display/types/display_constants.h"
@@ -112,11 +110,15 @@ class DISPLAY_MANAGER_EXPORT DisplayConfigurator
    public:
     explicit TestApi(DisplayConfigurator* configurator)
         : configurator_(configurator) {}
+
+    TestApi(const TestApi&) = delete;
+    TestApi& operator=(const TestApi&) = delete;
+
     ~TestApi() {}
 
     // If |configure_timer_| is started, stops the timer, runs
     // ConfigureDisplays(), and returns true; returns false otherwise.
-    bool TriggerConfigureTimeout() WARN_UNUSED_RESULT;
+    [[nodiscard]] bool TriggerConfigureTimeout();
 
     // Gets the current delay of the |configure_timer_| if it's running, or zero
     // time delta otherwise.
@@ -124,8 +126,6 @@ class DISPLAY_MANAGER_EXPORT DisplayConfigurator
 
    private:
     DisplayConfigurator* configurator_;  // not owned
-
-    DISALLOW_COPY_AND_ASSIGN(TestApi);
   };
 
   // Flags that can be passed to SetDisplayPower().
@@ -162,6 +162,10 @@ class DISPLAY_MANAGER_EXPORT DisplayConfigurator
       const gfx::Size& size);
 
   DisplayConfigurator();
+
+  DisplayConfigurator(const DisplayConfigurator&) = delete;
+  DisplayConfigurator& operator=(const DisplayConfigurator&) = delete;
+
   ~DisplayConfigurator() override;
 
   MultipleDisplayState display_state() const { return current_display_state_; }
@@ -268,16 +272,20 @@ class DISPLAY_MANAGER_EXPORT DisplayConfigurator
 
   // Enable/disable the privacy screen on display with |display_id|.
   // For this to succeed, privacy screen must be supported by the display.
-  void SetPrivacyScreen(int64_t display_id, bool enabled);
+  // After privacy screen is set, |callback| is called with the outcome
+  // (success/failure) of the operation.
+  void SetPrivacyScreen(int64_t display_id,
+                        bool enabled,
+                        ConfigurationCallback callback);
 
   // Returns the requested power state if set or the default power state.
   chromeos::DisplayPowerState GetRequestedPowerState() const;
 
   void reset_requested_power_state_for_test() {
-    requested_power_state_ = base::nullopt;
+    requested_power_state_ = absl::nullopt;
   }
 
-  base::Optional<chromeos::DisplayPowerState> GetRequestedPowerStateForTest()
+  absl::optional<chromeos::DisplayPowerState> GetRequestedPowerStateForTest()
       const {
     return requested_power_state_;
   }
@@ -378,7 +386,7 @@ class DISPLAY_MANAGER_EXPORT DisplayConfigurator
   MultipleDisplayState requested_display_state_;
 
   // Stores the requested power state.
-  base::Optional<chromeos::DisplayPowerState> requested_power_state_;
+  absl::optional<chromeos::DisplayPowerState> requested_power_state_;
 
   // The power state used by RunPendingConfiguration(). May be
   // |requested_power_state_| or DISPLAY_POWER_ALL_OFF for suspend.
@@ -434,8 +442,6 @@ class DISPLAY_MANAGER_EXPORT DisplayConfigurator
 
   // This must be the last variable.
   base::WeakPtrFactory<DisplayConfigurator> weak_ptr_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(DisplayConfigurator);
 };
 
 }  // namespace display

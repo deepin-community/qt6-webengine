@@ -8,6 +8,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/bind.h"
 #include "base/test/task_environment.h"
+#include "base/time/time.h"
 #include "content/public/browser/media_session.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/remote.h"
@@ -36,7 +37,12 @@ class FakeMediaSession : public content::MediaSession {
   MOCK_METHOD1(ScrubTo, void(base::TimeDelta));
   MOCK_METHOD0(EnterPictureInPicture, void());
   MOCK_METHOD0(ExitPictureInPicture, void());
-  MOCK_METHOD1(SetAudioSinkId, void(const base::Optional<std::string>& id));
+  MOCK_METHOD1(SetAudioSinkId, void(const absl::optional<std::string>& id));
+  MOCK_METHOD0(ToggleMicrophone, void());
+  MOCK_METHOD0(ToggleCamera, void());
+  MOCK_METHOD0(HangUp, void());
+  MOCK_METHOD0(Raise, void());
+  MOCK_METHOD1(SetMute, void(bool));
 
   // content::MediaSession APIs faked to implement testing behaviour.
   MOCK_METHOD1(DidReceiveAction,
@@ -79,6 +85,10 @@ class MediaPlayerImplTest : public testing::Test {
  public:
   MediaPlayerImplTest()
       : task_environment_(base::test::TaskEnvironment::MainThreadType::IO) {}
+
+  MediaPlayerImplTest(const MediaPlayerImplTest&) = delete;
+  MediaPlayerImplTest& operator=(const MediaPlayerImplTest&) = delete;
+
   ~MediaPlayerImplTest() override = default;
 
   void OnPlayerDisconnected() {}
@@ -90,8 +100,6 @@ class MediaPlayerImplTest : public testing::Test {
   fuchsia::media::sessions2::PlayerPtr player_;
 
   std::unique_ptr<MediaPlayerImpl> player_impl_;
-
-  DISALLOW_COPY_AND_ASSIGN(MediaPlayerImplTest);
 };
 
 // Verify that the |on_disconnect| closure is invoked if the client disconnects.
@@ -190,13 +198,17 @@ TEST_F(MediaPlayerImplTest, WatchInfoChangeReturnsInitialState) {
 
   media_session::MediaMetadata metadata;
   constexpr char kExpectedTitle[] = "Love Like A Sunset, Pt.1";
-  metadata.title = base::ASCIIToUTF16(kExpectedTitle);
+  constexpr char16_t kExpectedTitle16[] = u"Love Like A Sunset, Pt.1";
+  metadata.title = kExpectedTitle16;
   constexpr char kExpectedArtist[] = "Phoenix";
-  metadata.artist = base::ASCIIToUTF16(kExpectedArtist);
+  constexpr char16_t kExpectedArtist16[] = u"Phoenix";
+  metadata.artist = kExpectedArtist16;
   constexpr char kExpectedAlbum[] = "Wolfgang Amadeus Phoenix";
-  metadata.album = base::ASCIIToUTF16(kExpectedAlbum);
+  constexpr char16_t kExpectedAlbum16[] = u"Wolfgang Amadeus Phoenix";
+  metadata.album = kExpectedAlbum16;
   constexpr char kExpectedSourceTitle[] = "Unknown";
-  metadata.source_title = base::ASCIIToUTF16(kExpectedSourceTitle);
+  constexpr char16_t kExpectedSourceTitle16[] = u"Unknown";
+  metadata.source_title = kExpectedSourceTitle16;
   fake_session_.observer()->MediaSessionMetadataChanged(metadata);
 
   std::vector<media_session::mojom::MediaSessionAction> actions = {
@@ -283,7 +295,7 @@ TEST_F(MediaPlayerImplTest, WatchInfoChangeWaitsForNextChange) {
   // Calling WatchInfoChange() now should succeed, but not immediately return
   // any new data.
   base::RunLoop change_loop;
-  base::Optional<fuchsia::media::sessions2::PlayerState> state_after_change;
+  absl::optional<fuchsia::media::sessions2::PlayerState> state_after_change;
 
   player_->WatchInfoChange(
       [&change_loop,

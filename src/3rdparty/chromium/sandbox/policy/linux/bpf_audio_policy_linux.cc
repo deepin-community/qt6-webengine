@@ -77,10 +77,15 @@ ResultExpr AudioProcessPolicy::EvaluateSyscall(int system_call_number) const {
 #endif
       return Allow();
 #if defined(__NR_futex)
-    case __NR_futex: {
+    case __NR_futex:
+#if defined(__i386__) || defined(__arm__) || \
+    (defined(ARCH_CPU_MIPS_FAMILY) && defined(ARCH_CPU_32_BITS))
+    case __NR_futex_time64:
+#endif
+    {
       const Arg<int> op(1);
 #if defined(USE_PULSEAUDIO)
-      return Switch(op & ~FUTEX_PRIVATE_FLAG)
+      return Switch(op & ~(FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME))
           .SANDBOX_BPF_DSL_CASES(
               (FUTEX_CMP_REQUEUE, FUTEX_LOCK_PI, FUTEX_UNLOCK_PI, FUTEX_WAIT,
                FUTEX_WAIT_BITSET, FUTEX_WAKE),
@@ -127,7 +132,7 @@ ResultExpr AudioProcessPolicy::EvaluateSyscall(int system_call_number) const {
 
       auto* sandbox_linux = SandboxLinux::GetInstance();
       if (sandbox_linux->ShouldBrokerHandleSyscall(system_call_number))
-        return sandbox_linux->HandleViaBroker();
+        return sandbox_linux->HandleViaBroker(system_call_number);
 
       return BPFBasePolicy::EvaluateSyscall(system_call_number);
   }

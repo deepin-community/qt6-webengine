@@ -21,10 +21,10 @@
 #include "base/numerics/safe_conversions.h"
 #include "base/numerics/safe_math.h"
 #include "base/strings/stringprintf.h"
-#include "base/task/post_task.h"
+#include "base/task/task_runner.h"
 #include "base/task/thread_pool.h"
-#include "base/task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "base/time/time.h"
 #include "base/trace_event/memory_dump_manager.h"
 #include "base/trace_event/trace_event.h"
 #include "mojo/public/cpp/bindings/callback_helpers.h"
@@ -728,7 +728,7 @@ void BlobStorageContext::WriteBlobToFile(
     mojo::PendingRemote<::blink::mojom::Blob> pending_blob,
     const base::FilePath& file_path,
     bool flush_on_write,
-    base::Optional<base::Time> last_modified,
+    absl::optional<base::Time> last_modified,
     BlobStorageContext::WriteBlobToFileCallback callback) {
   DCHECK(!last_modified || !last_modified.value().is_null());
   if (profile_directory_.empty()) {
@@ -749,7 +749,7 @@ void BlobStorageContext::WriteBlobToFile(
       base::BindOnce(
           [](base::WeakPtr<BlobStorageContext> blob_context,
              const base::FilePath& file_path, bool flush_on_write,
-             base::Optional<base::Time> last_modified,
+             absl::optional<base::Time> last_modified,
              BlobStorageContext::WriteBlobToFileCallback callback,
              std::unique_ptr<BlobDataHandle> handle) {
             if (!handle || !blob_context) {

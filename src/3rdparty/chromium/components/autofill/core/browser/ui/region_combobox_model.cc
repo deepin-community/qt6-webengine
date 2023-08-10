@@ -8,6 +8,7 @@
 
 #include "base/bind.h"
 #include "base/callback_helpers.h"
+#include "base/observer_list.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/autofill/core/browser/geo/region_data_loader.h"
 #include "components/strings/grit/components_strings.h"
@@ -44,7 +45,7 @@ int RegionComboboxModel::GetItemCount() const {
   return regions_.size();
 }
 
-base::string16 RegionComboboxModel::GetItemAt(int index) const {
+std::u16string RegionComboboxModel::GetItemAt(int index) const {
   DCHECK_GE(index, 0);
   // This might happen because of the asynchronous nature of the data.
   if (static_cast<size_t>(index) >= regions_.size())
@@ -55,7 +56,7 @@ base::string16 RegionComboboxModel::GetItemAt(int index) const {
 
   // The separator item. Implemented for platforms that don't yet support
   // IsItemSeparatorAt().
-  return base::ASCIIToUTF16("---");
+  return u"---";
 }
 
 bool RegionComboboxModel::IsItemSeparatorAt(int index) const {
@@ -64,14 +65,6 @@ bool RegionComboboxModel::IsItemSeparatorAt(int index) const {
   if (static_cast<size_t>(index) >= regions_.size())
     return false;
   return regions_[index].first.empty();
-}
-
-void RegionComboboxModel::AddObserver(ui::ComboboxModelObserver* observer) {
-  observers_.AddObserver(observer);
-}
-
-void RegionComboboxModel::RemoveObserver(ui::ComboboxModelObserver* observer) {
-  observers_.RemoveObserver(observer);
 }
 
 void RegionComboboxModel::OnRegionDataLoaded(
@@ -94,7 +87,7 @@ void RegionComboboxModel::OnRegionDataLoaded(
     failed_to_load_data_ = true;
   }
 
-  for (auto& observer : observers_) {
+  for (auto& observer : observers()) {
     observer.OnComboboxModelChanged(this);
   }
 }

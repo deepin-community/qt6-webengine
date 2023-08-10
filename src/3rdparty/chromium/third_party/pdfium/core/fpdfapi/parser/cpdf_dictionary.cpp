@@ -20,7 +20,7 @@
 #include "core/fpdfapi/parser/fpdf_parser_utility.h"
 #include "core/fxcrt/fx_stream.h"
 #include "third_party/base/check.h"
-#include "third_party/base/stl_util.h"
+#include "third_party/base/containers/contains.h"
 
 CPDF_Dictionary::CPDF_Dictionary()
     : CPDF_Dictionary(WeakPtr<ByteStringPool>()) {}
@@ -33,7 +33,7 @@ CPDF_Dictionary::~CPDF_Dictionary() {
   // and break cyclic references.
   m_ObjNum = kInvalidObjNum;
   for (auto& it : m_Map) {
-    if (it.second && it.second->GetObjNum() == kInvalidObjNum)
+    if (it.second->GetObjNum() == kInvalidObjNum)
       it.second.Leak();
   }
 }
@@ -75,7 +75,8 @@ RetainPtr<CPDF_Object> CPDF_Dictionary::CloneNonCyclic(
   for (const auto& it : locker) {
     if (!pdfium::Contains(*pVisited, it.second.Get())) {
       std::set<const CPDF_Object*> visited(*pVisited);
-      if (auto obj = it.second->CloneNonCyclic(bDirect, &visited))
+      auto obj = it.second->CloneNonCyclic(bDirect, &visited);
+      if (obj)
         pCopy->m_Map.insert(std::make_pair(it.first, std::move(obj)));
     }
   }
@@ -147,6 +148,11 @@ float CPDF_Dictionary::GetNumberFor(const ByteString& key) const {
   return p ? p->GetNumber() : 0;
 }
 
+RetainPtr<CPDF_Dictionary> CPDF_Dictionary::GetMutableDictFor(
+    const ByteString& key) {
+  return pdfium::WrapRetain(GetDictFor(key));
+}
+
 const CPDF_Dictionary* CPDF_Dictionary::GetDictFor(
     const ByteString& key) const {
   const CPDF_Object* p = GetDirectObjectFor(key);
@@ -162,6 +168,11 @@ const CPDF_Dictionary* CPDF_Dictionary::GetDictFor(
 CPDF_Dictionary* CPDF_Dictionary::GetDictFor(const ByteString& key) {
   return const_cast<CPDF_Dictionary*>(
       static_cast<const CPDF_Dictionary*>(this)->GetDictFor(key));
+}
+
+RetainPtr<CPDF_Array> CPDF_Dictionary::GetMutableArrayFor(
+    const ByteString& key) {
+  return pdfium::WrapRetain(GetArrayFor(key));
 }
 
 const CPDF_Array* CPDF_Dictionary::GetArrayFor(const ByteString& key) const {

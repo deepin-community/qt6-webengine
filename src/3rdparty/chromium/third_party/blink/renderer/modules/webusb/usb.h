@@ -15,7 +15,9 @@
 #include "third_party/blink/renderer/core/execution_context/navigator_base.h"
 #include "third_party/blink/renderer/core/execution_context/security_context.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_map.h"
+#include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_set.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/mojo/heap_mojo_associated_receiver.h"
 #include "third_party/blink/renderer/platform/mojo/heap_mojo_remote.h"
 #include "third_party/blink/renderer/platform/mojo/heap_mojo_wrapper_mode.h"
@@ -66,6 +68,9 @@ class USB final : public EventTargetWithInlineData,
     return service_.get();
   }
 
+  void ForgetDevice(const String& device_guid,
+                    mojom::blink::WebUsbService::ForgetDeviceCallback callback);
+
   void OnGetDevices(ScriptPromiseResolver*,
                     Vector<device::mojom::blink::UsbDeviceInfoPtr>);
   void OnGetPermission(ScriptPromiseResolver*,
@@ -93,9 +98,7 @@ class USB final : public EventTargetWithInlineData,
   HeapMojoRemote<mojom::blink::WebUsbService> service_;
   HeapHashSet<Member<ScriptPromiseResolver>> get_devices_requests_;
   HeapHashSet<Member<ScriptPromiseResolver>> get_permission_requests_;
-  HeapMojoAssociatedReceiver<device::mojom::blink::UsbDeviceManagerClient,
-                             USB,
-                             HeapMojoWrapperMode::kWithoutContextObserver>
+  HeapMojoAssociatedReceiver<device::mojom::blink::UsbDeviceManagerClient, USB>
       client_receiver_;
   HeapHashMap<String, WeakMember<USBDevice>> device_cache_;
 };

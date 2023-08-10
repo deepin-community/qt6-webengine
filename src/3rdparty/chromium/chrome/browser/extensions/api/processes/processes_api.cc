@@ -110,6 +110,9 @@ api::processes::ProcessType GetProcessType(
     case task_manager::Task::PLUGIN_VM:
     case task_manager::Task::SANDBOX_HELPER:
     case task_manager::Task::ZYGOTE:
+    // TODO(crbug.com/1186464): Do not expose lacros tasks for now. Defer
+    // the decision until further discussion is made.
+    case task_manager::Task::LACROS:
       return api::processes::PROCESS_TYPE_OTHER;
   }
 
@@ -142,7 +145,7 @@ void FillProcessData(
     task_info.title = base::UTF16ToUTF8(task_manager->GetTitle(task_id));
     const SessionID tab_id = task_manager->GetTabId(task_id);
     if (tab_id.is_valid())
-      task_info.tab_id.reset(new int(tab_id.id()));
+      task_info.tab_id = std::make_unique<int>(tab_id.id());
 
     out_process->tasks.push_back(std::move(task_info));
   }
@@ -185,11 +188,10 @@ void FillProcessData(
 ////////////////////////////////////////////////////////////////////////////////
 
 ProcessesEventRouter::ProcessesEventRouter(content::BrowserContext* context)
-    : task_manager::TaskManagerObserver(base::TimeDelta::FromSeconds(1),
+    : task_manager::TaskManagerObserver(base::Seconds(1),
                                         task_manager::REFRESH_TYPE_NONE),
       browser_context_(context),
-      listeners_(0) {
-}
+      listeners_(0) {}
 
 ProcessesEventRouter::~ProcessesEventRouter() {
 }
@@ -339,7 +341,7 @@ void ProcessesEventRouter::OnTaskUnresponsive(task_manager::TaskId id) {
 void ProcessesEventRouter::DispatchEvent(
     events::HistogramValue histogram_value,
     const std::string& event_name,
-    std::unique_ptr<base::ListValue> event_args) const {
+    std::vector<base::Value> event_args) const {
   EventRouter* event_router = EventRouter::Get(browser_context_);
   if (event_router) {
     std::unique_ptr<Event> event(
@@ -447,7 +449,8 @@ void ProcessesAPI::OnListenerRemoved(const EventListenerInfo& details) {
 
 ProcessesEventRouter* ProcessesAPI::processes_event_router() {
   if (!processes_event_router_.get())
-    processes_event_router_.reset(new ProcessesEventRouter(browser_context_));
+    processes_event_router_ =
+        std::make_unique<ProcessesEventRouter>(browser_context_);
   return processes_event_router_.get();
 }
 
@@ -458,7 +461,7 @@ ProcessesEventRouter* ProcessesAPI::processes_event_router() {
 ExtensionFunction::ResponseAction ProcessesGetProcessIdForTabFunction::Run() {
   // For this function, the task manager doesn't even need to be running.
   std::unique_ptr<api::processes::GetProcessIdForTab::Params> params(
-      api::processes::GetProcessIdForTab::Params::Create(*args_));
+      api::processes::GetProcessIdForTab::Params::Create(args()));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
   const int tab_id = params->tab_id;
@@ -488,7 +491,7 @@ ExtensionFunction::ResponseAction ProcessesTerminateFunction::Run() {
 
   // For this function, the task manager doesn't even need to be running.
   std::unique_ptr<api::processes::Terminate::Params> params(
-      api::processes::Terminate::Params::Create(*args_));
+      api::processes::Terminate::Params::Create(args()));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
   child_process_host_id_ = params->process_id;
@@ -573,13 +576,12 @@ ProcessesTerminateFunction::TerminateIfAllowed(base::ProcessHandle handle) {
 
 ProcessesGetProcessInfoFunction::ProcessesGetProcessInfoFunction()
     : task_manager::TaskManagerObserver(
-          base::TimeDelta::FromSeconds(1),
-          GetRefreshTypesFlagOnlyEssentialData()) {
-}
+          base::Seconds(1),
+          GetRefreshTypesFlagOnlyEssentialData()) {}
 
 ExtensionFunction::ResponseAction ProcessesGetProcessInfoFunction::Run() {
   std::unique_ptr<api::processes::GetProcessInfo::Params> params(
-      api::processes::GetProcessInfo::Params::Create(*args_));
+      api::processes::GetProcessInfo::Params::Create(args()));
   EXTENSION_FUNCTION_VALIDATE(params.get());
   if (params->process_ids.as_integer)
     process_host_ids_.push_back(*params->process_ids.as_integer);

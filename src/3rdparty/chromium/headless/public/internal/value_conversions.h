@@ -7,7 +7,7 @@
 
 #include <memory>
 
-#include "headless/lib/browser/protocol/base_string_adapter.h"
+#include "base/values.h"
 #include "headless/public/util/error_reporter.h"
 
 namespace headless {
@@ -49,7 +49,7 @@ inline std::unique_ptr<base::Value> ToValue(const std::string& value) {
 
 template <>
 inline std::unique_ptr<base::Value> ToValue(const base::Value& value) {
-  return value.CreateDeepCopy();
+  return base::Value::ToUniquePtrValue(value.Clone());
 }
 
 template <>
@@ -140,7 +140,7 @@ template <>
 struct FromValue<base::Value> {
   static std::unique_ptr<base::Value> Parse(const base::Value& value,
                                             ErrorReporter* errors) {
-    return value.CreateDeepCopy();
+    return base::Value::ToUniquePtrValue(value.Clone());
   }
 };
 
@@ -178,7 +178,7 @@ struct FromValue<std::vector<T>> {
       return result;
     }
     errors->Push();
-    for (const auto& item : value.GetList())
+    for (const auto& item : value.GetListDeprecated())
       result.push_back(FromValue<T>::Parse(item, errors));
     errors->Pop();
     return result;

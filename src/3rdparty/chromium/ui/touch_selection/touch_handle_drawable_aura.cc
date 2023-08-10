@@ -10,6 +10,7 @@
 #include "ui/base/cursor/cursor.h"
 #include "ui/base/hit_test.h"
 #include "ui/base/resource/resource_bundle.h"
+#include "ui/compositor/layer.h"
 #include "ui/events/event.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/geometry/rect_conversions.h"
@@ -64,7 +65,6 @@ TouchHandleDrawableAura::TouchHandleDrawableAura(aura::Window* parent)
       orientation_(TouchHandleOrientation::UNDEFINED) {
   window_delegate_->set_image_offset(gfx::Vector2d(kSelectionHandlePadding,
                                                    kSelectionHandlePadding));
-  window_delegate_->set_background_color(SK_ColorTRANSPARENT);
   window_->SetTransparent(true);
   window_->Init(LAYER_TEXTURED);
   window_->set_owned_by_parent(false);
@@ -142,10 +142,10 @@ void TouchHandleDrawableAura::SetAlpha(float alpha) {
 
 gfx::RectF TouchHandleDrawableAura::GetVisibleBounds() const {
   gfx::RectF bounds(window_->bounds());
-  bounds.Inset(kSelectionHandlePadding,
-               kSelectionHandlePadding + kSelectionHandleVerticalVisualOffset,
-               kSelectionHandlePadding,
-               kSelectionHandlePadding);
+  bounds.Inset(gfx::InsetsF::TLBR(
+      kSelectionHandlePadding + kSelectionHandleVerticalVisualOffset,
+      kSelectionHandlePadding, kSelectionHandlePadding,
+      kSelectionHandlePadding));
   return bounds;
 }
 

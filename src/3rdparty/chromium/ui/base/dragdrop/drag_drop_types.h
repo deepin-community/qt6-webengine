@@ -9,10 +9,11 @@
 
 #include "base/component_export.h"
 #include "build/build_config.h"
+#include "ui/base/dragdrop/mojom/drag_drop_types.mojom-forward.h"
 
 namespace ui {
 
-class COMPONENT_EXPORT(UI_BASE) DragDropTypes {
+class COMPONENT_EXPORT(UI_BASE_DRAGDROP_TYPES) DragDropTypes {
  public:
   // These constants match their equivalents in NSDragOperation and
   // should not be renumbered.
@@ -25,16 +26,19 @@ class COMPONENT_EXPORT(UI_BASE) DragDropTypes {
     DRAG_MOVE = 16,
   };
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   static uint32_t DragOperationToDropEffect(int drag_operation);
   static int DropEffectToDragOperation(uint32_t effect);
 #endif
 
-#if defined(OS_APPLE)
+#if BUILDFLAG(IS_APPLE)
   static uint64_t DragOperationToNSDragOperation(int drag_operation);
   static int NSDragOperationToDragOperation(uint64_t ns_drag_operation);
 #endif
 };
+
+COMPONENT_EXPORT(UI_BASE_DRAGDROP_TYPES)
+ui::mojom::DragOperation PreferredDragOperation(int operations);
 
 }  // namespace ui
 

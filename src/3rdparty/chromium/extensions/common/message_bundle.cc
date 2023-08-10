@@ -8,9 +8,9 @@
 #include <string>
 #include <vector>
 
+#include "base/containers/contains.h"
 #include "base/i18n/rtl.h"
 #include "base/lazy_instance.h"
-#include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -159,7 +159,7 @@ bool MessageBundle::GetPlaceholders(const base::DictionaryValue& name_tree,
                                     const std::string& name_key,
                                     SubstitutionMap* placeholders,
                                     std::string* error) const {
-  if (!name_tree.HasKey(kPlaceholdersKey))
+  if (!name_tree.FindKey(kPlaceholdersKey))
     return true;
 
   const base::DictionaryValue* placeholders_tree;
@@ -264,8 +264,6 @@ bool MessageBundle::ReplaceVariables(const SubstitutionMap& variables,
     // And position pointer to after the replacement.
     beg_index += value.size() - var_begin_delimiter_size;
   }
-
-  return true;
 }
 
 // static
@@ -299,44 +297,6 @@ std::string MessageBundle::GetL10nMessage(const std::string& name,
   }
 
   return std::string();
-}
-
-///////////////////////////////////////////////////////////////////////////////
-//
-// Renderer helper functions.
-//
-///////////////////////////////////////////////////////////////////////////////
-
-// Unique class for Singleton.
-struct ExtensionToMessagesMap {
-  ExtensionToMessagesMap();
-  ~ExtensionToMessagesMap();
-
-  // Maps extension ID to message map.
-  ExtensionToL10nMessagesMap messages_map;
-};
-
-static base::LazyInstance<ExtensionToMessagesMap>::DestructorAtExit
-    g_extension_to_messages_map = LAZY_INSTANCE_INITIALIZER;
-
-ExtensionToMessagesMap::ExtensionToMessagesMap() {}
-
-ExtensionToMessagesMap::~ExtensionToMessagesMap() {}
-
-ExtensionToL10nMessagesMap* GetExtensionToL10nMessagesMap() {
-  return &g_extension_to_messages_map.Get().messages_map;
-}
-
-L10nMessagesMap* GetL10nMessagesMap(const std::string& extension_id) {
-  auto it = g_extension_to_messages_map.Get().messages_map.find(extension_id);
-  if (it != g_extension_to_messages_map.Get().messages_map.end())
-    return &(it->second);
-
-  return NULL;
-}
-
-void EraseL10nMessagesMap(const std::string& extension_id) {
-  g_extension_to_messages_map.Get().messages_map.erase(extension_id);
 }
 
 }  // namespace extensions

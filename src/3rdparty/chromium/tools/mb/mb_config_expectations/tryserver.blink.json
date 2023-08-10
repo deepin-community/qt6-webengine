@@ -1,6 +1,7 @@
 {
   "linux-blink-optional-highdpi-rel": {
     "gn_args": {
+      "dcheck_always_on": false,
       "ffmpeg_branding": "Chrome",
       "is_component_build": false,
       "is_debug": false,
@@ -11,6 +12,7 @@
   },
   "linux-blink-rel": {
     "gn_args": {
+      "dcheck_always_on": false,
       "ffmpeg_branding": "Chrome",
       "is_component_build": false,
       "is_debug": false,
@@ -21,6 +23,8 @@
   },
   "mac10.12-blink-rel": {
     "gn_args": {
+      "dcheck_always_on": false,
+      "enable_nacl": false,
       "ffmpeg_branding": "Chrome",
       "is_component_build": false,
       "is_debug": false,
@@ -31,6 +35,8 @@
   },
   "mac10.13-blink-rel": {
     "gn_args": {
+      "dcheck_always_on": false,
+      "enable_nacl": false,
       "ffmpeg_branding": "Chrome",
       "is_component_build": false,
       "is_debug": false,
@@ -41,6 +47,8 @@
   },
   "mac10.14-blink-rel": {
     "gn_args": {
+      "dcheck_always_on": false,
+      "enable_nacl": false,
       "ffmpeg_branding": "Chrome",
       "is_component_build": false,
       "is_debug": false,
@@ -51,6 +59,7 @@
   },
   "mac10.15-blink-rel": {
     "gn_args": {
+      "dcheck_always_on": false,
       "enable_nacl": false,
       "ffmpeg_branding": "Chrome",
       "is_component_build": false,
@@ -62,6 +71,8 @@
   },
   "mac11.0-blink-rel": {
     "gn_args": {
+      "dcheck_always_on": false,
+      "enable_nacl": false,
       "ffmpeg_branding": "Chrome",
       "is_component_build": false,
       "is_debug": false,
@@ -70,8 +81,33 @@
       "use_goma": true
     }
   },
-  "win10-blink-rel": {
+  "mac11.0.arm64-blink-rel": {
     "gn_args": {
+      "dcheck_always_on": false,
+      "ffmpeg_branding": "Chrome",
+      "is_component_build": false,
+      "is_debug": false,
+      "proprietary_codecs": true,
+      "symbol_level": 1,
+      "target_cpu": "arm64",
+      "use_goma": true
+    }
+  },
+  "win10.20h2-blink-rel": {
+    "gn_args": {
+      "dcheck_always_on": false,
+      "ffmpeg_branding": "Chrome",
+      "is_component_build": false,
+      "is_debug": false,
+      "proprietary_codecs": true,
+      "symbol_level": 1,
+      "target_cpu": "x86",
+      "use_goma": true
+    }
+  },
+  "win11-blink-rel": {
+    "gn_args": {
+      "dcheck_always_on": false,
       "ffmpeg_branding": "Chrome",
       "is_component_build": false,
       "is_debug": false,
@@ -83,6 +119,7 @@
   },
   "win7-blink-rel": {
     "gn_args": {
+      "dcheck_always_on": false,
       "ffmpeg_branding": "Chrome",
       "is_component_build": false,
       "is_debug": false,

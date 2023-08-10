@@ -22,6 +22,7 @@
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/platform/mediastream/media_stream_audio_track.h"
 #include "third_party/blink/renderer/platform/scheduler/public/post_cross_thread_task.h"
+#include "third_party/blink/renderer/platform/wtf/cross_thread_copier_base.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
 
 namespace WTF {
@@ -52,9 +53,8 @@ base::TimeDelta ComputeTotalElapsedRenderTime(
     int64_t num_samples_rendered,
     int sample_rate) {
   return prior_elapsed_render_time +
-         base::TimeDelta::FromMicroseconds(num_samples_rendered *
-                                           base::Time::kMicrosecondsPerSecond /
-                                           sample_rate);
+         base::Microseconds(num_samples_rendered *
+                            base::Time::kMicrosecondsPerSecond / sample_rate);
 }
 
 WebLocalFrame* ToWebLocalFrame(LocalFrame* frame) {
@@ -81,10 +81,7 @@ int TrackAudioRenderer::Render(base::TimeDelta delay,
     return 0;
   }
 
-  // TODO(miu): Plumbing is needed to determine the actual playout timestamp
-  // of the audio, instead of just snapshotting TimeTicks::Now(), for proper
-  // audio/video sync. https://crbug.com/335335
-  const base::TimeTicks playout_time = base::TimeTicks::Now() + delay;
+  const base::TimeTicks playout_time = delay_timestamp + delay;
   DVLOG(2) << "Pulling audio out of shifter to be played "
            << delay.InMilliseconds() << " ms from now.";
   audio_shifter_->Pull(audio_bus, playout_time);
@@ -110,8 +107,6 @@ void TrackAudioRenderer::OnRenderError() {
 // WebMediaStreamAudioSink implementation
 void TrackAudioRenderer::OnData(const media::AudioBus& audio_bus,
                                 base::TimeTicks reference_time) {
-  DCHECK(!reference_time.is_null());
-
   TRACE_EVENT1("audio", "TrackAudioRenderer::OnData", "reference time (ms)",
                (reference_time - base::TimeTicks()).InMillisecondsF());
 
@@ -154,7 +149,7 @@ void TrackAudioRenderer::OnSetFormat(const media::AudioParameters& params) {
 
 TrackAudioRenderer::TrackAudioRenderer(
     MediaStreamComponent* audio_component,
-    LocalFrame* playout_frame,
+    LocalFrame& playout_frame,
     const base::UnguessableToken& session_id,
     const String& device_id,
     base::RepeatingCallback<void()> on_render_error_callback)
@@ -162,7 +157,7 @@ TrackAudioRenderer::TrackAudioRenderer(
       playout_frame_(playout_frame),
       session_id_(session_id),
       task_runner_(
-          playout_frame->GetTaskRunner(blink::TaskType::kInternalMedia)),
+          playout_frame.GetTaskRunner(blink::TaskType::kInternalMedia)),
       num_samples_rendered_(0),
       on_render_error_callback_(std::move(on_render_error_callback)),
       playing_(false),
@@ -408,9 +403,8 @@ void TrackAudioRenderer::CreateAudioShifter() {
   // ~15ms on Windows machines without a working high-resolution clock.  See
   // comments in base/time/time.h for details.
   media::AudioShifter* const new_shifter = new media::AudioShifter(
-      base::TimeDelta::FromSeconds(5), base::TimeDelta::FromMilliseconds(20),
-      base::TimeDelta::FromSeconds(20), source_params_.sample_rate(),
-      source_params_.channels());
+      base::Seconds(5), base::Milliseconds(20), base::Seconds(20),
+      source_params_.sample_rate(), source_params_.channels());
 
   base::AutoLock auto_lock(thread_lock_);
   audio_shifter_.reset(new_shifter);

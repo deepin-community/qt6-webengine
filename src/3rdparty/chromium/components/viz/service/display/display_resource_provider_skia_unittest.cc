@@ -17,16 +17,17 @@
 #include "base/callback_helpers.h"
 #include "base/check.h"
 #include "base/memory/ref_counted.h"
-#include "base/optional.h"
 #include "build/build_config.h"
 #include "components/viz/client/client_resource_provider.h"
+#include "components/viz/common/resources/release_callback.h"
 #include "components/viz/common/resources/returned_resource.h"
-#include "components/viz/common/resources/single_release_callback.h"
 #include "components/viz/test/test_context_provider.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/khronos/GLES2/gl2.h"
 #include "third_party/khronos/GLES2/gl2ext.h"
+#include "third_party/skia/include/core/SkColorSpace.h"
 #include "ui/gfx/geometry/rect.h"
 
 using testing::_;
@@ -48,8 +49,9 @@ MATCHER_P(SamePtr, ptr_to_expected, "") {
 }
 
 static void CollectResources(std::vector<ReturnedResource>* array,
-                             const std::vector<ReturnedResource>& returned) {
-  array->insert(array->end(), returned.begin(), returned.end());
+                             std::vector<ReturnedResource> returned) {
+  array->insert(array->end(), std::make_move_iterator(returned.begin()),
+                std::make_move_iterator(returned.end()));
 }
 
 class MockExternalUseClient : public ExternalUseClient {
@@ -58,14 +60,15 @@ class MockExternalUseClient : public ExternalUseClient {
   MOCK_METHOD1(ReleaseImageContexts,
                gpu::SyncToken(
                    std::vector<std::unique_ptr<ImageContext>> image_contexts));
-  MOCK_METHOD6(CreateImageContext,
-               std::unique_ptr<ImageContext>(
-                   const gpu::MailboxHolder&,
-                   const gfx::Size&,
-                   ResourceFormat,
-                   bool,
-                   const base::Optional<gpu::VulkanYCbCrInfo>& ycbcr_info,
-                   sk_sp<SkColorSpace>));
+  MOCK_METHOD7(
+      CreateImageContext,
+      std::unique_ptr<ImageContext>(const gpu::MailboxHolder&,
+                                    const gfx::Size&,
+                                    ResourceFormat,
+                                    bool,
+                                    const absl::optional<gpu::VulkanYCbCrInfo>&,
+                                    sk_sp<SkColorSpace>,
+                                    bool));
 };
 
 class DisplayResourceProviderSkiaTest : public testing::Test {
@@ -117,7 +120,7 @@ class DisplayResourceProviderSkiaTest : public testing::Test {
   std::unique_ptr<DisplayResourceProviderSkia> resource_provider_;
   std::unique_ptr<ClientResourceProvider> child_resource_provider_;
   testing::NiceMock<MockExternalUseClient> client_;
-  base::Optional<DisplayResourceProviderSkia::LockSetForExternalUse> lock_set_;
+  absl::optional<DisplayResourceProviderSkia::LockSetForExternalUse> lock_set_;
 };
 
 TEST_F(DisplayResourceProviderSkiaTest, LockForExternalUse) {
@@ -129,11 +132,11 @@ TEST_F(DisplayResourceProviderSkiaTest, LockForExternalUse) {
   TransferableResource gl_resource = TransferableResource::MakeGL(
       mailbox, GL_LINEAR, GL_TEXTURE_2D, sync_token1, size,
       false /* is_overlay_candidate */);
-  ResourceId id1 = child_resource_provider_->ImportResource(
-      gl_resource, SingleReleaseCallback::Create(base::DoNothing()));
+  ResourceId id1 =
+      child_resource_provider_->ImportResource(gl_resource, base::DoNothing());
   std::vector<ReturnedResource> returned_to_child;
-  int child_id =
-      resource_provider_->CreateChild(GetReturnCallback(&returned_to_child));
+  int child_id = resource_provider_->CreateChild(
+      GetReturnCallback(&returned_to_child), SurfaceId());
 
   // Transfer some resources to the parent.
   std::vector<TransferableResource> list;
@@ -153,11 +156,11 @@ TEST_F(DisplayResourceProviderSkiaTest, LockForExternalUse) {
 
   auto owned_image_context = std::make_unique<ExternalUseClient::ImageContext>(
       gpu::MailboxHolder(mailbox, sync_token1, GL_TEXTURE_2D), size, RGBA_8888,
-      /*ycbcr_info=*/base::nullopt, /*color_space=*/nullptr);
+      /*ycbcr_info=*/absl::nullopt, /*color_space=*/nullptr);
   auto* image_context = owned_image_context.get();
 
   gpu::MailboxHolder holder;
-  EXPECT_CALL(client_, CreateImageContext(_, _, _, _, _, _))
+  EXPECT_CALL(client_, CreateImageContext(_, _, _, _, _, _, _))
       .WillOnce(DoAll(SaveArg<0>(&holder),
                       Return(ByMove(std::move(owned_image_context)))));
 
@@ -195,7 +198,8 @@ TEST_F(DisplayResourceProviderSkiaTest, LockForExternalUse) {
   // The resource should be returned after the lock is released.
   EXPECT_EQ(1u, returned_to_child.size());
   EXPECT_EQ(sync_token3, returned_to_child[0].sync_token);
-  child_resource_provider_->ReceiveReturnsFromParent(returned_to_child);
+  child_resource_provider_->ReceiveReturnsFromParent(
+      std::move(returned_to_child));
   child_resource_provider_->RemoveImportedResource(id1);
 }
 
@@ -208,11 +212,11 @@ TEST_F(DisplayResourceProviderSkiaTest, LockForExternalUseWebView) {
   TransferableResource gl_resource = TransferableResource::MakeGL(
       mailbox, GL_LINEAR, GL_TEXTURE_2D, sync_token1, size,
       false /* is_overlay_candidate */);
-  ResourceId id1 = child_resource_provider_->ImportResource(
-      gl_resource, SingleReleaseCallback::Create(base::DoNothing()));
+  ResourceId id1 =
+      child_resource_provider_->ImportResource(gl_resource, base::DoNothing());
   std::vector<ReturnedResource> returned_to_child;
-  int child_id =
-      resource_provider_->CreateChild(GetReturnCallback(&returned_to_child));
+  int child_id = resource_provider_->CreateChild(
+      GetReturnCallback(&returned_to_child), SurfaceId());
 
   // Transfer some resources to the parent.
   std::vector<TransferableResource> list;
@@ -232,11 +236,11 @@ TEST_F(DisplayResourceProviderSkiaTest, LockForExternalUseWebView) {
 
   auto owned_image_context = std::make_unique<ExternalUseClient::ImageContext>(
       gpu::MailboxHolder(mailbox, sync_token1, GL_TEXTURE_2D), size, RGBA_8888,
-      /*ycbcr_info=*/base::nullopt, /*color_space=*/nullptr);
+      /*ycbcr_info=*/absl::nullopt, /*color_space=*/nullptr);
   auto* image_context = owned_image_context.get();
 
   gpu::MailboxHolder holder;
-  EXPECT_CALL(client_, CreateImageContext(_, _, _, _, _, _))
+  EXPECT_CALL(client_, CreateImageContext(_, _, _, _, _, _, _))
       .WillOnce(DoAll(SaveArg<0>(&holder),
                       Return(ByMove(std::move(owned_image_context)))));
 
@@ -287,7 +291,8 @@ TEST_F(DisplayResourceProviderSkiaTest, LockForExternalUseWebView) {
   // The resource should be returned after the lock is released.
   EXPECT_EQ(1u, returned_to_child.size());
   EXPECT_EQ(sync_token3, returned_to_child[0].sync_token);
-  child_resource_provider_->ReceiveReturnsFromParent(returned_to_child);
+  child_resource_provider_->ReceiveReturnsFromParent(
+      std::move(returned_to_child));
   child_resource_provider_->RemoveImportedResource(id1);
 }
 
@@ -311,12 +316,12 @@ TEST_F(DisplayResourceProviderSkiaTest,
   TransferableResource tran1 = CreateResource(RGBA_8888);
   tran1.read_lock_fences_enabled = true;
   ResourceId id1 = child_resource_provider_->ImportResource(
-      tran1, SingleReleaseCallback::Create(base::BindOnce(
-                 &MockReleaseCallback::Released, base::Unretained(&release))));
+      tran1, base::BindOnce(&MockReleaseCallback::Released,
+                            base::Unretained(&release)));
 
   std::vector<ReturnedResource> returned_to_child;
-  int child_id =
-      resource_provider_->CreateChild(GetReturnCallback(&returned_to_child));
+  int child_id = resource_provider_->CreateChild(
+      GetReturnCallback(&returned_to_child), SurfaceId());
 
   // Transfer some resources to the parent.
   std::vector<TransferableResource> list;
@@ -351,7 +356,8 @@ TEST_F(DisplayResourceProviderSkiaTest,
   resource_provider_->DeclareUsedResourcesFromChild(child_id, ResourceIdSet());
   EXPECT_EQ(1u, returned_to_child.size());
 
-  child_resource_provider_->ReceiveReturnsFromParent(returned_to_child);
+  child_resource_provider_->ReceiveReturnsFromParent(
+      std::move(returned_to_child));
   EXPECT_CALL(release, Released(_, _));
   child_resource_provider_->RemoveImportedResource(id1);
 }
@@ -362,18 +368,18 @@ TEST_F(DisplayResourceProviderSkiaTest, ReadLockFenceDestroyChild) {
   TransferableResource tran1 = CreateResource(RGBA_8888);
   tran1.read_lock_fences_enabled = true;
   ResourceId id1 = child_resource_provider_->ImportResource(
-      tran1, SingleReleaseCallback::Create(base::BindOnce(
-                 &MockReleaseCallback::Released, base::Unretained(&release))));
+      tran1, base::BindOnce(&MockReleaseCallback::Released,
+                            base::Unretained(&release)));
 
   TransferableResource tran2 = CreateResource(RGBA_8888);
   tran2.read_lock_fences_enabled = false;
   ResourceId id2 = child_resource_provider_->ImportResource(
-      tran2, SingleReleaseCallback::Create(base::BindOnce(
-                 &MockReleaseCallback::Released, base::Unretained(&release))));
+      tran2, base::BindOnce(&MockReleaseCallback::Released,
+                            base::Unretained(&release)));
 
   std::vector<ReturnedResource> returned_to_child;
-  int child_id =
-      resource_provider_->CreateChild(GetReturnCallback(&returned_to_child));
+  int child_id = resource_provider_->CreateChild(
+      GetReturnCallback(&returned_to_child), SurfaceId());
 
   // Transfer resources to the parent.
   std::vector<TransferableResource> list;
@@ -413,63 +419,9 @@ TEST_F(DisplayResourceProviderSkiaTest, ReadLockFenceDestroyChild) {
   EXPECT_EQ(returned_to_child[0].lost, returned_to_child[0].id == id1);
   EXPECT_EQ(returned_to_child[1].lost, returned_to_child[1].id == id1);
 
-  child_resource_provider_->ReceiveReturnsFromParent(returned_to_child);
+  child_resource_provider_->ReceiveReturnsFromParent(
+      std::move(returned_to_child));
   EXPECT_CALL(release, Released(_, _)).Times(2);
-  child_resource_provider_->RemoveImportedResource(id1);
-  child_resource_provider_->RemoveImportedResource(id2);
-}
-
-TEST_F(DisplayResourceProviderSkiaTest, ReadLockFenceContextLost) {
-  TransferableResource tran1 = CreateResource(RGBA_8888);
-  tran1.read_lock_fences_enabled = true;
-  ResourceId id1 = child_resource_provider_->ImportResource(
-      tran1, SingleReleaseCallback::Create(base::DoNothing()));
-
-  TransferableResource tran2 = CreateResource(RGBA_8888);
-  tran2.read_lock_fences_enabled = false;
-  ResourceId id2 = child_resource_provider_->ImportResource(
-      tran2, SingleReleaseCallback::Create(base::DoNothing()));
-
-  std::vector<ReturnedResource> returned_to_child;
-  int child_id =
-      resource_provider_->CreateChild(GetReturnCallback(&returned_to_child));
-
-  // Transfer resources to the parent.
-  std::vector<TransferableResource> list;
-  child_resource_provider_->PrepareSendToParent(
-      {id1, id2}, &list,
-      static_cast<RasterContextProvider*>(child_context_provider_.get()));
-  ASSERT_EQ(2u, list.size());
-  EXPECT_TRUE(child_resource_provider_->InUseByConsumer(id1));
-  EXPECT_TRUE(child_resource_provider_->InUseByConsumer(id2));
-
-  resource_provider_->ReceiveFromChild(child_id, list);
-
-  // In DisplayResourceProvider's namespace, use the mapped resource id.
-  std::unordered_map<ResourceId, ResourceId, ResourceIdHasher> resource_map =
-      resource_provider_->GetChildToParentMap(child_id);
-
-  scoped_refptr<TestFence> fence(new TestFence);
-  resource_provider_->SetReadLockFence(fence.get());
-  {
-    for (auto& resource : list) {
-      ResourceId parent_id = resource_map[resource.id];
-      DisplayResourceProvider::ScopedReadLockSharedImage lock(
-          resource_provider_.get(), parent_id);
-    }
-  }
-  EXPECT_EQ(0u, returned_to_child.size());
-
-  EXPECT_EQ(2u, resource_provider_->num_resources());
-  resource_provider_->DidLoseContextProvider();
-  resource_provider_ = nullptr;
-
-  EXPECT_EQ(2u, returned_to_child.size());
-
-  EXPECT_TRUE(returned_to_child[0].lost);
-  EXPECT_TRUE(returned_to_child[1].lost);
-
-  child_resource_provider_->ReceiveReturnsFromParent(returned_to_child);
   child_resource_provider_->RemoveImportedResource(id1);
   child_resource_provider_->RemoveImportedResource(id2);
 }
@@ -480,8 +432,8 @@ TEST_F(DisplayResourceProviderSkiaTest,
   MockReleaseCallback release;
 
   std::vector<ReturnedResource> returned_to_child;
-  int child_id =
-      resource_provider_->CreateChild(GetReturnCallback(&returned_to_child));
+  int child_id = resource_provider_->CreateChild(
+      GetReturnCallback(&returned_to_child), SurfaceId());
 
   // Transfer some resources to the parent.
   constexpr size_t kTotalResources = 5;
@@ -491,8 +443,8 @@ TEST_F(DisplayResourceProviderSkiaTest,
   for (auto& id : ids) {
     TransferableResource tran = CreateResource(RGBA_8888);
     id = child_resource_provider_->ImportResource(
-        tran, SingleReleaseCallback::Create(base::BindOnce(
-                  &MockReleaseCallback::Released, base::Unretained(&release))));
+        tran, base::BindOnce(&MockReleaseCallback::Released,
+                             base::Unretained(&release)));
   }
   std::vector<ResourceId> resource_ids_to_transfer(ids, ids + kTotalResources);
 
@@ -528,7 +480,8 @@ TEST_F(DisplayResourceProviderSkiaTest,
     EXPECT_EQ(0u, returned_to_child.size());
   }
   EXPECT_EQ(1u, returned_to_child.size());
-  child_resource_provider_->ReceiveReturnsFromParent(returned_to_child);
+  child_resource_provider_->ReceiveReturnsFromParent(
+      std::move(returned_to_child));
   returned_to_child.clear();
 
   // Return all locked resources.
@@ -550,7 +503,8 @@ TEST_F(DisplayResourceProviderSkiaTest,
   for (const auto& resource : returned_to_child)
     EXPECT_EQ(resource.sync_token, returned_to_child[0].sync_token);
 
-  child_resource_provider_->ReceiveReturnsFromParent(returned_to_child);
+  child_resource_provider_->ReceiveReturnsFromParent(
+      std::move(returned_to_child));
   returned_to_child.clear();
 
   // Returns from destroying the child is also batched.
@@ -561,124 +515,14 @@ TEST_F(DisplayResourceProviderSkiaTest,
     EXPECT_EQ(0u, returned_to_child.size());
   }
   EXPECT_EQ(1u, returned_to_child.size());
-  child_resource_provider_->ReceiveReturnsFromParent(returned_to_child);
+  child_resource_provider_->ReceiveReturnsFromParent(
+      std::move(returned_to_child));
   returned_to_child.clear();
 
   EXPECT_CALL(release, Released(_, _)).Times(kTotalResources);
   for (const auto& id : ids)
     child_resource_provider_->RemoveImportedResource(id);
-}  // namespace
-
-TEST_F(DisplayResourceProviderSkiaTest, LostMailboxInParent) {
-  gpu::SyncToken sync_token(gpu::CommandBufferNamespace::GPU_IO,
-                            gpu::CommandBufferId::FromUnsafeValue(0x12), 0x34);
-  auto tran = CreateResource(RGBA_8888);
-  tran.id = ResourceId(11);
-
-  std::vector<ReturnedResource> returned_to_child;
-  int child_id = resource_provider_->CreateChild(
-      base::BindRepeating(&CollectResources, &returned_to_child));
-
-  // Receive a resource then lose the gpu context.
-  resource_provider_->ReceiveFromChild(child_id, {tran});
-  resource_provider_->DidLoseContextProvider();
-
-  // Transfer resources back from the parent to the child.
-  resource_provider_->DeclareUsedResourcesFromChild(child_id, {});
-  ASSERT_EQ(1u, returned_to_child.size());
-
-  // Losing an output surface only loses hardware resources.
-  EXPECT_EQ(returned_to_child[0].lost, true);
 }
-
-#if defined(OS_ANDROID)
-TEST_F(DisplayResourceProviderSkiaTest, OverlayPromotionHint) {
-  gpu::Mailbox external_mailbox = gpu::Mailbox::GenerateForSharedImage();
-  gpu::SyncToken external_sync_token = GenSyncToken();
-  EXPECT_TRUE(external_sync_token.HasData());
-
-  TransferableResource id1_transfer = TransferableResource::MakeGL(
-      external_mailbox, GL_LINEAR, GL_TEXTURE_EXTERNAL_OES, external_sync_token,
-      gfx::Size(1, 1), true);
-  id1_transfer.wants_promotion_hint = true;
-  id1_transfer.is_backed_by_surface_texture = true;
-  ResourceId id1 = child_resource_provider_->ImportResource(
-      id1_transfer, SingleReleaseCallback::Create(base::DoNothing()));
-
-  TransferableResource id2_transfer = TransferableResource::MakeGL(
-      external_mailbox, GL_LINEAR, GL_TEXTURE_EXTERNAL_OES, external_sync_token,
-      gfx::Size(1, 1), true);
-  id2_transfer.wants_promotion_hint = false;
-  id2_transfer.is_backed_by_surface_texture = false;
-  ResourceId id2 = child_resource_provider_->ImportResource(
-      id2_transfer, SingleReleaseCallback::Create(base::DoNothing()));
-
-  std::vector<ReturnedResource> returned_to_child;
-  int child_id =
-      resource_provider_->CreateChild(GetReturnCallback(&returned_to_child));
-
-  // Transfer some resources to the parent.
-  std::vector<TransferableResource> list;
-  child_resource_provider_->PrepareSendToParent(
-      {id1, id2}, &list,
-      static_cast<RasterContextProvider*>(child_context_provider_.get()));
-  ASSERT_EQ(2u, list.size());
-  resource_provider_->ReceiveFromChild(child_id, list);
-  std::unordered_map<ResourceId, ResourceId, ResourceIdHasher> resource_map =
-      resource_provider_->GetChildToParentMap(child_id);
-  ResourceId mapped_id1 = resource_map[list[0].id];
-  ResourceId mapped_id2 = resource_map[list[1].id];
-
-  // The promotion hints should not be recorded until after we wait.  This is
-  // because we can't notify them until they're synchronized, and we choose to
-  // ignore unwaited resources rather than send them a "no" hint.  If they end
-  // up in the request set before we wait, then the attempt to notify them wil;
-  // DCHECK when we try to lock them for reading in SendPromotionHints.
-  EXPECT_EQ(0u, resource_provider_->CountPromotionHintRequestsForTesting());
-  EXPECT_FALSE(resource_provider_->DoAnyResourcesWantPromotionHints());
-  {
-    resource_provider_->InitializePromotionHintRequest(mapped_id1);
-    DisplayResourceProvider::ScopedReadLockSharedImage lock(
-        resource_provider_.get(), mapped_id1);
-  }
-  EXPECT_EQ(1u, resource_provider_->CountPromotionHintRequestsForTesting());
-  EXPECT_TRUE(resource_provider_->DoAnyResourcesWantPromotionHints());
-
-  ResourceIdSet resource_ids_to_receive;
-  resource_ids_to_receive.insert(id1);
-  resource_ids_to_receive.insert(id2);
-  resource_provider_->DeclareUsedResourcesFromChild(child_id,
-                                                    resource_ids_to_receive);
-
-  EXPECT_EQ(2u, resource_provider_->num_resources());
-
-  EXPECT_NE(kInvalidResourceId, mapped_id1);
-  EXPECT_NE(kInvalidResourceId, mapped_id2);
-
-  // Make sure that the request for a promotion hint was noticed.
-  EXPECT_TRUE(resource_provider_->IsOverlayCandidate(mapped_id1));
-  EXPECT_TRUE(resource_provider_->IsBackedBySurfaceTexture(mapped_id1));
-  EXPECT_TRUE(resource_provider_->DoesResourceWantPromotionHint(mapped_id1));
-
-  EXPECT_TRUE(resource_provider_->IsOverlayCandidate(mapped_id2));
-  EXPECT_FALSE(resource_provider_->IsBackedBySurfaceTexture(mapped_id2));
-  EXPECT_FALSE(resource_provider_->DoesResourceWantPromotionHint(mapped_id2));
-
-  // ResourceProvider maintains a set of promotion hint requests that should be
-  // cleared when resources are deleted.
-  resource_provider_->DeclareUsedResourcesFromChild(child_id, ResourceIdSet());
-  EXPECT_EQ(2u, returned_to_child.size());
-  child_resource_provider_->ReceiveReturnsFromParent(returned_to_child);
-
-  EXPECT_EQ(0u, resource_provider_->CountPromotionHintRequestsForTesting());
-  EXPECT_FALSE(resource_provider_->DoAnyResourcesWantPromotionHints());
-
-  resource_provider_->DestroyChild(child_id);
-
-  child_resource_provider_->RemoveImportedResource(id2);
-  child_resource_provider_->RemoveImportedResource(id1);
-}
-#endif
 
 }  // namespace
 }  // namespace viz

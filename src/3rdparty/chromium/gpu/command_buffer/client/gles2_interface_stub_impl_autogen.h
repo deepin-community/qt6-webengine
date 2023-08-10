@@ -494,7 +494,6 @@ void GLES2InterfaceStub::ShaderSource(GLuint /* shader */,
                                       const GLchar* const* /* str */,
                                       const GLint* /* length */) {}
 void GLES2InterfaceStub::ShallowFinishCHROMIUM() {}
-void GLES2InterfaceStub::ShallowFlushCHROMIUM() {}
 void GLES2InterfaceStub::OrderingBarrierCHROMIUM() {}
 void GLES2InterfaceStub::MultiDrawArraysWEBGL(GLenum /* mode */,
                                               const GLint* /* firsts */,
@@ -1087,13 +1086,6 @@ void GLES2InterfaceStub::DiscardFramebufferEXT(
     const GLenum* /* attachments */) {}
 void GLES2InterfaceStub::LoseContextCHROMIUM(GLenum /* current */,
                                              GLenum /* other */) {}
-void GLES2InterfaceStub::UnpremultiplyAndDitherCopyCHROMIUM(
-    GLuint /* source_id */,
-    GLuint /* dest_id */,
-    GLint /* x */,
-    GLint /* y */,
-    GLsizei /* width */,
-    GLsizei /* height */) {}
 void GLES2InterfaceStub::DrawBuffersEXT(GLsizei /* count */,
                                         const GLenum* /* bufs */) {}
 void GLES2InterfaceStub::DiscardBackbufferCHROMIUM() {}

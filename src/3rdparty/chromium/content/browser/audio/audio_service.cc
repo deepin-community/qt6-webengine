@@ -5,16 +5,13 @@
 #include "content/public/browser/audio_service.h"
 
 #include "base/command_line.h"
-#include "base/deferred_sequenced_task_runner.h"
 #include "base/metrics/field_trial_params.h"
-#include "base/no_destructor.h"
-#include "base/optional.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/task/deferred_sequenced_task_runner.h"
 #include "base/threading/sequence_local_storage_slot.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "content/browser/browser_main_loop.h"
-#include "content/browser/service_sandbox_type.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/content_browser_client.h"
@@ -26,39 +23,41 @@
 #include "media/base/media_switches.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "services/audio/public/cpp/audio_system_to_service_adapter.h"
+#include "services/audio/public/mojom/audio_service.mojom.h"
 #include "services/audio/service.h"
 #include "services/audio/service_factory.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace content {
 
 namespace {
 
-base::Optional<base::TimeDelta> GetFieldTrialIdleTimeout() {
+absl::optional<base::TimeDelta> GetFieldTrialIdleTimeout() {
   std::string timeout_str =
       base::GetFieldTrialParamValue("AudioService", "teardown_timeout_s");
   int timeout_s = 0;
   if (!base::StringToInt(timeout_str, &timeout_s))
-    return base::nullopt;
-  return base::TimeDelta::FromSeconds(timeout_s);
+    return absl::nullopt;
+  return base::Seconds(timeout_s);
 }
 
-base::Optional<base::TimeDelta> GetCommandLineIdleTimeout() {
+absl::optional<base::TimeDelta> GetCommandLineIdleTimeout() {
   const base::CommandLine& command_line =
       *base::CommandLine::ForCurrentProcess();
   std::string timeout_str =
       command_line.GetSwitchValueASCII(switches::kAudioServiceQuitTimeoutMs);
   int timeout_ms = 0;
   if (!base::StringToInt(timeout_str, &timeout_ms))
-    return base::nullopt;
-  return base::TimeDelta::FromMilliseconds(timeout_ms);
+    return absl::nullopt;
+  return base::Milliseconds(timeout_ms);
 }
 
-base::Optional<base::TimeDelta> GetAudioServiceProcessIdleTimeout() {
-  base::Optional<base::TimeDelta> timeout = GetCommandLineIdleTimeout();
+absl::optional<base::TimeDelta> GetAudioServiceProcessIdleTimeout() {
+  absl::optional<base::TimeDelta> timeout = GetCommandLineIdleTimeout();
   if (!timeout)
     timeout = GetFieldTrialIdleTimeout();
-  if (timeout && *timeout < base::TimeDelta())
-    return base::nullopt;
+  if (timeout && timeout->is_negative())
+    return absl::nullopt;
   return timeout;
 }
 
@@ -82,7 +81,7 @@ void BindSystemInfoFromAnySequence(
 }
 
 void BindStreamFactoryFromAnySequence(
-    mojo::PendingReceiver<audio::mojom::StreamFactory> receiver) {
+    mojo::PendingReceiver<media::mojom::AudioStreamFactory> receiver) {
   if (!BrowserThread::CurrentlyOn(BrowserThread::UI)) {
     GetUIThreadTaskRunner({})->PostTask(
         FROM_HERE,
@@ -109,10 +108,10 @@ void LaunchAudioServiceInProcess(
       base::BindOnce(
           [](media::AudioManager* audio_manager,
              mojo::PendingReceiver<audio::mojom::AudioService> receiver) {
-            static base::NoDestructor<
-                base::SequenceLocalStorageSlot<std::unique_ptr<audio::Service>>>
+            static base::SequenceLocalStorageSlot<
+                std::unique_ptr<audio::Service>>
                 service;
-            service->GetOrCreateValue() = audio::CreateEmbeddedService(
+            service.GetOrCreateValue() = audio::CreateEmbeddedService(
                 audio_manager, std::move(receiver));
           },
           BrowserMainLoop::GetAudioManager(), std::move(receiver)));
@@ -124,12 +123,12 @@ void LaunchAudioServiceOutOfProcess(
       std::move(receiver),
       ServiceProcessHost::Options()
           .WithDisplayName("Audio Service")
-#if defined(OS_MAC)
+#if BUILDFLAG(IS_MAC)
           // On Mac, the audio service requires a CFRunLoop provided by a
           // UI MessageLoop type, to run AVFoundation and CoreAudio code.
           // See https://crbug.com/834581.
           .WithExtraCommandLineSwitches({switches::kMessageLoopTypeUi})
-#elif defined(OS_WIN)
+#elif BUILDFLAG(IS_WIN)
           .WithExtraCommandLineSwitches(
               GetContentClient()
                       ->browser()
@@ -162,17 +161,17 @@ audio::mojom::AudioService& GetAudioService() {
   // any sequence, but to limit the lifetime of this Remote to the lifetime of
   // UI-thread sequence. This is to support re-creation after task environment
   // shutdown and reinitialization e.g. between unit tests.
-  static base::NoDestructor<
-      base::SequenceLocalStorageSlot<mojo::Remote<audio::mojom::AudioService>>>
+  static base::SequenceLocalStorageSlot<
+      mojo::Remote<audio::mojom::AudioService>>
       remote_slot;
-  auto& remote = remote_slot->GetOrCreateValue();
+  auto& remote = remote_slot.GetOrCreateValue();
   if (!remote)
     LaunchAudioService(&remote);
   return *remote.get();
 }
 
 std::unique_ptr<media::AudioSystem> CreateAudioSystemForAudioService() {
-  constexpr auto kServiceDisconnectTimeout = base::TimeDelta::FromSeconds(1);
+  constexpr auto kServiceDisconnectTimeout = base::Seconds(1);
   return std::make_unique<audio::AudioSystemToServiceAdapter>(
       base::BindRepeating(&BindSystemInfoFromAnySequence),
       kServiceDisconnectTimeout);

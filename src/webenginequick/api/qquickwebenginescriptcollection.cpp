@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2020 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtWebEngine module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2020 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qquickwebenginescriptcollection_p.h"
 #include "qquickwebenginescriptcollection_p_p.h"
@@ -45,6 +9,61 @@
 #include <QtQml/private/qqmlengine_p.h>
 #include <QtQml/private/qv4scopedvalue_p.h>
 #include <QtQml/private/qv4arrayobject_p.h>
+
+/*!
+    \qmltype WebEngineScriptCollection
+    \brief Manages a collection of user scripts.
+    \since QtWebEngine 6.2
+
+    \inqmlmodule QtWebEngine
+
+    WebEngineScriptCollection handles a user scripts collection, which
+    is injected in the JavaScript engine during the loading of web content.
+
+    Use \l{WebEngineView::userScripts}{WebEgineView.userScripts} and
+    \l{WebEngineProfile::userScripts}{WebEngineProfile.userScripts} to access
+    the collection of scripts  associated with a single page or number of pages
+    sharing the same profile.
+
+    The collection of user script objects in QML can be created for a set of
+    user script objects by simple assignment to
+    \l{WebEngineScriptCollection::collection}{WebEngineScriptCollection.collection}
+    property or by WebEngineScriptCollection methods.
+
+    \note The new user script can be instantiated with JavaScript dictionaries when using
+    \e collection property.
+
+    See the following code snippets demonstrating the usage:
+
+    \list
+        \li \e collection property with JavaScript dictionaries
+        \code
+            var scriptFoo = { name: "Foo",
+                            sourceUrl: Qt.resolvedUrl("foo.js"),
+                            injectionPoint: WebEngineScript.DocumentReady }
+
+            webEngineView.userScripts.collection = [ scriptFoo, scriptBar ];
+        \endcode
+        \li \e collection property with user script object as value type
+         \code
+            var script = WebEngine.script()
+            script.name = "FOO"
+            webEngineView.userScripts.collection = [ script ]
+         \endcode
+         \li user script collection \e insert method can be used only with value type
+            or list of value types
+         \code
+            var script = WebEngine.script()
+            script.name = "FOO"
+            webEngineView.userScripts.insert(script)
+
+            var list = [ script ]
+            webEngineView.userScripts.insert(list)
+         \endcode
+     \endlist
+     \sa WebEngineScript WebEngineScriptCollection
+
+*/
 
 QWebEngineScript parseScript(const QJSValue &value, bool *ok)
 {
@@ -97,36 +116,79 @@ QQuickWebEngineScriptCollection::QQuickWebEngineScriptCollection(QQuickWebEngine
 
 QQuickWebEngineScriptCollection::~QQuickWebEngineScriptCollection() { }
 
+/*!
+    \qmlmethod void WebEngineScriptCollection::contains(WebEngineScript script)
+    \since QtWebEngine 6.2
+    Checks if the specified \a script is in the collection.
+    \sa find()
+*/
+
 bool QQuickWebEngineScriptCollection::contains(const QWebEngineScript &value) const
 {
     return d->contains(value);
 }
 
+/*!
+    \qmlmethod list<WebEngineScript> WebEngineScriptCollection::find(string name)
+    \since QtWebEngine 6.2
+    Returns a list of all user script objects with the given \a name.
+    \sa find()
+*/
 QList<QWebEngineScript> QQuickWebEngineScriptCollection::find(const QString &name) const
 {
     return d->find(name);
 }
 
+/*!
+    \qmlmethod void WebEngineScriptCollection::insert(WebEngineScript script)
+    \since QtWebEngine 6.2
+    Inserts a single \a script into the collection.
+    \sa find()
+*/
 void QQuickWebEngineScriptCollection::insert(const QWebEngineScript &s)
 {
     d->insert(s);
 }
 
+/*!
+    \qmlmethod void WebEngineScriptCollection::insert(list<WebEngineScript> list)
+    \since QtWebEngine 6.2
+    Inserts a \a list of WebEngineScript values into the user script collection.
+    \sa find()
+*/
 void QQuickWebEngineScriptCollection::insert(const QList<QWebEngineScript> &list)
 {
     d->insert(list);
 }
 
+/*!
+    \qmlmethod bool WebEngineScriptCollection::remove(WebEngineScript script)
+    \since QtWebEngine 6.2
+    Returns \c true if a given \a script is removed from the collection.
+    \sa insert()
+*/
 bool QQuickWebEngineScriptCollection::remove(const QWebEngineScript &script)
 {
     return d->remove(script);
 }
 
+/*!
+    \qmlmethod void WebEngineScriptCollection::clear()
+    \since QtWebEngine 6.2
+    Removes all script objects from this collection.
+*/
 void QQuickWebEngineScriptCollection::clear()
 {
     d->clear();
 }
 
+/*!
+    \qmlproperty list<WebEngineScript> WebEngineScriptCollection::collection
+    \since QtWebEngine 6.2
+
+    This property holds a JavaScript array of user script objects. The array can
+    take WebEngineScript basic type or a JavaScript dictionary as values.
+*/
 QJSValue QQuickWebEngineScriptCollection::collection() const
 {
     if (!d->m_qmlEngine) {
@@ -137,7 +199,7 @@ QJSValue QQuickWebEngineScriptCollection::collection() const
     const QList<QWebEngineScript> &list = d->toList();
     QV4::ExecutionEngine *v4 = QQmlEnginePrivate::getV4Engine(d->m_qmlEngine);
     QV4::Scope scope(v4);
-    QV4::Scoped<QV4::ArrayObject> scriptArray(scope, v4->newArrayObject(list.length()));
+    QV4::Scoped<QV4::ArrayObject> scriptArray(scope, v4->newArrayObject(list.size()));
     int i = 0;
     for (const auto &val : list) {
         QV4::ScopedValue sv(scope, v4->fromVariant(QVariant::fromValue(val)));
@@ -179,3 +241,4 @@ void QQuickWebEngineScriptCollection::setQmlEngine(QQmlEngine *engine)
     Q_ASSERT(engine);
     d->m_qmlEngine = engine;
 }
+#include "moc_qquickwebenginescriptcollection_p.cpp"

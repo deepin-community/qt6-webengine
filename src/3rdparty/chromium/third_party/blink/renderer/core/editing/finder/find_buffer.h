@@ -5,6 +5,8 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_EDITING_FINDER_FIND_BUFFER_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_EDITING_FINDER_FIND_BUFFER_H_
 
+#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/display_lock/display_lock_context.h"
 #include "third_party/blink/renderer/core/editing/finder/find_options.h"
 #include "third_party/blink/renderer/core/editing/iterators/text_searcher_icu.h"
@@ -30,7 +32,7 @@ class CORE_EXPORT FindBuffer {
       const EphemeralRangeInFlatTree& range,
       String search_text,
       const FindOptions,
-      base::Optional<base::TimeDelta> timeout_ms = base::nullopt);
+      absl::optional<base::TimeDelta> timeout_ms = absl::nullopt);
 
   // Returns the closest ancestor of |start_node| (including the node itself)
   // that is block level.
@@ -148,6 +150,9 @@ class CORE_EXPORT FindBuffer {
   // surpassed. Saves the next starting node after the block (first node in
   // another LayoutBlockFlow or after |end_position|) to |node_after_block_|.
   void CollectTextUntilBlockBoundary(const EphemeralRangeInFlatTree& range);
+
+  // Replaces nodes that should be ignored with appropriate char constants.
+  void ReplaceNodeWithCharConstants(const Node& node);
 
   // Mapping for position in buffer -> actual node where the text came from,
   // along with the offset in the NGOffsetMapping of this find_buffer.

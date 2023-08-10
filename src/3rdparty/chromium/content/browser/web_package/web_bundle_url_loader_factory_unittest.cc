@@ -5,8 +5,7 @@
 #include "content/browser/web_package/web_bundle_url_loader_factory.h"
 
 #include "base/callback_helpers.h"
-#include "base/macros.h"
-#include "base/optional.h"
+#include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
 #include "content/browser/renderer_host/frame_tree_node.h"
 #include "content/browser/web_package/mock_web_bundle_reader_factory.h"
@@ -21,6 +20,7 @@
 #include "services/network/test/test_url_loader_client.h"
 #include "services/network/test/test_url_loader_factory.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/gurl.h"
 
 namespace content {
@@ -31,6 +31,10 @@ class WebBundleURLLoaderFactoryTest : public testing::Test {
  public:
   WebBundleURLLoaderFactoryTest() {}
 
+  WebBundleURLLoaderFactoryTest(const WebBundleURLLoaderFactoryTest&) = delete;
+  WebBundleURLLoaderFactoryTest& operator=(
+      const WebBundleURLLoaderFactoryTest&) = delete;
+
   void SetUp() override {
     mock_factory_ = MockWebBundleReaderFactory::Create();
     auto reader = mock_factory_->CreateReader(body_);
@@ -38,12 +42,9 @@ class WebBundleURLLoaderFactoryTest : public testing::Test {
     loader_factory_ = std::make_unique<WebBundleURLLoaderFactory>(
         std::move(reader), FrameTreeNode::kFrameTreeNodeInvalidId);
 
-    base::flat_map<GURL, web_package::mojom::BundleIndexValuePtr> items;
-    web_package::mojom::BundleIndexValuePtr item =
-        web_package::mojom::BundleIndexValue::New();
-    item->response_locations.push_back(
-        web_package::mojom::BundleResponseLocation::New(573u, 765u));
-    items.insert({primary_url_, std::move(item)});
+    base::flat_map<GURL, web_package::mojom::BundleResponseLocationPtr> items;
+    items.insert({primary_url_,
+                  web_package::mojom::BundleResponseLocation::New(573u, 765u)});
 
     web_package::mojom::BundleMetadataPtr metadata =
         web_package::mojom::BundleMetadata::New();
@@ -78,7 +79,7 @@ class WebBundleURLLoaderFactoryTest : public testing::Test {
   // is given. |response| can contain nullptr to simulate the case ReadResponse
   // fails.
   mojo::Remote<network::mojom::URLLoader> CreateLoaderAndStart(
-      base::Optional<web_package::mojom::BundleResponsePtr> response,
+      absl::optional<web_package::mojom::BundleResponsePtr> response,
       bool clone = false) {
     mojo::Remote<network::mojom::URLLoader> loader;
 
@@ -87,14 +88,14 @@ class WebBundleURLLoaderFactoryTest : public testing::Test {
       loader_factory_->Clone(loader_factory.BindNewPipeAndPassReceiver());
       loader_factory->CreateLoaderAndStart(
           loader.BindNewPipeAndPassReceiver(),
-          /*routing_id=*/0, /*request_id=*/0, /*options=*/0, resource_request_,
+          /*request_id=*/0, /*options=*/0, resource_request_,
           test_client_.CreateRemote(),
           net::MutableNetworkTrafficAnnotationTag(
               TRAFFIC_ANNOTATION_FOR_TESTS));
     } else {
       loader_factory_->CreateLoaderAndStart(
           loader.BindNewPipeAndPassReceiver(),
-          /*routing_id=*/0, /*request_id=*/0, /*options=*/0, resource_request_,
+          /*request_id=*/0, /*options=*/0, resource_request_,
           test_client_.CreateRemote(),
           net::MutableNetworkTrafficAnnotationTag(
               TRAFFIC_ANNOTATION_FOR_TESTS));
@@ -168,12 +169,10 @@ class WebBundleURLLoaderFactoryTest : public testing::Test {
   BrowserTaskEnvironment task_environment_;
   std::unique_ptr<MockWebBundleReaderFactory> mock_factory_;
   std::unique_ptr<WebBundleURLLoaderFactory> loader_factory_;
-  WebBundleReader* reader_;
+  raw_ptr<WebBundleReader> reader_;
   network::TestURLLoaderClient test_client_;
   const std::string body_ = std::string("present day, present time");
   const GURL primary_url_ = GURL("https://test.example.org/");
-
-  DISALLOW_COPY_AND_ASSIGN(WebBundleURLLoaderFactoryTest);
 };
 
 TEST_F(WebBundleURLLoaderFactoryTest, CreateEntryLoader) {
@@ -247,14 +246,14 @@ TEST_F(WebBundleURLLoaderFactoryTest, CreateEntryLoaderAndFailToReadResponse) {
 TEST_F(WebBundleURLLoaderFactoryTest, CreateLoaderForPost) {
   // URL should match, but POST method should not be handled by the EntryLoader.
   resource_request_.method = "POST";
-  auto loader = CreateLoaderAndStart(/*response=*/base::nullopt);
+  auto loader = CreateLoaderAndStart(/*response=*/absl::nullopt);
 
   RunAndCheckFailure(net::ERR_FAILED);
 }
 
 TEST_F(WebBundleURLLoaderFactoryTest, CreateLoaderForNotSupportedURL) {
   resource_request_.url = GURL("https://test.example.org/nowhere");
-  auto loader = CreateLoaderAndStart(/*response=*/base::nullopt);
+  auto loader = CreateLoaderAndStart(/*response=*/absl::nullopt);
 
   RunAndCheckFailure(net::ERR_FAILED);
 }
@@ -272,7 +271,7 @@ TEST_F(WebBundleURLLoaderFactoryTest, CreateFallbackLoader) {
   // the fallback factory set above.
   const std::string url_string = "https://test.example.org/somewhere";
   resource_request_.url = GURL(url_string);
-  auto loader = CreateLoaderAndStart(base::nullopt);
+  auto loader = CreateLoaderAndStart(absl::nullopt);
   ASSERT_EQ(1, test_factory->NumPending());
 
   // Reply with a mock response.

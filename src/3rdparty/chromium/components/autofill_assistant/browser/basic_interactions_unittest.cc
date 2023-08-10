@@ -8,8 +8,10 @@
 #include "base/test/icu_test_util.h"
 #include "base/test/mock_callback.h"
 #include "components/autofill/core/browser/autofill_test_utils.h"
-#include "components/autofill_assistant/browser/fake_script_executor_delegate.h"
+#include "components/autofill_assistant/browser/actions/action_test_utils.h"
+#include "components/autofill_assistant/browser/fake_script_executor_ui_delegate.h"
 #include "components/autofill_assistant/browser/generic_ui.pb.h"
+#include "components/autofill_assistant/browser/mock_execution_delegate.h"
 #include "components/autofill_assistant/browser/user_model.h"
 #include "components/autofill_assistant/browser/value_util.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -21,6 +23,8 @@ using ::testing::ElementsAre;
 using ::testing::Eq;
 using ::testing::InSequence;
 using ::testing::Property;
+using ::testing::Return;
+using ::testing::ReturnRef;
 using ::testing::StrEq;
 namespace {
 DateProto CreateDateProto(int year, int month, int day) {
@@ -33,13 +37,23 @@ DateProto CreateDateProto(int year, int month, int day) {
 }  // namespace
 
 class BasicInteractionsTest : public testing::Test {
+ public:
+  void SetUp() override {
+    ON_CALL(execution_delegate_, GetClientSettings)
+        .WillByDefault(ReturnRef(settings_));
+    ON_CALL(execution_delegate_, GetUserModel)
+        .WillByDefault(Return(&user_model_));
+  }
+
  protected:
-  BasicInteractionsTest() { delegate_.SetUserModel(&user_model_); }
+  BasicInteractionsTest() {}
   ~BasicInteractionsTest() override {}
 
-  FakeScriptExecutorDelegate delegate_;
+  FakeScriptExecutorUiDelegate ui_delegate_;
+  MockExecutionDelegate execution_delegate_;
+  ClientSettings settings_;
   UserModel user_model_;
-  BasicInteractions basic_interactions_{&delegate_};
+  BasicInteractions basic_interactions_{&ui_delegate_, &execution_delegate_};
 };
 
 TEST_F(BasicInteractionsTest, SetValue) {
@@ -242,12 +256,24 @@ TEST_F(BasicInteractionsTest, ComputeValueToString) {
   credit_cards_value.mutable_credit_cards()->add_values()->set_guid(
       credit_card_b.guid());
   user_model_.SetValue("value", credit_cards_value);
-  // Formatting credit cards fails if pattern or locale are not set.
+  // Formatting credit cards fails if value_expression or locale are not set.
   proto.mutable_to_string()->mutable_autofill_format()->set_locale("en-US");
   EXPECT_FALSE(basic_interactions_.ComputeValue(proto));
   // {name} {network} **** {last-4-digits} ({month/year})
-  proto.mutable_to_string()->mutable_autofill_format()->set_pattern(
-      "${51}. ${-5} **** ${-4} (${53}/${54})");
+  *proto.mutable_to_string()
+       ->mutable_autofill_format()
+       ->mutable_value_expression() = test_util::ValueExpressionBuilder()
+                                          .addChunk(51)
+                                          .addChunk(". ")
+                                          .addChunk(-5)
+                                          .addChunk(" **** ")
+                                          .addChunk(-4)
+                                          .addChunk(" (")
+                                          .addChunk(53)
+                                          .addChunk("/")
+                                          .addChunk(54)
+                                          .addChunk(")")
+                                          .toProto();
   EXPECT_TRUE(basic_interactions_.ComputeValue(proto));
   ValueProto expected_result;
   expected_result.mutable_strings()->add_values(
@@ -279,11 +305,24 @@ TEST_F(BasicInteractionsTest, ComputeValueToString) {
   profiles_value.mutable_profiles()->add_values()->set_guid(profile_a.guid());
   profiles_value.mutable_profiles()->add_values()->set_guid(profile_b.guid());
   user_model_.SetValue("value", profiles_value);
-  // Formatting profiles fails if pattern is not set.
+  // Formatting profiles fails if value_expression is empty.
   EXPECT_FALSE(basic_interactions_.ComputeValue(proto));
   // {name_full}, {address_line_1} {address_line_2} {zip code} {city} {country}
-  proto.mutable_to_string()->mutable_autofill_format()->set_pattern(
-      "${7} ${30} ${31} ${35} ${33} ${36}");
+  *proto.mutable_to_string()
+       ->mutable_autofill_format()
+       ->mutable_value_expression() = test_util::ValueExpressionBuilder()
+                                          .addChunk(7)
+                                          .addChunk(" ")
+                                          .addChunk(30)
+                                          .addChunk(" ")
+                                          .addChunk(31)
+                                          .addChunk(" ")
+                                          .addChunk(35)
+                                          .addChunk(" ")
+                                          .addChunk(33)
+                                          .addChunk(" ")
+                                          .addChunk(36)
+                                          .toProto();
   EXPECT_TRUE(basic_interactions_.ComputeValue(proto));
   expected_result.Clear();
   expected_result.mutable_strings()->add_values(
@@ -633,6 +672,33 @@ TEST_F(BasicInteractionsTest, ComputeValueCreateLoginOptionResponse) {
   EXPECT_EQ(user_model_.GetValue("result"), expected_response_value);
 }
 
+TEST_F(BasicInteractionsTest, ComputeValueCreateLoginOptionResponseWithTag) {
+  ComputeValueProto proto;
+  proto.mutable_create_login_option_response();
+
+  // Missing fields.
+  EXPECT_FALSE(basic_interactions_.ComputeValue(proto));
+  proto.mutable_create_login_option_response()
+      ->mutable_value()
+      ->set_model_identifier("value");
+  EXPECT_FALSE(basic_interactions_.ComputeValue(proto));
+  proto.set_result_model_identifier("result");
+  EXPECT_FALSE(basic_interactions_.ComputeValue(proto));
+
+  ValueProto value;
+  value.mutable_login_options()->add_values()->set_tag("tag");
+  value.set_is_client_side_only(true);
+  user_model_.SetValue("value", value);
+  EXPECT_TRUE(basic_interactions_.ComputeValue(proto));
+
+  // LoginOptionResponseProto is allowed to extract the payload from
+  // client-only values.
+  ValueProto expected_response_value;
+  expected_response_value.mutable_strings()->add_values("tag");
+  expected_response_value.set_is_client_side_only(false);
+  EXPECT_EQ(user_model_.GetValue("result"), expected_response_value);
+}
+
 TEST_F(BasicInteractionsTest, ComputeStringEmpty) {
   ComputeValueProto proto;
   proto.set_result_model_identifier("result");
@@ -750,6 +816,15 @@ TEST_F(BasicInteractionsTest, RunConditionalCallback) {
   user_model_.SetValue("condition", SimpleValue(true));
   EXPECT_TRUE(
       basic_interactions_.RunConditionalCallback("condition", callback.Get()));
+}
+
+TEST_F(BasicInteractionsTest, GetClientSettings) {
+  settings_.display_strings_locale = "hi-IN";
+  EXPECT_EQ(basic_interactions_.GetClientSettings().display_strings_locale,
+            "hi-IN");
+  settings_.display_strings_locale = "";
+  EXPECT_TRUE(
+      basic_interactions_.GetClientSettings().display_strings_locale.empty());
 }
 
 }  // namespace autofill_assistant

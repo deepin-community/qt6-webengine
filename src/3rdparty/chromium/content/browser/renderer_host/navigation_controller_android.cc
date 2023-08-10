@@ -6,12 +6,13 @@
 
 #include <stdint.h>
 
+#include <string>
+
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
 #include "base/callback.h"
 #include "base/callback_helpers.h"
 #include "base/containers/flat_map.h"
-#include "base/strings/string16.h"
 #include "content/browser/renderer_host/navigation_controller_impl.h"
 #include "content/browser/renderer_host/navigation_entry_impl.h"
 #include "content/public/android/content_jni_headers/NavigationControllerImpl_jni.h"
@@ -19,9 +20,12 @@
 #include "content/public/browser/ssl_host_state_delegate.h"
 #include "content/public/common/referrer.h"
 #include "content/public/common/resource_request_body_android.h"
+#include "content/public/common/url_constants.h"
 #include "net/base/data_url.h"
 #include "ui/gfx/android/java_bitmap.h"
 #include "url/android/gurl_android.h"
+#include "url/gurl.h"
+#include "url/origin.h"
 
 using base::android::AttachCurrentThread;
 using base::android::ConvertJavaStringToUTF16;
@@ -64,7 +68,8 @@ JNI_NavigationControllerImpl_CreateJavaNavigationEntry(
 
   return content::Java_NavigationControllerImpl_createNavigationEntry(
       env, index, j_url, j_virtual_url, j_original_url, j_referrer_url, j_title,
-      j_bitmap, entry->GetTransitionType(), j_timestamp);
+      j_bitmap, entry->GetTransitionType(), j_timestamp,
+      entry->IsInitialEntry());
 }
 
 static void JNI_NavigationControllerImpl_AddNavigationEntryToHistory(
@@ -81,6 +86,10 @@ static void JNI_NavigationControllerImpl_AddNavigationEntryToHistory(
 class MapData : public base::SupportsUserData::Data {
  public:
   MapData() = default;
+
+  MapData(const MapData&) = delete;
+  MapData& operator=(const MapData&) = delete;
+
   ~MapData() override = default;
 
   static MapData* Get(content::NavigationEntry* entry) {
@@ -93,7 +102,7 @@ class MapData : public base::SupportsUserData::Data {
     return map_data;
   }
 
-  base::flat_map<std::string, base::string16>& map() { return map_; }
+  base::flat_map<std::string, std::u16string>& map() { return map_; }
 
   // base::SupportsUserData::Data:
   std::unique_ptr<Data> Clone() override {
@@ -103,9 +112,7 @@ class MapData : public base::SupportsUserData::Data {
   }
 
  private:
-  base::flat_map<std::string, base::string16> map_;
-
-  DISALLOW_COPY_AND_ASSIGN(MapData);
+  base::flat_map<std::string, std::u16string> map_;
 };
 
 }  // namespace
@@ -146,7 +153,7 @@ jboolean NavigationControllerAndroid::CanGoToOffset(
     JNIEnv* env,
     const JavaParamRef<jobject>& obj,
     jint offset) {
-  return navigation_controller_->CanGoToOffset(offset);
+  return navigation_controller_->CanGoToOffsetWithSkipping(offset);
 }
 
 void NavigationControllerAndroid::GoBack(JNIEnv* env,
@@ -162,7 +169,7 @@ void NavigationControllerAndroid::GoForward(JNIEnv* env,
 void NavigationControllerAndroid::GoToOffset(JNIEnv* env,
                                              const JavaParamRef<jobject>& obj,
                                              jint offset) {
-  navigation_controller_->GoToOffset(offset);
+  navigation_controller_->GoToOffsetWithSkipping(offset);
 }
 
 jboolean NavigationControllerAndroid::IsInitialNavigation(
@@ -237,7 +244,11 @@ void NavigationControllerAndroid::LoadUrl(
     const JavaParamRef<jstring>& data_url_as_string,
     jboolean can_load_local_resources,
     jboolean is_renderer_initiated,
-    jboolean should_replace_current_entry) {
+    jboolean should_replace_current_entry,
+    const JavaParamRef<jobject>& j_initiator_origin,
+    jboolean has_user_gesture,
+    jboolean should_clear_history_list,
+    jlong input_start) {
   DCHECK(url);
   NavigationController::LoadURLParams params(
       GURL(ConvertJavaStringToUTF8(env, url)));
@@ -251,6 +262,8 @@ void NavigationControllerAndroid::LoadUrl(
   params.can_load_local_resources = can_load_local_resources;
   params.is_renderer_initiated = is_renderer_initiated;
   params.should_replace_current_entry = should_replace_current_entry;
+  params.has_user_gesture = has_user_gesture;
+  params.should_clear_history_list = should_clear_history_list;
 
   if (extra_headers)
     params.extra_headers = ConvertJavaStringToUTF8(env, extra_headers);
@@ -290,6 +303,13 @@ void NavigationControllerAndroid::LoadUrl(
         Referrer(GURL(ConvertJavaStringToUTF8(env, j_referrer_url)),
                  Referrer::ConvertToPolicy(referrer_policy));
   }
+
+  if (j_initiator_origin) {
+    params.initiator_origin = url::Origin::FromJavaObject(j_initiator_origin);
+  }
+
+  if (input_start != 0)
+    params.input_start = base::TimeTicks::FromUptimeMillis(input_start);
 
   navigation_controller_->LoadURLWithParams(params);
 }
@@ -446,7 +466,7 @@ ScopedJavaLocalRef<jstring> NavigationControllerAndroid::GetEntryExtraData(
       MapData::Get(navigation_controller_->GetEntryAtIndex(index));
   auto iter = map_data->map().find(key);
   return ConvertUTF16ToJavaString(
-      env, iter == map_data->map().end() ? base::string16() : iter->second);
+      env, iter == map_data->map().end() ? std::u16string() : iter->second);
 }
 
 void NavigationControllerAndroid::SetEntryExtraData(
@@ -459,7 +479,7 @@ void NavigationControllerAndroid::SetEntryExtraData(
     return;
 
   std::string key = base::android::ConvertJavaStringToUTF8(env, jkey);
-  base::string16 value = base::android::ConvertJavaStringToUTF16(env, jvalue);
+  std::u16string value = base::android::ConvertJavaStringToUTF16(env, jvalue);
   MapData* map_data =
       MapData::Get(navigation_controller_->GetEntryAtIndex(index));
   map_data->map()[key] = value;

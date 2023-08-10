@@ -8,7 +8,7 @@
 #include <stdint.h>
 
 #include "base/callback.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/sequence_checker.h"
 #include "media/base/callback_registry.h"
@@ -36,13 +36,16 @@ class MEDIA_EXPORT DecryptingVideoDecoder : public VideoDecoder {
   DecryptingVideoDecoder(
       const scoped_refptr<base::SequencedTaskRunner>& task_runner,
       MediaLog* media_log);
+
+  DecryptingVideoDecoder(const DecryptingVideoDecoder&) = delete;
+  DecryptingVideoDecoder& operator=(const DecryptingVideoDecoder&) = delete;
+
   ~DecryptingVideoDecoder() override;
 
   bool SupportsDecryption() const override;
 
   // VideoDecoder implementation.
   VideoDecoderType GetDecoderType() const override;
-  std::string GetDisplayName() const override;
   void Initialize(const VideoDecoderConfig& config,
                   bool low_delay,
                   CdmContext* cdm_context,
@@ -88,7 +91,7 @@ class MEDIA_EXPORT DecryptingVideoDecoder : public VideoDecoder {
 
   // Set in constructor.
   scoped_refptr<base::SequencedTaskRunner> const task_runner_;
-  MediaLog* const media_log_;
+  const raw_ptr<MediaLog> media_log_;
 
   SEQUENCE_CHECKER(sequence_checker_);
 
@@ -102,7 +105,7 @@ class MEDIA_EXPORT DecryptingVideoDecoder : public VideoDecoder {
 
   VideoDecoderConfig config_;
 
-  Decryptor* decryptor_ = nullptr;
+  raw_ptr<Decryptor> decryptor_ = nullptr;
 
   // The buffer that needs decrypting/decoding.
   scoped_refptr<media::DecoderBuffer> pending_buffer_to_decode_;
@@ -122,8 +125,6 @@ class MEDIA_EXPORT DecryptingVideoDecoder : public VideoDecoder {
   std::unique_ptr<CallbackRegistration> event_cb_registration_;
 
   base::WeakPtrFactory<DecryptingVideoDecoder> weak_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(DecryptingVideoDecoder);
 };
 
 }  // namespace media

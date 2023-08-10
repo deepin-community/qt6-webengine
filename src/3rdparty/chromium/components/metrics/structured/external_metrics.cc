@@ -6,22 +6,54 @@
 
 #include <sys/file.h>
 
+#include "base/containers/fixed_flat_set.h"
 #include "base/files/file.h"
 #include "base/files/file_enumerator.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
-#include "base/task/current_thread.h"
-#include "base/task/post_task.h"
+#include "base/task/task_runner_util.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
-#include "base/task_runner_util.h"
 #include "base/threading/scoped_blocking_call.h"
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "components/metrics/structured/storage.pb.h"
+#include "components/metrics/structured/structured_metrics_features.h"
 
 namespace metrics {
 namespace structured {
 namespace {
+
+// TODO(b/181724341): Remove this once the bluetooth metrics are fully enabled.
+void MaybeFilterBluetoothEvents(
+    google::protobuf::RepeatedPtrField<metrics::StructuredEventProto>* events) {
+  // Event name hashes of all bluetooth events listed in
+  // src/platform2/metrics/structured/structured.xml.
+  static constexpr auto kBluetoothEventHashes = base::MakeFixedFlatSet<uint64_t>({
+      // BluetoothAdapterStateChanged
+      UINT64_C(959829856916771459),
+      // BluetoothPairingStateChanged
+      UINT64_C(11839023048095184048),
+      // BluetoothAclConnectionStateChanged
+      UINT64_C(1880220404408566268),
+      // BluetoothProfileConnectionStateChanged
+      UINT64_C(7217682640379679663),
+      // BluetoothDeviceInfoReport
+      UINT64_C(1506471670382892394)
+  });
+
+  if (base::FeatureList::IsEnabled(kBluetoothSessionizedMetrics))
+    return;
+
+  // Remove all bluetooth events.
+  auto it = events->begin();
+  while (it != events->end()) {
+    if (kBluetoothEventHashes.contains(it->event_name_hash())) {
+      it = events->erase(it);
+    } else {
+      ++it;
+    }
+  }
+}
 
 EventsProto ReadAndDeleteEvents(const base::FilePath& directory) {
   base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
@@ -37,30 +69,21 @@ EventsProto ReadAndDeleteEvents(const base::FilePath& directory) {
     std::string proto_str;
     EventsProto proto;
 
-    // We may try to read a file as it's being written by cros. To avoid this,
-    // cros locks each file exclusively before writing. Check we can get a
-    // shared lock for reading, and otherwise ignore the file. Note these are
-    // advisory POSIX locks. We don't actually use the file object for reading.
-    static const uint32_t open_flags =
-        base::File::FLAG_OPEN | base::File::FLAG_READ;
-    base::File file(path, open_flags);
-    if (file.Lock(base::File::LockMode::kShared) != base::File::FILE_OK)
-      continue;
-
     bool read_ok = base::ReadFileToString(path, &proto_str) &&
                    proto.ParseFromString(proto_str);
     base::DeleteFile(path);
-    file.Unlock();
 
     if (!read_ok)
       continue;
 
     // MergeFrom performs a copy that could be a move if done manually. But all
     // the protos here are expected to be small, so let's keep it simple.
-    result.mutable_uma_events()->MergeFrom(*proto.mutable_uma_events());
-    result.mutable_non_uma_events()->MergeFrom(*proto.mutable_non_uma_events());
+    result.mutable_uma_events()->MergeFrom(proto.uma_events());
+    result.mutable_non_uma_events()->MergeFrom(proto.non_uma_events());
   }
 
+  MaybeFilterBluetoothEvents(result.mutable_uma_events());
+  MaybeFilterBluetoothEvents(result.mutable_non_uma_events());
   return result;
 }
 
@@ -86,8 +109,8 @@ void ExternalMetrics::CollectEventsAndReschedule() {
 }
 
 void ExternalMetrics::ScheduleCollector() {
-  base::ThreadPool::PostDelayedTask(
-      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
+  base::SequencedTaskRunnerHandle::Get()->PostDelayedTask(
+      FROM_HERE,
       base::BindOnce(&ExternalMetrics::CollectEventsAndReschedule,
                      weak_factory_.GetWeakPtr()),
       collection_interval_);
@@ -96,13 +119,7 @@ void ExternalMetrics::ScheduleCollector() {
 void ExternalMetrics::CollectEvents() {
   task_runner_->PostTaskAndReplyWithResult(
       FROM_HERE, base::BindOnce(&ReadAndDeleteEvents, events_directory_),
-      base::BindOnce(&ExternalMetrics::OnEventsCollected,
-                     weak_factory_.GetWeakPtr()));
-}
-
-void ExternalMetrics::OnEventsCollected(EventsProto events) {
-  base::SequencedTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::BindOnce(callback_, std::move(events)));
+      base::BindOnce(callback_));
 }
 
 }  // namespace structured

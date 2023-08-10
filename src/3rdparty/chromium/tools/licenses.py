@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # Copyright (c) 2012 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
@@ -40,42 +40,39 @@ from util import build_utils
 # Paths from the root of the tree to directories to skip.
 PRUNE_PATHS = set([
     # Placeholder directory only, not third-party code.
-    os.path.join('third_party','adobe'),
+    os.path.join('third_party', 'adobe'),
 
     # Will remove it once converted private sdk using cipd.
-    os.path.join('third_party','android_tools_internal'),
+    os.path.join('third_party', 'android_tools_internal'),
 
     # Build files only, not third-party code.
-    os.path.join('third_party','widevine'),
+    os.path.join('third_party', 'widevine'),
 
     # Only binaries, used during development.
-    os.path.join('third_party','valgrind'),
+    os.path.join('third_party', 'valgrind'),
 
     # Used for development and test, not in the shipping product.
-    os.path.join('build','secondary'),
-    os.path.join('third_party','bison'),
-    os.path.join('third_party','blanketjs'),
-    os.path.join('third_party','chromite'),
-    os.path.join('third_party','cygwin'),
-    os.path.join('third_party','gles2_conform'),
-    os.path.join('third_party','gnu_binutils'),
-    os.path.join('third_party','gold'),
-    os.path.join('third_party','gperf'),
-    os.path.join('third_party','lighttpd'),
-    os.path.join('third_party','llvm'),
-    os.path.join('third_party','llvm-build'),
-    os.path.join('third_party','mingw-w64'),
-    os.path.join('third_party','nacl_sdk_binaries'),
-    os.path.join('third_party','pefile'),
-    os.path.join('third_party','perl'),
-    os.path.join('third_party','psyco_win32'),
-    os.path.join('third_party','pyelftools'),
-    os.path.join('third_party','pylib'),
-    os.path.join('third_party','pywebsocket'),
-    os.path.join('third_party','syzygy'),
-
-    # Chromium code.
-    os.path.join('tools', 'swarming_client'),
+    os.path.join('build', 'secondary'),
+    os.path.join('third_party', 'bison'),
+    os.path.join('third_party', 'blanketjs'),
+    os.path.join('third_party', 'chromite'),
+    os.path.join('third_party', 'cygwin'),
+    os.path.join('third_party', 'gles2_conform'),
+    os.path.join('third_party', 'gnu_binutils'),
+    os.path.join('third_party', 'gold'),
+    os.path.join('third_party', 'gperf'),
+    os.path.join('third_party', 'lighttpd'),
+    os.path.join('third_party', 'llvm'),
+    os.path.join('third_party', 'llvm-build'),
+    os.path.join('third_party', 'mingw-w64'),
+    os.path.join('third_party', 'nacl_sdk_binaries'),
+    os.path.join('third_party', 'pefile'),
+    os.path.join('third_party', 'perl'),
+    os.path.join('third_party', 'psyco_win32'),
+    os.path.join('third_party', 'pyelftools'),
+    os.path.join('third_party', 'pylib'),
+    os.path.join('third_party', 'pywebsocket'),
+    os.path.join('third_party', 'syzygy'),
 
     # Stuff pulled in from chrome-internal for official builds/tools.
     os.path.join('third_party', 'clear_cache'),
@@ -89,8 +86,14 @@ PRUNE_PATHS = set([
     # Chrome for Android proprietary code.
     os.path.join('clank'),
 
+    # Proprietary barcode detection library.
+    os.path.join('third_party', 'barhopper'),
+
+    # Proprietary DevTools code.
+    os.path.join('third_party', 'devtools-frontend-internal'),
+
     # Redistribution does not require attribution in documentation.
-    os.path.join('third_party','directxsdk'),
+    os.path.join('third_party', 'directxsdk'),
 
     # For testing only, presents on some bots.
     os.path.join('isolate_deps_dir'),
@@ -122,11 +125,14 @@ ADDITIONAL_PATHS = (
     os.path.join('chrome', 'common', 'extensions', 'docs', 'examples'),
     os.path.join('chrome', 'test', 'chromeos', 'autotest'),
     os.path.join('chrome', 'test', 'data'),
-    os.path.join('clank', 'third_party', 'elements'),
     os.path.join('native_client'),
     os.path.join('testing', 'gmock'),
     os.path.join('testing', 'gtest'),
     os.path.join('third_party', 'boringssl', 'src', 'third_party', 'fiat'),
+    os.path.join('third_party', 'devtools-frontend', 'src', 'front_end',
+                 'third_party'),
+    os.path.join('third_party', 'devtools-frontend-internal', 'front_end',
+                 'third_party'),
     os.path.join('tools', 'gyp'),
     os.path.join('tools', 'page_cycler', 'acid3'),
     os.path.join('url', 'third_party', 'mozilla'),
@@ -170,12 +176,11 @@ SPECIAL_CASES = {
         # Absolute path here is resolved as relative to the source root.
         "License File": "/LICENSE.chromium_os",
     },
-    os.path.join('third_party', 'devtools-frontend'): {
-        # TODO(crbug.com/1151057): Remove this special case when issue is fixed.
-        "Name": "Devtools-Frontend",
-        "URL": "https://chromium.googlesource.com/devtools/devtools-frontend",
+    os.path.join('third_party', 'ipcz'): {
+        "Name": "ipcz",
+        "URL" : "https://chromium.googlesource.com/chromium/src/third_party/ipcz",
         "License": "BSD",
-        "License File": "src/LICENSE",
+        "License File": "/third_party/ipcz/LICENSE",
     },
     os.path.join('third_party', 'lss'): {
         "Name": "linux-syscall-support",
@@ -328,6 +333,13 @@ SPECIAL_CASES = {
         "License Android Compatible": "yes",
         "License File": "/third_party/swiftshader/LICENSE.txt",
     },
+    os.path.join('third_party', 'swiftshader', 'third_party', 'SPIRV-Tools'): {
+        "Name": "SPIRV-Tools",
+        "URL": "https://github.com/KhronosGroup/SPIRV-Tools",
+        "License": "Apache 2.0",
+        "License File":
+        "/third_party/swiftshader/third_party/SPIRV-Tools/LICENSE",
+    },
 }
 
 # Special value for 'License File' field used to indicate that the license file
@@ -364,7 +376,6 @@ KNOWN_NON_IOS_LIBRARIES = set([
     os.path.join('third_party', 'isimpledom'),
     os.path.join('third_party', 'jsoncpp'),
     os.path.join('third_party', 'khronos'),
-    os.path.join('third_party', 'libXNVCtrl'),
     os.path.join('third_party', 'libevent'),
     os.path.join('third_party', 'libjpeg'),
     os.path.join('third_party', 'libusb'),
@@ -387,7 +398,6 @@ KNOWN_NON_IOS_LIBRARIES = set([
     os.path.join('third_party', 'swiftshader'),
     os.path.join('third_party', 'swig'),
     os.path.join('third_party', 'talloc'),
-    os.path.join('third_party', 'tcmalloc'),
     os.path.join('third_party', 'usb_ids'),
     os.path.join('third_party', 'v8-i18n'),
     os.path.join('third_party', 'wtl'),
@@ -439,7 +449,7 @@ def ParseDir(path, root, require_license_file=True, optional_keys=None):
       raise LicenseError("missing README.chromium or licenses.py "
                          "SPECIAL_CASES entry in %s\n" % path)
 
-    for line in open(readme_path):
+    for line in codecs.open(readme_path, encoding='utf-8'):
       line = line.strip()
       if not line:
         break
@@ -501,12 +511,12 @@ def ProcessAdditionalReadmePathsJson(root, dirname, third_party_dirs):
     third_party_dirs."""
   additional_paths_file = os.path.join(root, dirname, ADDITIONAL_PATHS_FILENAME)
   if os.path.exists(additional_paths_file):
-    with open(additional_paths_file) as paths_file:
+    with codecs.open(additional_paths_file, encoding='utf-8') as paths_file:
       extra_paths = json.load(paths_file)
       third_party_dirs.update([os.path.join(dirname, p) for p in extra_paths])
 
 
-def FindThirdPartyDirs(prune_paths, root):
+def FindThirdPartyDirs(prune_paths, root, extra_third_party_dirs=None):
   """Find all third_party directories underneath the source root."""
   third_party_dirs = set()
   for path, dirs, files in os.walk(root):
@@ -542,12 +552,16 @@ def FindThirdPartyDirs(prune_paths, root):
     if path in ADDITIONAL_PATHS:
       dirs[:] = []
 
-  for dir in ADDITIONAL_PATHS:
+  extra_paths = set(ADDITIONAL_PATHS)
+  if extra_third_party_dirs:
+    extra_paths.update(extra_third_party_dirs)
+
+  for dir in extra_paths:
     if dir not in prune_paths:
       third_party_dirs.add(dir)
       ProcessAdditionalReadmePathsJson(root, dir, third_party_dirs)
 
-  return third_party_dirs
+  return sorted(third_party_dirs)
 
 
 def FindThirdPartyDirsWithFiles(root):
@@ -598,7 +612,7 @@ def GetThirdPartyDepsFromGNDepsOutput(gn_deps, target_os):
       # Skip over files that are known not to be used on iOS.
       continue
     third_party_deps.add(third_party_path[:-1])
-  return third_party_deps
+  return sorted(third_party_deps)
 
 
 def FindThirdPartyDeps(gn_out_dir, gn_target, target_os):
@@ -609,20 +623,30 @@ def FindThirdPartyDeps(gn_out_dir, gn_target, target_os):
   # Current gn directory cannot be used when we run this script in a gn action
   # rule, because gn doesn't allow recursive invocations due to potential side
   # effects.
-  tmp_dir = None
   try:
-    tmp_dir = tempfile.mkdtemp(dir=gn_out_dir)
-    shutil.copy(os.path.join(gn_out_dir, "args.gn"), tmp_dir)
-    subprocess.check_output([_GnBinary(), "gen", tmp_dir])
-    gn_deps = subprocess.check_output([
-        _GnBinary(), "desc", tmp_dir, gn_target, "deps", "--as=buildfile",
-        "--all"
-    ])
-    if isinstance(gn_deps, bytes):
-      gn_deps = gn_deps.decode("utf-8")
-  finally:
-    if tmp_dir and os.path.exists(tmp_dir):
-      shutil.rmtree(tmp_dir)
+    with tempfile.TemporaryDirectory(dir=gn_out_dir) as tmp_dir:
+      shutil.copy(os.path.join(gn_out_dir, "args.gn"), tmp_dir)
+      subprocess.check_output(
+          [_GnBinary(), "gen",
+           "--root=%s" % _REPOSITORY_ROOT, tmp_dir])
+      gn_deps = subprocess.check_output([
+          _GnBinary(), "desc",
+          "--root=%s" % _REPOSITORY_ROOT, tmp_dir, gn_target, "deps",
+          "--as=buildfile", "--all"
+      ])
+      if isinstance(gn_deps, bytes):
+        gn_deps = gn_deps.decode("utf-8")
+  except:
+    if sys.platform == 'win32':
+      print("""
+      ############################################################################
+
+      This is known issue, please report the failure to https://crbug.com/1208393.
+
+      ############################################################################
+      """)
+      subprocess.check_call(['tasklist.exe'])
+    raise
 
   return GetThirdPartyDepsFromGNDepsOutput(gn_deps, target_os)
 
@@ -647,9 +671,14 @@ def ScanThirdPartyDirs(root=None):
   return len(errors) == 0
 
 
-def GenerateCredits(
-        file_template_file, entry_template_file, output_file, target_os,
-        gn_out_dir, gn_target, depfile=None):
+def GenerateCredits(file_template_file,
+                    entry_template_file,
+                    output_file,
+                    target_os,
+                    gn_out_dir,
+                    gn_target,
+                    extra_third_party_dirs=None,
+                    depfile=None):
   """Generate about:credits."""
 
   def EvaluateTemplate(template, env, escape=True):
@@ -667,7 +696,8 @@ def GenerateCredits(
         'name': metadata['Name'],
         'name-sanitized': metadata['Name'].replace(' ', '-'),
         'url': metadata['URL'],
-        'license': open(metadata['License File']).read(),
+        'license': codecs.open(metadata['License File'],
+                               encoding='utf-8').read(),
         'license-type': metadata['License']
     }
     return {
@@ -684,7 +714,8 @@ def GenerateCredits(
     if not third_party_dirs:
       raise RuntimeError("No deps found.")
   else:
-    third_party_dirs = FindThirdPartyDirs(PRUNE_PATHS, _REPOSITORY_ROOT)
+    third_party_dirs = FindThirdPartyDirs(PRUNE_PATHS, _REPOSITORY_ROOT,
+                                          extra_third_party_dirs)
 
   if not file_template_file:
     file_template_file = os.path.join(_REPOSITORY_ROOT, 'components',
@@ -695,7 +726,7 @@ def GenerateCredits(
                                        'about_ui', 'resources',
                                        'about_credits_entry.tmpl')
 
-  entry_template = open(entry_template_file).read()
+  entry_template = codecs.open(entry_template_file, encoding='utf-8').read()
   entries = []
   # Start from Chromium's LICENSE file
   chromium_license_metadata = {
@@ -739,7 +770,7 @@ def GenerateCredits(
     entry['content'] = entry['content'].replace('{{id}}', str(entry_id))
 
   entries_contents = '\n'.join([entry['content'] for entry in entries])
-  file_template = open(file_template_file).read()
+  file_template = codecs.open(file_template_file, encoding='utf-8').read()
   template_contents = "<!-- Generated by licenses.py; do not edit. -->"
   template_contents += EvaluateTemplate(
       file_template, {'entries': entries_contents}, escape=False)
@@ -747,13 +778,13 @@ def GenerateCredits(
   if output_file:
     changed = True
     try:
-      old_output = open(output_file, 'r').read()
+      old_output = codecs.open(output_file, 'r', encoding='utf-8').read()
       if old_output == template_contents:
         changed = False
     except:
       pass
     if changed:
-      with open(output_file, 'w') as output:
+      with codecs.open(output_file, 'w', encoding='utf-8') as output:
         output.write(template_contents)
   else:
     print(template_contents)
@@ -825,6 +856,9 @@ def main():
       '--file-template', help='Template HTML to use for the license page.')
   parser.add_argument(
       '--entry-template', help='Template HTML to use for each license.')
+  parser.add_argument(
+      '--extra-third-party-dirs',
+      help='Gn list of additional third_party dirs to look through.')
   parser.add_argument('--target-os', help='OS that this build is targeting.')
   parser.add_argument(
       '--gn-out-dir', help='GN output directory for scanning dependencies.')
@@ -834,6 +868,8 @@ def main():
   parser.add_argument('output_file', nargs='?')
   build_utils.AddDepfileOption(parser)
   args = parser.parse_args()
+  args.extra_third_party_dirs = build_utils.ParseGnList(
+      args.extra_third_party_dirs)
 
   if args.command == 'scan':
     if not ScanThirdPartyDirs():
@@ -841,7 +877,8 @@ def main():
   elif args.command == 'credits':
     if not GenerateCredits(args.file_template, args.entry_template,
                            args.output_file, args.target_os, args.gn_out_dir,
-                           args.gn_target, args.depfile):
+                           args.gn_target, args.extra_third_party_dirs,
+                           args.depfile):
       return 1
   elif args.command == 'license_file':
     try:

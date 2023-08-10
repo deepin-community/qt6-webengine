@@ -12,7 +12,8 @@
 #include "base/values.h"
 #include "build/branding_buildflags.h"
 #include "build/build_config.h"
-#include "components/autofill/core/browser/autofill_metrics.h"
+#include "components/autofill/core/browser/metrics/autofill_metrics.h"
+#include "components/autofill/core/browser/metrics/payments/save_credit_card_prompt_metrics.h"
 #include "components/autofill/core/browser/ui/payments/card_name_fix_flow_view.h"
 #include "components/grit/components_scaled_resources.h"
 #include "components/strings/grit/components_strings.h"
@@ -30,13 +31,17 @@ CardNameFixFlowControllerImpl::~CardNameFixFlowControllerImpl() {
     AutofillMetrics::LogCardholderNameFixFlowPromptEvent(
         AutofillMetrics::
             CARDHOLDER_NAME_FIX_FLOW_PROMPT_CLOSED_WITHOUT_INTERACTION);
+    LogSaveCreditCardPromptResult(
+        SaveCreditCardPromptResult::kInteractedAndIgnored, true,
+        AutofillClient::SaveCreditCardOptions()
+            .with_should_request_name_from_user(true));
   }
 }
 
 void CardNameFixFlowControllerImpl::Show(
     CardNameFixFlowView* card_name_fix_flow_view,
-    const base::string16& inferred_cardholder_name,
-    base::OnceCallback<void(const base::string16&)> name_accepted_callback) {
+    const std::u16string& inferred_cardholder_name,
+    base::OnceCallback<void(const std::u16string&)> name_accepted_callback) {
   DCHECK(!name_accepted_callback.is_null());
   DCHECK(card_name_fix_flow_view);
 
@@ -60,13 +65,16 @@ void CardNameFixFlowControllerImpl::OnConfirmNameDialogClosed() {
   card_name_fix_flow_view_ = nullptr;
 }
 
-void CardNameFixFlowControllerImpl::OnNameAccepted(const base::string16& name) {
+void CardNameFixFlowControllerImpl::OnNameAccepted(const std::u16string& name) {
   AutofillMetrics::LogCardholderNameFixFlowPromptEvent(
       AutofillMetrics::CARDHOLDER_NAME_FIX_FLOW_PROMPT_ACCEPTED);
+  LogSaveCreditCardPromptResult(SaveCreditCardPromptResult::kAccepted, true,
+                                AutofillClient::SaveCreditCardOptions()
+                                    .with_should_request_name_from_user(true));
   had_user_interaction_ = true;
   AutofillMetrics::LogSaveCardCardholderNameWasEdited(
       inferred_cardholder_name_ != name);
-  base::string16 trimmed_name;
+  std::u16string trimmed_name;
   base::TrimWhitespace(name, base::TRIM_ALL, &trimmed_name);
   std::move(name_accepted_callback_).Run(trimmed_name);
 }
@@ -74,6 +82,9 @@ void CardNameFixFlowControllerImpl::OnNameAccepted(const base::string16& name) {
 void CardNameFixFlowControllerImpl::OnDismissed() {
   AutofillMetrics::LogCardholderNameFixFlowPromptEvent(
       AutofillMetrics::CARDHOLDER_NAME_FIX_FLOW_PROMPT_DISMISSED);
+  LogSaveCreditCardPromptResult(SaveCreditCardPromptResult::kDenied, true,
+                                AutofillClient::SaveCreditCardOptions()
+                                    .with_should_request_name_from_user(true));
   had_user_interaction_ = true;
 }
 
@@ -85,33 +96,33 @@ int CardNameFixFlowControllerImpl::GetIconId() const {
 #endif
 }
 
-base::string16 CardNameFixFlowControllerImpl::GetCancelButtonLabel() const {
+std::u16string CardNameFixFlowControllerImpl::GetCancelButtonLabel() const {
   return l10n_util::GetStringUTF16(IDS_CANCEL);
 }
 
-base::string16 CardNameFixFlowControllerImpl::GetInferredCardholderName()
+std::u16string CardNameFixFlowControllerImpl::GetInferredCardholderName()
     const {
   return inferred_cardholder_name_;
 }
 
-base::string16 CardNameFixFlowControllerImpl::GetInferredNameTooltipText()
+std::u16string CardNameFixFlowControllerImpl::GetInferredNameTooltipText()
     const {
   return l10n_util::GetStringUTF16(
       IDS_AUTOFILL_SAVE_CARD_PROMPT_CARDHOLDER_NAME_TOOLTIP);
 }
 
-base::string16 CardNameFixFlowControllerImpl::GetInputLabel() const {
+std::u16string CardNameFixFlowControllerImpl::GetInputLabel() const {
   return l10n_util::GetStringUTF16(
       IDS_AUTOFILL_SAVE_CARD_PROMPT_CARDHOLDER_NAME);
 }
 
-base::string16 CardNameFixFlowControllerImpl::GetInputPlaceholderText() const {
+std::u16string CardNameFixFlowControllerImpl::GetInputPlaceholderText() const {
   return l10n_util::GetStringUTF16(
       IDS_AUTOFILL_SAVE_CARD_PROMPT_CARDHOLDER_NAME);
 }
 
-base::string16 CardNameFixFlowControllerImpl::GetSaveButtonLabel() const {
-#if defined(OS_IOS)
+std::u16string CardNameFixFlowControllerImpl::GetSaveButtonLabel() const {
+#if BUILDFLAG(IS_IOS)
   return l10n_util::GetStringUTF16(IDS_SAVE);
 #else
   return l10n_util::GetStringUTF16(
@@ -119,7 +130,7 @@ base::string16 CardNameFixFlowControllerImpl::GetSaveButtonLabel() const {
 #endif
 }
 
-base::string16 CardNameFixFlowControllerImpl::GetTitleText() const {
+std::u16string CardNameFixFlowControllerImpl::GetTitleText() const {
   return l10n_util::GetStringUTF16(
       IDS_AUTOFILL_SAVE_CARD_CARDHOLDER_NAME_FIX_FLOW_HEADER);
 }

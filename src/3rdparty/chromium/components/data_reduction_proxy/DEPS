@@ -1,13 +1,11 @@
 include_rules = [
-  "+components/data_use_measurement/core",
   "+components/pref_registry",
   "+components/prefs",
   "+components/previews/core",
   "+crypto",
   "+google_apis",
   "+net",
-  "+mojo/public/cpp",  
-  "+services/network/public/cpp",
+  "+mojo/public/cpp",
   "+services/network/public/mojom",
 
   "-components"

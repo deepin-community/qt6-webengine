@@ -9,36 +9,36 @@
 #include "base/test/task_environment.h"
 #include "build/build_config.h"
 #include "content/browser/accessibility/browser_accessibility_manager.h"
+#include "content/browser/accessibility/browser_accessibility_manager_android.h"
 #include "content/browser/accessibility/test_browser_accessibility_delegate.h"
 #include "content/test/test_content_client.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/blink/public/strings/grit/blink_strings.h"
+#include "third_party/blink/public/strings/grit/blink_accessibility_strings.h"
 
 namespace content {
 
 class MockContentClient : public TestContentClient {
  public:
-  base::string16 GetLocalizedString(int message_id) override {
+  std::u16string GetLocalizedString(int message_id) override {
     switch (message_id) {
       case IDS_AX_UNLABELED_IMAGE_ROLE_DESCRIPTION:
-        return base::ASCIIToUTF16("Unlabeled image");
+        return u"Unlabeled image";
       case IDS_AX_IMAGE_ELIGIBLE_FOR_ANNOTATION_ANDROID_LTR:
-        return base::ASCIIToUTF16(
-            "This image isn't labeled. Open the More Options menu at the top "
-            "right to get image descriptions.");
+        return u"This image isn't labeled. Open the More Options menu at the "
+               u"top "
+               u"right to get image descriptions.";
       case IDS_AX_IMAGE_ELIGIBLE_FOR_ANNOTATION_ANDROID_RTL:
-        return base::ASCIIToUTF16(
-            "This image isn't labeled. Open the More Options menu at the top "
-            "left to get image descriptions.");
+        return u"This image isn't labeled. Open the More Options menu at the "
+               u"top "
+               u"left to get image descriptions.";
       case IDS_AX_IMAGE_ANNOTATION_PENDING:
-        return base::ASCIIToUTF16("Getting description...");
+        return u"Getting description...";
       case IDS_AX_IMAGE_ANNOTATION_ADULT:
-        return base::ASCIIToUTF16(
-            "Appears to contain adult content. No description available.");
+        return u"Appears to contain adult content. No description available.";
       case IDS_AX_IMAGE_ANNOTATION_NO_DESCRIPTION:
-        return base::ASCIIToUTF16("No description available.");
+        return u"No description available.";
       default:
-        return base::string16();
+        return std::u16string();
     }
   }
 };
@@ -46,6 +46,12 @@ class MockContentClient : public TestContentClient {
 class BrowserAccessibilityAndroidTest : public testing::Test {
  public:
   BrowserAccessibilityAndroidTest();
+
+  BrowserAccessibilityAndroidTest(const BrowserAccessibilityAndroidTest&) =
+      delete;
+  BrowserAccessibilityAndroidTest& operator=(
+      const BrowserAccessibilityAndroidTest&) = delete;
+
   ~BrowserAccessibilityAndroidTest() override;
 
  protected:
@@ -56,15 +62,15 @@ class BrowserAccessibilityAndroidTest : public testing::Test {
   void SetUp() override;
   base::test::TaskEnvironment task_environment_;
   MockContentClient client_;
-  DISALLOW_COPY_AND_ASSIGN(BrowserAccessibilityAndroidTest);
+  ui::testing::ScopedAxModeSetter ax_mode_setter_;
 };
 
-BrowserAccessibilityAndroidTest::BrowserAccessibilityAndroidTest() = default;
+BrowserAccessibilityAndroidTest::BrowserAccessibilityAndroidTest()
+    : ax_mode_setter_(ui::kAXModeComplete) {}
 
 BrowserAccessibilityAndroidTest::~BrowserAccessibilityAndroidTest() = default;
 
 void BrowserAccessibilityAndroidTest::SetUp() {
-  ui::AXPlatformNode::NotifyAddAXModeFlags(ui::kAXModeComplete);
   test_browser_accessibility_delegate_ =
       std::make_unique<TestBrowserAccessibilityDelegate>();
   SetContentClient(&client_);
@@ -92,13 +98,13 @@ TEST_F(BrowserAccessibilityAndroidTest, TestRetargetTextOnly) {
           test_browser_accessibility_delegate_.get()));
 
   BrowserAccessibility* root_obj = manager->GetRoot();
-  EXPECT_FALSE(root_obj->PlatformIsLeaf());
+  EXPECT_FALSE(root_obj->IsLeaf());
   EXPECT_TRUE(root_obj->CanFireEvents());
   BrowserAccessibility* para_obj = root_obj->PlatformGetChild(0);
-  EXPECT_TRUE(para_obj->PlatformIsLeaf());
+  EXPECT_TRUE(para_obj->IsLeaf());
   EXPECT_TRUE(para_obj->CanFireEvents());
   BrowserAccessibility* text_obj = manager->GetFromID(111);
-  EXPECT_TRUE(text_obj->PlatformIsLeaf());
+  EXPECT_TRUE(text_obj->IsLeaf());
   EXPECT_FALSE(text_obj->CanFireEvents());
   BrowserAccessibility* updated = manager->RetargetForEvents(
       text_obj, BrowserAccessibilityManager::RetargetEventType::
@@ -131,13 +137,13 @@ TEST_F(BrowserAccessibilityAndroidTest, TestRetargetHeading) {
           test_browser_accessibility_delegate_.get()));
 
   BrowserAccessibility* root_obj = manager->GetRoot();
-  EXPECT_FALSE(root_obj->PlatformIsLeaf());
+  EXPECT_FALSE(root_obj->IsLeaf());
   EXPECT_TRUE(root_obj->CanFireEvents());
   BrowserAccessibility* heading_obj = root_obj->PlatformGetChild(0);
-  EXPECT_TRUE(heading_obj->PlatformIsLeaf());
+  EXPECT_TRUE(heading_obj->IsLeaf());
   EXPECT_TRUE(heading_obj->CanFireEvents());
   BrowserAccessibility* text_obj = manager->GetFromID(111);
-  EXPECT_TRUE(text_obj->PlatformIsLeaf());
+  EXPECT_TRUE(text_obj->IsLeaf());
   EXPECT_FALSE(text_obj->CanFireEvents());
   BrowserAccessibility* updated = manager->RetargetForEvents(
       text_obj, BrowserAccessibilityManager::RetargetEventType::
@@ -171,13 +177,13 @@ TEST_F(BrowserAccessibilityAndroidTest, TestRetargetFocusable) {
           test_browser_accessibility_delegate_.get()));
 
   BrowserAccessibility* root_obj = manager->GetRoot();
-  EXPECT_FALSE(root_obj->PlatformIsLeaf());
+  EXPECT_FALSE(root_obj->IsLeaf());
   EXPECT_TRUE(root_obj->CanFireEvents());
   BrowserAccessibility* para_obj = root_obj->PlatformGetChild(0);
-  EXPECT_TRUE(para_obj->PlatformIsLeaf());
+  EXPECT_TRUE(para_obj->IsLeaf());
   EXPECT_TRUE(para_obj->CanFireEvents());
   BrowserAccessibility* text_obj = manager->GetFromID(111);
-  EXPECT_TRUE(text_obj->PlatformIsLeaf());
+  EXPECT_TRUE(text_obj->IsLeaf());
   EXPECT_FALSE(text_obj->CanFireEvents());
   BrowserAccessibility* updated = manager->RetargetForEvents(
       text_obj, BrowserAccessibilityManager::RetargetEventType::
@@ -259,13 +265,13 @@ TEST_F(BrowserAccessibilityAndroidTest, TestRetargetInputControl) {
           test_browser_accessibility_delegate_.get()));
 
   BrowserAccessibility* root_obj = manager->GetRoot();
-  EXPECT_FALSE(root_obj->PlatformIsLeaf());
+  EXPECT_FALSE(root_obj->IsLeaf());
   EXPECT_TRUE(root_obj->CanFireEvents());
   BrowserAccessibility* label_obj = manager->GetFromID(label.id);
-  EXPECT_TRUE(label_obj->PlatformIsLeaf());
+  EXPECT_TRUE(label_obj->IsLeaf());
   EXPECT_TRUE(label_obj->CanFireEvents());
   BrowserAccessibility* label_text_obj = manager->GetFromID(label_text.id);
-  EXPECT_TRUE(label_text_obj->PlatformIsLeaf());
+  EXPECT_TRUE(label_text_obj->IsLeaf());
   EXPECT_FALSE(label_text_obj->CanFireEvents());
   BrowserAccessibility* updated = manager->RetargetForEvents(
       label_text_obj, BrowserAccessibilityManager::RetargetEventType::
@@ -274,11 +280,11 @@ TEST_F(BrowserAccessibilityAndroidTest, TestRetargetInputControl) {
   EXPECT_TRUE(updated->CanFireEvents());
 
   BrowserAccessibility* input_time_obj = manager->GetFromID(input_time.id);
-  EXPECT_TRUE(input_time_obj->PlatformIsLeaf());
+  EXPECT_TRUE(input_time_obj->IsLeaf());
   EXPECT_TRUE(input_time_obj->CanFireEvents());
   BrowserAccessibility* input_time_container_obj =
       manager->GetFromID(input_container.id);
-  EXPECT_TRUE(input_time_container_obj->PlatformIsLeaf());
+  EXPECT_TRUE(input_time_container_obj->IsLeaf());
   EXPECT_FALSE(input_time_container_obj->CanFireEvents());
   updated = manager->RetargetForEvents(
       input_time_container_obj, BrowserAccessibilityManager::RetargetEventType::
@@ -286,7 +292,7 @@ TEST_F(BrowserAccessibilityAndroidTest, TestRetargetInputControl) {
   EXPECT_EQ(input_time.id, updated->GetId());
   EXPECT_TRUE(updated->CanFireEvents());
   BrowserAccessibility* input_text_obj = manager->GetFromID(input_text.id);
-  EXPECT_TRUE(input_text_obj->PlatformIsLeaf());
+  EXPECT_TRUE(input_text_obj->IsLeaf());
   EXPECT_FALSE(input_text_obj->CanFireEvents());
   updated = manager->RetargetForEvents(
       input_text_obj, BrowserAccessibilityManager::RetargetEventType::
@@ -295,10 +301,10 @@ TEST_F(BrowserAccessibilityAndroidTest, TestRetargetInputControl) {
   EXPECT_TRUE(updated->CanFireEvents());
 
   BrowserAccessibility* button_obj = manager->GetFromID(button.id);
-  EXPECT_TRUE(button_obj->PlatformIsLeaf());
+  EXPECT_TRUE(button_obj->IsLeaf());
   EXPECT_TRUE(button_obj->CanFireEvents());
   BrowserAccessibility* button_text_obj = manager->GetFromID(button_text.id);
-  EXPECT_TRUE(button_text_obj->PlatformIsLeaf());
+  EXPECT_TRUE(button_text_obj->IsLeaf());
   EXPECT_FALSE(button_text_obj->CanFireEvents());
   updated = manager->RetargetForEvents(
       button_text_obj, BrowserAccessibilityManager::RetargetEventType::
@@ -346,14 +352,18 @@ TEST_F(BrowserAccessibilityAndroidTest,
       BrowserAccessibilityManager::Create(
           tree, test_browser_accessibility_delegate_.get()));
 
-  for (int child_index = 0; child_index < int{tree.nodes[0].child_ids.size()};
+  BrowserAccessibilityManagerAndroid* android_manager =
+      manager->ToBrowserAccessibilityManagerAndroid();
+  android_manager->set_allow_image_descriptions_for_testing(true);
+
+  for (int child_index = 0;
+       child_index < static_cast<int>(tree.nodes[0].child_ids.size());
        ++child_index) {
     BrowserAccessibilityAndroid* child =
         static_cast<BrowserAccessibilityAndroid*>(
             manager->GetRoot()->PlatformGetChild(child_index));
 
-    EXPECT_EQ(base::ASCIIToUTF16("Unlabeled image"),
-              child->GetRoleDescription());
+    EXPECT_EQ(u"Unlabeled image", child->GetRoleDescription());
   }
 }
 
@@ -394,13 +404,18 @@ TEST_F(BrowserAccessibilityAndroidTest, TestImageRoleDescription_Empty) {
       BrowserAccessibilityManager::Create(
           tree, test_browser_accessibility_delegate_.get()));
 
-  for (int child_index = 0; child_index < int{tree.nodes[0].child_ids.size()};
+  BrowserAccessibilityManagerAndroid* android_manager =
+      manager->ToBrowserAccessibilityManagerAndroid();
+  android_manager->set_allow_image_descriptions_for_testing(true);
+
+  for (int child_index = 0;
+       child_index < static_cast<int>(tree.nodes[0].child_ids.size());
        ++child_index) {
     BrowserAccessibilityAndroid* child =
         static_cast<BrowserAccessibilityAndroid*>(
             manager->GetRoot()->PlatformGetChild(child_index));
 
-    EXPECT_EQ(base::string16(), child->GetRoleDescription());
+    EXPECT_EQ(std::u16string(), child->GetRoleDescription());
   }
 }
 
@@ -432,23 +447,27 @@ TEST_F(BrowserAccessibilityAndroidTest, TestImageInnerText_Eligible) {
       BrowserAccessibilityManager::Create(
           tree, test_browser_accessibility_delegate_.get()));
 
+  BrowserAccessibilityManagerAndroid* android_manager =
+      manager->ToBrowserAccessibilityManagerAndroid();
+  android_manager->set_allow_image_descriptions_for_testing(true);
+
   BrowserAccessibilityAndroid* image_ltr =
       static_cast<BrowserAccessibilityAndroid*>(
           manager->GetRoot()->PlatformGetChild(0));
 
   EXPECT_EQ(
-      base::ASCIIToUTF16("This image isn't labeled. Open the More Options menu "
-                         "at the top right to get image descriptions."),
-      image_ltr->GetInnerText());
+      u"This image isn't labeled. Open the More Options menu "
+      u"at the top right to get image descriptions.",
+      image_ltr->GetTextContentUTF16());
 
   BrowserAccessibilityAndroid* image_rtl =
       static_cast<BrowserAccessibilityAndroid*>(
           manager->GetRoot()->PlatformGetChild(1));
 
-  EXPECT_EQ(base::ASCIIToUTF16(
-                "image_name, This image isn't labeled. Open the More Options "
-                "menu at the top left to get image descriptions."),
-            image_rtl->GetInnerText());
+  EXPECT_EQ(
+      u"image_name, This image isn't labeled. Open the More Options "
+      u"menu at the top left to get image descriptions.",
+      image_rtl->GetTextContentUTF16());
 }
 
 TEST_F(BrowserAccessibilityAndroidTest,
@@ -483,6 +502,10 @@ TEST_F(BrowserAccessibilityAndroidTest,
       BrowserAccessibilityManager::Create(
           tree, test_browser_accessibility_delegate_.get()));
 
+  BrowserAccessibilityManagerAndroid* android_manager =
+      manager->ToBrowserAccessibilityManagerAndroid();
+  android_manager->set_allow_image_descriptions_for_testing(true);
+
   BrowserAccessibilityAndroid* image_pending =
       static_cast<BrowserAccessibilityAndroid*>(
           manager->GetRoot()->PlatformGetChild(0));
@@ -499,15 +522,11 @@ TEST_F(BrowserAccessibilityAndroidTest,
       static_cast<BrowserAccessibilityAndroid*>(
           manager->GetRoot()->PlatformGetChild(3));
 
-  EXPECT_EQ(base::ASCIIToUTF16("Getting description..."),
-            image_pending->GetInnerText());
-  EXPECT_EQ(base::ASCIIToUTF16("No description available."),
-            image_empty->GetInnerText());
-  EXPECT_EQ(base::ASCIIToUTF16(
-                "Appears to contain adult content. No description available."),
-            image_adult->GetInnerText());
-  EXPECT_EQ(base::ASCIIToUTF16("No description available."),
-            image_failed->GetInnerText());
+  EXPECT_EQ(u"Getting description...", image_pending->GetTextContentUTF16());
+  EXPECT_EQ(u"No description available.", image_empty->GetTextContentUTF16());
+  EXPECT_EQ(u"Appears to contain adult content. No description available.",
+            image_adult->GetTextContentUTF16());
+  EXPECT_EQ(u"No description available.", image_failed->GetTextContentUTF16());
 }
 
 TEST_F(BrowserAccessibilityAndroidTest, TestImageInnerText_Ineligible) {
@@ -542,6 +561,10 @@ TEST_F(BrowserAccessibilityAndroidTest, TestImageInnerText_Ineligible) {
       BrowserAccessibilityManager::Create(
           tree, test_browser_accessibility_delegate_.get()));
 
+  BrowserAccessibilityManagerAndroid* android_manager =
+      manager->ToBrowserAccessibilityManagerAndroid();
+  android_manager->set_allow_image_descriptions_for_testing(true);
+
   BrowserAccessibilityAndroid* image_none =
       static_cast<BrowserAccessibilityAndroid*>(
           manager->GetRoot()->PlatformGetChild(0));
@@ -558,10 +581,10 @@ TEST_F(BrowserAccessibilityAndroidTest, TestImageInnerText_Ineligible) {
       static_cast<BrowserAccessibilityAndroid*>(
           manager->GetRoot()->PlatformGetChild(3));
 
-  EXPECT_EQ(base::string16(), image_none->GetInnerText());
-  EXPECT_EQ(base::ASCIIToUTF16("image_name"), image_scheme->GetInnerText());
-  EXPECT_EQ(base::string16(), image_ineligible->GetInnerText());
-  EXPECT_EQ(base::string16(), image_silent->GetInnerText());
+  EXPECT_EQ(std::u16string(), image_none->GetTextContentUTF16());
+  EXPECT_EQ(u"image_name", image_scheme->GetTextContentUTF16());
+  EXPECT_EQ(std::u16string(), image_ineligible->GetTextContentUTF16());
+  EXPECT_EQ(std::u16string(), image_silent->GetTextContentUTF16());
 }
 
 TEST_F(BrowserAccessibilityAndroidTest,
@@ -591,6 +614,10 @@ TEST_F(BrowserAccessibilityAndroidTest,
       BrowserAccessibilityManager::Create(
           tree, test_browser_accessibility_delegate_.get()));
 
+  BrowserAccessibilityManagerAndroid* android_manager =
+      manager->ToBrowserAccessibilityManagerAndroid();
+  android_manager->set_allow_image_descriptions_for_testing(true);
+
   BrowserAccessibilityAndroid* image_succeeded =
       static_cast<BrowserAccessibilityAndroid*>(
           manager->GetRoot()->PlatformGetChild(0));
@@ -599,10 +626,9 @@ TEST_F(BrowserAccessibilityAndroidTest,
       static_cast<BrowserAccessibilityAndroid*>(
           manager->GetRoot()->PlatformGetChild(1));
 
-  EXPECT_EQ(base::ASCIIToUTF16("test_annotation"),
-            image_succeeded->GetInnerText());
-  EXPECT_EQ(base::ASCIIToUTF16("test_annotation"),
-            image_succeeded_with_name->GetInnerText());
+  EXPECT_EQ(u"test_annotation", image_succeeded->GetTextContentUTF16());
+  EXPECT_EQ(u"test_annotation",
+            image_succeeded_with_name->GetTextContentUTF16());
 }
 
 }  // namespace content

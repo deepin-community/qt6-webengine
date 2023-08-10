@@ -16,9 +16,9 @@
 
 namespace extensions {
 
-bool IsSourceFromAnExtension(const base::string16& source) {
+bool IsSourceFromAnExtension(const std::u16string& source) {
   return GURL(source).SchemeIs(kExtensionScheme) ||
-         base::StartsWith(source, base::ASCIIToUTF16("extensions::"),
+         base::StartsWith(source, u"extensions::",
                           base::CompareCase::SENSITIVE);
 }
 
@@ -78,10 +78,10 @@ bool IsWebstoreUpdateUrl(const GURL& update_url) {
           update_url.path_piece() == store_url.path_piece());
 }
 
-bool IsBlacklistUpdateUrl(const GURL& url) {
+bool IsBlocklistUpdateUrl(const GURL& url) {
   extensions::ExtensionsClient* client = extensions::ExtensionsClient::Get();
   if (client)
-    return client->IsBlacklistUpdateURL(url);
+    return client->IsBlocklistUpdateURL(url);
   return false;
 }
 

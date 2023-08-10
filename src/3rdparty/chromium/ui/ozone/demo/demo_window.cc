@@ -6,7 +6,9 @@
 
 #include <utility>
 
+#include "base/logging.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
 #include "ui/events/event.h"
 #include "ui/events/keycodes/dom/dom_code.h"
 #include "ui/ozone/demo/renderer.h"
@@ -16,7 +18,7 @@
 #include "ui/platform_window/platform_window.h"
 #include "ui/platform_window/platform_window_init_properties.h"
 
-#if defined(OS_FUCHSIA)
+#if BUILDFLAG(IS_FUCHSIA)
 #include "ui/platform_window/fuchsia/initialize_presenter_api_view.h"
 #endif
 
@@ -29,7 +31,7 @@ DemoWindow::DemoWindow(WindowManager* window_manager,
   PlatformWindowInitProperties properties;
   properties.bounds = bounds;
 
-#if defined(OS_FUCHSIA)
+#if BUILDFLAG(IS_FUCHSIA)
   // When using Scenic Ozone platform we need to supply a view_token to the
   // window. This is not necessary when using the headless ozone platform.
   if (ui::OzonePlatform::GetInstance()
@@ -65,7 +67,7 @@ void DemoWindow::Quit() {
   window_manager_->Quit();
 }
 
-void DemoWindow::OnBoundsChanged(const gfx::Rect& new_bounds) {
+void DemoWindow::OnBoundsChanged(const BoundsChange& change) {
   StartRendererIfNecessary();
 }
 
@@ -84,7 +86,8 @@ void DemoWindow::OnCloseRequest() {
 
 void DemoWindow::OnClosed() {}
 
-void DemoWindow::OnWindowStateChanged(PlatformWindowState new_state) {}
+void DemoWindow::OnWindowStateChanged(PlatformWindowState old_state,
+                                      PlatformWindowState new_state) {}
 
 void DemoWindow::OnLostCapture() {}
 

@@ -13,7 +13,7 @@ namespace sh = net::structured_headers;
 
 OriginPolicyParsedHeader::OriginPolicyParsedHeader(
     const std::vector<OriginPolicyAllowedValue>& allowed,
-    const base::Optional<OriginPolicyPreferredValue>& preferred)
+    const absl::optional<OriginPolicyPreferredValue>& preferred)
     : allowed_(allowed), preferred_(preferred) {
   DCHECK(!allowed_.empty() || preferred_.has_value());
 }
@@ -24,12 +24,12 @@ OriginPolicyParsedHeader::OriginPolicyParsedHeader(
     const OriginPolicyParsedHeader&) = default;
 
 // https://wicg.github.io/origin-policy/#parse-an-origin-policy-header
-base::Optional<OriginPolicyParsedHeader> OriginPolicyParsedHeader::FromString(
+absl::optional<OriginPolicyParsedHeader> OriginPolicyParsedHeader::FromString(
     const std::string& string) {
-  base::Optional<sh::Dictionary> parsed_header_opt =
+  absl::optional<sh::Dictionary> parsed_header_opt =
       sh::ParseDictionary(string);
   if (!parsed_header_opt) {
-    return base::nullopt;
+    return absl::nullopt;
   }
 
   const sh::Dictionary& parsed_header = *parsed_header_opt;
@@ -38,30 +38,30 @@ base::Optional<OriginPolicyParsedHeader> OriginPolicyParsedHeader::FromString(
 
   if (parsed_header.contains("allowed")) {
     if (!parsed_header.at("allowed").member_is_inner_list) {
-      return base::nullopt;
+      return absl::nullopt;
     }
 
     const std::vector<sh::ParameterizedItem>& raw_allowed_list =
         parsed_header.at("allowed").member;
     for (const auto& parameterized_item : raw_allowed_list) {
-      base::Optional<OriginPolicyAllowedValue> result;
+      absl::optional<OriginPolicyAllowedValue> result;
 
       const sh::Item& item = parameterized_item.item;
       if (item.is_string()) {
-        const std::string& string = item.GetString();
-        if (string.empty()) {
-          return base::nullopt;
+        const std::string& item_string = item.GetString();
+        if (item_string.empty()) {
+          return absl::nullopt;
         }
-        result = OriginPolicyAllowedValue::FromString(string);
+        result = OriginPolicyAllowedValue::FromString(item_string);
       } else if (item.is_token()) {
-        const std::string& string = item.GetString();
-        if (string == "null") {
+        const std::string& item_string = item.GetString();
+        if (item_string == "null") {
           result = OriginPolicyAllowedValue::Null();
-        } else if (string == "latest") {
+        } else if (item_string == "latest") {
           result = OriginPolicyAllowedValue::Latest();
         }
       } else {
-        return base::nullopt;
+        return absl::nullopt;
       }
 
       if (result && !base::Contains(allowed, *result)) {
@@ -70,31 +70,31 @@ base::Optional<OriginPolicyParsedHeader> OriginPolicyParsedHeader::FromString(
     }
   }
 
-  base::Optional<OriginPolicyPreferredValue> preferred;
+  absl::optional<OriginPolicyPreferredValue> preferred;
   if (parsed_header.contains("preferred")) {
     if (parsed_header.at("preferred").member_is_inner_list) {
-      return base::nullopt;
+      return absl::nullopt;
     }
 
     const sh::Item& item = parsed_header.at("preferred").member[0].item;
     if (item.is_string()) {
-      const std::string& string = item.GetString();
-      if (string.empty()) {
-        return base::nullopt;
+      const std::string& item_string = item.GetString();
+      if (item_string.empty()) {
+        return absl::nullopt;
       }
-      preferred = OriginPolicyPreferredValue::FromString(string);
+      preferred = OriginPolicyPreferredValue::FromString(item_string);
     } else if (item.is_token()) {
-      const std::string& string = item.GetString();
-      if (string == "latest-from-network") {
+      const std::string& item_string = item.GetString();
+      if (item_string == "latest-from-network") {
         preferred = OriginPolicyPreferredValue::LatestFromNetwork();
       }
     } else {
-      return base::nullopt;
+      return absl::nullopt;
     }
   }
 
   if (allowed.empty() && !preferred.has_value()) {
-    return base::nullopt;
+    return absl::nullopt;
   }
 
   return OriginPolicyParsedHeader(allowed, preferred);

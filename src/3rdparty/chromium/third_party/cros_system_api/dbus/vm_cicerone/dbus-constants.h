@@ -28,6 +28,7 @@ const char kUninstallPackageOwningFileMethod[] = "UninstallPackageOwningFile";
 const char kCreateLxdContainerMethod[] = "CreateLxdContainer";
 const char kDeleteLxdContainerMethod[] = "DeleteLxdContainer";
 const char kStartLxdContainerMethod[] = "StartLxdContainer";
+const char kStopLxdContainerMethod[] = "StopLxdContainer";
 const char kSetTimezoneMethod[] = "SetTimezone";
 const char kGetLxdContainerUsernameMethod[] = "GetLxdContainerUsername";
 const char kSetUpLxdContainerUserMethod[] = "SetUpLxdContainerUser";
@@ -44,6 +45,7 @@ const char kAddFileWatchMethod[] = "AddFileWatch";
 const char kRemoveFileWatchMethod[] = "RemoveFileWatch";
 const char kRegisterVshSessionMethod[] = "RegisterVshSession";
 const char kGetVshSessionMethod[] = "GetVshSession";
+const char kFileSelectedMethod[] = "FileSelected";
 
 // Methods to be called from chunneld.
 const char kConnectChunnelMethod[] = "ConnectChunnel";
@@ -60,6 +62,7 @@ const char kLxdContainerCreatedSignal[] = "LxdContainerCreated";
 const char kLxdContainerDeletedSignal[] = "LxdContainerDeleted";
 const char kLxdContainerDownloadingSignal[] = "LxdContainerDownloading";
 const char kLxdContainerStartingSignal[] = "LxdContainerStarting";
+const char kLxdContainerStoppingSignal[] = "LxdContainerStopping";
 const char kTremplinStartedSignal[] = "TremplinStarted";
 const char kExportLxdContainerProgressSignal[] = "ExportLxdContainerProgress";
 const char kImportLxdContainerProgressSignal[] = "ImportLxdContainerProgress";
@@ -69,6 +72,7 @@ const char kApplyAnsiblePlaybookProgressSignal[] =
 const char kUpgradeContainerProgressSignal[] = "UpgradeContainerProgress";
 const char kStartLxdProgressSignal[] = "StartLxdProgress";
 const char kFileWatchTriggeredSignal[] = "FileWatchTriggered";
+const char kLowDiskSpaceTriggeredSignal[] = "LowDiskSpaceTriggered";
 
 }  // namespace cicerone
 }  // namespace vm_tools

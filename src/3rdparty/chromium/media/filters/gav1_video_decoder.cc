@@ -16,6 +16,7 @@
 #include "media/base/limits.h"
 #include "media/base/media_log.h"
 #include "media/base/video_frame.h"
+#include "media/base/video_util.h"
 #include "third_party/libgav1/src/src/gav1/decoder.h"
 #include "third_party/libgav1/src/src/gav1/decoder_settings.h"
 #include "third_party/libgav1/src/src/gav1/frame_buffer.h"
@@ -146,7 +147,7 @@ libgav1::StatusCode GetFrameBufferImpl(void* callback_private_data,
   // proper, indicated by Y. VideoFramePool aligns the first byte of the
   // buffer, indicated by X. To make sure the byte indicated by Y is also
   // aligned, we need to pad left_border to be a multiple of stride_alignment.
-  left_border = base::bits::Align(left_border, stride_alignment);
+  left_border = base::bits::AlignUp(left_border, stride_alignment);
   gfx::Size coded_size(left_border + width + right_border,
                        top_border + height + bottom_border);
   gfx::Rect visible_rect(left_border, top_border, width, height);
@@ -207,8 +208,7 @@ scoped_refptr<VideoFrame> FormatVideoFrame(
     const VideoColorSpace& container_color_space) {
   scoped_refptr<VideoFrame> frame =
       static_cast<VideoFrame*>(buffer.buffer_private_data);
-  frame->set_timestamp(
-      base::TimeDelta::FromMicroseconds(buffer.user_private_data));
+  frame->set_timestamp(base::Microseconds(buffer.user_private_data));
 
   // AV1 color space defines match ISO 23001-8:2016 via ISO/IEC 23091-4/ITU-T
   // H.273. https://aomediacodec.github.io/av1-spec/#color-config-semantics
@@ -253,10 +253,6 @@ Gav1VideoDecoder::~Gav1VideoDecoder() {
   CloseDecoder();
 }
 
-std::string Gav1VideoDecoder::GetDisplayName() const {
-  return "Gav1VideoDecoder";
-}
-
 VideoDecoderType Gav1VideoDecoder::GetDecoderType() const {
   return VideoDecoderType::kGav1;
 }
@@ -272,8 +268,9 @@ void Gav1VideoDecoder::Initialize(const VideoDecoderConfig& config,
 
   InitCB bound_init_cb = bind_callbacks_ ? BindToCurrentLoop(std::move(init_cb))
                                          : std::move(init_cb);
-  if (config.is_encrypted() || config.codec() != kCodecAV1) {
-    std::move(bound_init_cb).Run(StatusCode::kEncryptedContentUnsupported);
+  if (config.is_encrypted() || config.codec() != VideoCodec::kAV1) {
+    std::move(bound_init_cb)
+        .Run(DecoderStatus::Codes::kUnsupportedEncryptionMode);
     return;
   }
 
@@ -288,20 +285,26 @@ void Gav1VideoDecoder::Initialize(const VideoDecoderConfig& config,
   settings.release_input_buffer = ReleaseInputBufferImpl;
   settings.callback_private_data = this;
 
+  if (low_delay || config.is_rtc()) {
+    // The `frame_parallel` setting is false by default, so this serves more as
+    // documentation that it should be false for low delay decoding.
+    settings.frame_parallel = false;
+  }
+
   libgav1_decoder_ = std::make_unique<libgav1::Decoder>();
   libgav1::StatusCode status = libgav1_decoder_->Init(&settings);
   if (status != kLibgav1StatusOk) {
     MEDIA_LOG(ERROR, media_log_) << "libgav1::Decoder::Init() failed, "
                                  << "status=" << status;
-    std::move(bound_init_cb).Run(StatusCode::kDecoderFailedInitialization);
+    std::move(bound_init_cb).Run(DecoderStatus::Codes::kFailedToCreateDecoder);
     return;
   }
 
   output_cb_ = output_cb;
   state_ = DecoderState::kDecoding;
   color_space_ = config.color_space_info();
-  natural_size_ = config.natural_size();
-  std::move(bound_init_cb).Run(OkStatus());
+  aspect_ratio_ = config.aspect_ratio();
+  std::move(bound_init_cb).Run(DecoderStatus::Codes::kOk);
 }
 
 void Gav1VideoDecoder::Decode(scoped_refptr<DecoderBuffer> buffer,
@@ -318,18 +321,18 @@ void Gav1VideoDecoder::Decode(scoped_refptr<DecoderBuffer> buffer,
                                  : std::move(decode_cb);
 
   if (state_ == DecoderState::kError) {
-    std::move(bound_decode_cb).Run(DecodeStatus::DECODE_ERROR);
+    std::move(bound_decode_cb).Run(DecoderStatus::Codes::kFailed);
     return;
   }
 
   if (!DecodeBuffer(std::move(buffer))) {
     state_ = DecoderState::kError;
-    std::move(bound_decode_cb).Run(DecodeStatus::DECODE_ERROR);
+    std::move(bound_decode_cb).Run(DecoderStatus::Codes::kFailed);
     return;
   }
 
   // VideoDecoderShim expects |decode_cb| call after |output_cb_|.
-  std::move(bound_decode_cb).Run(DecodeStatus::OK);
+  std::move(bound_decode_cb).Run(DecoderStatus::Codes::kOk);
 }
 
 bool Gav1VideoDecoder::DecodeBuffer(scoped_refptr<DecoderBuffer> buffer) {
@@ -436,7 +439,8 @@ scoped_refptr<VideoFrame> Gav1VideoDecoder::CreateVideoFrame(
   //   will not be zero initialized.
   // The zero initialization is necessary for FFmpeg but not for libgav1.
   return frame_pool_.CreateFrame(format, coded_size, visible_rect,
-                                 natural_size_, kNoTimestamp);
+                                 aspect_ratio_.GetNaturalSize(visible_rect),
+                                 kNoTimestamp);
 }
 
 void Gav1VideoDecoder::CloseDecoder() {

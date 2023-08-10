@@ -13,11 +13,12 @@
 #include "ui/views/examples/examples_window_with_content.h"
 #include "ui/views_content_client/views_content_client.h"
 
-#if defined(OS_APPLE)
+#if BUILDFLAG(IS_MAC)
 #include "sandbox/mac/seatbelt_exec.h"
 #endif
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
+#include "base/win/windows_types.h"
 #include "content/public/app/sandbox_helper_win.h"
 #include "sandbox/win/src/sandbox_types.h"
 #endif
@@ -26,12 +27,12 @@ namespace {
 
 void OnResourcesLoaded() {
   base::FilePath views_examples_resources_pak_path;
-  CHECK(base::PathService::Get(base::DIR_MODULE,
+  CHECK(base::PathService::Get(base::DIR_ASSETS,
                                &views_examples_resources_pak_path));
   ui::ResourceBundle::GetSharedInstance().AddDataPackFromPath(
       views_examples_resources_pak_path.AppendASCII(
           "views_examples_resources.pak"),
-      ui::SCALE_FACTOR_100P);
+      ui::k100Percent);
 }
 
 void ShowContentExampleWindow(ui::ViewsContentClient* views_content_client,
@@ -48,15 +49,16 @@ void ShowContentExampleWindow(ui::ViewsContentClient* views_content_client,
   // dlsym search path, which breaks (usually valid) assumptions made in
   // sandbox::InitLibcUrandomOverrides(). See http://crbug.com/374712.
   if (!browser_context) {
-    content::BrowserContext::SaveSessionState(nullptr);
+    browser_context->SaveSessionState();
     NOTREACHED();
   }
 }
 
 }  // namespace
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, wchar_t*, int) {
+  base::CommandLine::Init(0, nullptr);
   sandbox::SandboxInterfaceInfo sandbox_info = {nullptr};
   content::InitializeSandboxInfo(&sandbox_info);
   ui::ViewsContentClient views_content_client(instance, &sandbox_info);
@@ -69,7 +71,7 @@ int main(int argc, const char** argv) {
   if (views::examples::CheckCommandLineUsage())
     return 0;
 
-#if defined(OS_APPLE)
+#if BUILDFLAG(IS_MAC)
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
   // ViewsContentClient expects a const char** argv and
   // CreateFromArgumentsResult expects a regular char** argv. Given this is a

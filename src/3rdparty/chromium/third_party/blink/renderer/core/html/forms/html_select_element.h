@@ -45,11 +45,11 @@ class ExceptionState;
 class HTMLHRElement;
 class HTMLOptGroupElement;
 class HTMLOptionElement;
-class HTMLOptionElementOrHTMLOptGroupElement;
-class HTMLElementOrLong;
 class LayoutUnit;
 class PopupMenu;
 class SelectType;
+class V8UnionHTMLElementOrLong;
+class V8UnionHTMLOptGroupElementOrHTMLOptionElement;
 
 class CORE_EXPORT HTMLSelectElement final
     : public HTMLFormControlElementWithState,
@@ -85,9 +85,9 @@ class CORE_EXPORT HTMLSelectElement final
 
   bool UsesMenuList() const { return uses_menu_list_; }
 
-  void add(const HTMLOptionElementOrHTMLOptGroupElement&,
-           const HTMLElementOrLong&,
-           ExceptionState&);
+  void add(const V8UnionHTMLOptGroupElementOrHTMLOptionElement* element,
+           const V8UnionHTMLElementOrLong* before,
+           ExceptionState& exception_state);
 
   using Node::remove;
   void remove(int index);
@@ -162,7 +162,8 @@ class CORE_EXPORT HTMLSelectElement final
   void ProvisionalSelectionChanged(unsigned);
   void PopupDidHide();
   bool PopupIsVisible() const;
-  HTMLOptionElement* OptionToBeShownForTesting() const;
+  // Returns the active option. Only available in menulist mode.
+  HTMLOptionElement* OptionToBeShown() const;
   // Style of the selected OPTION. This is nullable, and only for
   // the menulist mode.
   const ComputedStyle* OptionStyle() const;
@@ -171,9 +172,6 @@ class CORE_EXPORT HTMLSelectElement final
   PopupMenu* PopupForTesting() const;
 
   void ResetTypeAheadSessionForTesting();
-
-  // Used for slot assignment.
-  static bool CanAssignToSelectSlot(const Node&);
 
   bool HasNonInBodyInsertionMode() const override { return true; }
 
@@ -220,6 +218,7 @@ class CORE_EXPORT HTMLSelectElement final
   void DetachLayoutTree(bool performing_reattach = false) override;
   void AppendToFormData(FormData&) override;
   void DidAddUserAgentShadowRoot(ShadowRoot&) override;
+  void ManuallyAssignSlots() override;
 
   void DefaultEventHandler(Event&) override;
 
@@ -282,6 +281,7 @@ class CORE_EXPORT HTMLSelectElement final
   mutable ListItems list_items_;
   TypeAhead type_ahead_;
   unsigned size_;
+  Member<HTMLSlotElement> option_slot_;
   Member<HTMLOptionElement> last_on_change_option_;
   Member<HTMLOptionElement> suggested_option_;
   bool uses_menu_list_ = true;

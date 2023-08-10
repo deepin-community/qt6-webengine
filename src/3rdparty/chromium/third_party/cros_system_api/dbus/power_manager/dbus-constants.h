@@ -21,10 +21,15 @@ const char kGetKeyboardBrightnessPercentMethod[] =
     "GetKeyboardBrightnessPercent";
 const char kDecreaseKeyboardBrightnessMethod[] = "DecreaseKeyboardBrightness";
 const char kIncreaseKeyboardBrightnessMethod[] = "IncreaseKeyboardBrightness";
+const char kSetKeyboardBacklightToggledOffMethod[] =
+    "SetKeyboardBacklightToggledOff";
+const char kGetKeyboardBacklightToggledOffMethod[] =
+    "GetKeyboardBacklightToggledOff";
 const char kRequestRestartMethod[] = "RequestRestart";
 const char kRequestShutdownMethod[] = "RequestShutdown";
 const char kRequestSuspendMethod[] = "RequestSuspend";
 const char kGetPowerSupplyPropertiesMethod[] = "GetPowerSupplyProperties";
+const char kGetBatteryStateMethod[] = "GetBatteryState";
 const char kGetSwitchStatesMethod[] = "GetSwitchStates";
 const char kHandleUserActivityMethod[] = "HandleUserActivity";
 const char kHandleVideoActivityMethod[] = "HandleVideoActivity";
@@ -52,13 +57,19 @@ const char kHasAmbientColorDeviceMethod[] = "HasAmbientColorDevice";
 const char kChangeWifiRegDomainMethod[] = "ChangeWifiRegDomain";
 // TODO(b/166543531): Remove after migrating to BlueZ Battery Provider API.
 const char kRefreshBluetoothBatteryMethod[] = "RefreshBluetoothBattery";
+const char kRefreshAllPeripheralBatteryMethod[] = "RefreshAllPeripheralBattery";
 const char kGetThermalStateMethod[] = "GetThermalState";
+const char kSetExternalDisplayALSBrightnessMethod[] =
+    "SetExternalDisplayALSBrightness";
+const char kGetExternalDisplayALSBrightnessMethod[] =
+    "GetExternalDisplayALSBrightness";
 
 // Signals emitted by powerd.
 const char kScreenBrightnessChangedSignal[] = "ScreenBrightnessChanged";
 const char kKeyboardBrightnessChangedSignal[] = "KeyboardBrightnessChanged";
 const char kPeripheralBatteryStatusSignal[] = "PeripheralBatteryStatus";
 const char kPowerSupplyPollSignal[] = "PowerSupplyPoll";
+const char kBatteryStatePollSignal[] = "BatteryStatePoll";
 const char kSuspendImminentSignal[] = "SuspendImminent";
 const char kDarkSuspendImminentSignal[] = "DarkSuspendImminent";
 const char kSuspendDoneSignal[] = "SuspendDone";
@@ -103,6 +114,11 @@ enum WifiRegDomainDbus {
   WIFI_REG_DOMAIN_EU = 1,
   WIFI_REG_DOMAIN_REST_OF_WORLD = 2,
   WIFI_REG_DOMAIN_NONE = 3,
+};
+enum RequestSuspendFlavor {
+  REQUEST_SUSPEND_DEFAULT = 0,
+  REQUEST_SUSPEND_TO_RAM = 1,
+  REQUEST_SUSPEND_TO_DISK = 2,
 };
 
 }  // namespace power_manager

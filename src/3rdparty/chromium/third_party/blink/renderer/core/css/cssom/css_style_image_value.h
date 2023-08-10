@@ -5,7 +5,7 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_CSS_CSSOM_CSS_STYLE_IMAGE_VALUE_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_CSS_CSSOM_CSS_STYLE_IMAGE_VALUE_H_
 
-#include "base/optional.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/css/cssom/css_resource_value.h"
 #include "third_party/blink/renderer/core/html/canvas/canvas_image_source.h"
@@ -31,15 +31,15 @@ class CORE_EXPORT CSSStyleImageValue : public CSSResourceValue,
   // CanvasImageSource
   bool IsCSSImageValue() const final { return true; }
   bool WouldTaintOrigin() const final { return true; }
-  FloatSize ElementSize(const FloatSize& default_object_size,
-                        const RespectImageOrientationEnum) const final;
+  gfx::SizeF ElementSize(const gfx::SizeF& default_object_size,
+                         const RespectImageOrientationEnum) const final;
 
  protected:
   CSSStyleImageValue() = default;
 
-  virtual base::Optional<IntSize> IntrinsicSize() const = 0;
+  virtual absl::optional<gfx::Size> IntrinsicSize() const = 0;
 };
 
 }  // namespace blink
 
-#endif  // CSSResourceValue_h
+#endif  // THIRD_PARTY_BLINK_RENDERER_CORE_CSS_CSSOM_CSS_STYLE_IMAGE_VALUE_H_

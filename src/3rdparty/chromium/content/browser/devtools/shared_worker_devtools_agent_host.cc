@@ -37,6 +37,8 @@ SharedWorkerDevToolsAgentHost::SharedWorkerDevToolsAgentHost(
     SharedWorkerHost* worker_host,
     const base::UnguessableToken& devtools_worker_token)
     : DevToolsAgentHostImpl(devtools_worker_token.ToString()),
+      auto_attacher_(std::make_unique<protocol::RendererAutoAttacherBase>(
+          GetRendererChannel())),
       state_(WORKER_NOT_READY),
       worker_host_(worker_host),
       devtools_worker_token_(devtools_worker_token),
@@ -66,8 +68,8 @@ GURL SharedWorkerDevToolsAgentHost::GetURL() {
   return instance_.url();
 }
 
-url::Origin SharedWorkerDevToolsAgentHost::GetConstructorOrigin() {
-  return instance_.constructor_origin();
+blink::StorageKey SharedWorkerDevToolsAgentHost::GetStorageKey() const {
+  return instance_.storage_key();
 }
 
 bool SharedWorkerDevToolsAgentHost::Activate() {
@@ -89,7 +91,7 @@ bool SharedWorkerDevToolsAgentHost::AttachSession(DevToolsSession* session,
   session->AddHandler(std::make_unique<protocol::InspectorHandler>());
   session->AddHandler(std::make_unique<protocol::NetworkHandler>(
       GetId(), devtools_worker_token_, GetIOContext(),
-      base::BindRepeating([] {})));
+      base::BindRepeating([] {}), session->GetClient()->MayReadLocalFiles()));
   // TODO(crbug.com/1143100): support pushing updated loader factories down to
   // renderer.
   session->AddHandler(std::make_unique<protocol::FetchHandler>(
@@ -98,7 +100,7 @@ bool SharedWorkerDevToolsAgentHost::AttachSession(DevToolsSession* session,
   session->AddHandler(std::make_unique<protocol::SchemaHandler>());
   session->AddHandler(std::make_unique<protocol::TargetHandler>(
       protocol::TargetHandler::AccessMode::kAutoAttachOnly, GetId(),
-      GetRendererChannel(), session->GetRootSession()));
+      auto_attacher_.get(), session->GetRootSession()));
   return true;
 }
 
@@ -109,7 +111,7 @@ void SharedWorkerDevToolsAgentHost::DetachSession(DevToolsSession* session) {
 bool SharedWorkerDevToolsAgentHost::Matches(SharedWorkerHost* worker_host) {
   return instance_.Matches(worker_host->instance().url(),
                            worker_host->instance().name(),
-                           worker_host->instance().constructor_origin());
+                           worker_host->instance().storage_key());
 }
 
 void SharedWorkerDevToolsAgentHost::WorkerReadyForInspection(
@@ -148,13 +150,17 @@ void SharedWorkerDevToolsAgentHost::WorkerDestroyed() {
 DevToolsAgentHostImpl::NetworkLoaderFactoryParamsAndInfo
 SharedWorkerDevToolsAgentHost::CreateNetworkFactoryParamsForDevTools() {
   DCHECK(worker_host_);
-  return {GetConstructorOrigin(), net::SiteForCookies::FromUrl(GetURL()),
+  return {GetStorageKey().origin(), net::SiteForCookies::FromUrl(GetURL()),
           worker_host_->CreateNetworkFactoryParamsForSubresources()};
 }
 
 RenderProcessHost* SharedWorkerDevToolsAgentHost::GetProcessHost() {
   DCHECK(worker_host_);
   return worker_host_->GetProcessHost();
+}
+
+protocol::TargetAutoAttacher* SharedWorkerDevToolsAgentHost::auto_attacher() {
+  return auto_attacher_.get();
 }
 
 }  // namespace content

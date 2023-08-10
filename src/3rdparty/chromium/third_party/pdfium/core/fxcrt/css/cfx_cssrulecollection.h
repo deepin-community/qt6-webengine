@@ -11,7 +11,7 @@
 #include <memory>
 #include <vector>
 
-#include "core/fxcrt/fx_string.h"
+#include "core/fxcrt/widestring.h"
 
 class CFX_CSSDeclaration;
 class CFX_CSSSelector;
@@ -43,7 +43,7 @@ class CFX_CSSRuleCollection {
                     CFX_CSSStyleRule* pRule);
 
   std::map<uint32_t, std::vector<std::unique_ptr<Data>>> m_TagRules;
-  int32_t m_iSelectors;
+  int32_t m_iSelectors = 0;
 };
 
 #endif  // CORE_FXCRT_CSS_CFX_CSSRULECOLLECTION_H_

@@ -17,11 +17,11 @@
 #include <sys/types.h>
 
 #include <algorithm>
+#include <iterator>
 #include <limits>
 
 #include "base/check_op.h"
 #include "base/numerics/safe_conversions.h"
-#include "base/stl_util.h"
 
 namespace crashpad {
 
@@ -76,7 +76,7 @@ DelimitedFileReader::Result DelimitedFileReader::GetDelim(char delimiter,
         return Result::kEndOfFile;
       }
 
-      DCHECK_LE(static_cast<size_t>(read_result), base::size(buf_));
+      DCHECK_LE(static_cast<size_t>(read_result), std::size(buf_));
       DCHECK(
           base::IsValueInRangeForNumericType<decltype(buf_len_)>(read_result));
       buf_len_ = static_cast<decltype(buf_len_)>(read_result);

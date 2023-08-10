@@ -7,7 +7,7 @@
 #include <utility>
 
 #include "base/bind.h"
-#include "base/task/post_task.h"
+#include "base/observer_list.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/notification_details.h"
@@ -70,6 +70,7 @@ void RulesCacheDelegate::Init(RulesRegistry* registry) {
   registry_ = registry->GetWeakPtr();
   rules_registry_thread_ = registry->owner_thread();
   browser_context_ = registry->browser_context();
+  extension_registry_ = ExtensionRegistry::Get(browser_context_);
 
   if (browser_context_->IsOffTheRecord())
     log_storage_init_delay_ = false;
@@ -103,8 +104,15 @@ void RulesCacheDelegate::UpdateRules(const std::string& extension_id,
   if (!browser_context_)
     return;
 
+  // The extension may have been uninstalled before any existing tasks are
+  // run.
+  if (!extension_registry_->GetExtensionById(extension_id,
+                                             ExtensionRegistry::EVERYTHING)) {
+    return;
+  }
+
   DCHECK(value.is_list());
-  has_nonempty_ruleset_ = !value.GetList().empty();
+  has_nonempty_ruleset_ = !value.GetListDeprecated().empty();
   for (auto& observer : observers_)
     observer.OnUpdateRules();
 
@@ -142,9 +150,9 @@ void RulesCacheDelegate::CheckIfReady() {
   if (notified_registry_ || !waiting_for_extensions_.empty())
     return;
 
-  base::PostTask(
-      FROM_HERE, {rules_registry_thread_},
-      base::BindOnce(&RulesRegistry::MarkReady, registry_, storage_init_time_));
+  content::BrowserThread::GetTaskRunnerForThread(rules_registry_thread_)
+      ->PostTask(FROM_HERE, base::BindOnce(&RulesRegistry::MarkReady, registry_,
+                                           storage_init_time_));
   notified_registry_ = true;
 }
 
@@ -164,9 +172,9 @@ void RulesCacheDelegate::ReadRulesForInstalledExtensions() {
          ++i) {
       bool needs_apis_storing_rules =
           (*i)->permissions_data()->HasAPIPermission(
-              APIPermission::kDeclarativeContent) ||
+              mojom::APIPermissionID::kDeclarativeContent) ||
           (*i)->permissions_data()->HasAPIPermission(
-              APIPermission::kDeclarativeWebRequest);
+              mojom::APIPermissionID::kDeclarativeWebRequest);
       bool respects_off_the_record =
           !(browser_context_->IsOffTheRecord()) ||
           extension_prefs->IsIncognitoEnabled((*i)->id());
@@ -208,7 +216,8 @@ void RulesCacheDelegate::ReadFromStorageCallback(
     std::unique_ptr<base::Value> value) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   DCHECK_EQ(Type::kPersistent, type_);
-  base::PostTask(FROM_HERE, {rules_registry_thread_},
+  content::BrowserThread::GetTaskRunnerForThread(rules_registry_thread_)
+      ->PostTask(FROM_HERE,
                  base::BindOnce(&RulesRegistry::DeserializeAndAddRules,
                                 registry_, extension_id, std::move(value)));
 
@@ -242,8 +251,6 @@ void RulesCacheDelegate::SetDeclarativeRulesStored(
     bool rules_stored) {
   CHECK(browser_context_);
   DCHECK_EQ(Type::kPersistent, type_);
-  DCHECK(ExtensionRegistry::Get(browser_context_)
-             ->GetExtensionById(extension_id, ExtensionRegistry::EVERYTHING));
 
   ExtensionPrefs* extension_prefs = ExtensionPrefs::Get(browser_context_);
   extension_prefs->UpdateExtensionPref(

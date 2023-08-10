@@ -7,9 +7,9 @@
 #include "ash/public/cpp/shelf_types.h"
 #include "ash/public/cpp/window_properties.h"
 #include "base/metrics/histogram_functions.h"
-#include "chrome/browser/chromeos/crostini/crostini_manager.h"
-#include "chrome/browser/chromeos/crostini/crostini_shelf_utils.h"
-#include "chrome/browser/chromeos/crostini/crostini_simple_types.h"
+#include "chrome/browser/ash/crostini/crostini_manager.h"
+#include "chrome/browser/ash/crostini/crostini_shelf_utils.h"
+#include "chrome/browser/ash/crostini/crostini_simple_types.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/webui/chromeos/crostini_upgrader/crostini_upgrader_ui.h"
 #include "chrome/common/webui_url_constants.h"
@@ -81,7 +81,7 @@ void CrostiniUpgraderDialog::GetDialogSize(gfx::Size* size) const {
 }
 
 bool CrostiniUpgraderDialog::ShouldShowCloseButton() const {
-  return true;
+  return false;
 }
 
 bool CrostiniUpgraderDialog::ShouldShowDialogTitle() const {

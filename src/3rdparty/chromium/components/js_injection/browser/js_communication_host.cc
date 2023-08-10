@@ -28,10 +28,32 @@ std::string ConvertToNativeAllowedOriginRulesWithSanityCheck(
   return std::string();
 }
 
+// Performs ForEachRenderFrameHost starting from `render_frame_host`, but skips
+// any inner WebContents.
+void ForEachRenderFrameHostWithinSameWebContents(
+    content::RenderFrameHost* render_frame_host,
+    content::RenderFrameHost::FrameIterationAlwaysContinueCallback callback) {
+  render_frame_host->ForEachRenderFrameHost(base::BindRepeating(
+      [](const content::WebContents* starting_web_contents,
+         content::RenderFrameHost::FrameIterationAlwaysContinueCallback
+             callback,
+         content::RenderFrameHost* rfh) {
+        // Don't cross into inner WebContents since we wouldn't be notified of
+        // its changes.
+        if (content::WebContents::FromRenderFrameHost(rfh) !=
+            starting_web_contents) {
+          return content::RenderFrameHost::FrameIterationAction::kSkipChildren;
+        }
+        callback.Run(rfh);
+        return content::RenderFrameHost::FrameIterationAction::kContinue;
+      },
+      content::WebContents::FromRenderFrameHost(render_frame_host), callback));
+}
+
 }  // namespace
 
 struct JsObject {
-  JsObject(const base::string16& name,
+  JsObject(const std::u16string& name,
            OriginMatcher allowed_origin_rules,
            std::unique_ptr<WebMessageHostFactory> factory)
       : name(std::move(name)),
@@ -41,13 +63,13 @@ struct JsObject {
   JsObject& operator=(JsObject&& other) = delete;
   ~JsObject() = default;
 
-  base::string16 name;
+  std::u16string name;
   OriginMatcher allowed_origin_rules;
   std::unique_ptr<WebMessageHostFactory> factory;
 };
 
 struct DocumentStartJavaScript {
-  DocumentStartJavaScript(base::string16 script,
+  DocumentStartJavaScript(std::u16string script,
                           OriginMatcher allowed_origin_rules,
                           int32_t script_id)
       : script_(std::move(script)),
@@ -59,7 +81,7 @@ struct DocumentStartJavaScript {
   DocumentStartJavaScript(DocumentStartJavaScript&&) = default;
   DocumentStartJavaScript& operator=(DocumentStartJavaScript&&) = default;
 
-  base::string16 script_;
+  std::u16string script_;
   OriginMatcher allowed_origin_rules_;
   int32_t script_id_;
 };
@@ -79,7 +101,7 @@ JsCommunicationHost::~JsCommunicationHost() = default;
 
 JsCommunicationHost::AddScriptResult
 JsCommunicationHost::AddDocumentStartJavaScript(
-    const base::string16& script,
+    const std::u16string& script,
     const std::vector<std::string>& allowed_origin_rules) {
   OriginMatcher origin_matcher;
   std::string error_message = ConvertToNativeAllowedOriginRulesWithSanityCheck(
@@ -92,9 +114,11 @@ JsCommunicationHost::AddDocumentStartJavaScript(
 
   scripts_.emplace_back(script, origin_matcher, next_script_id_++);
 
-  web_contents()->ForEachFrame(base::BindRepeating(
-      &JsCommunicationHost::NotifyFrameForAddDocumentStartJavaScript,
-      base::Unretained(this), &*scripts_.rbegin()));
+  ForEachRenderFrameHostWithinSameWebContents(
+      web_contents()->GetMainFrame(),
+      base::BindRepeating(
+          &JsCommunicationHost::NotifyFrameForAddDocumentStartJavaScript,
+          base::Unretained(this), &*scripts_.rbegin()));
   result.script_id = scripts_.rbegin()->script_id_;
   return result;
 }
@@ -103,18 +127,20 @@ bool JsCommunicationHost::RemoveDocumentStartJavaScript(int script_id) {
   for (auto it = scripts_.begin(); it != scripts_.end(); ++it) {
     if (it->script_id_ == script_id) {
       scripts_.erase(it);
-      web_contents()->ForEachFrame(base::BindRepeating(
-          &JsCommunicationHost::NotifyFrameForRemoveDocumentStartJavaScript,
-          base::Unretained(this), script_id));
+      ForEachRenderFrameHostWithinSameWebContents(
+          web_contents()->GetMainFrame(),
+          base::BindRepeating(
+              &JsCommunicationHost::NotifyFrameForRemoveDocumentStartJavaScript,
+              base::Unretained(this), script_id));
       return true;
     }
   }
   return false;
 }
 
-base::string16 JsCommunicationHost::AddWebMessageHostFactory(
+std::u16string JsCommunicationHost::AddWebMessageHostFactory(
     std::unique_ptr<WebMessageHostFactory> factory,
-    const base::string16& js_object_name,
+    const std::u16string& js_object_name,
     const std::vector<std::string>& allowed_origin_rules) {
   OriginMatcher origin_matcher;
   std::string error_message = ConvertToNativeAllowedOriginRulesWithSanityCheck(
@@ -124,29 +150,32 @@ base::string16 JsCommunicationHost::AddWebMessageHostFactory(
 
   for (const auto& js_object : js_objects_) {
     if (js_object->name == js_object_name) {
-      return base::ASCIIToUTF16("jsObjectName ") + js_object->name +
-             base::ASCIIToUTF16(" was already added.");
+      return u"jsObjectName " + js_object->name + u" was already added.";
     }
   }
 
   js_objects_.push_back(std::make_unique<JsObject>(
       js_object_name, origin_matcher, std::move(factory)));
 
-  web_contents()->ForEachFrame(base::BindRepeating(
-      &JsCommunicationHost::NotifyFrameForWebMessageListener,
-      base::Unretained(this)));
-  return base::string16();
+  ForEachRenderFrameHostWithinSameWebContents(
+      web_contents()->GetMainFrame(),
+      base::BindRepeating(
+          &JsCommunicationHost::NotifyFrameForWebMessageListener,
+          base::Unretained(this)));
+  return std::u16string();
 }
 
 void JsCommunicationHost::RemoveWebMessageHostFactory(
-    const base::string16& js_object_name) {
+    const std::u16string& js_object_name) {
   for (auto iterator = js_objects_.begin(); iterator != js_objects_.end();
        ++iterator) {
     if ((*iterator)->name == js_object_name) {
       js_objects_.erase(iterator);
-      web_contents()->ForEachFrame(base::BindRepeating(
-          &JsCommunicationHost::NotifyFrameForWebMessageListener,
-          base::Unretained(this)));
+      ForEachRenderFrameHostWithinSameWebContents(
+          web_contents()->GetMainFrame(),
+          base::BindRepeating(
+              &JsCommunicationHost::NotifyFrameForWebMessageListener,
+              base::Unretained(this)));
       break;
     }
   }
@@ -172,16 +201,23 @@ void JsCommunicationHost::RenderFrameCreated(
 
 void JsCommunicationHost::RenderFrameDeleted(
     content::RenderFrameHost* render_frame_host) {
-  js_to_browser_messagings_.erase(render_frame_host);
+  js_to_browser_messagings_.erase(render_frame_host->GetGlobalId());
 }
 
-void JsCommunicationHost::FrameBackForwardCacheStateChanged(
-    content::RenderFrameHost* render_frame_host) {
-  auto iter = js_to_browser_messagings_.find(render_frame_host);
+void JsCommunicationHost::RenderFrameHostStateChanged(
+    content::RenderFrameHost* render_frame_host,
+    content::RenderFrameHost::LifecycleState old_state,
+    content::RenderFrameHost::LifecycleState new_state) {
+  auto iter = js_to_browser_messagings_.find(render_frame_host->GetGlobalId());
   if (iter == js_to_browser_messagings_.end())
     return;
-  for (auto& js_to_browser_messaging_ptr : iter->second)
-    js_to_browser_messaging_ptr->OnBackForwardCacheStateChanged();
+
+  using LifecycleState = content::RenderFrameHost::LifecycleState;
+  if (old_state == LifecycleState::kInBackForwardCache ||
+      new_state == LifecycleState::kInBackForwardCache) {
+    for (auto& js_to_browser_messaging_ptr : iter->second)
+      js_to_browser_messaging_ptr->OnBackForwardCacheStateChanged();
+  }
 }
 
 void JsCommunicationHost::NotifyFrameForAllDocumentStartJavaScripts(
@@ -193,6 +229,13 @@ void JsCommunicationHost::NotifyFrameForAllDocumentStartJavaScripts(
 
 void JsCommunicationHost::NotifyFrameForWebMessageListener(
     content::RenderFrameHost* render_frame_host) {
+  // AddWebMessageHostFactory() uses this method with ForEachFrame() from JNI.
+  // Old entries are deleted from `js_to_browser_messagings_` by
+  // RenderFrameDeleted(); however, RenderFrameDeleted() will not be called if
+  // there is no live RenderFrame.
+  if (!render_frame_host->IsRenderFrameLive())
+    return;
+
   mojo::AssociatedRemote<mojom::JsCommunication> configurator_remote;
   render_frame_host->GetRemoteAssociatedInterfaces()->GetInterface(
       &configurator_remote);
@@ -200,7 +243,7 @@ void JsCommunicationHost::NotifyFrameForWebMessageListener(
   js_objects.reserve(js_objects_.size());
   for (const auto& js_object : js_objects_) {
     mojo::PendingAssociatedRemote<mojom::JsToBrowserMessaging> pending_remote;
-    js_to_browser_messagings_[render_frame_host].emplace_back(
+    js_to_browser_messagings_[render_frame_host->GetGlobalId()].emplace_back(
         std::make_unique<JsToBrowserMessaging>(
             render_frame_host,
             pending_remote.InitWithNewEndpointAndPassReceiver(),

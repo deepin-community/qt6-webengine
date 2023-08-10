@@ -294,9 +294,13 @@ TEST(MathUtilTest, ScanForward)
 // Test ScanReverse, which scans for the most significant 1 bit from a non-zero integer.
 TEST(MathUtilTest, ScanReverse)
 {
-    EXPECT_EQ(0ul, gl::ScanReverse(1ul));
-    EXPECT_EQ(16ul, gl::ScanReverse(0x00010030ul));
-    EXPECT_EQ(31ul, gl::ScanReverse(0x80000000ul));
+    EXPECT_EQ(0ul, gl::ScanReverse(1u));
+    EXPECT_EQ(16ul, gl::ScanReverse(static_cast<uint64_t>(0x00010030ull)));
+    EXPECT_EQ(31ul, gl::ScanReverse(static_cast<uint64_t>(0x80000000ull)));
+
+    EXPECT_EQ(32ul, gl::ScanReverse(static_cast<uint64_t>(0x100000000ull)));
+    EXPECT_EQ(48ul, gl::ScanReverse(static_cast<uint64_t>(0x0001080000000000ull)));
+    EXPECT_EQ(63ul, gl::ScanReverse(static_cast<uint64_t>(0x8000000000000000ull)));
 }
 
 // Test FindLSB, which finds the least significant 1 bit.
@@ -358,6 +362,61 @@ TEST(MathUtilTest, RangeIteration)
         expected++;
     }
     EXPECT_EQ(range.length(), expected);
+}
+
+// Tests for clampForBitCount
+TEST(MathUtilTest, ClampForBitCount)
+{
+    constexpr uint64_t kUnsignedMax = std::numeric_limits<uint64_t>::max();
+    constexpr int64_t kSignedMax    = std::numeric_limits<int64_t>::max();
+    constexpr int64_t kSignedMin    = std::numeric_limits<int64_t>::min();
+    constexpr int64_t kRandomValue  = 0x4D34A0B1;
+
+    ASSERT_EQ(clampForBitCount<uint64_t>(kUnsignedMax, 64), std::numeric_limits<uint64_t>::max());
+    ASSERT_EQ(clampForBitCount<uint64_t>(kUnsignedMax, 32),
+              static_cast<uint64_t>(std::numeric_limits<uint32_t>::max()));
+    ASSERT_EQ(clampForBitCount<uint64_t>(kUnsignedMax, 16),
+              static_cast<uint64_t>(std::numeric_limits<uint16_t>::max()));
+    ASSERT_EQ(clampForBitCount<uint64_t>(kUnsignedMax, 8),
+              static_cast<uint64_t>(std::numeric_limits<uint8_t>::max()));
+    ASSERT_EQ(clampForBitCount<uint64_t>(kUnsignedMax, 4), 15u);
+    ASSERT_EQ(clampForBitCount<uint64_t>(kUnsignedMax, 2), 3u);
+    ASSERT_EQ(clampForBitCount<uint64_t>(kUnsignedMax, 1), 1u);
+    ASSERT_EQ(clampForBitCount<uint64_t>(kUnsignedMax, 0), 0u);
+
+    ASSERT_EQ(clampForBitCount<int64_t>(kSignedMax, 64), std::numeric_limits<int64_t>::max());
+    ASSERT_EQ(clampForBitCount<uint64_t>(static_cast<uint64_t>(kSignedMax), 64),
+              static_cast<uint64_t>(std::numeric_limits<int64_t>::max()));
+    ASSERT_EQ(clampForBitCount<int64_t>(kSignedMax, 32),
+              static_cast<int64_t>(std::numeric_limits<int32_t>::max()));
+    ASSERT_EQ(clampForBitCount<int64_t>(kSignedMax, 16),
+              static_cast<int64_t>(std::numeric_limits<int16_t>::max()));
+    ASSERT_EQ(clampForBitCount<int64_t>(kSignedMax, 8),
+              static_cast<int64_t>(std::numeric_limits<int8_t>::max()));
+    ASSERT_EQ(clampForBitCount<int64_t>(kSignedMax, 4), 7);
+    ASSERT_EQ(clampForBitCount<int64_t>(kSignedMax, 2), 1);
+    ASSERT_EQ(clampForBitCount<int64_t>(kSignedMax, 0), 0);
+
+    ASSERT_EQ(clampForBitCount<int64_t>(kRandomValue, 64), kRandomValue);
+    ASSERT_EQ(clampForBitCount<int64_t>(kRandomValue, 32), kRandomValue);
+    ASSERT_EQ(clampForBitCount<int64_t>(kRandomValue, 16),
+              static_cast<int64_t>(std::numeric_limits<int16_t>::max()));
+    ASSERT_EQ(clampForBitCount<int64_t>(kRandomValue, 8),
+              static_cast<int64_t>(std::numeric_limits<int8_t>::max()));
+    ASSERT_EQ(clampForBitCount<int64_t>(kRandomValue, 4), 7);
+    ASSERT_EQ(clampForBitCount<int64_t>(kRandomValue, 2), 1);
+    ASSERT_EQ(clampForBitCount<int64_t>(kRandomValue, 0), 0);
+
+    ASSERT_EQ(clampForBitCount<int64_t>(kSignedMin, 64), std::numeric_limits<int64_t>::min());
+    ASSERT_EQ(clampForBitCount<int64_t>(kSignedMin, 32),
+              static_cast<int64_t>(std::numeric_limits<int32_t>::min()));
+    ASSERT_EQ(clampForBitCount<int64_t>(kSignedMin, 16),
+              static_cast<int64_t>(std::numeric_limits<int16_t>::min()));
+    ASSERT_EQ(clampForBitCount<int64_t>(kSignedMin, 8),
+              static_cast<int64_t>(std::numeric_limits<int8_t>::min()));
+    ASSERT_EQ(clampForBitCount<int64_t>(kSignedMin, 4), -8);
+    ASSERT_EQ(clampForBitCount<int64_t>(kSignedMin, 2), -2);
+    ASSERT_EQ(clampForBitCount<int64_t>(kSignedMin, 0), 0);
 }
 
 // Tests for float32 to float16 conversion

@@ -2,24 +2,23 @@
 
 include /usr/share/dpkg/architecture.mk
 
-export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all optimize=+lto
 
 PARALLEL_OPTION = $(filter parallel=%,$(DEB_BUILD_OPTIONS))
 ifneq (,$(PARALLEL_OPTION))
-       MNUMJOBS = $(patsubst parallel=%,%,$(PARALLEL_OPTION))
-       NUMJOBS = $(shell if [ $(MNUMJOBS) -ge 16 ]; then echo "16"; else echo $(MNUMJOBS); fi)
-       export NINJAFLAGS = -j$(NUMJOBS)
+	NUMJOBS = $(patsubst parallel=%,%,$(PARALLEL_OPTION))
+	export NINJAJOBS = -j$(NUMJOBS)
 endif
 
-# Reduce memory consumption on certain architectures
+# Reduce memory consumption & parallelism on certain architectures
 ifeq (armhf, $(DEB_HOST_ARCH))
-export LDFLAGS+=-Wl,--no-keep-memory
-export NINJAFLAGS = -j2
-export NINJAJOBS = -j2
+	export LDFLAGS+=-Wl,--no-keep-memory
+	export NINJAJOBS = -j2
 endif
 
 ifeq (i386, $(DEB_HOST_ARCH))
-export LDFLAGS+=-Wl,--no-keep-memory
+	export LDFLAGS+=-Wl,--no-keep-memory
+	export NINJAJOBS = -j2
 endif
 
 
@@ -27,22 +26,24 @@ endif
 	dh $@ --with pkgkde_symbolshelper --buildsystem=cmake+ninja
 
 touch_files = src/3rdparty/chromium/third_party/devtools-frontend/src/front_end/third_party/lighthouse/lighthouse-dt-bundle.js \
-	      src/3rdparty/chromium/third_party/devtools-frontend/src/front_end/third_party/lighthouse/report-assets/report-generator.js \
-	      src/3rdparty/chromium/third_party/devtools-frontend/src/front_end/diff/diff_match_patch.js
+	      src/3rdparty/chromium/third_party/devtools-frontend/src/front_end/third_party/lighthouse/report-assets/report-generator.js
 
 override_dh_auto_clean:
-	# dh_auto_clean
+	dh_auto_clean
+
 	rm -f $(CURDIR)/src/3rdparty/chromium/third_party/jstemplate/jstemplate_compiled.js
 	for fname in $(touch_files); do \
 		rm -f $(CURDIR)/$${fname}; \
 	done
 
+# Turn on system FFmpeg libraries for 6.3
 override_dh_auto_configure:
 	dh_auto_configure -- \
+		--log-level=STATUS \
 		-DCMAKE_LIBRARY_PATH=$(DEB_HOST_MULTIARCH) \
-		-DFEATURE_webengine_system_ffmpeg=ON \
 		-DFEATURE_webengine_system_icu=ON \
 		-DFEATURE_webengine_system_libevent=ON \
+		-DFEATURE_webengine_system_libopenjpeg2=ON \
 		-DFEATURE_qtpdf_build=ON \
 		-DFEATURE_qtpdf_widgets_build=ON \
 		-DFEATURE_qtpdf_quick_build=ON \
@@ -63,8 +64,17 @@ override_dh_auto_configure:
 		touch $(CURDIR)/$${fname}; \
 	done
 
+override_dh_auto_build:
+	dh_auto_build
+	dh_auto_build -- docs
+
 execute_after_dh_auto_install:
 	# Reproducible builds: remove build paths from .prl files
 	sed -i -e '/^QMAKE_PRL_BUILD_DIR/d' debian/tmp/usr/lib/$(DEB_HOST_MULTIARCH)/libQt6*.prl
+	# Install documentation.
+	DESTDIR=$(CURDIR)/debian/tmp dh_auto_build -- install_docs
+	# Remove build path from index files.
+	find $(CURDIR)/debian/tmp/usr/share/qt6/doc -type f -name *.index -exec \
+               sed -i 's@$(CURDIR)/@@g' {} \;
 
 override_dh_dwz:

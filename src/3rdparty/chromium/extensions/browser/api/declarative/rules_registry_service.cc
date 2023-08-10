@@ -10,8 +10,9 @@
 
 #include "base/bind.h"
 #include "base/check_op.h"
+#include "base/containers/contains.h"
 #include "base/lazy_instance.h"
-#include "base/task/post_task.h"
+#include "base/observer_list.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_process_host.h"
@@ -20,6 +21,7 @@
 #include "extensions/browser/api/declarative_webrequest/webrequest_rules_registry.h"
 #include "extensions/browser/api/extensions_api_client.h"
 #include "extensions/browser/api/web_request/web_request_api.h"
+#include "extensions/browser/extension_util.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/features/feature.h"
 #include "extensions/common/features/feature_provider.h"
@@ -45,7 +47,8 @@ RulesRegistryService::RulesRegistryService(content::BrowserContext* context)
       content_rules_registry_(nullptr),
       browser_context_(context) {
   if (browser_context_) {
-    extension_registry_observer_.Add(ExtensionRegistry::Get(browser_context_));
+    extension_registry_observation_.Observe(
+        ExtensionRegistry::Get(browser_context_));
     EnsureDefaultRulesRegistriesRegistered();
   }
 }
@@ -196,7 +199,8 @@ void RulesRegistryService::EnsureDefaultRulesRegistriesRegistered() {
   // declarativeWebRequest API is enabled. See crbug.com/693243.
   const bool is_api_enabled =
       FeatureProvider::GetAPIFeature("declarativeWebRequest")
-          ->IsAvailableToEnvironment()
+          ->IsAvailableToEnvironment(
+              util::GetBrowserContextId(browser_context_))
           .is_available();
   if (is_api_enabled) {
     // Persist the cache since it pertains to regular pages (i.e. not webviews).
@@ -229,7 +233,8 @@ void RulesRegistryService::NotifyRegistriesHelper(
     if (content::BrowserThread::CurrentlyOn(registry->owner_thread())) {
       (registry.get()->*notification_callback)(extension);
     } else {
-      base::PostTask(FROM_HERE, {registry->owner_thread()},
+      content::BrowserThread::GetTaskRunnerForThread(registry->owner_thread())
+          ->PostTask(FROM_HERE,
                      base::BindOnce(&NotifyWithExtensionSafe,
                                     base::WrapRefCounted(extension),
                                     notification_callback, registry));

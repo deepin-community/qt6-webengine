@@ -10,8 +10,8 @@ namespace extensions {
 
 namespace {
 
-// Apps/extensions explicitly whitelisted for use in public sessions.
-const char* const kPublicSessionWhitelist[] = {
+// Apps/extensions explicitly allowlisted for use in public sessions.
+const char* const kPublicSessionAllowlist[] = {
     // Public sessions in general:
     "cbkkbcmdlboombapidmoeolnmdacpkch",  // Chrome RDP
     "inomeogfingihgjfjlpeplalcfajhgai",  // Chrome Remote Desktop
@@ -27,7 +27,7 @@ const char* const kPublicSessionWhitelist[] = {
     "haeblkpifdemlfnkogkipmghfcbonief",  // Charismathics Smart Card Middleware
     "mpnkhdpphjiihmlmkcamhpogecnnfffa",  // Service NSW Kiosk Utility
     "npilppbicblkkgjfnbmibmhhgjhobpll",  // QwickACCESS
-    // TODO(isandrk): Only on the whitelist for the purpose of getting the soft
+    // TODO(isandrk): Only on the allowlist for the purpose of getting the soft
     // MGS warning.  Remove
     // once dynamic MGS warnings are implemented.
     "ppkfnjlimknmjoaemnpidmdlfchhehel",  // VMware Horizon Client for Chrome
@@ -47,7 +47,6 @@ const char* const kPublicSessionWhitelist[] = {
     "kgimkbnclbekdkabkpjhpakhhalfanda",  // Bejeweled demo
     "joodangkbfjnajiiifokapkpmhfnpleo",  // Calculator
     "fpgfohogebplgnamlafljlcidjedbdeb",  // Calendar demo
-    "cdjikkcakjcdjemakobkmijmikhkegcj",  // Chrome Remote Desktop demo
     "jkoildpomkimndcphjpffmephmcmkfhn",  // Chromebook Demo App
     "lbhdhapagjhalobandnbdnmblnmocojh",  // Crackle demo
     "ielkookhdphmgbipcfmafkaiagademfp",  // Custom bookmarks
@@ -118,7 +117,6 @@ const char* const kPublicSessionWhitelist[] = {
     "ongnjlefhnoajpbodoldndkbkdgfomlp",  // Show Managed Storage
     "ilnpadgckeacioehlommkaafedibdeob",  // Enterprise DeviceAttributes
     "oflckobdemeldmjddmlbaiaookhhcngo",  // Citrix Receiver QA version
-    "ljacajndfccfgnfohlgkdphmbnpkjflk",  // Chrome Remote Desktop (Dev Build)
     "behllobkkfkfnphdnhnkndlbkcpglgmj",  // Autotest
 
     // Google Apps:
@@ -141,7 +139,6 @@ const char* const kPublicSessionWhitelist[] = {
     "khpfeaanjngmcnplbdlpegiifgpfgdco",  // Smart Card Connector
     "hmjkmjkepdijhoojdojkdfohbdgmmhki",  // Google Keep - notes and lists
     "felcaaldnbdncclmgdcncolpebgiejap",  // Google Sheets
-    "gbchcmhmhahfdphkhkmpfmihenigjmpp",  // Chrome Remote Desktop
     "khkjfddibboofomnlkndfedpoccieiee",  // Study Kit
     "becloognjehhioodmnimnehjcibkloed",  // Coding with Chrome
     "hfhhnacclhffhdffklopdkcgdhifgngh",  // Camera
@@ -163,10 +160,10 @@ const char* const kPublicSessionWhitelist[] = {
 
 }  // namespace
 
-bool IsWhitelistedForPublicSession(const std::string& extension_id) {
-  return std::find(std::begin(kPublicSessionWhitelist),
-                   std::end(kPublicSessionWhitelist),
-                   extension_id) != std::end(kPublicSessionWhitelist);
+bool IsAllowlistedForPublicSession(const std::string& extension_id) {
+  return std::find(std::begin(kPublicSessionAllowlist),
+                   std::end(kPublicSessionAllowlist),
+                   extension_id) != std::end(kPublicSessionAllowlist);
 }
 
 }  // namespace extensions

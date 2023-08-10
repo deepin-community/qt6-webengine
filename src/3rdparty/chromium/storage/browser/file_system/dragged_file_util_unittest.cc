@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "storage/browser/file_system/dragged_file_util.h"
+
 #include <stddef.h>
 
 #include <map>
@@ -15,25 +17,23 @@
 #include "base/files/file_enumerator.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/macros.h"
-#include "base/stl_util.h"
 #include "base/test/task_environment.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "components/services/filesystem/public/mojom/types.mojom.h"
-#include "storage/browser/file_system/dragged_file_util.h"
 #include "storage/browser/file_system/file_system_context.h"
 #include "storage/browser/file_system/file_system_operation_context.h"
 #include "storage/browser/file_system/isolated_context.h"
 #include "storage/browser/file_system/local_file_util.h"
 #include "storage/browser/file_system/native_file_util.h"
+#include "storage/browser/quota/quota_manager_proxy.h"
 #include "storage/browser/test/async_file_test_helper.h"
 #include "storage/browser/test/file_system_test_file_set.h"
 #include "storage/browser/test/test_file_system_context.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/common/storage_key/storage_key.h"
 #include "url/gurl.h"
-#include "url/origin.h"
 
 namespace storage {
 
@@ -52,9 +52,7 @@ constexpr const base::FilePath::CharType* kRootPaths[] = {
 };
 
 base::FilePath GetTopLevelPath(const base::FilePath& path) {
-  std::vector<base::FilePath::StringType> components;
-  path.GetComponents(&components);
-  return base::FilePath(components[0]);
+  return base::FilePath(path.GetComponents()[0]);
 }
 
 bool IsDirectoryEmpty(FileSystemContext* context, const FileSystemURL& url) {
@@ -68,7 +66,7 @@ FileSystemURL GetEntryURL(FileSystemContext* file_system_context,
                           const FileSystemURL& dir,
                           const base::FilePath::StringType& name) {
   return file_system_context->CreateCrackedFileSystemURL(
-      dir.origin(), dir.mount_type(), dir.virtual_path().Append(name));
+      dir.storage_key(), dir.mount_type(), dir.virtual_path().Append(name));
 }
 
 base::FilePath GetRelativeVirtualPath(const FileSystemURL& root,
@@ -87,7 +85,7 @@ FileSystemURL GetOtherURL(FileSystemContext* file_system_context,
                           const FileSystemURL& other_root,
                           const FileSystemURL& url) {
   return file_system_context->CreateCrackedFileSystemURL(
-      other_root.origin(), other_root.mount_type(),
+      other_root.storage_key(), other_root.mount_type(),
       other_root.virtual_path().Append(GetRelativeVirtualPath(root, url)));
 }
 
@@ -96,6 +94,9 @@ FileSystemURL GetOtherURL(FileSystemContext* file_system_context,
 class DraggedFileUtilTest : public testing::Test {
  public:
   DraggedFileUtilTest() = default;
+
+  DraggedFileUtilTest(const DraggedFileUtilTest&) = delete;
+  DraggedFileUtilTest& operator=(const DraggedFileUtilTest&) = delete;
 
   void SetUp() override {
     ASSERT_TRUE(data_dir_.CreateUniqueTempDir());
@@ -107,7 +108,7 @@ class DraggedFileUtilTest : public testing::Test {
     SimulateDropFiles();
 
     file_system_context_ = CreateFileSystemContextForTesting(
-        nullptr /* quota_manager */, partition_dir_.GetPath());
+        /*quota_manager_proxy=*/nullptr, partition_dir_.GetPath());
 
     isolated_context()->AddReference(filesystem_id_);
   }
@@ -145,13 +146,13 @@ class DraggedFileUtilTest : public testing::Test {
     base::FilePath virtual_path =
         isolated_context()->CreateVirtualRootPath(filesystem_id()).Append(path);
     return file_system_context_->CreateCrackedFileSystemURL(
-        url::Origin::Create(GURL("http://example.com")),
+        blink::StorageKey::CreateFromStringForTesting("http://example.com"),
         kFileSystemTypeIsolated, virtual_path);
   }
 
   FileSystemURL GetOtherFileSystemURL(const base::FilePath& path) const {
     return file_system_context()->CreateCrackedFileSystemURL(
-        url::Origin::Create(GURL("http://example.com")),
+        blink::StorageKey::CreateFromStringForTesting("http://example.com"),
         kFileSystemTypeTemporary,
         base::FilePath().AppendASCII("dest").Append(path));
   }
@@ -259,7 +260,7 @@ class DraggedFileUtilTest : public testing::Test {
       // to simulate a drop with multiple directories.
       if (toplevel_root_map_.find(toplevel) == toplevel_root_map_.end()) {
         base::FilePath root = root_path().Append(
-            kRootPaths[(root_path_index++) % base::size(kRootPaths)]);
+            kRootPaths[(root_path_index++) % std::size(kRootPaths)]);
         toplevel_root_map_[toplevel] = root;
         toplevels.AddPath(root.Append(path), nullptr);
       }
@@ -279,7 +280,6 @@ class DraggedFileUtilTest : public testing::Test {
   scoped_refptr<FileSystemContext> file_system_context_;
   std::map<base::FilePath, base::FilePath> toplevel_root_map_;
   std::unique_ptr<DraggedFileUtil> file_util_;
-  DISALLOW_COPY_AND_ASSIGN(DraggedFileUtilTest);
 };
 
 TEST_F(DraggedFileUtilTest, BasicTest) {
@@ -316,7 +316,7 @@ TEST_F(DraggedFileUtilTest, UnregisteredPathsTest) {
       {false, FILE_PATH_LITERAL("bar"), 20},
   };
 
-  for (size_t i = 0; i < base::size(kUnregisteredCases); ++i) {
+  for (size_t i = 0; i < std::size(kUnregisteredCases); ++i) {
     SCOPED_TRACE(testing::Message() << "Creating kUnregisteredCases " << i);
     const FileSystemTestCaseRecord& test_case = kUnregisteredCases[i];
 
@@ -331,7 +331,7 @@ TEST_F(DraggedFileUtilTest, UnregisteredPathsTest) {
     ASSERT_EQ(test_case.is_directory, info.is_directory);
   }
 
-  for (size_t i = 0; i < base::size(kUnregisteredCases); ++i) {
+  for (size_t i = 0; i < std::size(kUnregisteredCases); ++i) {
     SCOPED_TRACE(testing::Message() << "Creating kUnregisteredCases " << i);
     const FileSystemTestCaseRecord& test_case = kUnregisteredCases[i];
     FileSystemURL url = GetFileSystemURL(base::FilePath(test_case.path));
@@ -370,7 +370,7 @@ TEST_F(DraggedFileUtilTest, ReadDirectoryTest) {
       entry.name = current.BaseName();
       expected_entry_map[entry.name.value()] = entry;
 
-#if defined(OS_POSIX)
+#if BUILDFLAG(IS_POSIX)
       // Creates a symlink for each file/directory.
       // They should be ignored by ReadDirectory, so we don't add them
       // to expected_entry_map.
@@ -387,8 +387,7 @@ TEST_F(DraggedFileUtilTest, ReadDirectoryTest) {
                                        file_system_context(), url, &entries));
 
     EXPECT_EQ(expected_entry_map.size(), entries.size());
-    for (size_t i = 0; i < entries.size(); ++i) {
-      const filesystem::mojom::DirectoryEntry& entry = entries[i];
+    for (const auto& entry : entries) {
       auto found = expected_entry_map.find(entry.name.value());
       EXPECT_TRUE(found != expected_entry_map.end());
       EXPECT_EQ(found->second.name, entry.name);

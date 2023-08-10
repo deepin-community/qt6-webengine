@@ -13,8 +13,6 @@ import("//build/config/features.gni")
 source_set("networking_private") {
   # Sources that will be added if a non-stub implementation is chosen.
   default_sources = [
-    "networking_cast_private_delegate.cc",
-    "networking_cast_private_delegate.h",
     "networking_private_api.cc",
     "networking_private_api.h",
     "networking_private_delegate.cc",
@@ -49,7 +47,7 @@ source_set("networking_private") {
               ]
 
     deps += [ "//dbus" ]
-  } else if (is_win || is_mac) {
+  } else if (is_win || is_mac || is_fuchsia) {
     sources = default_sources + [
                 "networking_private_event_router_nonchromeos.cc",
                 "networking_private_service_client.cc",
@@ -63,6 +61,7 @@ source_set("networking_private") {
                 "networking_private_event_router_chromeos.cc",
               ]
     deps += [
+      "//chromeos/components/onc",
       "//chromeos/login/login_state",
       "//chromeos/network",
       "//components/proxy_config",

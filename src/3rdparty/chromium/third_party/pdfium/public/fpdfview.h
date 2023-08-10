@@ -50,10 +50,11 @@ typedef enum {
   FPDF_TEXTRENDERMODE_LAST = FPDF_TEXTRENDERMODE_CLIP,
 } FPDF_TEXT_RENDERMODE;
 
-// PDF types - use incomplete types (never completed) just for API type safety.
+// PDF types - use incomplete types (never completed) to force API type safety.
 typedef struct fpdf_action_t__* FPDF_ACTION;
 typedef struct fpdf_annotation_t__* FPDF_ANNOTATION;
 typedef struct fpdf_attachment_t__* FPDF_ATTACHMENT;
+typedef struct fpdf_avail_t__* FPDF_AVAIL;
 typedef struct fpdf_bitmap_t__* FPDF_BITMAP;
 typedef struct fpdf_bookmark_t__* FPDF_BOOKMARK;
 typedef struct fpdf_clippath_t__* FPDF_CLIPPATH;
@@ -61,6 +62,7 @@ typedef struct fpdf_dest_t__* FPDF_DEST;
 typedef struct fpdf_document_t__* FPDF_DOCUMENT;
 typedef struct fpdf_font_t__* FPDF_FONT;
 typedef struct fpdf_form_handle_t__* FPDF_FORMHANDLE;
+typedef const struct fpdf_glyphpath_t__* FPDF_GLYPHPATH;
 typedef struct fpdf_javascript_action_t* FPDF_JAVASCRIPT_ACTION;
 typedef struct fpdf_link_t__* FPDF_LINK;
 typedef struct fpdf_page_t__* FPDF_PAGE;
@@ -73,9 +75,11 @@ typedef void* FPDF_RECORDER;  // Passed into skia.
 typedef struct fpdf_schhandle_t__* FPDF_SCHHANDLE;
 typedef struct fpdf_signature_t__* FPDF_SIGNATURE;
 typedef struct fpdf_structelement_t__* FPDF_STRUCTELEMENT;
+typedef const struct fpdf_structelement_attr_t__* FPDF_STRUCTELEMENT_ATTR;
 typedef struct fpdf_structtree_t__* FPDF_STRUCTTREE;
 typedef struct fpdf_textpage_t__* FPDF_TEXTPAGE;
 typedef struct fpdf_widget_t__* FPDF_WIDGET;
+typedef struct fpdf_xobject_t__* FPDF_XOBJECT;
 
 // Basic data types
 typedef int FPDF_BOOL;
@@ -289,35 +293,6 @@ FPDF_EXPORT void FPDF_CALLCONV FPDF_SetSandBoxPolicy(FPDF_DWORD policy,
                                                      FPDF_BOOL enable);
 
 #if defined(_WIN32)
-#if defined(PDFIUM_PRINT_TEXT_WITH_GDI)
-// Pointer to a helper function to make |font| with |text| of |text_length|
-// accessible when printing text with GDI. This is useful in sandboxed
-// environments where PDFium's access to GDI may be restricted.
-typedef void (*PDFiumEnsureTypefaceCharactersAccessible)(const LOGFONT* font,
-                                                         const wchar_t* text,
-                                                         size_t text_length);
-
-// Experimental API.
-// Function: FPDF_SetTypefaceAccessibleFunc
-//          Set the function pointer that makes GDI fonts available in sandboxed
-//          environments.
-// Parameters:
-//          func -   A function pointer. See description above.
-// Return value:
-//          None.
-FPDF_EXPORT void FPDF_CALLCONV
-FPDF_SetTypefaceAccessibleFunc(PDFiumEnsureTypefaceCharactersAccessible func);
-
-// Experimental API.
-// Function: FPDF_SetPrintTextWithGDI
-//          Set whether to use GDI to draw fonts when printing on Windows.
-// Parameters:
-//          use_gdi -   Set to true to enable printing text with GDI.
-// Return value:
-//          None.
-FPDF_EXPORT void FPDF_CALLCONV FPDF_SetPrintTextWithGDI(FPDF_BOOL use_gdi);
-#endif  // PDFIUM_PRINT_TEXT_WITH_GDI
-
 // Experimental API.
 // Function: FPDF_SetPrintMode
 //          Set printing mode when printing on Windows.
@@ -335,6 +310,12 @@ FPDF_EXPORT void FPDF_CALLCONV FPDF_SetPrintTextWithGDI(FPDF_BOOL use_gdi);
 //                 PostScript via ExtEscape() in PASSTHROUGH mode.
 //                 FPDF_PRINTMODE_EMF_IMAGE_MASKS to output EMF, with more
 //                 efficient processing of documents containing image masks.
+//                 FPDF_PRINTMODE_POSTSCRIPT3_TYPE42 to output level 3
+//                 PostScript with embedded Type 42 fonts, when applicable, into
+//                 EMF as a series of GDI comments.
+//                 FPDF_PRINTMODE_POSTSCRIPT3_TYPE42_PASSTHROUGH to output level
+//                 3 PostScript with embedded Type 42 fonts, when applicable,
+//                 via ExtEscape() in PASSTHROUGH mode.
 // Return value:
 //          True if successful, false if unsuccessful (typically invalid input).
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV FPDF_SetPrintMode(int mode);
@@ -353,6 +334,8 @@ FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV FPDF_SetPrintMode(int mode);
 //          Loaded document can be closed by FPDF_CloseDocument().
 //          If this function fails, you can use FPDF_GetLastError() to retrieve
 //          the reason why it failed.
+//
+//          The encoding for |file_path| is UTF-8.
 //
 //          The encoding for |password| can be either UTF-8 or Latin-1. PDFs,
 //          depending on the security handler revision, will only accept one or

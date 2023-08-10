@@ -13,7 +13,6 @@
 #include "base/android/jni_weak_ref.h"
 #include "base/android/scoped_java_ref.h"
 #include "base/observer_list.h"
-#include "base/stl_util.h"
 #include "ui/android/display_android_manager.h"
 #include "ui/android/ui_android_jni_headers/WindowAndroid_jni.h"
 #include "ui/android/window_android_compositor.h"
@@ -47,6 +46,15 @@ WindowAndroid::ScopedSelectionHandles::~ScopedSelectionHandles() {
     Java_WindowAndroid_onSelectionHandlesStateChanged(
         env, window_->GetJavaObject(), false /* active */);
   }
+}
+
+WindowAndroid::ScopedWindowAndroidForTesting::ScopedWindowAndroidForTesting(
+    WindowAndroid* window)
+    : window_(window) {}
+
+WindowAndroid::ScopedWindowAndroidForTesting::~ScopedWindowAndroidForTesting() {
+  JNIEnv* env = AttachCurrentThread();
+  Java_WindowAndroid_destroy(env, window_->GetJavaObject());
 }
 
 // static
@@ -88,10 +96,12 @@ WindowAndroid::~WindowAndroid() {
   Java_WindowAndroid_clearNativePointer(AttachCurrentThread(), GetJavaObject());
 }
 
-WindowAndroid* WindowAndroid::CreateForTesting() {
+std::unique_ptr<WindowAndroid::ScopedWindowAndroidForTesting>
+WindowAndroid::CreateForTesting() {
   JNIEnv* env = AttachCurrentThread();
   long native_pointer = Java_WindowAndroid_createForTesting(env);
-  return reinterpret_cast<WindowAndroid*>(native_pointer);
+  return std::make_unique<ScopedWindowAndroidForTesting>(
+      reinterpret_cast<WindowAndroid*>(native_pointer));
 }
 
 void WindowAndroid::OnCompositingDidCommit() {

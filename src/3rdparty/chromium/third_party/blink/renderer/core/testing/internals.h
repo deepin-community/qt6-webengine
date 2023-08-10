@@ -35,7 +35,7 @@
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
@@ -56,6 +56,7 @@ class Element;
 class ExceptionState;
 class ExecutionContext;
 class GCObservation;
+class HTMLCanvasElement;
 class HTMLIFrameElement;
 class HTMLInputElement;
 class HTMLMediaElement;
@@ -71,6 +72,7 @@ class LocalFrame;
 class Location;
 class Node;
 class OriginTrialsTest;
+class OffscreenCanvas;
 class Page;
 class Range;
 class ReadableStream;
@@ -96,6 +98,7 @@ class Internals final : public ScriptWrappable {
   static void ResetToConsistentState(Page*);
 
   explicit Internals(ExecutionContext*);
+  ~Internals() override;
 
   String elementLayoutTreeAsText(Element*, ExceptionState&);
 
@@ -106,7 +109,9 @@ class Internals final : public ScriptWrappable {
   bool isLoading(const String& url);
   bool isLoadingFromMemoryCache(const String& url);
 
-  ScriptPromise getResourcePriority(ScriptState*, const String& url, Document*);
+  ScriptPromise getInitialResourcePriority(ScriptState*,
+                                           const String& url,
+                                           Document*);
   String getResourceHeader(const String& url, const String& header, Document*);
 
   bool doesWindowHaveUrlFragment(DOMWindow*);
@@ -152,6 +157,7 @@ class Internals final : public ScriptWrappable {
 
   unsigned updateStyleAndReturnAffectedElementCount(ExceptionState&) const;
   unsigned needsLayoutCount(ExceptionState&) const;
+  unsigned layoutCountForTesting(ExceptionState&) const;
   unsigned hitTestCount(Document*, ExceptionState&) const;
   unsigned hitTestCacheHits(Document*, ExceptionState&) const;
   Element* elementFromPoint(Document*,
@@ -324,9 +330,6 @@ class Internals final : public ScriptWrappable {
   bool canHyphenate(const AtomicString& locale);
   void setMockHyphenation(const AtomicString& locale);
 
-  bool isOverwriteModeEnabled(Document*);
-  void toggleOverwriteModeEnabled(Document*);
-
   unsigned numberOfScrollableAreas(Document*);
 
   bool isPageBoxVisible(Document*, int page_number);
@@ -334,8 +337,6 @@ class Internals final : public ScriptWrappable {
   InternalSettings* settings() const;
   InternalRuntimeFlags* runtimeFlags() const;
   unsigned workerThreadCount() const;
-
-  bool isFormControlsRefreshEnabled() const;
 
   String resolveModuleSpecifier(const String& specifier,
                                 const String& base_url_string,
@@ -353,8 +354,6 @@ class Internals final : public ScriptWrappable {
 
   String layerTreeAsText(Document*, unsigned flags, ExceptionState&) const;
   String layerTreeAsText(Document*, ExceptionState&) const;
-
-  bool scrollsWithRespectTo(Element*, Element*, ExceptionState&);
 
   String scrollingStateTreeAsText(Document*) const;
   String mainThreadScrollingReasons(Document*, ExceptionState&) const;
@@ -427,6 +426,7 @@ class Internals final : public ScriptWrappable {
   CallbackFunctionTest* callbackFunctionTest() const;
 
   Vector<String> getReferencedFilePaths() const;
+  void disableReferencedFilePathsVerification() const;
 
   void startTrackingRepaints(Document*, ExceptionState&);
   void stopTrackingRepaints(Document*, ExceptionState&);
@@ -467,10 +467,9 @@ class Internals final : public ScriptWrappable {
   DOMRect* selectionBounds(ExceptionState&);
   String textAffinity();
 
-  bool loseSharedGraphicsContext3D();
-
   void forceCompositingUpdate(Document*, ExceptionState&);
 
+  void setDarkPreferredColorScheme(Document* document);
   void setForcedColorsAndDarkPreferredColorScheme(Document* document);
 
   void setShouldRevealPassword(Element*, bool, ExceptionState&);
@@ -509,6 +508,11 @@ class Internals final : public ScriptWrappable {
 
   bool isInCanvasFontCache(Document*, const String&);
   unsigned canvasFontCacheMaxFonts();
+  void forceLoseCanvasContext(HTMLCanvasElement* canvas,
+                              const String& context_type);
+
+  void forceLoseCanvasContext(OffscreenCanvas* offscreencanvas,
+                              const String& context_type);
 
   void setScrollChain(ScrollState*,
                       const HeapVector<Member<Element>>& elements,
@@ -622,6 +626,8 @@ class Internals final : public ScriptWrappable {
                                           int32_t queueSize,
                                           const String& optimizer,
                                           ExceptionState&);
+
+  void setAllowPerChunkTransferring(ReadableStream* stream);
 
  private:
   Document* ContextDocument() const;

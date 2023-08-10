@@ -1,5 +1,6 @@
 /*
  * MobiClip Video decoder
+ * Copyright (c) 2015-2016 Florian Nouwt
  * Copyright (c) 2017 Adib Surani
  * Copyright (c) 2020 Paul B Mahol
  *
@@ -28,6 +29,7 @@
 #include "avcodec.h"
 #include "bytestream.h"
 #include "bswapdsp.h"
+#include "codec_internal.h"
 #include "get_bits.h"
 #include "golomb.h"
 #include "internal.h"
@@ -490,7 +492,7 @@ static int add_pframe_coefficients(AVCodecContext *avctx, AVFrame *frame,
     int ret, idx = get_ue_golomb_31(gb);
 
     if (idx == 0) {
-        ret = add_coefficients(avctx, frame, bx, by, size, plane);
+        return add_coefficients(avctx, frame, bx, by, size, plane);
     } else if ((unsigned)idx < FF_ARRAY_ELEMS(pframe_block4x4_coefficients_tab)) {
         int flags = pframe_block4x4_coefficients_tab[idx];
 
@@ -504,11 +506,10 @@ static int add_pframe_coefficients(AVCodecContext *avctx, AVFrame *frame,
                 flags >>= 1;
             }
         }
+        return 0;
     } else {
-        ret = AVERROR_INVALIDDATA;
+        return AVERROR_INVALIDDATA;
     }
-
-    return ret;
 }
 
 static int adjust(int x, int size)
@@ -544,7 +545,7 @@ static uint8_t half(int a, int b)
 
 static uint8_t half3(int a, int b, int c)
 {
-    return ((a + b + b + c) * 2 / 4 + 1) / 2;;
+    return ((a + b + b + c) * 2 / 4 + 1) / 2;
 }
 
 static uint8_t pick_above(BlockXY bxy)
@@ -848,7 +849,7 @@ static int predict_intra(AVCodecContext *avctx, AVFrame *frame, int ax, int ay,
             uint8_t *left = frame->data[plane] + ay * frame->linesize[plane] + FFMAX(ax - 1, 0);
             int bottommost = frame->data[plane][(ay + size - 1) * frame->linesize[plane] + FFMAX(ax - 1, 0)];
             int rightmost = frame->data[plane][FFMAX(ay - 1, 0) * frame->linesize[plane] + ax + size - 1];
-            int avg = (bottommost + rightmost + 1) / 2 + 2 * get_se_golomb(gb);
+            int avg = (bottommost + rightmost + 1) / 2 + 2 * av_clip(get_se_golomb(gb), -(1<<16), 1<<16);
             int r6 = adjust(avg - bottommost, size);
             int r9 = adjust(avg - rightmost, size);
             int shift = adjust(size, size) == 8 ? 3 : 2;
@@ -1091,8 +1092,8 @@ static int predict_motion(AVCodecContext *avctx,
             sidx += 6;
 
         if (index > 0) {
-            mv.x = mv.x + get_se_golomb(gb);
-            mv.y = mv.y + get_se_golomb(gb);
+            mv.x = mv.x + (unsigned)get_se_golomb(gb);
+            mv.y = mv.y + (unsigned)get_se_golomb(gb);
         }
         if (mv.x >= INT_MAX || mv.y >= INT_MAX)
             return AVERROR_INVALIDDATA;
@@ -1339,16 +1340,16 @@ static av_cold int mobiclip_close(AVCodecContext *avctx)
     return 0;
 }
 
-AVCodec ff_mobiclip_decoder = {
-    .name           = "mobiclip",
-    .long_name      = NULL_IF_CONFIG_SMALL("MobiClip Video"),
-    .type           = AVMEDIA_TYPE_VIDEO,
-    .id             = AV_CODEC_ID_MOBICLIP,
+const FFCodec ff_mobiclip_decoder = {
+    .p.name         = "mobiclip",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("MobiClip Video"),
+    .p.type         = AVMEDIA_TYPE_VIDEO,
+    .p.id           = AV_CODEC_ID_MOBICLIP,
     .priv_data_size = sizeof(MobiClipContext),
     .init           = mobiclip_init,
     .decode         = mobiclip_decode,
     .flush          = mobiclip_flush,
     .close          = mobiclip_close,
-    .capabilities   = AV_CODEC_CAP_DR1,
+    .p.capabilities = AV_CODEC_CAP_DR1,
     .caps_internal  = FF_CODEC_CAP_INIT_THREADSAFE | FF_CODEC_CAP_INIT_CLEANUP,
 };

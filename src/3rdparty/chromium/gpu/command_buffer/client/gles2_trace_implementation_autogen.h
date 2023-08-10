@@ -372,7 +372,6 @@ void ShaderSource(GLuint shader,
                   const GLchar* const* str,
                   const GLint* length) override;
 void ShallowFinishCHROMIUM() override;
-void ShallowFlushCHROMIUM() override;
 void OrderingBarrierCHROMIUM() override;
 void MultiDrawArraysWEBGL(GLenum mode,
                           const GLint* firsts,
@@ -814,12 +813,6 @@ void DiscardFramebufferEXT(GLenum target,
                            GLsizei count,
                            const GLenum* attachments) override;
 void LoseContextCHROMIUM(GLenum current, GLenum other) override;
-void UnpremultiplyAndDitherCopyCHROMIUM(GLuint source_id,
-                                        GLuint dest_id,
-                                        GLint x,
-                                        GLint y,
-                                        GLsizei width,
-                                        GLsizei height) override;
 void DrawBuffersEXT(GLsizei count, const GLenum* bufs) override;
 void DiscardBackbufferCHROMIUM() override;
 void ScheduleOverlayPlaneCHROMIUM(GLint plane_z_order,

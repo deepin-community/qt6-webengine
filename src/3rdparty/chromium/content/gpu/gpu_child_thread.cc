@@ -5,6 +5,8 @@
 #include "content/gpu/gpu_child_thread.h"
 
 #include <stddef.h>
+
+#include <memory>
 #include <utility>
 
 #include "base/allocator/allocator_extension.h"
@@ -16,10 +18,13 @@
 #include "base/power_monitor/power_monitor.h"
 #include "base/power_monitor/power_monitor_device_source.h"
 #include "base/run_loop.h"
-#include "base/sequenced_task_runner.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/threading/thread_checker.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
+#include "build/chromeos_buildflags.h"
 #include "content/child/child_process.h"
+#include "content/common/process_visibility_tracker.h"
 #include "content/gpu/browser_exposed_gpu_interfaces.h"
 #include "content/gpu/gpu_service_factory.h"
 #include "content/public/browser/content_browser_client.h"
@@ -43,36 +48,16 @@
 #include "services/viz/privileged/mojom/gl/gpu_service.mojom.h"
 #include "third_party/skia/include/core/SkGraphics.h"
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 #include "media/base/android/media_drm_bridge_client.h"
 #include "media/mojo/clients/mojo_android_overlay.h"
 #endif
 
-#if defined(TOOLKIT_QT)
-// Used from //gpu/ipc/client/command_buffer_proxy_impl.cc
-bool CreateCommandBufferSyncQt(
-    const GPUCreateCommandBufferConfig &init_params,
-    int channel_id,
-    int32_t route_id,
-    base::UnsafeSharedMemoryRegion *region,
-    gpu::ContextResult *result,
-    gpu::Capabilities *capabilities)
-{
-  content::GpuChildThread* child_thread = content::GpuChildThread::instance();
-  if (child_thread) {
-    gpu::GpuChannelManager* gpu_channel_manager =
-        child_thread->gpu_channel_manager();
-    // With in-process UI-thread GPU, sync IPC would deadlock; so call directly:
-    if (gpu_channel_manager->task_runner()->BelongsToCurrentThread()) {
-      gpu::GpuChannel* gpu_channel =
-          gpu_channel_manager->LookupChannel(channel_id);
-      gpu_channel->OnCreateCommandBuffer(
-          init_params, route_id, std::move(*region), result, capabilities);
-      return true;
-    }
-  }
-  return false;
-}
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+#include "components/services/font/public/cpp/font_loader.h"  // nogncheck
+#include "components/services/font/public/mojom/font_service.mojom.h"  // nogncheck
+#include "third_party/skia/include/core/SkRefCnt.h"
+#include "third_party/skia/include/ports/SkFontConfigInterface.h"
 #endif
 
 namespace content {
@@ -85,12 +70,13 @@ void HandleBadMessage(const std::string& error) {
   base::debug::DumpWithoutCrashing();
 }
 
-ChildThreadImpl::Options GetOptions() {
+ChildThreadImpl::Options GetOptions(
+    const InProcessChildThreadParams* in_process_params = nullptr) {
   ChildThreadImpl::Options::Builder builder;
-
   builder.ConnectToBrowser(true);
   builder.ExposesInterfacesToBrowser();
-
+  if (in_process_params)
+    builder.InBrowserProcess(*in_process_params);
   return builder.Build();
 }
 
@@ -134,11 +120,7 @@ GpuChildThread::GpuChildThread(base::RepeatingClosure quit_closure,
 GpuChildThread::GpuChildThread(const InProcessChildThreadParams& params,
                                std::unique_ptr<gpu::GpuInit> gpu_init)
     : GpuChildThread(base::DoNothing(),
-                     ChildThreadImpl::Options::Builder()
-                         .InBrowserProcess(params)
-                         .ConnectToBrowser(true)
-                         .ExposesInterfacesToBrowser()
-                         .Build(),
+                     GetOptions(&params),
                      std::move(gpu_init)) {}
 
 GpuChildThread::GpuChildThread(base::RepeatingClosure quit_closure,
@@ -166,45 +148,29 @@ void GpuChildThread::Init(const base::Time& process_start_time) {
 
   // When running in in-process mode, this has been set in the browser at
   // ChromeBrowserMainPartsAndroid::PreMainMessageLoopRun().
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   if (!in_process_gpu()) {
     media::SetMediaDrmBridgeClient(
         GetContentClient()->GetMediaDrmBridgeClient());
   }
 #endif
 
-  blink::AssociatedInterfaceRegistry* associated_registry =
-      &associated_interfaces_;
-  associated_registry->AddInterface(base::BindRepeating(
-      &GpuChildThread::CreateVizMainService, base::Unretained(this)));
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+  if (!in_process_gpu()) {
+    mojo::PendingRemote<font_service::mojom::FontService> font_service;
+    BindHostReceiver(font_service.InitWithNewPipeAndPassReceiver());
+    SkFontConfigInterface::SetGlobal(
+        sk_make_sp<font_service::FontLoader>(std::move(font_service)));
+  }
+#endif
 
   memory_pressure_listener_ = std::make_unique<base::MemoryPressureListener>(
       FROM_HERE, base::BindRepeating(&GpuChildThread::OnMemoryPressure,
                                      base::Unretained(this)));
 }
 
-void GpuChildThread::CreateVizMainService(
-    mojo::PendingAssociatedReceiver<viz::mojom::VizMain> pending_receiver) {
-  viz_main_.BindAssociated(std::move(pending_receiver));
-}
-
 bool GpuChildThread::in_process_gpu() const {
   return viz_main_.gpu_service()->gpu_info().in_process_gpu;
-}
-
-bool GpuChildThread::Send(IPC::Message* msg) {
-  // The GPU process must never send a synchronous IPC message to the browser
-  // process. This could result in deadlock.
-  DCHECK(!msg->is_sync());
-
-  return ChildThreadImpl::Send(msg);
-}
-
-void GpuChildThread::OnAssociatedInterfaceRequest(
-    const std::string& name,
-    mojo::ScopedInterfaceEndpointHandle handle) {
-  if (!associated_interfaces_.TryBindInterface(name, &handle))
-    ChildThreadImpl::OnAssociatedInterfaceRequest(name, std::move(handle));
 }
 
 void GpuChildThread::OnInitializationFailed() {
@@ -213,7 +179,7 @@ void GpuChildThread::OnInitializationFailed() {
 
 void GpuChildThread::OnGpuServiceConnection(viz::GpuServiceImpl* gpu_service) {
   media::AndroidOverlayMojoFactoryCB overlay_factory_cb;
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   overlay_factory_cb =
       base::BindRepeating(&GpuChildThread::CreateAndroidOverlay,
                           base::ThreadTaskRunnerHandle::Get());
@@ -225,13 +191,21 @@ void GpuChildThread::OnGpuServiceConnection(viz::GpuServiceImpl* gpu_service) {
   gpu_channel_manager()->set_share_group(GetContentClient()->browser()->GetInProcessGpuShareGroup());
 #endif
 
+  if (!IsInBrowserProcess()) {
+    gpu_service->SetVisibilityChangedCallback(
+        base::BindRepeating([](bool visible) {
+          ProcessVisibilityTracker::GetInstance()->OnProcessVisibilityChanged(
+              visible);
+        }));
+  }
+
   // Only set once per process instance.
-  service_factory_.reset(new GpuServiceFactory(
+  service_factory_ = std::make_unique<GpuServiceFactory>(
       gpu_service->gpu_preferences(),
       gpu_service->gpu_channel_manager()->gpu_driver_bug_workarounds(),
-      gpu_service->gpu_feature_info(),
+      gpu_service->gpu_feature_info(), gpu_service->gpu_info(),
       gpu_service->media_gpu_channel_manager()->AsWeakPtr(),
-      gpu_service->gpu_memory_buffer_factory(), std::move(overlay_factory_cb)));
+      gpu_service->gpu_memory_buffer_factory(), std::move(overlay_factory_cb));
   for (auto& receiver : pending_service_receivers_)
     BindServiceInterface(std::move(receiver));
   pending_service_receivers_.clear();
@@ -297,7 +271,7 @@ base::RepeatingClosure GpuChildThread::MakeQuitSafelyClosure() {
                              base::ThreadTaskRunnerHandle::Get());
 }
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 // static
 std::unique_ptr<media::AndroidOverlay> GpuChildThread::CreateAndroidOverlay(
     scoped_refptr<base::SingleThreadTaskRunner> main_task_runner,

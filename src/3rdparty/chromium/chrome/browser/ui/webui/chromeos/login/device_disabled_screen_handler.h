@@ -5,12 +5,13 @@
 #ifndef CHROME_BROWSER_UI_WEBUI_CHROMEOS_LOGIN_DEVICE_DISABLED_SCREEN_HANDLER_H_
 #define CHROME_BROWSER_UI_WEBUI_CHROMEOS_LOGIN_DEVICE_DISABLED_SCREEN_HANDLER_H_
 
-#include "base/macros.h"
 #include "chrome/browser/ui/webui/chromeos/login/base_screen_handler.h"
 
-namespace chromeos {
-
+namespace ash {
 class DeviceDisabledScreen;
+}
+
+namespace chromeos {
 
 // Interface between the device disabled screen and its representation.
 class DeviceDisabledScreenView {
@@ -23,7 +24,7 @@ class DeviceDisabledScreenView {
                     const std::string& domain,
                     const std::string& message) = 0;
   virtual void Hide() = 0;
-  virtual void Bind(DeviceDisabledScreen* screen) = 0;
+  virtual void Bind(ash::DeviceDisabledScreen* screen) = 0;
   virtual void UpdateMessage(const std::string& message) = 0;
 };
 
@@ -33,7 +34,12 @@ class DeviceDisabledScreenHandler : public DeviceDisabledScreenView,
  public:
   using TView = DeviceDisabledScreenView;
 
-  explicit DeviceDisabledScreenHandler(JSCallsContainer* js_calls_container);
+  DeviceDisabledScreenHandler();
+
+  DeviceDisabledScreenHandler(const DeviceDisabledScreenHandler&) = delete;
+  DeviceDisabledScreenHandler& operator=(const DeviceDisabledScreenHandler&) =
+      delete;
+
   ~DeviceDisabledScreenHandler() override;
 
   // DeviceDisabledScreenActor:
@@ -41,29 +47,27 @@ class DeviceDisabledScreenHandler : public DeviceDisabledScreenView,
             const std::string& domain,
             const std::string& message) override;
   void Hide() override;
-  void Bind(DeviceDisabledScreen* screen) override;
+  void Bind(ash::DeviceDisabledScreen* screen) override;
   void UpdateMessage(const std::string& message) override;
 
   // BaseScreenHandler:
   void DeclareLocalizedValues(
       ::login::LocalizedValuesBuilder* builder) override;
-  void Initialize() override;
+  void InitializeDeprecated() override;
 
  private:
   // WebUIMessageHandler:
   void RegisterMessages() override;
 
-  DeviceDisabledScreen* screen_ = nullptr;
-
-  DISALLOW_COPY_AND_ASSIGN(DeviceDisabledScreenHandler);
+  ash::DeviceDisabledScreen* screen_ = nullptr;
 };
 
 }  // namespace chromeos
 
 // TODO(https://crbug.com/1164001): remove when moved to ash.
 namespace ash {
+using ::chromeos::DeviceDisabledScreenHandler;
 using ::chromeos::DeviceDisabledScreenView;
 }
 
 #endif  // CHROME_BROWSER_UI_WEBUI_CHROMEOS_LOGIN_DEVICE_DISABLED_SCREEN_HANDLER_H_
-

@@ -8,11 +8,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 #include "base/bits.h"
 #include "base/logging.h"
 #include "base/numerics/safe_conversions.h"
-#include "base/stl_util.h"
 #include "media/base/decrypt_config.h"
 #include "media/base/video_codecs.h"
 #include "ui/gfx/geometry/rect.h"
@@ -41,40 +41,8 @@ constexpr int kTableSarWidth[] = {0,  1,  12, 10, 16,  40, 24, 20, 32,
                                   80, 18, 15, 64, 160, 4,  3,  2};
 constexpr int kTableSarHeight[] = {0,  1,  11, 11, 11, 33, 11, 11, 11,
                                    33, 11, 11, 33, 99, 3,  2,  1};
-static_assert(base::size(kTableSarWidth) == base::size(kTableSarHeight),
+static_assert(std::size(kTableSarWidth) == std::size(kTableSarHeight),
               "sar tables must have the same size");
-
-// Converts [|start|, |end|) range with |encrypted_ranges| into a vector of
-// SubsampleEntry. |encrypted_ranges| must be with in the range defined by
-// |start| and |end|.
-// It is OK to pass in empty |encrypted_ranges|; this will return a vector
-// with single SubsampleEntry with clear_bytes set to the size of the buffer.
-std::vector<SubsampleEntry> EncryptedRangesToSubsampleEntry(
-    const uint8_t* start,
-    const uint8_t* end,
-    const Ranges<const uint8_t*>& encrypted_ranges) {
-  std::vector<SubsampleEntry> subsamples(encrypted_ranges.size());
-  const uint8_t* cur = start;
-  for (size_t i = 0; i < encrypted_ranges.size(); ++i) {
-    const uint8_t* encrypted_start = encrypted_ranges.start(i);
-    DCHECK_GE(encrypted_start, cur)
-        << "Encrypted range started before the current buffer pointer.";
-    subsamples[i].clear_bytes = encrypted_start - cur;
-
-    const uint8_t* encrypted_end = encrypted_ranges.end(i);
-    subsamples[i].cypher_bytes = encrypted_end - encrypted_start;
-
-    cur = encrypted_end;
-    DCHECK_LE(cur, end) << "Encrypted range is outside the buffer range.";
-  }
-
-  // If there is more data in the buffer but not covered by encrypted_ranges,
-  // then it must be in the clear.
-  if (cur < end)
-    subsamples.emplace_back(end - cur, 0);
-
-  return subsamples;
-}
 
 void FillInDefaultScalingListData(H265ScalingListData* scaling_list_data,
                                   int size_id,
@@ -129,9 +97,9 @@ void FillInDefaultScalingListData(H265ScalingListData* scaling_list_data,
 #define SKIP_BITS_OR_RETURN(num_bits)                                       \
   do {                                                                      \
     int bits_left = num_bits;                                               \
-    int data;                                                               \
+    int discard;                                                            \
     while (bits_left > 0) {                                                 \
-      if (!br_.ReadBits(bits_left > 16 ? 16 : bits_left, &data)) {          \
+      if (!br_.ReadBits(bits_left > 16 ? 16 : bits_left, &discard)) {       \
         DVLOG(1) << "Error in stream: unexpected EOS while trying to skip"; \
         return kInvalidStream;                                              \
       }                                                                     \
@@ -193,10 +161,6 @@ void FillInDefaultScalingListData(H265ScalingListData* scaling_list_data,
     }                                                                     \
   } while (0)
 
-H265NALU::H265NALU() {
-  memset(reinterpret_cast<void*>(this), 0, sizeof(*this));
-}
-
 H265ScalingListData::H265ScalingListData() {
   memset(reinterpret_cast<void*>(this), 0, sizeof(*this));
 }
@@ -221,6 +185,10 @@ H265PPS::H265PPS() {
   memset(reinterpret_cast<void*>(this), 0, sizeof(*this));
 }
 
+H265VPS::H265VPS() {
+  memset(reinterpret_cast<void*>(this), 0, sizeof(*this));
+}
+
 H265RefPicListsModifications::H265RefPicListsModifications() {
   memset(reinterpret_cast<void*>(this), 0, sizeof(*this));
 }
@@ -233,9 +201,7 @@ H265SliceHeader::H265SliceHeader() {
   memset(reinterpret_cast<void*>(this), 0, sizeof(*this));
 }
 
-H265Parser::H265Parser() {
-  Reset();
-}
+H265Parser::H265Parser() : H265NaluParser() {}
 
 H265Parser::~H265Parser() {}
 
@@ -315,83 +281,6 @@ bool H265SliceHeader::IsBSlice() const {
   return slice_type == kSliceTypeB;
 }
 
-void H265Parser::Reset() {
-  stream_ = NULL;
-  bytes_left_ = 0;
-  encrypted_ranges_.clear();
-  previous_nalu_range_.clear();
-}
-
-void H265Parser::SetStream(const uint8_t* stream, off_t stream_size) {
-  std::vector<SubsampleEntry> subsamples;
-  SetEncryptedStream(stream, stream_size, subsamples);
-}
-
-void H265Parser::SetEncryptedStream(
-    const uint8_t* stream,
-    off_t stream_size,
-    const std::vector<SubsampleEntry>& subsamples) {
-  DCHECK(stream);
-  DCHECK_GT(stream_size, 0);
-
-  stream_ = stream;
-  bytes_left_ = stream_size;
-  previous_nalu_range_.clear();
-
-  encrypted_ranges_.clear();
-  const uint8_t* start = stream;
-  const uint8_t* stream_end = stream_ + bytes_left_;
-  for (size_t i = 0; i < subsamples.size() && start < stream_end; ++i) {
-    start += subsamples[i].clear_bytes;
-
-    const uint8_t* end =
-        std::min(start + subsamples[i].cypher_bytes, stream_end);
-    encrypted_ranges_.Add(start, end);
-    start = end;
-  }
-}
-
-bool H265Parser::LocateNALU(off_t* nalu_size, off_t* start_code_size) {
-  // Find the start code of next NALU.
-  off_t nalu_start_off = 0;
-  off_t annexb_start_code_size = 0;
-
-  if (!H264Parser::FindStartCodeInClearRanges(
-          stream_, bytes_left_, encrypted_ranges_, &nalu_start_off,
-          &annexb_start_code_size)) {
-    DVLOG(4) << "Could not find start code, end of stream?";
-    return false;
-  }
-
-  // Move the stream to the beginning of the NALU (pointing at the start code).
-  stream_ += nalu_start_off;
-  bytes_left_ -= nalu_start_off;
-
-  const uint8_t* nalu_data = stream_ + annexb_start_code_size;
-  off_t max_nalu_data_size = bytes_left_ - annexb_start_code_size;
-  if (max_nalu_data_size <= 0) {
-    DVLOG(3) << "End of stream";
-    return false;
-  }
-
-  // Find the start code of next NALU;
-  // if successful, |nalu_size_without_start_code| is the number of bytes from
-  // after previous start code to before this one;
-  // if next start code is not found, it is still a valid NALU since there
-  // are some bytes left after the first start code: all the remaining bytes
-  // belong to the current NALU.
-  off_t next_start_code_size = 0;
-  off_t nalu_size_without_start_code = 0;
-  if (!H264Parser::FindStartCodeInClearRanges(
-          nalu_data, max_nalu_data_size, encrypted_ranges_,
-          &nalu_size_without_start_code, &next_start_code_size)) {
-    nalu_size_without_start_code = max_nalu_data_size;
-  }
-  *nalu_size = nalu_size_without_start_code + annexb_start_code_size;
-  *start_code_size = annexb_start_code_size;
-  return true;
-}
-
 H265Parser::Result H265Parser::ReadUE(int* val) {
   // Count the number of contiguous zero bits.
   int bit;
@@ -440,47 +329,72 @@ H265Parser::Result H265Parser::ReadSE(int* val) {
   return kOk;
 }
 
-H265Parser::Result H265Parser::AdvanceToNextNALU(H265NALU* nalu) {
-  off_t start_code_size;
-  off_t nalu_size_with_start_code;
-  if (!LocateNALU(&nalu_size_with_start_code, &start_code_size)) {
-    DVLOG(4) << "Could not find next NALU, bytes left in stream: "
-             << bytes_left_;
-    return kEOStream;
+H265Parser::Result H265Parser::ParseVPS(int* vps_id) {
+  DVLOG(4) << "Parsing VPS";
+  Result res = kOk;
+
+  DCHECK(vps_id);
+  *vps_id = -1;
+
+  std::unique_ptr<H265VPS> vps = std::make_unique<H265VPS>();
+
+  READ_BITS_OR_RETURN(4, &vps->vps_video_parameter_set_id);
+  IN_RANGE_OR_RETURN(vps->vps_video_parameter_set_id, 0, 16);
+  READ_BOOL_OR_RETURN(&vps->vps_base_layer_internal_flag);
+  READ_BOOL_OR_RETURN(&vps->vps_base_layer_available_flag);
+  READ_BITS_OR_RETURN(6, &vps->vps_max_layers_minus1);
+  IN_RANGE_OR_RETURN(vps->vps_max_layers_minus1, 0, 62);
+  READ_BITS_OR_RETURN(3, &vps->vps_max_sub_layers_minus1);
+  IN_RANGE_OR_RETURN(vps->vps_max_sub_layers_minus1, 0, 7);
+  READ_BOOL_OR_RETURN(&vps->vps_temporal_id_nesting_flag);
+  SKIP_BITS_OR_RETURN(16);  // vps_reserved_0xffff_16bits
+  res = ParseProfileTierLevel(true, vps->vps_max_sub_layers_minus1,
+                              &vps->profile_tier_level);
+  if (res != kOk) {
+    return res;
   }
 
-  DCHECK(nalu);
-  nalu->data = stream_ + start_code_size;
-  nalu->size = nalu_size_with_start_code - start_code_size;
-  DVLOG(4) << "NALU found: size=" << nalu_size_with_start_code;
+  bool vps_sub_layer_ordering_info_present_flag;
+  READ_BOOL_OR_RETURN(&vps_sub_layer_ordering_info_present_flag);
 
-  // Initialize bit reader at the start of found NALU.
-  if (!br_.Initialize(nalu->data, nalu->size))
-    return kEOStream;
+  for (int i = vps_sub_layer_ordering_info_present_flag
+                   ? 0
+                   : vps->vps_max_sub_layers_minus1;
+       i <= vps->vps_max_sub_layers_minus1; ++i) {
+    READ_UE_OR_RETURN(&vps->vps_max_dec_pic_buffering_minus1[i]);
+    IN_RANGE_OR_RETURN(vps->vps_max_dec_pic_buffering_minus1[i], 0, 15);
+    READ_UE_OR_RETURN(&vps->vps_max_num_reorder_pics[i]);
+    IN_RANGE_OR_RETURN(vps->vps_max_num_reorder_pics[i], 0,
+                       vps->vps_max_dec_pic_buffering_minus1[i]);
+    if (i > 0) {
+      TRUE_OR_RETURN(vps->vps_max_dec_pic_buffering_minus1[i] >=
+                     vps->vps_max_dec_pic_buffering_minus1[i - 1]);
+      TRUE_OR_RETURN(vps->vps_max_num_reorder_pics[i] >=
+                     vps->vps_max_num_reorder_pics[i - 1]);
+    }
+    READ_UE_OR_RETURN(&vps->vps_max_latency_increase_plus1[i]);
+  }
+  if (!vps_sub_layer_ordering_info_present_flag) {
+    for (int i = 0; i < vps->vps_max_sub_layers_minus1; ++i) {
+      vps->vps_max_dec_pic_buffering_minus1[i] =
+          vps->vps_max_dec_pic_buffering_minus1[vps->vps_max_sub_layers_minus1];
+      vps->vps_max_num_reorder_pics[i] =
+          vps->vps_max_num_reorder_pics[vps->vps_max_sub_layers_minus1];
+      vps->vps_max_latency_increase_plus1[i] =
+          vps->vps_max_latency_increase_plus1[vps->vps_max_sub_layers_minus1];
+    }
+  }
 
-  // Move parser state to after this NALU, so next time AdvanceToNextNALU
-  // is called, we will effectively be skipping it;
-  // other parsing functions will use the position saved
-  // in bit reader for parsing, so we don't have to remember it here.
-  stream_ += nalu_size_with_start_code;
-  bytes_left_ -= nalu_size_with_start_code;
+  READ_BITS_OR_RETURN(6, &vps->vps_max_layer_id);
+  IN_RANGE_OR_RETURN(vps->vps_max_layer_id, 0, 62);
+  READ_UE_OR_RETURN(&vps->vps_num_layer_sets_minus1);
+  IN_RANGE_OR_RETURN(vps->vps_num_layer_sets_minus1, 0, 1023);
 
-  // Read NALU header, skip the forbidden_zero_bit, but check for it.
-  int data;
-  READ_BITS_OR_RETURN(1, &data);
-  TRUE_OR_RETURN(data == 0);
+  // If an VPS with the same id already exists, replace it.
+  *vps_id = vps->vps_video_parameter_set_id;
+  active_vps_[*vps_id] = std::move(vps);
 
-  READ_BITS_OR_RETURN(6, &nalu->nal_unit_type);
-  READ_BITS_OR_RETURN(6, &nalu->nuh_layer_id);
-  READ_BITS_OR_RETURN(3, &nalu->nuh_temporal_id_plus1);
-
-  DVLOG(4) << "NALU type: " << static_cast<int>(nalu->nal_unit_type)
-           << " at: " << reinterpret_cast<const void*>(nalu->data)
-           << " size: " << nalu->size;
-
-  previous_nalu_range_.clear();
-  previous_nalu_range_.Add(nalu->data, nalu->data + nalu->size);
-  return kOk;
+  return res;
 }
 
 H265Parser::Result H265Parser::ParseSPS(int* sps_id) {
@@ -492,7 +406,8 @@ H265Parser::Result H265Parser::ParseSPS(int* sps_id) {
   *sps_id = -1;
 
   std::unique_ptr<H265SPS> sps = std::make_unique<H265SPS>();
-  SKIP_BITS_OR_RETURN(4);  // sps_video_parameter_set_id
+  READ_BITS_OR_RETURN(4, &sps->sps_video_parameter_set_id);
+  IN_RANGE_OR_RETURN(sps->sps_video_parameter_set_id, 0, 15);
   READ_BITS_OR_RETURN(3, &sps->sps_max_sub_layers_minus1);
   IN_RANGE_OR_RETURN(sps->sps_max_sub_layers_minus1, 0, 6);
   SKIP_BITS_OR_RETURN(1);  // sps_temporal_id_nesting_flag
@@ -650,6 +565,8 @@ H265Parser::Result H265Parser::ParseSPS(int* sps_id) {
   READ_BOOL_OR_RETURN(&sps->scaling_list_enabled_flag);
   if (sps->scaling_list_enabled_flag) {
     READ_BOOL_OR_RETURN(&sps->sps_scaling_list_data_present_flag);
+  }
+  if (sps->sps_scaling_list_data_present_flag) {
     res = ParseScalingListData(&sps->scaling_list_data);
     if (res != kOk)
       return res;
@@ -929,6 +846,16 @@ H265Parser::Result H265Parser::ParsePPS(const H265NALU& nalu, int* pps_id) {
   return res;
 }
 
+const H265VPS* H265Parser::GetVPS(int vps_id) const {
+  auto it = active_vps_.find(vps_id);
+  if (it == active_vps_.end()) {
+    DVLOG(1) << "Requested a nonexistent VPS id " << vps_id;
+    return nullptr;
+  }
+
+  return it->second.get();
+}
+
 const H265SPS* H265Parser::GetSPS(int sps_id) const {
   auto it = active_sps_.find(sps_id);
   if (it == active_sps_.end()) {
@@ -997,6 +924,14 @@ H265Parser::Result H265Parser::ParseSliceHeader(const H265NALU& nalu,
     memcpy(reinterpret_cast<uint8_t*>(shdr) + skip_amount,
            reinterpret_cast<uint8_t*>(prior_shdr) + skip_amount,
            sizeof(H265SliceHeader) - skip_amount);
+
+    // We also need to validate the fields that have conditions that depend on
+    // anything unique in this slice (i.e. anything already parsed).
+    if ((shdr->irap_pic ||
+         sps->sps_max_dec_pic_buffering_minus1[pps->temporal_id] == 0) &&
+        nalu.nuh_layer_id == 0) {
+      TRUE_OR_RETURN(shdr->slice_type == 2);
+    }
   } else {
     // Set these defaults if they are not present here.
     shdr->pic_output_flag = 1;
@@ -1298,16 +1233,6 @@ VideoCodecProfile H265Parser::ProfileIDCToVideoCodecProfile(int profile_idc) {
       DVLOG(1) << "unknown video profile: " << profile_idc;
       return VIDEO_CODEC_PROFILE_UNKNOWN;
   }
-}
-
-std::vector<SubsampleEntry> H265Parser::GetCurrentSubsamples() {
-  DCHECK_EQ(previous_nalu_range_.size(), 1u)
-      << "This should only be called after a "
-         "successful call to AdvanceToNextNalu()";
-
-  auto intersection = encrypted_ranges_.IntersectionWith(previous_nalu_range_);
-  return EncryptedRangesToSubsampleEntry(
-      previous_nalu_range_.start(0), previous_nalu_range_.end(0), intersection);
 }
 
 H265Parser::Result H265Parser::ParseProfileTierLevel(
@@ -1622,7 +1547,7 @@ H265Parser::Result H265Parser::ParseVuiParameters(const H265SPS& sps,
       READ_BITS_OR_RETURN(16, &vui->sar_width);
       READ_BITS_OR_RETURN(16, &vui->sar_height);
     } else {
-      const int max_aspect_ratio_idc = base::size(kTableSarWidth) - 1;
+      const int max_aspect_ratio_idc = std::size(kTableSarWidth) - 1;
       IN_RANGE_OR_RETURN(aspect_ratio_idc, 0, max_aspect_ratio_idc);
       vui->sar_width = kTableSarWidth[aspect_ratio_idc];
       vui->sar_height = kTableSarHeight[aspect_ratio_idc];

@@ -2,14 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "ui/base/l10n/l10n_util_mac.h"
+
 #import <Foundation/Foundation.h>
 #include <stddef.h>
 
-#include "base/stl_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/platform_test.h"
-#include "ui/base/l10n/l10n_util_mac.h"
 
 typedef PlatformTest L10nUtilMacTest;
 
@@ -38,8 +38,8 @@ TEST_F(L10nUtilMacTest, FixUpWindowsStyleLabel) {
     { @"foo(&b)...", @"foo\u2026" },
     { @"(&b)foo", @"foo" },
   };
-  for (size_t idx = 0; idx < base::size(data); ++idx) {
-    base::string16 input16(base::SysNSStringToUTF16(data[idx].input));
+  for (size_t idx = 0; idx < std::size(data); ++idx) {
+    std::u16string input16(base::SysNSStringToUTF16(data[idx].input));
 
     NSString* result = l10n_util::FixUpWindowsStyleLabel(input16);
     EXPECT_TRUE(result != nil) << "Fixup Failed, idx = " << idx;
@@ -52,7 +52,7 @@ TEST_F(L10nUtilMacTest, FixUpWindowsStyleLabel) {
 
 TEST_F(L10nUtilMacTest, GetDisplayNameForLocale) {
   // Test documented error cases and return values of GetDisplayNameForLocale.
-  base::string16 result = l10n_util::GetDisplayNameForLocale("xyz", "en");
+  std::u16string result = l10n_util::GetDisplayNameForLocale("xyz", "en");
   EXPECT_EQ(base::SysNSStringToUTF16(@"xyz"), result);
 
   result = l10n_util::GetDisplayNameForLocale("Xyz", "en");

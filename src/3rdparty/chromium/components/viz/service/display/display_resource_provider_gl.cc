@@ -4,14 +4,18 @@
 
 #include "components/viz/service/display/display_resource_provider_gl.h"
 
+#include <utility>
 #include <vector>
 
 #include "base/dcheck_is_on.h"
+#include "base/memory/raw_ptr.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "components/viz/common/gpu/context_provider.h"
 #include "gpu/GLES2/gl2extchromium.h"
 #include "gpu/command_buffer/client/gles2_interface.h"
+#include "ui/gfx/gpu_fence.h"
+#include "ui/gl/gl_fence.h"
 
 using gpu::gles2::GLES2Interface;
 
@@ -39,7 +43,7 @@ class ScopedSetActiveTexture {
   }
 
  private:
-  GLES2Interface* gl_;
+  raw_ptr<GLES2Interface> gl_;
   GLenum unit_;
 };
 
@@ -164,6 +168,17 @@ void DisplayResourceProviderGL::UnlockForRead(ResourceId id,
       DCHECK(resource->gl_id);
       GLES2Interface* gl = ContextGL();
       DCHECK(gl);
+      if (!resource->release_fence.is_null()) {
+        auto fence = gfx::GpuFence(resource->release_fence.Clone());
+        if (gl::GLFence::IsGpuFenceSupported()) {
+          auto fence_id =
+              gl->CreateClientGpuFenceCHROMIUM(fence.AsClientGpuFence());
+          gl->WaitGpuFenceCHROMIUM(fence_id);
+          gl->DestroyGpuFenceCHROMIUM(fence_id);
+        } else {
+          fence.Wait();
+        }
+      }
       gl->EndSharedImageAccessDirectCHROMIUM(resource->gl_id);
     }
   }
@@ -191,6 +206,7 @@ DisplayResourceProviderGL::DeleteAndReturnUnusedResourcesToChildImpl(
 
   GLES2Interface* gl = ContextGL();
   DCHECK(gl);
+  DCHECK(can_access_gpu_thread_);
   for (ResourceId local_id : unused) {
     auto it = resources_.find(local_id);
     CHECK(it != resources_.end());
@@ -200,7 +216,6 @@ DisplayResourceProviderGL::DeleteAndReturnUnusedResourcesToChildImpl(
     ResourceId child_id = resource.transferable.id;
     DCHECK(child_info.child_to_parent_map.count(child_id));
 
-    bool is_lost = lost_context_provider_;
     auto can_delete = CanDeleteNow(child_info, resource, style);
     if (can_delete == CanDeleteNowResult::kNo) {
       // Defer this resource deletion.
@@ -208,7 +223,7 @@ DisplayResourceProviderGL::DeleteAndReturnUnusedResourcesToChildImpl(
       continue;
     }
 
-    is_lost = is_lost || can_delete == CanDeleteNowResult::kYesButLoseResource;
+    const bool is_lost = can_delete == CanDeleteNowResult::kYesButLoseResource;
 
     if (resource.gl_id && resource.filter != resource.transferable.filter) {
       DCHECK(resource.transferable.mailbox_holder.texture_target);
@@ -223,6 +238,7 @@ DisplayResourceProviderGL::DeleteAndReturnUnusedResourcesToChildImpl(
     }
 
     to_return.emplace_back(child_id, resource.sync_token(),
+                           std::move(resource.release_fence),
                            resource.imported_count, is_lost);
     auto& returned = to_return.back();
 
@@ -235,9 +251,6 @@ DisplayResourceProviderGL::DeleteAndReturnUnusedResourcesToChildImpl(
 
     child_info.child_to_parent_map.erase(child_id);
     resource.imported_count = 0;
-#if defined(OS_ANDROID)
-    DeletePromotionHint(it);
-#endif
     DeleteResourceInternal(it);
   }
 
@@ -271,11 +284,6 @@ void DisplayResourceProviderGL::WaitSyncToken(ResourceId id) {
   if (!resource)
     return;
   WaitSyncTokenInternal(resource);
-
-#if defined(OS_ANDROID)
-  // Now that the resource is synced, we may send it a promotion hint.
-  InitializePromotionHintRequest(id);
-#endif
 }
 
 GLenum DisplayResourceProviderGL::BindForSampling(ResourceId resource_id,
@@ -323,7 +331,7 @@ void DisplayResourceProviderGL::WaitSyncTokenInternal(ChildResource* resource) {
 DisplayResourceProviderGL::ScopedReadLockGL::ScopedReadLockGL(
     DisplayResourceProviderGL* resource_provider,
     ResourceId resource_id)
-    : resource_provider_(resource_provider), resource_id_(resource_id), target_(GL_TEXTURE_2D) {
+    : resource_provider_(resource_provider), resource_id_(resource_id) {
   const ChildResource* resource =
       resource_provider->LockForRead(resource_id, false /* overlay_only */);
   // TODO(ericrk): We should never fail LockForRead, but we appear to be
@@ -336,6 +344,7 @@ DisplayResourceProviderGL::ScopedReadLockGL::ScopedReadLockGL(
   target_ = resource->transferable.mailbox_holder.texture_target;
   size_ = resource->transferable.size;
   color_space_ = resource->transferable.color_space;
+  hdr_metadata_ = resource->transferable.hdr_metadata;
 }
 
 DisplayResourceProviderGL::ScopedReadLockGL::~ScopedReadLockGL() {
@@ -375,6 +384,19 @@ DisplayResourceProviderGL::ScopedOverlayLockGL::ScopedOverlayLockGL(
 
 DisplayResourceProviderGL::ScopedOverlayLockGL::~ScopedOverlayLockGL() {
   resource_provider_->UnlockForRead(resource_id_, true /* overlay_only */);
+}
+
+void DisplayResourceProviderGL::ScopedOverlayLockGL::SetReleaseFence(
+    gfx::GpuFenceHandle release_fence) {
+  auto* resource = resource_provider_->GetResource(resource_id_);
+  DCHECK(resource);
+  resource->release_fence = std::move(release_fence);
+}
+
+bool DisplayResourceProviderGL::ScopedOverlayLockGL::HasReadLockFence() const {
+  auto* resource = resource_provider_->GetResource(resource_id_);
+  DCHECK(resource);
+  return resource->transferable.read_lock_fences_enabled;
 }
 
 DisplayResourceProviderGL::SynchronousFence::SynchronousFence(

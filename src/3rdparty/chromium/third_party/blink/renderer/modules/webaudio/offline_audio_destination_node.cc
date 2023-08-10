@@ -27,6 +27,7 @@
 
 #include <algorithm>
 #include "third_party/blink/public/platform/platform.h"
+#include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/modules/webaudio/audio_node_input.h"
 #include "third_party/blink/renderer/modules/webaudio/audio_node_output.h"
 #include "third_party/blink/renderer/modules/webaudio/audio_worklet.h"
@@ -37,6 +38,7 @@
 #include "third_party/blink/renderer/platform/audio/audio_utilities.h"
 #include "third_party/blink/renderer/platform/audio/denormal_disabler.h"
 #include "third_party/blink/renderer/platform/audio/hrtf_database_loader.h"
+#include "third_party/blink/renderer/platform/wtf/cross_thread_copier_base.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
 
 namespace blink {
@@ -80,21 +82,24 @@ void OfflineAudioDestinationHandler::Dispose() {
 }
 
 void OfflineAudioDestinationHandler::Initialize() {
-  if (IsInitialized())
+  if (IsInitialized()) {
     return;
+  }
 
   AudioHandler::Initialize();
 }
 
 void OfflineAudioDestinationHandler::Uninitialize() {
-  if (!IsInitialized())
+  if (!IsInitialized()) {
     return;
+  }
 
   // See https://crbug.com/1110035 and https://crbug.com/1080821. Resetting the
   // thread unique pointer multiple times or not-resetting at all causes a
   // mysterious CHECK failure or a crash.
-  if (render_thread_)
+  if (render_thread_) {
     render_thread_.reset();
+  }
 
   AudioHandler::Uninitialize();
 }
@@ -149,8 +154,9 @@ void OfflineAudioDestinationHandler::InitializeOfflineRenderThread(
   DCHECK(IsMainThread());
 
   shared_render_target_ = render_target->CreateSharedAudioBuffer();
-  render_bus_ = AudioBus::Create(render_target->numberOfChannels(),
-                                 audio_utilities::kRenderQuantumFrames);
+  render_bus_ =
+      AudioBus::Create(render_target->numberOfChannels(),
+                       GetDeferredTaskHandler().RenderQuantumFrames());
   DCHECK(render_bus_);
 
   PrepareTaskRunnerForRendering();
@@ -165,7 +171,8 @@ void OfflineAudioDestinationHandler::StartOfflineRendering() {
 
   DCHECK_EQ(render_bus_->NumberOfChannels(),
             shared_render_target_->numberOfChannels());
-  DCHECK_GE(render_bus_->length(), audio_utilities::kRenderQuantumFrames);
+  DCHECK_GE(render_bus_->length(),
+            GetDeferredTaskHandler().RenderQuantumFrames());
 
   // Start rendering.
   DoOfflineRendering();
@@ -189,11 +196,12 @@ void OfflineAudioDestinationHandler::DoOfflineRendering() {
     // Suspend the rendering if a scheduled suspend found at the current
     // sample frame. Otherwise render one quantum.
     if (RenderIfNotSuspended(nullptr, render_bus_.get(),
-                             audio_utilities::kRenderQuantumFrames))
+                             GetDeferredTaskHandler().RenderQuantumFrames())) {
       return;
+    }
 
-    uint32_t frames_available_to_copy =
-        std::min(frames_to_process_, audio_utilities::kRenderQuantumFrames);
+    uint32_t frames_available_to_copy = std::min(
+        frames_to_process_, GetDeferredTaskHandler().RenderQuantumFrames());
 
     for (unsigned channel_index = 0; channel_index < number_of_channels;
          ++channel_index) {
@@ -236,8 +244,9 @@ void OfflineAudioDestinationHandler::FinishOfflineRendering() {
 void OfflineAudioDestinationHandler::NotifySuspend(size_t frame) {
   DCHECK(IsMainThread());
 
-  if (!IsExecutionContextDestroyed() && Context())
+  if (!IsExecutionContextDestroyed() && Context()) {
     Context()->ResolveSuspendOnMainThread(frame);
+  }
 }
 
 void OfflineAudioDestinationHandler::NotifyComplete() {
@@ -252,8 +261,9 @@ void OfflineAudioDestinationHandler::NotifyComplete() {
   }
 
   // The OfflineAudioContext might be gone.
-  if (Context() && Context()->GetExecutionContext())
+  if (Context() && Context()->GetExecutionContext()) {
     Context()->FireCompletionEvent();
+  }
 }
 
 bool OfflineAudioDestinationHandler::RenderIfNotSuspended(
@@ -273,8 +283,9 @@ bool OfflineAudioDestinationHandler::RenderIfNotSuspended(
   // TODO(hongchan): because the context can go away while rendering, so this
   // check cannot guarantee the safe execution of the following steps.
   DCHECK(Context());
-  if (!Context())
+  if (!Context()) {
     return false;
+  }
 
   Context()->GetDeferredTaskHandler().SetAudioThreadToCurrentThread();
 

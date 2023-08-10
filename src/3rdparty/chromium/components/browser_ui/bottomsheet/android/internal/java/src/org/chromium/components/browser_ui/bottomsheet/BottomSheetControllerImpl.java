@@ -38,6 +38,12 @@ class BottomSheetControllerImpl implements ManagedBottomSheetController {
     /** A handle to the {@link BottomSheet} that this class controls. */
     private BottomSheet mBottomSheet;
 
+    /**
+     * The container that the sheet exists in. This is one layer inside of the root coordinator view
+     * to support the view's shadow.
+     */
+    private ViewGroup mBottomSheetContainer;
+
     /** A queue for content that is waiting to be shown in the {@link BottomSheet}. */
     private PriorityQueue<BottomSheetContent> mContentQueue;
 
@@ -105,12 +111,16 @@ class BottomSheetControllerImpl implements ManagedBottomSheetController {
      */
     private void initializeSheet(Callback<View> initializedCallback, Window window,
             KeyboardVisibilityDelegate keyboardDelegate, Supplier<ViewGroup> root) {
-        LayoutInflater.from(root.get().getContext()).inflate(R.layout.bottom_sheet, root.get());
+        mBottomSheetContainer = root.get();
+        mBottomSheetContainer.setVisibility(View.VISIBLE);
+
+        LayoutInflater.from(root.get().getContext())
+                .inflate(R.layout.bottom_sheet, mBottomSheetContainer);
         mBottomSheet = (BottomSheet) root.get().findViewById(R.id.bottom_sheet);
         initializedCallback.onResult(mBottomSheet);
 
         mBottomSheet.init(window, keyboardDelegate);
-        mBottomSheet.setAccssibilityUtil(mAccessibilityUtil);
+        mBottomSheet.setAccessibilityUtil(mAccessibilityUtil);
 
         // Initialize the queue with a comparator that checks content priority.
         mContentQueue = new PriorityQueue<>(INITIAL_QUEUE_CAPACITY,
@@ -176,7 +186,7 @@ class BottomSheetControllerImpl implements ManagedBottomSheetController {
             }
 
             @Override
-            public void onSheetStateChanged(@SheetState int state) {
+            public void onSheetStateChanged(@SheetState int state, int reason) {
                 // If hiding request is in progress, destroy the current sheet content being hidden
                 // even when it is in suppressed state. See https://crbug.com/1057966.
                 if (state != SheetState.HIDDEN
@@ -190,6 +200,14 @@ class BottomSheetControllerImpl implements ManagedBottomSheetController {
                 mIsSuppressingCurrentContent = false;
                 mIsProcessingHideRequest = false;
                 showNextContent(true);
+            }
+
+            @Override
+            public void onSheetContentChanged(BottomSheetContent newContent) {
+                if (newContent != null) return;
+
+                // If there are no more things to be shown, the container can avoid layouts.
+                mBottomSheetContainer.setVisibility(View.GONE);
             }
         });
 
@@ -290,11 +308,6 @@ class BottomSheetControllerImpl implements ManagedBottomSheetController {
     }
 
     @Override
-    public int getTopShadowHeight() {
-        return mBottomSheet != null ? (int) mBottomSheet.getToolbarShadowHeight() : 0;
-    }
-
-    @Override
     public void addObserver(BottomSheetObserver observer) {
         if (mBottomSheet == null) {
             mPendingSheetObservers.add(observer);
@@ -322,7 +335,12 @@ class BottomSheetControllerImpl implements ManagedBottomSheetController {
         boolean hadTokens = mSuppressionTokens.hasTokens();
         int token = mSuppressionTokens.acquireToken();
         if (!hadTokens && mBottomSheet != null) {
-            mSheetStateBeforeSuppress = getSheetState();
+            // Make sure we don't save an invalid final state (particularly "scrolling").
+            mSheetStateBeforeSuppress = getTargetSheetState();
+            if (mSheetStateBeforeSuppress == SheetState.NONE) {
+                mSheetStateBeforeSuppress = getSheetState();
+            }
+
             mContentWhenSuppressed = getCurrentSheetContent();
             mBottomSheet.setSheetState(SheetState.HIDDEN, false, reason);
         }
@@ -353,7 +371,7 @@ class BottomSheetControllerImpl implements ManagedBottomSheetController {
     }
 
     @Override
-    public void setAccssibilityUtil(AccessibilityUtil enabledSupplier) {
+    public void setAccessibilityUtil(AccessibilityUtil enabledSupplier) {
         mAccessibilityUtil = enabledSupplier;
     }
 
@@ -388,8 +406,10 @@ class BottomSheetControllerImpl implements ManagedBottomSheetController {
 
         if (mBottomSheet == null) mSheetInitializer.run();
 
-        // If already showing the requested content, do nothing.
-        if (content == mBottomSheet.getCurrentSheetContent()) return true;
+        // If already showing (or queued to show) the requested content, do nothing.
+        if (content == mBottomSheet.getCurrentSheetContent() || mContentQueue.contains(content)) {
+            return content == mBottomSheet.getCurrentSheetContent();
+        }
 
         boolean shouldSwapForPriorityContent = mBottomSheet.getCurrentSheetContent() != null
                 && content.getPriority() < mBottomSheet.getCurrentSheetContent().getPriority()
@@ -451,7 +471,9 @@ class BottomSheetControllerImpl implements ManagedBottomSheetController {
 
     @Override
     public void expandSheet() {
-        if (mBottomSheet == null || mSuppressionTokens.hasTokens()) return;
+        if (mBottomSheet == null || mSuppressionTokens.hasTokens() || mBottomSheet.isHiding()) {
+            return;
+        }
 
         if (mBottomSheet.getCurrentSheetContent() == null) return;
         mBottomSheet.setSheetState(SheetState.HALF, true);
@@ -459,7 +481,9 @@ class BottomSheetControllerImpl implements ManagedBottomSheetController {
 
     @Override
     public boolean collapseSheet(boolean animate) {
-        if (mBottomSheet == null || mSuppressionTokens.hasTokens()) return false;
+        if (mBottomSheet == null || mSuppressionTokens.hasTokens() || mBottomSheet.isHiding()) {
+            return false;
+        }
         if (mBottomSheet.isSheetOpen() && mBottomSheet.isPeekStateEnabled()) {
             mBottomSheet.setSheetState(SheetState.PEEK, animate);
             return true;
@@ -476,6 +500,9 @@ class BottomSheetControllerImpl implements ManagedBottomSheetController {
         if (mBottomSheet.getSheetState() != SheetState.HIDDEN) {
             throw new RuntimeException("Showing next content before sheet is hidden!");
         }
+
+        // Make sure the container is visible as it is set to "gone" when there is no content.
+        mBottomSheetContainer.setVisibility(View.VISIBLE);
 
         if (mContentQueue.isEmpty()) {
             mBottomSheet.showContent(null);

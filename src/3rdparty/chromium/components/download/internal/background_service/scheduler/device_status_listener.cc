@@ -33,7 +33,7 @@ NetworkStatus ToNetworkStatus(network::mojom::ConnectionType type) {
     case network::mojom::ConnectionType::CONNECTION_BLUETOOTH:
       return NetworkStatus::DISCONNECTED;
     case network::mojom::ConnectionType::CONNECTION_UNKNOWN:
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
       return NetworkStatus::DISCONNECTED;
 #else
       return NetworkStatus::UNMETERED;
@@ -104,9 +104,6 @@ void DeviceStatusListener::StartAfterDelay() {
   pending_network_status_ = status_.network_status;
 
   listening_ = true;
-  is_valid_state_ = true;
-
-  NotifyStatusChange();
 }
 
 void DeviceStatusListener::Stop() {
@@ -124,6 +121,13 @@ void DeviceStatusListener::Stop() {
   status_ = DeviceStatus();
   listening_ = false;
   observer_ = nullptr;
+}
+
+void DeviceStatusListener::OnNetworkStatusReady(
+    network::mojom::ConnectionType type) {
+  status_.network_status = ToNetworkStatus(type);
+  is_valid_state_ = true;
+  NotifyStatusChange();
 }
 
 void DeviceStatusListener::OnNetworkChanged(

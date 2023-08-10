@@ -1,14 +1,14 @@
 # Chromium C++ style guide
 
 _For other languages, please see the
-[Chromium style guides](https://chromium.googlesource.com/chromium/src/+/master/styleguide/styleguide.md)._
+[Chromium style guides](https://chromium.googlesource.com/chromium/src/+/main/styleguide/styleguide.md)._
 
 Chromium follows the [Google C++ Style
 Guide](https://google.github.io/styleguide/cppguide.html) unless an exception
 is listed below.
 
 A checkout should give you
-[clang-format](https://chromium.googlesource.com/chromium/src/+/master/docs/clang_format.md)
+[clang-format](https://chromium.googlesource.com/chromium/src/+/main/docs/clang_format.md)
 to automatically format C++ code. By policy, Clang's formatting of code should
 always be accepted in code reviews.
 
@@ -21,28 +21,39 @@ Blink code in `third_party/blink` uses [Blink style](blink-c++.md).
 
 ## Modern C++ features
 
-Google style
+Google and Chromium style
 [targets C++17](https://google.github.io/styleguide/cppguide.html#C++_Version).
-Chromium targets C++14; [C++17 support](https://crbug.com/752720) is not
-expected before
-[mid-2021](https://blog.chromium.org/2020/01/moving-forward-from-chrome-apps.html).
 Additionally, some features of supported C++ versions remain forbidden. The
 status of Chromium's C++ support is covered in more detail in
-[Modern C++ use in Chromium](https://chromium-cpp.appspot.com/).
+[Modern C++ use in Chromium](c++-features.md).
 
 ## Naming
 
   * "Chromium" is the name of the project, not the product, and should never
     appear in code, variable names, API names etc. Use "Chrome" instead.
 
-## Test-only Code
+## Tests and Test-only Code
 
   * Functions used only for testing should be restricted to test-only usages
     with the testing suffixes supported by
-    [PRESUMBIT.py](https://chromium.googlesource.com/chromium/src/+/master/PRESUBMIT.py).
+    [PRESUMBIT.py](https://chromium.googlesource.com/chromium/src/+/main/PRESUBMIT.py).
     `ForTesting` is the conventional suffix although similar patterns, such as
     `ForTest`, are also accepted. These suffixes are checked at presubmit time
     to ensure the functions are called only by test files.
+  * Classes used only for testing should be in a GN build target that is
+    marked `testonly=true`. Tests can depend on such targets, but production
+    code can not.
+  * While test files generally appear alongside the production code they test,
+    support code for `testonly` targets should be placed in a `test/` subdirectory.
+    For example, see `//mojo/core/core_unittest.cc` and
+    `//mojo/core/test/mojo_test_base.cc`. For test classes used across multiple
+    directories, it might make sense to move them into a nested `test` namespace for
+    clarity.
+  * Despite the Google C++ style guide
+    [deprecating](https://google.github.io/styleguide/cppguide.html#File_Names)
+    the `_unittest.cc` suffix for unit test files, in Chromium we still use this
+    suffix to distinguish unit tests from browser tests, which are written in
+    files with the `_browsertest.cc` suffix.
 
 ## Code formatting
 
@@ -128,18 +139,25 @@ Place platform-specific #includes in their own section below the "normal"
   #include <algorithm>
 
   #include "base/strings/utf_string_conversions.h"
+  #include "build/build_config.h"
   #include "chrome/common/render_messages.h"
 
-  #if defined(OS_WIN)
+  #if BUILDFLAG(IS_WIN)
   #include <windows.h>
   #include "base/win/com_init_util.h"
-  #elif defined(OS_POSIX)
+  #elif BUILDFLAG(IS_POSIX)
   #include "base/posix/global_descriptors.h"
   #endif
 ```
 
 ## Types
 
+  * Refer to the [Mojo style
+    guide](https://chromium.googlesource.com/chromium/src/+/main/docs/security/mojo.md)
+    when working with types that will be passed across network or process
+    boundaries. For example, explicitly-sized integral types must be used for
+    safety, since the sending and receiving ends may not have been compiled
+    with the same sizes for things like `int` and `size_t`.
   * Use `size_t` for object and allocation sizes, object counts, array and
     pointer offsets, vector indices, and so on. This prevents casts when
     dealing with STL APIs, and if followed consistently across the codebase,
@@ -149,7 +167,11 @@ Place platform-specific #includes in their own section below the "normal"
     these cases, continue to use `size_t` in public-facing function
     declarations, and continue to use unsigned types internally (e.g.
     `uint32_t`).
-  * Follow [Google C++ casting
+  * Follow the [integer semantics
+    guide](https://chromium.googlesource.com/chromium/src/+/main/docs/security/integer-semantics.md)
+    for all arithmetic conversions and calculations used in memory management
+    or passed across network or process boundaries. In other circumstances,
+    follow [Google C++ casting
     conventions](https://google.github.io/styleguide/cppguide.html#Casting)
     to convert arithmetic types when you know the conversion is safe. Use
     `checked_cast<T>` (from `base/numerics/safe_conversions.h`) when you need to
@@ -157,15 +179,16 @@ Place platform-specific #includes in their own section below the "normal"
     `saturated_cast<T>` if you instead wish to clamp out-of-range values.
     `CheckedNumeric` is an ergonomic way to perform safe arithmetic and casting
     in many cases.
-  * When passing values across network or process boundaries, use
-    explicitly-sized types for safety, since the sending and receiving ends may
-    not have been compiled with the same sizes for things like `int` and
-    `size_t`. However, to the greatest degree possible, avoid letting these
-    sized types bleed through the APIs of the layers in question.
-  * Don't use `std::wstring`. Use `base::string16` or `base::FilePath` instead.
-    (Windows-specific code interfacing with system APIs using `wstring` and
-    `wchar_t` can still use `string16` and `char16`; it is safe to assume that
-    these are equivalent to the "wide" types.)
+  * The Google Style Guide [bans
+    UTF-16](https://google.github.io/styleguide/cppguide.html#Non-ASCII_Characters).
+    For various reasons, Chromium uses UTF-16 extensively. Use `std::u16string`
+    and `char16_t*` for 16-bit strings, `u"..."` to declare UTF-16 literals, and
+    either the actual characters or the `\uXXXX` or `\UXXXXXXXX` escapes for
+    Unicode characters. Avoid `\xXX...`-style escapes, which can cause subtle
+    problems if someone attempts to change the type of string that holds the
+    literal. In code used only on Windows, it may be necessary to use
+    `std::wstring` and `wchar_t*`; these are legal, but note that they are
+    distinct types and are often not 16-bit on other platforms.
 
 ## Object ownership and calling conventions
 
@@ -202,6 +225,21 @@ functions take ownership of params passed as `T*`, or take `const
 scoped_refptr<T>&` instead of `T*`, or return `T*` instead of
 `scoped_refptr<T>` (to avoid refcount churn pre-C++11). Try to clean up such
 code when you find it, or at least not make such usage any more widespread.
+
+## Non-owning pointers in class fields
+
+Use `raw_ptr<T>` for class and struct fields in place of a raw C++ pointer `T*`
+whenever possible, except in paths that include `/renderer/` or
+`blink/public/web/`.  `raw_ptr<T>` is a non-owning smart pointer that has
+improved memory-safety over raw pointers, and can prevent exploitation of a
+significant percentage of Use-after-Free bugs.
+
+Using `raw_ptr<T>` may not be possible in rare cases for
+[performance reasons](../../base/memory/raw_ptr.md#Performance).
+Additionally, `raw_ptr<T>` doesn’t support some C++ scenarios (e.g. `constexpr`,
+ObjC pointers).  Tooling will help to encourage use of `raw_ptr<T>`.  See
+[raw_ptr.md](../../base/memory/raw_ptr.md#When-to-use-raw_ptr_T)
+for how to add exclusions.
 
 ## Forward declarations vs. #includes
 

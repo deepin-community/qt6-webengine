@@ -2,13 +2,14 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 import argparse
+import collections
 import errno
-import sys
-import subprocess
 import json
+import logging
 import os
 import shutil
-import collections
+import subprocess
+import sys
 
 from os import path
 _CURRENT_DIR = path.join(path.dirname(__file__))
@@ -23,8 +24,10 @@ try:
 finally:
     sys.path = old_sys_path
 NODE_LOCATION = devtools_paths.node_path()
+ESBUILD_LOCATION = devtools_paths.esbuild_path()
 
-BASE_TS_CONFIG_LOCATION = path.join(ROOT_DIRECTORY_OF_REPOSITORY, 'tsconfig.base.json')
+BASE_TS_CONFIG_LOCATION = path.join(ROOT_DIRECTORY_OF_REPOSITORY, 'config',
+                                    'typescript', 'tsconfig.base.json')
 TYPES_NODE_MODULES_DIRECTORY = path.join(ROOT_DIRECTORY_OF_REPOSITORY, 'node_modules', '@types')
 RESOURCES_INSPECTOR_PATH = path.join(os.getcwd(), 'resources', 'inspector')
 
@@ -38,32 +41,23 @@ GLOBAL_TYPESCRIPT_DEFINITION_FILES = [
               'global_defs.d.ts'),
     path.join(ROOT_DIRECTORY_OF_REPOSITORY, 'front_end', 'global_typings',
               'request_idle_callback.d.ts'),
-    # generated protocol definitions
-    path.join(ROOT_DIRECTORY_OF_REPOSITORY, 'front_end', 'generated',
-              'protocol.d.ts'),
-    # generated protocol api interactions
-    path.join(ROOT_DIRECTORY_OF_REPOSITORY, 'front_end', 'generated',
-              'protocol-proxy-api.d.ts'),
     # Types for W3C FileSystem API
     path.join(ROOT_DIRECTORY_OF_REPOSITORY, 'node_modules', '@types',
               'filesystem', 'index.d.ts'),
-    # Global types required for our usage of ESTree (coming from Acorn)
-    path.join(ROOT_DIRECTORY_OF_REPOSITORY, 'node_modules', '@types', 'estree',
-              'index.d.ts'),
-    path.join(ROOT_DIRECTORY_OF_REPOSITORY, 'front_end', 'legacy',
-              'estree-legacy.d.ts'),
-    # CodeMirror types
-    path.join(ROOT_DIRECTORY_OF_REPOSITORY, 'node_modules', '@types',
-              'codemirror', 'index.d.ts'),
-    path.join(ROOT_DIRECTORY_OF_REPOSITORY, 'front_end', 'legacy',
-              'codemirror-legacy.d.ts'),
 ]
 
 
+logging.basicConfig(
+    level=logging.DEBUG if os.environ.get('TSC_DEBUG') else logging.WARNING)
+
+
 def runTsc(tsconfig_location):
-    process = subprocess.Popen([NODE_LOCATION, TSC_LOCATION, '-p', tsconfig_location],
+    cmd = [NODE_LOCATION, TSC_LOCATION, '-p', tsconfig_location]
+    logging.info("runTsc: %s", ' '.join(cmd))
+    process = subprocess.Popen(cmd,
                                stdout=subprocess.PIPE,
-                               stderr=subprocess.PIPE)
+                               stderr=subprocess.PIPE,
+                               universal_newlines=True)
     stdout, stderr = process.communicate()
     # TypeScript does not correctly write to stderr because of https://github.com/microsoft/TypeScript/issues/33849
     return process.returncode, stdout + stderr
@@ -113,10 +107,116 @@ def runTscRemote(tsconfig_location, all_ts_files, rewrapper_binary,
         relative_tsc_location, '-p', relative_tsconfig_location
     ],
                                stdout=subprocess.PIPE,
-                               stderr=subprocess.PIPE)
+                               stderr=subprocess.PIPE,
+                               universal_newlines=True)
     stdout, stderr = process.communicate()
     # TypeScript does not correctly write to stderr because of https://github.com/microsoft/TypeScript/issues/33849
     return process.returncode, stdout + stderr
+
+
+# To ensure that Ninja only rebuilds dependents when the actual content/public API of a TypeScript target changes,
+# we need to make sure that the config only changes when it needs to. Therefore, if the content would be equivalent
+# to what is already on disk, we don't write and allow Ninja to short-circuit if it can.
+def maybe_update_tsconfig_file(tsconfig_output_location, tsconfig):
+    old_contents = None
+    if os.path.exists(tsconfig_output_location):
+        with open(tsconfig_output_location, encoding="utf8") as fp:
+            old_contents = fp.read()
+
+    new_contents = json.dumps(tsconfig, sort_keys=True, indent=2)
+    if old_contents is None or new_contents != old_contents:
+        try:
+            with open(tsconfig_output_location, 'w', encoding="utf8") as fp:
+                fp.write(new_contents)
+        except Exception as e:
+            print(
+                'Encountered error while writing generated tsconfig in location %s:'
+                % tsconfig_output_location)
+            print(e)
+            return 1
+
+    return 0
+
+
+# Obtain the timestamps and original content of any previously generated TypeScript files, if any.
+# This will be used later in `maybe_reset_timestamps_on_generated_files` to potentially reset
+# file timestamps for Ninja.
+def compute_previous_generated_file_metadata(sources,
+                                             tsconfig_output_directory):
+    gen_files = {}
+    for src_fname in sources:
+        for ext in ['.d.ts', '.js', '.js.map']:
+            gen_fname = os.path.basename(src_fname.replace('.ts', ext))
+            gen_path = os.path.join(tsconfig_output_directory, gen_fname)
+            if os.path.exists(gen_path):
+                mtime = os.stat(gen_path).st_mtime
+                with open(gen_path, encoding="utf8") as fp:
+                    contents = fp.read()
+                gen_files[gen_fname] = (mtime, contents)
+
+    return gen_files
+
+
+# Ninja and TypeScript use different mechanism to determine whether a file is "new". TypeScript
+# uses content-based file hashing, whereas Ninja uses file timestamps. Therefore, if we determine
+# that `tsc` actually didn't generate new file contents, we reset the timestamp to what it was
+# prior to invocation of `ts_library`. Then Ninja will determine nothing has changed and will
+# not run dependents.
+#
+# This also means that if the public API of a target changes, it does run the immediate dependents
+# of the target. However, if there is no functional change in the immediate dependents, the timestamps
+# of the immediate dependent would be properly reset and any transitive dependents would not be rerun.
+def maybe_reset_timestamps_on_generated_files(
+        previously_generated_file_metadata, tsconfig_output_directory):
+    for gen_fname in previously_generated_file_metadata:
+        gen_path = os.path.join(tsconfig_output_directory, gen_fname)
+        if os.path.exists(gen_path):
+            old_mtime, old_contents = previously_generated_file_metadata[
+                gen_fname]
+            with open(gen_path, encoding="utf8") as fp:
+                new_contents = fp.read()
+            if new_contents == old_contents:
+                os.utime(gen_path, (old_mtime, old_mtime))
+
+
+# TypeScript generates `.tsbuildinfo` files for its incremental compilation. These files are used for
+# the internal compiler "build" mode which can incrementally compile based on the declaration files of
+# any project references. However, since GN "runs the world", GN determines when it should recompile
+# certain targets.
+#
+# We don't include the `.tsbuildinfo` files in the GN `outputs`, since they have historically introduced
+# non-determinism in the build system and we don't actually need them. However, a side-effect of not
+# including these files in `outputs` is that `ninja -C out/Default -t clean` does not clean up these
+# files. This could mean that after cleaning the out directory, a recompilation will start to break,
+# since the TypeScript compiler looks at the `.tsbuildinfo` file and sees that none of the source files
+# are changed, but it doesn't check that the output files are still there. Therefore, the output files
+# are gone and any compilation of a project that depends on the outputs will start to fail.
+#
+# To avoid any problems, we should simply delete these files. We don't need any information from them,
+# since GN already knows what to do. This should also provide a small performance improvement, as the
+# TypeScript compiler now no longer need to check for up-to-dateness, which saves a couple of CPU cycles.
+def remove_generated_tsbuildinfo_file(tsbuildinfo_output_location):
+    # Should technically not happen, but let's code defensively here just in case
+    if os.path.exists(tsbuildinfo_output_location):
+        os.remove(tsbuildinfo_output_location)
+
+
+def runEsbuild(opts):
+    cmd = [
+        ESBUILD_LOCATION,
+        '--outdir=' + path.dirname(opts.tsconfig_output_location),
+        '--log-level=warning',
+        '--sourcemap',
+    ]
+
+    if opts.module == 'commonjs':
+        cmd += ['--format=cjs']
+
+    cmd += opts.sources
+
+    logging.info('runEsbuild: %s', ' '.join(cmd))
+    p = subprocess.run(cmd)
+    return p.returncode
 
 
 def main():
@@ -130,13 +230,16 @@ def main():
     parser.add_argument('--verify-lib-check', action='store_true')
     parser.add_argument('--is_web_worker', action='store_true')
     parser.add_argument('--module', required=False)
+    parser.add_argument('--reset_timestamps', action='store_true')
     parser.add_argument('--use-rbe', action='store_true')
     parser.add_argument('--rewrapper-binary', required=False)
     parser.add_argument('--rewrapper-cfg', required=False)
     parser.add_argument('--rewrapper-exec-root', required=False)
+    parser.add_argument('--use-esbuild', action='store_true')
     parser.set_defaults(test_only=False,
                         no_emit=False,
                         verify_lib_check=False,
+                        reset_timestamps=False,
                         module='esnext')
 
     opts = parser.parse_args()
@@ -150,6 +253,7 @@ def main():
     tsconfig_output_location = path.join(os.getcwd(), opts.tsconfig_output_location)
     tsconfig_output_directory = path.dirname(tsconfig_output_location)
     tsbuildinfo_name = path.basename(tsconfig_output_location) + '.tsbuildinfo'
+    runs_in_node_environment = opts.module == "commonjs"
 
     def get_relative_path_from_output_directory(file_to_resolve):
         return path.relpath(path.join(os.getcwd(), file_to_resolve), tsconfig_output_directory)
@@ -165,10 +269,18 @@ def main():
     if (not opts.verify_lib_check):
         tsconfig['compilerOptions']['skipLibCheck'] = True
     tsconfig['compilerOptions']['rootDir'] = get_relative_path_from_output_directory(opts.front_end_directory)
-    tsconfig['compilerOptions']['typeRoots'] = opts.test_only and [
+    tsconfig['compilerOptions']['typeRoots'] = (
+        opts.test_only or runs_in_node_environment
+    ) and [
         get_relative_path_from_output_directory(TYPES_NODE_MODULES_DIRECTORY)
     ] or []
     if opts.test_only:
+        tsconfig['compilerOptions']['types'] = [
+            "mocha", "chai", "sinon", "karma-chai-sinon"
+        ]
+        if runs_in_node_environment:
+            tsconfig['compilerOptions']['types'] += ["node"]
+    if runs_in_node_environment:
         tsconfig['compilerOptions']['moduleResolution'] = 'node'
     if opts.no_emit:
         tsconfig['compilerOptions']['emitDeclarationOnly'] = True
@@ -178,19 +290,20 @@ def main():
         opts.is_web_worker and ['webworker', 'webworker.iterable']
         or ['dom', 'dom.iterable'])
 
-    with open(tsconfig_output_location, 'w') as generated_tsconfig:
-        try:
-            json.dump(tsconfig, generated_tsconfig)
-        except Exception as e:
-            print('Encountered error while writing generated tsconfig in location %s:' % tsconfig_output_location)
-            print(e)
-            return 1
+    if maybe_update_tsconfig_file(tsconfig_output_location, tsconfig) == 1:
+        return 1
 
     # If there are no sources to compile, we can bail out and don't call tsc.
     # That's because tsc can successfully compile dependents solely on the
     # the tsconfig.json
     if len(sources) == 0 and not opts.verify_lib_check:
         return 0
+
+    if opts.use_esbuild:
+        return runEsbuild(opts)
+
+    previously_generated_file_metadata = compute_previous_generated_file_metadata(
+        sources, tsconfig_output_directory)
 
     use_remote_execution = opts.use_rbe and (opts.deps is None
                                              or len(opts.deps) == 0)
@@ -205,6 +318,14 @@ def main():
     else:
         found_errors, stderr = runTsc(
             tsconfig_location=tsconfig_output_location)
+
+    if opts.reset_timestamps:
+        maybe_reset_timestamps_on_generated_files(
+            previously_generated_file_metadata, tsconfig_output_directory)
+
+    remove_generated_tsbuildinfo_file(
+        path.join(tsconfig_output_directory, tsbuildinfo_name))
+
     if found_errors:
         print('')
         print('TypeScript compilation failed. Used tsconfig %s' % opts.tsconfig_output_location)

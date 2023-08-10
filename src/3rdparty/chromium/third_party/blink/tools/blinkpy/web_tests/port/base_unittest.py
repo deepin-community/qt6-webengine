@@ -27,6 +27,7 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import mock
+import operator
 import optparse
 import unittest
 
@@ -59,16 +60,18 @@ class PortTest(LoggingTestCase):
         if with_tests:
             add_unit_tests_to_mock_filesystem(host.filesystem)
             return TestPort(host, **kwargs)
-        return Port(host, port_name or 'baseport', **kwargs)
+        port = Port(host, port_name or 'baseport', **kwargs)
+        port.operating_system = lambda: 'linux'
+        return port
 
     def test_validate_wpt_dirs(self):
         # Keys should not have trailing slashes.
         for wpt_path in Port.WPT_DIRS.keys():
             self.assertFalse(wpt_path.endswith('/'))
         # Values should not be empty (except the last one).
-        for url_prefix in Port.WPT_DIRS.values()[:-1]:
+        for url_prefix in list(Port.WPT_DIRS.values())[:-1]:
             self.assertNotEqual(url_prefix, '/')
-        self.assertEqual(Port.WPT_DIRS.values()[-1], '/')
+        self.assertEqual(list(Port.WPT_DIRS.values())[-1], '/')
 
     def test_validate_wpt_regex(self):
         self.assertEquals(
@@ -297,7 +300,8 @@ class PortTest(LoggingTestCase):
         virtual_test = 'virtual/flag/fast/test.html'
         port.host.filesystem.write_text_file(
             MOCK_WEB_TESTS + 'VirtualTestSuites',
-            '[{ "prefix": "flag", "bases": ["fast"], "args": ["--flag"]}]')
+            '[{ "prefix": "flag", "platforms": ["Linux", "Mac", "Win"],'
+            ' "bases": ["fast"], "args": ["--flag"]}]')
 
         # The default baseline for base test
         self.assertEqual(
@@ -459,8 +463,10 @@ class PortTest(LoggingTestCase):
 
     def test_nonexistant_expectations(self):
         port = self.make_port(port_name='foo')
-        port.expectations_files = lambda: [MOCK_WEB_TESTS + 'platform/exists/TestExpectations',
-                                           MOCK_WEB_TESTS + 'platform/nonexistant/TestExpectations']
+        port.default_expectations_files = lambda: [
+            MOCK_WEB_TESTS + 'platform/exists/TestExpectations', MOCK_WEB_TESTS
+            + 'platform/nonexistant/TestExpectations'
+        ]
         port.host.filesystem.write_text_file(
             MOCK_WEB_TESTS + 'platform/exists/TestExpectations', '')
         self.assertEqual('\n'.join(port.expectations_dict().keys()),
@@ -481,13 +487,14 @@ class PortTest(LoggingTestCase):
 
     def test_additional_expectations_empty(self):
         port = self._make_port_for_test_additional_expectations()
-        self.assertEqual(port.expectations_dict().values(), [])
+        self.assertEqual(list(port.expectations_dict().values()), [])
 
     def test_additional_expectations_1(self):
         port = self._make_port_for_test_additional_expectations({
             'additional_expectations': ['/tmp/additional-expectations-1.txt']
         })
-        self.assertEqual(port.expectations_dict().values(), ['content1\n'])
+        self.assertEqual(list(port.expectations_dict().values()),
+                         ['content1\n'])
 
     def test_additional_expectations_2(self):
         port = self._make_port_for_test_additional_expectations({
@@ -496,7 +503,7 @@ class PortTest(LoggingTestCase):
                 '/tmp/additional-expectations-2.txt'
             ]
         })
-        self.assertEqual(port.expectations_dict().values(),
+        self.assertEqual(list(port.expectations_dict().values()),
                          ['content1\n', 'content2\n'])
 
     def test_additional_expectations_additional_flag(self):
@@ -507,7 +514,7 @@ class PortTest(LoggingTestCase):
             ],
             'additional_driver_flag': ['--special-flag']
         })
-        self.assertEqual(port.expectations_dict().values(),
+        self.assertEqual(list(port.expectations_dict().values()),
                          ['content3', 'content1\n', 'content2\n'])
 
     def test_flag_specific_expectations(self):
@@ -519,7 +526,7 @@ class PortTest(LoggingTestCase):
         port.host.filesystem.write_text_file(
             MOCK_WEB_TESTS + 'FlagExpectations/README.txt', 'cc')
 
-        self.assertEqual(port.expectations_dict().values(), [])
+        self.assertEqual(list(port.expectations_dict().values()), [])
         # all_expectations_dict() is an OrderedDict, but its order depends on
         # file system walking order.
         self.assertEqual(
@@ -529,7 +536,7 @@ class PortTest(LoggingTestCase):
         port = self.make_port(port_name='foo')
 
         non_utf8_file = MOCK_WEB_TESTS + 'FlagExpectations/non-utf8-file'
-        invalid_utf8 = '\xC0'
+        invalid_utf8 = b'\xC0'
         port.host.filesystem.write_binary_file(non_utf8_file, invalid_utf8)
 
         with self.assertRaises(UnicodeDecodeError):
@@ -546,14 +553,14 @@ class PortTest(LoggingTestCase):
         port_a = self.make_port(options=optparse.Values({}))
         # pylint: disable=protected-access
         self.assertEqual(port_a._specified_additional_driver_flags(), [])
-        self.assertIsNone(port_a._flag_specific_config_name())
+        self.assertIsNone(port_a.flag_specific_config_name())
 
         port_b = self.make_port(
             options=optparse.Values({
                 'additional_driver_flag': ['--bb']
             }))
         self.assertEqual(port_b._specified_additional_driver_flags(), ['--bb'])
-        self.assertEqual(port_b._flag_specific_config_name(), 'bb')
+        self.assertEqual(port_b.flag_specific_config_name(), 'bb')
 
         port_c = self.make_port(
             options=optparse.Values({
@@ -561,7 +568,7 @@ class PortTest(LoggingTestCase):
             }))
         self.assertEqual(port_c._specified_additional_driver_flags(),
                          ['--cc', '--dd'])
-        self.assertEqual(port_c._flag_specific_config_name(), 'cc')
+        self.assertEqual(port_c.flag_specific_config_name(), 'cc')
 
     def test_flag_specific_config_name_from_options_and_file(self):
         flag_file = MOCK_WEB_TESTS + 'additional-driver-flag.setting'
@@ -570,7 +577,7 @@ class PortTest(LoggingTestCase):
         port_a.host.filesystem.write_text_file(flag_file, '--aa')
         # pylint: disable=protected-access
         self.assertEqual(port_a._specified_additional_driver_flags(), ['--aa'])
-        self.assertEqual(port_a._flag_specific_config_name(), 'aa')
+        self.assertEqual(port_a.flag_specific_config_name(), 'aa')
 
         port_b = self.make_port(
             options=optparse.Values({
@@ -579,7 +586,7 @@ class PortTest(LoggingTestCase):
         port_b.host.filesystem.write_text_file(flag_file, '--aa')
         self.assertEqual(port_b._specified_additional_driver_flags(),
                          ['--aa', '--bb'])
-        self.assertEqual(port_b._flag_specific_config_name(), 'aa')
+        self.assertEqual(port_b.flag_specific_config_name(), 'aa')
 
         port_c = self.make_port(
             options=optparse.Values({
@@ -589,7 +596,7 @@ class PortTest(LoggingTestCase):
         # We don't remove duplicated flags at this time.
         self.assertEqual(port_c._specified_additional_driver_flags(),
                          ['--bb', '--dd', '--bb', '--cc'])
-        self.assertEqual(port_c._flag_specific_config_name(), 'bb')
+        self.assertEqual(port_c.flag_specific_config_name(), 'bb')
 
     def _write_flag_specific_config(self, port):
         port.host.filesystem.write_text_file(
@@ -607,56 +614,56 @@ class PortTest(LoggingTestCase):
             }))
         self._write_flag_specific_config(port_a1)
         # pylint: disable=protected-access
-        self.assertEqual(port_a1._flag_specific_config_name(), 'a')
+        self.assertEqual(port_a1.flag_specific_config_name(), 'a')
 
         port_a2 = self.make_port(
             options=optparse.Values({
                 'additional_driver_flag': ['--aa', '--dd']
             }))
         self._write_flag_specific_config(port_a2)
-        self.assertEqual(port_a2._flag_specific_config_name(), 'a')
+        self.assertEqual(port_a2.flag_specific_config_name(), 'a')
 
         port_a3 = self.make_port(
             options=optparse.Values({
                 'additional_driver_flag': ['--aa', '--bb']
             }))
         self._write_flag_specific_config(port_a3)
-        self.assertEqual(port_a3._flag_specific_config_name(), 'a')
+        self.assertEqual(port_a3.flag_specific_config_name(), 'a')
 
         port_b1 = self.make_port(
             options=optparse.Values({
                 'additional_driver_flag': ['--bb', '--aa']
             }))
         self._write_flag_specific_config(port_b1)
-        self.assertEqual(port_b1._flag_specific_config_name(), 'b')
+        self.assertEqual(port_b1.flag_specific_config_name(), 'b')
 
         port_b2 = self.make_port(
             options=optparse.Values({
                 'additional_driver_flag': ['--bb', '--aa', '--cc']
             }))
         self._write_flag_specific_config(port_b2)
-        self.assertEqual(port_b2._flag_specific_config_name(), 'b')
+        self.assertEqual(port_b2.flag_specific_config_name(), 'b')
 
         port_b3 = self.make_port(
             options=optparse.Values({
                 'additional_driver_flag': ['--bb', '--aa', '--dd']
             }))
         self._write_flag_specific_config(port_b3)
-        self.assertEqual(port_b3._flag_specific_config_name(), 'b')
+        self.assertEqual(port_b3.flag_specific_config_name(), 'b')
 
         port_c1 = self.make_port(
             options=optparse.Values({
                 'additional_driver_flag': ['--bb', '--cc']
             }))
         self._write_flag_specific_config(port_c1)
-        self.assertEqual(port_c1._flag_specific_config_name(), 'c')
+        self.assertEqual(port_c1.flag_specific_config_name(), 'c')
 
         port_c2 = self.make_port(
             options=optparse.Values({
                 'additional_driver_flag': ['--bb', '--cc', '--aa']
             }))
         self._write_flag_specific_config(port_c2)
-        self.assertEqual(port_c2._flag_specific_config_name(), 'c')
+        self.assertEqual(port_c2.flag_specific_config_name(), 'c')
 
     def test_flag_specific_fallback(self):
         port_b = self.make_port(
@@ -665,7 +672,7 @@ class PortTest(LoggingTestCase):
             }))
         self._write_flag_specific_config(port_b)
         # No match. Fallback to first specified flag.
-        self.assertEqual(port_b._flag_specific_config_name(), 'bb')
+        self.assertEqual(port_b.flag_specific_config_name(), 'bb')
 
         port_d = self.make_port(
             options=optparse.Values({
@@ -673,7 +680,7 @@ class PortTest(LoggingTestCase):
             }))
         self._write_flag_specific_config(port_d)
         # pylint: disable=protected-access
-        self.assertEqual(port_d._flag_specific_config_name(), 'dd')
+        self.assertEqual(port_d.flag_specific_config_name(), 'dd')
 
     def test_flag_specific_option(self):
         port_a = self.make_port(
@@ -682,7 +689,7 @@ class PortTest(LoggingTestCase):
             }))
         self._write_flag_specific_config(port_a)
         # pylint: disable=protected-access
-        self.assertEqual(port_a._flag_specific_config_name(), 'a')
+        self.assertEqual(port_a.flag_specific_config_name(), 'a')
 
         port_b = self.make_port(
             options=optparse.Values({
@@ -690,14 +697,14 @@ class PortTest(LoggingTestCase):
                 'additional_driver_flag': ['--bb']
             }))
         self._write_flag_specific_config(port_b)
-        self.assertEqual(port_b._flag_specific_config_name(), 'a')
+        self.assertEqual(port_b.flag_specific_config_name(), 'a')
 
         port_d = self.make_port(
             options=optparse.Values({
                 'flag_specific': 'd'
             }))
         self._write_flag_specific_config(port_d)
-        self.assertRaises(AssertionError, port_d._flag_specific_config_name)
+        self.assertRaises(AssertionError, port_d.flag_specific_config_name)
 
     def test_duplicate_flag_specific_name(self):
         port = self.make_port()
@@ -894,9 +901,9 @@ class PortTest(LoggingTestCase):
         self.assertEqual(
             sorted(port.tests(['virtual/virtual_wpt/external/wpt/'])), all_wpt)
         self.assertEqual(
-            port.tests(['virtual/virtual_wpt/external/wpt/console']), [
-                'virtual/virtual_wpt/external/wpt/console/console-is-a-namespace.any.worker.html',
-                'virtual/virtual_wpt/external/wpt/console/console-is-a-namespace.any.html'
+            sorted(port.tests(['virtual/virtual_wpt/external/wpt/console'])), [
+                'virtual/virtual_wpt/external/wpt/console/console-is-a-namespace.any.html',
+                'virtual/virtual_wpt/external/wpt/console/console-is-a-namespace.any.worker.html'
             ])
 
         self.assertEqual(
@@ -1378,6 +1385,7 @@ class PortTest(LoggingTestCase):
 
     def test_can_load_actual_virtual_test_suite_file(self):
         port = Port(SystemHost(), 'baseport')
+        port.operating_system = lambda: 'linux'
 
         # If this call returns successfully, we found and loaded the web_tests/VirtualTestSuites.
         _ = port.virtual_test_suites()
@@ -1387,7 +1395,8 @@ class PortTest(LoggingTestCase):
         port.host.filesystem.write_text_file(
             port.host.filesystem.join(port.web_tests_dir(),
                                       'VirtualTestSuites'),
-            '[{"prefix": "bar", "bases": ["fast/bar"], "args": ["--bar"]}]')
+            '[{"prefix": "bar", "platforms": ["Linux", "Mac", "Win"], '
+            '"bases": ["fast/bar"], "args": ["--bar"]}]')
 
         # If this call returns successfully, we found and loaded the web_tests/VirtualTestSuites.
         _ = port.virtual_test_suites()
@@ -1397,8 +1406,8 @@ class PortTest(LoggingTestCase):
         port.host.filesystem.write_text_file(
             port.host.filesystem.join(port.web_tests_dir(),
                                       'VirtualTestSuites'), '['
-            '{"prefix": "bar", "bases": ["fast/bar"], "args": ["--bar"]},'
-            '{"prefix": "bar", "bases": ["fast/foo"], "args": ["--bar"]}'
+            '{"prefix": "bar", "platforms": ["Linux"], "bases": ["fast/bar"], "args": ["--bar"]},'
+            '{"prefix": "bar", "platforms": ["Linux"], "bases": ["fast/foo"], "args": ["--bar"]}'
             ']')
 
         self.assertRaises(ValueError, port.virtual_test_suites)
@@ -1539,26 +1548,18 @@ class PortTest(LoggingTestCase):
 
     def test_apache_config_file_name_for_platform(self):
         port = self.make_port()
-        port._apache_version = lambda: '2.2'  # pylint: disable=protected-access
+        port._apache_version = lambda: '2.4'  # pylint: disable=protected-access
         self._assert_config_file_for_platform(port, 'linux',
-                                              'apache2-httpd-2.2.conf')
+                                              'apache2-httpd-2.4-php7.conf')
         self._assert_config_file_for_linux_distribution(
-            port, 'arch', 'arch-httpd-2.2.conf')
-        self._assert_config_file_for_linux_distribution(
-            port, 'debian', 'debian-httpd-2.2.conf')
-        self._assert_config_file_for_linux_distribution(
-            port, 'fedora', 'fedora-httpd-2.2.conf')
-        self._assert_config_file_for_linux_distribution(
-            port, 'slackware', 'apache2-httpd-2.2.conf')
-        self._assert_config_file_for_linux_distribution(
-            port, 'redhat', 'redhat-httpd-2.2.conf')
+            port, 'arch', 'apache2-httpd-2.4-php7.conf')
 
         self._assert_config_file_for_platform(port, 'mac',
-                                              'apache2-httpd-2.2.conf')
+                                              'apache2-httpd-2.4-php7.conf')
         self._assert_config_file_for_platform(port, 'win32',
-                                              'apache2-httpd-2.2.conf')
+                                              'apache2-httpd-2.4-php7.conf')
         self._assert_config_file_for_platform(port, 'barf',
-                                              'apache2-httpd-2.2.conf')
+                                              'apache2-httpd-2.4-php7.conf')
 
     def test_skips_test_in_smoke_tests(self):
         port = self.make_port(with_tests=True)
@@ -1667,34 +1668,67 @@ class PortTest(LoggingTestCase):
             self.assertIsNotNone(port_class, port_name)
             self.assertListEqual(versions, list(port_class.SUPPORTED_VERSIONS))
 
+    def test_used_expectations_files_pardir(self):
+        port = self.make_port()
+        original_dir = port.host.filesystem.getcwd()
+        try:
+            subdir = port.host.filesystem.join(port.web_tests_dir(),
+                                               'some_directory')
+            port.host.filesystem.maybe_make_directory(subdir)
+            port.host.filesystem.chdir(subdir)
+            port._options.additional_expectations = [
+                port.host.filesystem.join('..', 'some_file')
+            ]
+            self.assertIn(
+                port.host.filesystem.join(port.web_tests_dir(), 'some_file'),
+                port.used_expectations_files())
+        finally:
+            port.host.filesystem.chdir(original_dir)
+
+    def test_skia_gold_properties_initialization(self):
+        # The Gold code usually assumes that argparse is used, not optparse, so
+        # ensure that it still works with optparse here.
+        port = self.make_port()
+        expected_revision = 'a' * 40
+        expected_issue = '1234'
+        expected_patchset = '1'
+        expected_id = 'bbid'
+        port._options.git_revision = expected_revision
+        port._options.gerrit_issue = expected_issue
+        port._options.gerrit_patchset = expected_patchset
+        port._options.buildbucket_id = expected_id
+        properties = port.skia_gold_properties()
+        self.assertEqual(properties.git_revision, expected_revision)
+        self.assertEqual(properties.issue, expected_issue)
+        self.assertEqual(properties.patchset, expected_patchset)
+        self.assertEqual(properties.job_id, expected_id)
+
 
 class NaturalCompareTest(unittest.TestCase):
     def setUp(self):
         self._port = TestPort(MockSystemHost())
 
-    def assert_cmp(self, x, y, result):
-        # pylint: disable=protected-access
-        self.assertEqual(
-            cmp(
-                self._port._natural_sort_key(x),
-                self._port._natural_sort_key(y)), result)
+    def assert_order(self, x, y, predicate):
+        self.assertTrue(
+            predicate(self._port._natural_sort_key(x),
+                      self._port._natural_sort_key(y)))
 
     def test_natural_compare(self):
-        self.assert_cmp('a', 'a', 0)
-        self.assert_cmp('ab', 'a', 1)
-        self.assert_cmp('a', 'ab', -1)
-        self.assert_cmp('', '', 0)
-        self.assert_cmp('', 'ab', -1)
-        self.assert_cmp('1', '2', -1)
-        self.assert_cmp('2', '1', 1)
-        self.assert_cmp('1', '10', -1)
-        self.assert_cmp('2', '10', -1)
-        self.assert_cmp('foo_1.html', 'foo_2.html', -1)
-        self.assert_cmp('foo_1.1.html', 'foo_2.html', -1)
-        self.assert_cmp('foo_1.html', 'foo_10.html', -1)
-        self.assert_cmp('foo_2.html', 'foo_10.html', -1)
-        self.assert_cmp('foo_23.html', 'foo_10.html', 1)
-        self.assert_cmp('foo_23.html', 'foo_100.html', -1)
+        self.assert_order('a', 'a', operator.eq)
+        self.assert_order('ab', 'a', operator.gt)
+        self.assert_order('a', 'ab', operator.lt)
+        self.assert_order('', '', operator.eq)
+        self.assert_order('', 'ab', operator.lt)
+        self.assert_order('1', '2', operator.lt)
+        self.assert_order('2', '1', operator.gt)
+        self.assert_order('1', '10', operator.lt)
+        self.assert_order('2', '10', operator.lt)
+        self.assert_order('foo_1.html', 'foo_2.html', operator.lt)
+        self.assert_order('foo_1.1.html', 'foo_2.html', operator.lt)
+        self.assert_order('foo_1.html', 'foo_10.html', operator.lt)
+        self.assert_order('foo_2.html', 'foo_10.html', operator.lt)
+        self.assert_order('foo_23.html', 'foo_10.html', operator.gt)
+        self.assert_order('foo_23.html', 'foo_100.html', operator.lt)
 
 
 class KeyCompareTest(unittest.TestCase):
@@ -1705,28 +1739,39 @@ class KeyCompareTest(unittest.TestCase):
         self.assertEqual(
             cmp(self._port.test_key(x), self._port.test_key(y)), result)
 
+    def assert_order(self, x, y, predicate):
+        self.assertTrue(
+            predicate(self._port.test_key(x), self._port.test_key(y)))
+
     def test_test_key(self):
-        self.assert_cmp('/a', '/a', 0)
-        self.assert_cmp('/a', '/b', -1)
-        self.assert_cmp('/a2', '/a10', -1)
-        self.assert_cmp('/a2/foo', '/a10/foo', -1)
-        self.assert_cmp('/a/foo11', '/a/foo2', 1)
-        self.assert_cmp('/ab', '/a/a/b', -1)
-        self.assert_cmp('/a/a/b', '/ab', 1)
-        self.assert_cmp('/foo-bar/baz', '/foo/baz', -1)
+        self.assert_order('/a', '/a', operator.eq)
+        self.assert_order('/a', '/b', operator.lt)
+        self.assert_order('/a2', '/a10', operator.lt)
+        self.assert_order('/a2/foo', '/a10/foo', operator.lt)
+        self.assert_order('/a/foo11', '/a/foo2', operator.gt)
+        self.assert_order('/ab', '/a/a/b', operator.lt)
+        self.assert_order('/a/a/b', '/ab', operator.gt)
+        self.assert_order('/foo-bar/baz', '/foo/baz', operator.lt)
 
 
 class VirtualTestSuiteTest(unittest.TestCase):
     def test_basic(self):
-        suite = VirtualTestSuite(
-            prefix='suite', bases=['base/foo', 'base/bar'], args=['--args'])
+        suite = VirtualTestSuite(prefix='suite',
+                                 platforms=['Linux', 'Mac', 'Win'],
+                                 bases=['base/foo', 'base/bar'],
+                                 args=['--args'])
         self.assertEqual(suite.full_prefix, 'virtual/suite/')
+        self.assertEqual(suite.platforms, ['linux', 'mac', 'win'])
         self.assertEqual(suite.bases, ['base/foo', 'base/bar'])
         self.assertEqual(suite.args, ['--args'])
 
     def test_empty_bases(self):
-        suite = VirtualTestSuite(prefix='suite', bases=[], args=['--args'])
+        suite = VirtualTestSuite(prefix='suite',
+                                 platforms=['Linux', 'Mac', 'Win'],
+                                 bases=[],
+                                 args=['--args'])
         self.assertEqual(suite.full_prefix, 'virtual/suite/')
+        self.assertEqual(suite.platforms, ['linux', 'mac', 'win'])
         self.assertEqual(suite.bases, [])
         self.assertEqual(suite.args, ['--args'])
 

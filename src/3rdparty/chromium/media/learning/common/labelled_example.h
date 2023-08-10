@@ -10,7 +10,6 @@
 #include <vector>
 
 #include "base/component_export.h"
-#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "media/learning/common/value.h"
 
@@ -32,7 +31,7 @@ struct COMPONENT_EXPORT(LEARNING_COMMON) LabelledExample {
   LabelledExample(std::initializer_list<FeatureValue> init_list,
                   TargetValue target);
   LabelledExample(const LabelledExample& rhs);
-  LabelledExample(LabelledExample&& rhs);
+  LabelledExample(LabelledExample&& rhs) noexcept;
   ~LabelledExample();
 
   // Comparisons ignore weight, because it's convenient.

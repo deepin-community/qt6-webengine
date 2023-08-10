@@ -10,14 +10,13 @@
 
 #include "include/core/SkDeferredDisplayListRecorder.h"
 #include "include/gpu/GrBackendSurface.h"
-#include "include/private/GrTypesPriv.h"
+#include "include/private/gpu/ganesh/GrTypesPriv.h"
 #include "src/core/SkYUVAInfoLocation.h"
 #include "src/image/SkImage_Base.h"
 
 class GrColorSpaceXform;
 class GrDirectContext;
 class GrImageContext;
-class GrSurfaceFillContext;
 class SkColorSpace;
 
 class SkImage_GpuBase : public SkImage_Base {
@@ -37,10 +36,6 @@ public:
 
     bool onIsValid(GrRecordingContext*) const final;
 
-#if GR_TEST_UTILS
-    void resetContext(sk_sp<GrImageContext> newContext);
-#endif
-
     static bool ValidateBackendTexture(const GrCaps*, const GrBackendTexture& tex,
                                        GrColorType grCT, SkColorType ct, SkAlphaType at,
                                        sk_sp<SkColorSpace> cs);
@@ -49,16 +44,16 @@ public:
 
     // Helper for making a lazy proxy for a promise image.
     // PromiseImageTextureFulfillProc must not be null.
-    static sk_sp<GrTextureProxy> MakePromiseImageLazyProxy(GrContextThreadSafeProxy*,
-                                                           SkISize dimensions,
-                                                           GrBackendFormat,
-                                                           GrMipmapped,
-                                                           PromiseImageTextureFulfillProc,
-                                                           sk_sp<GrRefCntedCallback> releaseHelper);
+    static sk_sp<GrTextureProxy> MakePromiseImageLazyProxy(
+            GrContextThreadSafeProxy*,
+            SkISize dimensions,
+            GrBackendFormat,
+            GrMipmapped,
+            PromiseImageTextureFulfillProc,
+            sk_sp<skgpu::RefCntedCallback> releaseHelper);
 
 protected:
-    SkImage_GpuBase(sk_sp<GrImageContext>, SkISize size, uint32_t uniqueID, SkColorType,
-                    SkAlphaType, sk_sp<SkColorSpace>);
+    SkImage_GpuBase(sk_sp<GrImageContext>, SkImageInfo, uint32_t uniqueID);
 
     sk_sp<GrImageContext> fContext;
 

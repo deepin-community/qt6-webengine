@@ -13,14 +13,14 @@
 // limitations under the License.
 
 import {binaryDecode, binaryEncode} from '../base/string_utils';
-import {Actions} from '../common/actions';
+import {TRACE_SUFFIX} from '../common/constants';
 
 import {
   ConsumerPortResponse,
+  hasProperty,
   isReadBuffersResponse,
   Typed
 } from './consumer_port_types';
-import {globals} from './globals';
 import {Consumer, RpcConsumerPort} from './record_controller_interfaces';
 
 export interface ChromeExtensionError extends Typed {
@@ -46,8 +46,18 @@ function isStatus(obj: Typed): obj is ChromeExtensionStatus {
   return obj.type === 'ChromeExtensionStatus';
 }
 
-function isGetCategoriesResponse(obj: Typed): obj is GetCategoriesResponse {
-  return obj.type === 'GetCategoriesResponse';
+function isObject(obj: unknown): obj is object {
+  return typeof obj === 'object' && obj !== null;
+}
+
+export function isGetCategoriesResponse(obj: unknown):
+    obj is GetCategoriesResponse {
+  if (!(isObject(obj) && hasProperty(obj, 'type') &&
+        obj.type === 'GetCategoriesResponse')) {
+    return false;
+  }
+
+  return hasProperty(obj, 'categories') && Array.isArray(obj.categories);
 }
 
 // This class acts as a proxy from the record controller (running in a worker),
@@ -78,10 +88,6 @@ export class ChromeExtensionConsumerPort extends RpcConsumerPort {
       this.sendStatus(message.data.status);
       return;
     }
-    if (isGetCategoriesResponse(message.data)) {
-      globals.dispatch(Actions.setChromeCategories(message.data));
-      return;
-    }
 
     // In this else branch message.data will be a ConsumerPortResponse.
     if (isReadBuffersResponse(message.data) && message.data.slices) {
@@ -94,5 +100,9 @@ export class ChromeExtensionConsumerPort extends RpcConsumerPort {
   handleCommand(method: string, requestData: Uint8Array): void {
     const reqEncoded = binaryEncode(requestData);
     this.extensionPort.postMessage({method, requestData: reqEncoded});
+  }
+
+  getRecordedTraceSuffix(): string {
+    return `${TRACE_SUFFIX}.gz`;
   }
 }

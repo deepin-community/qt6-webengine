@@ -6,6 +6,8 @@
 
 #include <stddef.h>
 #include <stdint.h>
+
+#include <tuple>
 #include <utility>
 
 #include "base/bind.h"
@@ -127,7 +129,7 @@ void FixTopSitesTable(sql::Database* db, int version) {
         "DELETE FROM thumbnails "
         "WHERE (url_rank = -1 AND last_forced = 0) "
         "OR (url_rank <> -1 AND last_forced <> 0)";
-    ignore_result(db->Execute(kFixRankSql));
+    std::ignore = db->Execute(kFixRankSql);
     if (db->GetLastChangeCount() > 0)
       RecordRecoveryEvent(RECOVERY_EVENT_INVARIANT_RANK);
   }
@@ -139,8 +141,8 @@ void FixTopSitesTable(sql::Database* db, int version) {
   static const char kFixRedirectsSql[] =
       "DELETE FROM %s "
       "WHERE url <> substr(redirects, -length(url), length(url))";
-  ignore_result(
-      db->Execute(base::StringPrintf(kFixRedirectsSql, kTableName).c_str()));
+  std::ignore =
+      db->Execute(base::StringPrintf(kFixRedirectsSql, kTableName).c_str());
   if (db->GetLastChangeCount() > 0)
     RecordRecoveryEvent(RECOVERY_EVENT_INVARIANT_REDIRECT);
 
@@ -160,7 +162,7 @@ void FixTopSitesTable(sql::Database* db, int version) {
   sql::Statement update_statement(db->GetUniqueStatement(
       base::StringPrintf(kAdjustRankSql, kTableName).c_str()));
 
-  // Update any rows where |next_rank| doesn't match |url_rank|.
+  // Update any rows where `next_rank` doesn't match `url_rank`.
   int next_rank = 0;
   bool adjusted = false;
   while (select_statement.Step()) {
@@ -246,7 +248,7 @@ void DatabaseErrorCallback(sql::Database* db,
     // Prevent reentrant calls.
     db->reset_error_callback();
 
-    // After this call, the |db| handle is poisoned so that future calls will
+    // After this call, the `db` handle is poisoned so that future calls will
     // return errors until the handle is re-opened.
     RecoverAndFixup(db, db_path);
 
@@ -255,7 +257,7 @@ void DatabaseErrorCallback(sql::Database* db,
     // or hardware issues, not coding errors at the client level, so displaying
     // the error would probably lead to confusion.  The ignored call signals the
     // test-expectation framework that the error was handled.
-    ignore_result(sql::Database::IsExpectedSqliteError(extended_error));
+    std::ignore = sql::Database::IsExpectedSqliteError(extended_error);
     return;
   }
 
@@ -322,7 +324,9 @@ bool TopSitesDatabase::InitImpl(const base::FilePath& db_name) {
 
   // Clear databases which are too old to process.
   DCHECK_LT(kDeprecatedVersionNumber, kVersionNumber);
-  sql::MetaTable::RazeIfDeprecated(db_.get(), kDeprecatedVersionNumber);
+  sql::MetaTable::RazeIfIncompatible(
+      db_.get(), /*lowest_supported_version=*/kDeprecatedVersionNumber + 1,
+      kVersionNumber);
 
   // Scope initialization in a transaction so we can't be partially
   // initialized.

@@ -4,6 +4,7 @@
 
 #include "components/exo/gaming_seat.h"
 
+#include <memory>
 #include <vector>
 
 #include "ash/shell.h"
@@ -59,8 +60,12 @@ class MockGamingSeatDelegate : public GamingSeatDelegate {
 class GamingSeatTest : public test::ExoTestBase {
  public:
   GamingSeatTest() {}
+
+  GamingSeatTest(const GamingSeatTest&) = delete;
+  GamingSeatTest& operator=(const GamingSeatTest&) = delete;
+
   void InitializeGamingSeat(MockGamingSeatDelegate* delegate) {
-    gaming_seat_.reset(new GamingSeat(delegate));
+    gaming_seat_ = std::make_unique<GamingSeat>(delegate);
   }
 
   void DestroyGamingSeat(MockGamingSeatDelegate* delegate) {
@@ -99,7 +104,6 @@ class GamingSeatTest : public test::ExoTestBase {
 
  protected:
   std::unique_ptr<GamingSeat> gaming_seat_;
-  DISALLOW_COPY_AND_ASSIGN(GamingSeatTest);
 };
 
 TEST_F(GamingSeatTest, ConnectionChange) {

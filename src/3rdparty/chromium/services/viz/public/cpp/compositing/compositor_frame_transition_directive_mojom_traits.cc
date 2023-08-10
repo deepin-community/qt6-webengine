@@ -4,7 +4,15 @@
 
 #include "services/viz/public/cpp/compositing/compositor_frame_transition_directive_mojom_traits.h"
 
+#include <utility>
+#include <vector>
+
+#include "base/time/time.h"
+#include "components/viz/common/quads/compositor_frame_transition_directive.h"
+#include "components/viz/common/quads/compositor_render_pass.h"
 #include "mojo/public/cpp/base/time_mojom_traits.h"
+#include "services/viz/public/cpp/compositing/compositor_render_pass_id_mojom_traits.h"
+#include "services/viz/public/cpp/compositing/shared_element_resource_id_mojom_traits.h"
 #include "services/viz/public/mojom/compositing/compositor_frame_transition_directive.mojom-shared.h"
 
 namespace mojo {
@@ -19,6 +27,11 @@ EnumTraits<viz::mojom::CompositorFrameTransitionDirectiveType,
       return viz::mojom::CompositorFrameTransitionDirectiveType::kSave;
     case viz::CompositorFrameTransitionDirective::Type::kAnimate:
       return viz::mojom::CompositorFrameTransitionDirectiveType::kAnimate;
+    case viz::CompositorFrameTransitionDirective::Type::kAnimateRenderer:
+      return viz::mojom::CompositorFrameTransitionDirectiveType::
+          kAnimateRenderer;
+    case viz::CompositorFrameTransitionDirective::Type::kRelease:
+      return viz::mojom::CompositorFrameTransitionDirectiveType::kRelease;
   }
   NOTREACHED();
   return viz::mojom::CompositorFrameTransitionDirectiveType::kSave;
@@ -35,6 +48,12 @@ bool EnumTraits<viz::mojom::CompositorFrameTransitionDirectiveType,
       return true;
     case viz::mojom::CompositorFrameTransitionDirectiveType::kAnimate:
       *out = viz::CompositorFrameTransitionDirective::Type::kAnimate;
+      return true;
+    case viz::mojom::CompositorFrameTransitionDirectiveType::kAnimateRenderer:
+      *out = viz::CompositorFrameTransitionDirective::Type::kAnimateRenderer;
+      return true;
+    case viz::mojom::CompositorFrameTransitionDirectiveType::kRelease:
+      *out = viz::CompositorFrameTransitionDirective::Type::kRelease;
       return true;
   }
   return false;
@@ -122,6 +141,27 @@ bool EnumTraits<viz::mojom::CompositorFrameTransitionDirectiveEffect,
 }
 
 // static
+bool StructTraits<viz::mojom::CompositorFrameTransitionDirectiveConfigDataView,
+                  viz::CompositorFrameTransitionDirective::TransitionConfig>::
+    Read(viz::mojom::CompositorFrameTransitionDirectiveConfigDataView data,
+         viz::CompositorFrameTransitionDirective::TransitionConfig* out) {
+  return data.ReadDuration(&out->duration) && data.ReadDelay(&out->delay) &&
+         out->IsValid();
+}
+
+// static
+bool StructTraits<
+    viz::mojom::CompositorFrameTransitionDirectiveSharedElementDataView,
+    viz::CompositorFrameTransitionDirective::SharedElement>::
+    Read(viz::mojom::CompositorFrameTransitionDirectiveSharedElementDataView
+             data,
+         viz::CompositorFrameTransitionDirective::SharedElement* out) {
+  return data.ReadConfig(&out->config) &&
+         data.ReadRenderPassId(&out->render_pass_id) &&
+         data.ReadSharedElementResourceId(&out->shared_element_resource_id);
+}
+
+// static
 bool StructTraits<viz::mojom::CompositorFrameTransitionDirectiveDataView,
                   viz::CompositorFrameTransitionDirective>::
     Read(viz::mojom::CompositorFrameTransitionDirectiveDataView data,
@@ -130,17 +170,19 @@ bool StructTraits<viz::mojom::CompositorFrameTransitionDirectiveDataView,
 
   viz::CompositorFrameTransitionDirective::Type type;
   viz::CompositorFrameTransitionDirective::Effect effect;
-  base::TimeDelta duration;
+  viz::CompositorFrameTransitionDirective::TransitionConfig root_config;
+  std::vector<viz::CompositorFrameTransitionDirective::SharedElement>
+      shared_elements;
   if (!data.ReadType(&type) || !data.ReadEffect(&effect) ||
-      !data.ReadDuration(&duration)) {
+      !data.ReadRootConfig(&root_config) ||
+      !data.ReadSharedElements(&shared_elements)) {
     return false;
   }
+  bool is_renderer_driven_animation = data.is_renderer_driven_animation();
 
-  if (duration > viz::CompositorFrameTransitionDirective::kMaxDuration)
-    return false;
-
-  *out = viz::CompositorFrameTransitionDirective(sequence_id, type, effect,
-                                                 duration);
+  *out = viz::CompositorFrameTransitionDirective(
+      sequence_id, type, is_renderer_driven_animation, effect, root_config,
+      std::move(shared_elements));
   return true;
 }
 

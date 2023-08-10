@@ -52,7 +52,6 @@
 #include <openssl/aead.h>
 #include <openssl/aes.h>
 #include <openssl/cipher.h>
-#include <openssl/cpu.h>
 #include <openssl/err.h>
 #include <openssl/mem.h>
 #include <openssl/nid.h>
@@ -141,10 +140,22 @@ typedef struct {
 
 static int aes_init_key(EVP_CIPHER_CTX *ctx, const uint8_t *key,
                         const uint8_t *iv, int enc) {
-  int ret, mode;
+  int ret;
   EVP_AES_KEY *dat = (EVP_AES_KEY *)ctx->cipher_data;
+  const int mode = ctx->cipher->flags & EVP_CIPH_MODE_MASK;
 
-  mode = ctx->cipher->flags & EVP_CIPH_MODE_MASK;
+  if (mode == EVP_CIPH_CTR_MODE) {
+    switch (ctx->key_len) {
+      case 16:
+        boringssl_fips_inc_counter(fips_counter_evp_aes_128_ctr);
+        break;
+
+      case 32:
+        boringssl_fips_inc_counter(fips_counter_evp_aes_256_ctr);
+        break;
+    }
+  }
+
   if ((mode == EVP_CIPH_ECB_MODE || mode == EVP_CIPH_CBC_MODE) && !enc) {
     if (hwaes_capable()) {
       ret = aes_hw_set_decrypt_key(key, ctx->key_len * 8, &dat->ks.ks);
@@ -353,6 +364,17 @@ static int aes_gcm_init_key(EVP_CIPHER_CTX *ctx, const uint8_t *key,
   if (!iv && !key) {
     return 1;
   }
+
+  switch (ctx->key_len) {
+    case 16:
+      boringssl_fips_inc_counter(fips_counter_evp_aes_128_gcm);
+      break;
+
+    case 32:
+      boringssl_fips_inc_counter(fips_counter_evp_aes_256_gcm);
+      break;
+  }
+
   if (key) {
     OPENSSL_memset(&gctx->gcm, 0, sizeof(gctx->gcm));
     gctx->ctr = aes_ctr_set_key(&gctx->ks.ks, &gctx->gcm.gcm_key, NULL, key,
@@ -887,6 +909,16 @@ static int aead_aes_gcm_init_impl(struct aead_aes_gcm_ctx *gcm_ctx,
                                   size_t *out_tag_len, const uint8_t *key,
                                   size_t key_len, size_t tag_len) {
   const size_t key_bits = key_len * 8;
+
+  switch (key_bits) {
+    case 128:
+      boringssl_fips_inc_counter(fips_counter_evp_aes_128_gcm);
+      break;
+
+    case 256:
+      boringssl_fips_inc_counter(fips_counter_evp_aes_256_gcm);
+      break;
+  }
 
   if (key_bits != 128 && key_bits != 192 && key_bits != 256) {
     OPENSSL_PUT_ERROR(CIPHER, CIPHER_R_BAD_KEY_LENGTH);

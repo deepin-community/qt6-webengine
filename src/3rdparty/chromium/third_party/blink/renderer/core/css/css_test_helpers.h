@@ -6,6 +6,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_CSS_CSS_TEST_HELPERS_H_
 
 #include "base/memory/scoped_refptr.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/renderer/core/css/css_selector_list.h"
 #include "third_party/blink/renderer/core/css/rule_set.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
@@ -28,7 +29,7 @@ namespace css_test_helpers {
 // RuleSet& ruleSet = sheet.ruleSet();
 // ... examine RuleSet to find the rule and test properties on it.
 class TestStyleSheet {
-  STACK_ALLOCATED();
+  DISALLOW_NEW();
 
  public:
   TestStyleSheet();
@@ -58,8 +59,19 @@ PropertyRegistration* CreateLengthRegistration(const String& name, int px);
 void RegisterProperty(Document& document,
                       const String& name,
                       const String& syntax,
-                      const base::Optional<String>& initial_value,
+                      const absl::optional<String>& initial_value,
                       bool is_inherited);
+void RegisterProperty(Document& document,
+                      const String& name,
+                      const String& syntax,
+                      const absl::optional<String>& initial_value,
+                      bool is_inherited,
+                      ExceptionState&);
+void DeclareProperty(Document& document,
+                     const String& name,
+                     const String& syntax,
+                     const absl::optional<String>& initial_value,
+                     bool is_inherited);
 
 scoped_refptr<CSSVariableData> CreateVariableData(String);
 const CSSValue* CreateCustomIdent(AtomicString);

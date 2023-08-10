@@ -4,6 +4,8 @@
 
 #include "ui/views/widget/desktop_aura/desktop_screen_ozone.h"
 
+#include <memory>
+
 #include "build/build_config.h"
 #include "ui/aura/screen_ozone.h"
 #include "ui/views/widget/desktop_aura/desktop_screen.h"
@@ -23,12 +25,11 @@ gfx::NativeWindow DesktopScreenOzone::GetNativeWindowFromAcceleratedWidget(
       widget);
 }
 
-// To avoid multiple definitions when use_x11 && use_ozone is true, disable this
-// factory method for OS_LINUX as Linux has a factory method that decides what
-// screen to use based on IsUsingOzonePlatform feature flag.
-#if !defined(OS_LINUX) && !defined(OS_CHROMEOS)
-display::Screen* CreateDesktopScreen() {
-  return new DesktopScreenOzone();
+#if !BUILDFLAG(IS_LINUX) && !BUILDFLAG(IS_CHROMEOS)
+std::unique_ptr<display::Screen> CreateDesktopScreen() {
+  auto screen = std::make_unique<aura::ScreenOzone>();
+  screen->Initialize();
+  return screen;
 }
 #endif
 

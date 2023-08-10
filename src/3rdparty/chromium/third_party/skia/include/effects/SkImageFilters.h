@@ -10,15 +10,17 @@
 
 #include "include/core/SkBlendMode.h"
 #include "include/core/SkColor.h"
-#include "include/core/SkFilterQuality.h"
 #include "include/core/SkImage.h"
 #include "include/core/SkImageFilter.h"
 #include "include/core/SkPicture.h"
 #include "include/core/SkRect.h"
 #include "include/core/SkTileMode.h"
+#include "include/core/SkTypes.h"
+#include "include/effects/SkRuntimeEffect.h"
 
 #include <cstddef>
 
+class SkBlender;
 class SkColorFilter;
 class SkPaint;
 class SkRegion;
@@ -94,6 +96,17 @@ public:
      *  @cropRect         Optional rectangle to crop input and output.
      */
     static sk_sp<SkImageFilter> Blend(SkBlendMode mode, sk_sp<SkImageFilter> background,
+                                      sk_sp<SkImageFilter> foreground = nullptr,
+                                      const CropRect& cropRect = {});
+
+    /**
+     *  This filter takes an SkBlendMode and uses it to composite the two filters together.
+     *  @param blender       The blender that defines the compositing operation
+     *  @param background The Dst pixels used in blending, if null the source bitmap is used.
+     *  @param foreground The Src pixels used in blending, if null the source bitmap is used.
+     *  @cropRect         Optional rectangle to crop input and output.
+     */
+    static sk_sp<SkImageFilter> Blend(sk_sp<SkBlender> blender, sk_sp<SkImageFilter> background,
                                       sk_sp<SkImageFilter> foreground = nullptr,
                                       const CropRect& cropRect = {});
 
@@ -263,12 +276,6 @@ public:
     static sk_sp<SkImageFilter> MatrixTransform(const SkMatrix& matrix,
                                                 const SkSamplingOptions& sampling,
                                                 sk_sp<SkImageFilter> input);
-#ifdef SK_SUPPORT_LEGACY_MATRIX_IMAGEFILTER
-    // DEPRECATED
-    static sk_sp<SkImageFilter> MatrixTransform(const SkMatrix& matrix,
-                                                SkFilterQuality filterQuality,
-                                                sk_sp<SkImageFilter> input);
-#endif
 
     /**
      *  Create a filter that merges the 'count' filters together by drawing their results in order
@@ -327,6 +334,46 @@ public:
         return Picture(std::move(pic), target);
     }
 
+#ifdef SK_ENABLE_SKSL
+    /**
+     *  Create a filter that fills the output with the per-pixel evaluation of the SkShader produced
+     *  by the SkRuntimeShaderBuilder. The shader is defined in the image filter's local coordinate
+     *  system, so it will automatically be affected by SkCanvas' transform.
+     *
+     *  @param builder         The builder used to produce the runtime shader, that will in turn
+     *                         fill the result image
+     *  @param childShaderName The name of the child shader defined in the builder that will be
+     *                         bound to the input param (or the source image if the input param
+     *                         is null).  If null the builder can have exactly one child shader,
+     *                         which automatically binds the input param.
+     *  @param input           The image filter that will be provided as input to the runtime
+     *                         shader. If null the implicit source image is used instead
+     */
+    static sk_sp<SkImageFilter> RuntimeShader(const SkRuntimeShaderBuilder& builder,
+                                              const char* childShaderName,
+                                              sk_sp<SkImageFilter> input);
+
+    /**
+     *  Create a filter that fills the output with the per-pixel evaluation of the SkShader produced
+     *  by the SkRuntimeShaderBuilder. The shader is defined in the image filter's local coordinate
+     *  system, so it will automatically be affected by SkCanvas' transform.
+     *
+     *  @param builder          The builder used to produce the runtime shader, that will in turn
+     *                          fill the result image
+     *  @param childShaderNames The names of the child shaders defined in the builder that will be
+     *                          bound to the input params (or the source image if the input param
+     *                          is null). If any name is null, or appears more than once, factory
+     *                          fails and returns nullptr.
+     *  @param inputs           The image filters that will be provided as input to the runtime
+     *                          shader. If any are null, the implicit source image is used instead.
+     *  @param inputCount       How many entries are present in 'childShaderNames' and 'inputs'.
+     */
+    static sk_sp<SkImageFilter> RuntimeShader(const SkRuntimeShaderBuilder& builder,
+                                              const char* childShaderNames[],
+                                              const sk_sp<SkImageFilter> inputs[],
+                                              int inputCount);
+#endif  // SK_ENABLE_SKSL
+
     enum class Dither : bool {
         kNo = false,
         kYes = true
@@ -347,14 +394,6 @@ public:
     }
     static sk_sp<SkImageFilter> Shader(sk_sp<SkShader> shader, Dither dither,
                                        const CropRect& cropRect = {});
-#ifdef SK_SUPPORT_LEGACY_IMPLICIT_FILTERQUALITY
-    // As above, but the filter quality defines what is used in image shaders that defer to the
-    // quality stored on an SkPaint. NOTE: this default behavior is deprecated, so prefer creating
-    // image shaders with explicit sampling parameters and call the other Shader() factory instead.
-    static sk_sp<SkImageFilter> Shader(sk_sp<SkShader> shader, Dither dither,
-                                       SkFilterQuality filterQuality,
-                                       const CropRect& cropRect = {});
-#endif
 
     /**
      *  Create a tile image filter.
@@ -504,8 +543,6 @@ public:
                                                 SkScalar ks, SkScalar shininess,
                                                 sk_sp<SkImageFilter> input,
                                                 const CropRect& cropRect = {});
-
-    static void RegisterFlattenables();
 
 private:
     SkImageFilters() = delete;

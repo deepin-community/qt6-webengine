@@ -31,9 +31,16 @@ class CookieManager {
   using GetCookieCallback = base::OnceCallback<void(const std::string&)>;
   virtual void GetCookie(const GURL& url, GetCookieCallback callback) = 0;
 
+  // Gets the cookies for the given URL in the form of the 'Set-Cookie' HTTP
+  // response header.
+  using GetResponseCookiesCallback =
+      base::OnceCallback<void(const std::vector<std::string>&)>;
+  virtual void GetResponseCookies(const GURL& url,
+                                  GetResponseCookiesCallback callback) = 0;
+
   // Adds a callback to listen for changes to cookies for the given URL.
   using CookieChangedCallbackList =
-      base::CallbackList<void(const net::CookieChangeInfo&)>;
+      base::RepeatingCallbackList<void(const net::CookieChangeInfo&)>;
   using CookieChangedCallback = CookieChangedCallbackList::CallbackType;
   virtual base::CallbackListSubscription AddCookieChangedCallback(
       const GURL& url,

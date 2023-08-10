@@ -7,14 +7,15 @@
 #ifndef CORE_FXCODEC_JBIG2_JBIG2_PAGE_H_
 #define CORE_FXCODEC_JBIG2_JBIG2_PAGE_H_
 
-#include "core/fxcrt/fx_system.h"
+#include <stdint.h>
 
 struct JBig2PageInfo {
   uint32_t m_dwWidth;
   uint32_t m_dwHeight;
   uint32_t m_dwResolutionX;
   uint32_t m_dwResolutionY;
-  uint8_t m_cFlags;
+  // Page segment flags, bit 2.
+  bool m_bDefaultPixelValue;
   bool m_bIsStriped;
   uint16_t m_wMaxStripeSize;
 };

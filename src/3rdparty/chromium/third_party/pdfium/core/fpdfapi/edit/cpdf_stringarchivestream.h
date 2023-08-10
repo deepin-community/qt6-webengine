@@ -6,21 +6,19 @@
 #define CORE_FPDFAPI_EDIT_CPDF_STRINGARCHIVESTREAM_H_
 
 #include "core/fxcrt/fx_stream.h"
+#include "core/fxcrt/fx_string_wrappers.h"
 
 class CPDF_StringArchiveStream final : public IFX_ArchiveStream {
  public:
-  explicit CPDF_StringArchiveStream(std::ostringstream* stream);
+  explicit CPDF_StringArchiveStream(fxcrt::ostringstream* stream);
   ~CPDF_StringArchiveStream() override;
 
-  // IFX_ArchiveStream
-  bool WriteByte(uint8_t byte) override;
-  bool WriteDWord(uint32_t i) override;
-  FX_FILESIZE CurrentOffset() const override;
+  // IFX_ArchiveStream:
   bool WriteBlock(const void* pData, size_t size) override;
-  bool WriteString(ByteStringView str) override;
+  FX_FILESIZE CurrentOffset() const override;
 
  private:
-  std::ostringstream* stream_;
+  fxcrt::ostringstream* stream_;
 };
 
 #endif  // CORE_FPDFAPI_EDIT_CPDF_STRINGARCHIVESTREAM_H_

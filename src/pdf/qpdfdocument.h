@@ -1,38 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2020 The Qt Company Ltd.
-** Contact: http://www.qt.io/licensing/
-**
-** This file is part of the QtPDF module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL3$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see http://www.qt.io/terms-conditions. For further
-** information use the contact form at http://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPLv3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or later as published by the Free
-** Software Foundation and appearing in the file LICENSE.GPL included in
-** the packaging of this file. Please review the following information to
-** ensure the GNU General Public License version 2.0 requirements will be
-** met: http://www.gnu.org/licenses/gpl-2.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2020 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #ifndef QPDFDOCUMENT_H
 #define QPDFDOCUMENT_H
@@ -40,6 +7,7 @@
 #include <QtPdf/qtpdfglobal.h>
 
 #include <QtCore/qobject.h>
+#include <QtCore/QAbstractListModel>
 #include <QtGui/qimage.h>
 #include <QtPdf/qpdfdocumentrenderoptions.h>
 #include <QtPdf/qpdfselection.h>
@@ -56,9 +24,10 @@ class Q_PDF_EXPORT QPdfDocument : public QObject
     Q_PROPERTY(int pageCount READ pageCount NOTIFY pageCountChanged FINAL)
     Q_PROPERTY(QString password READ password WRITE setPassword NOTIFY passwordChanged FINAL)
     Q_PROPERTY(Status status READ status NOTIFY statusChanged FINAL)
+    Q_PROPERTY(QAbstractListModel* pageModel READ pageModel NOTIFY pageModelChanged FINAL)
 
 public:
-    enum Status {
+    enum class Status {
         Null,
         Loading,
         Ready,
@@ -67,18 +36,18 @@ public:
     };
     Q_ENUM(Status)
 
-    enum DocumentError {
-        NoError,
-        UnknownError,
-        DataNotYetAvailableError,
-        FileNotFoundError,
-        InvalidFileFormatError,
-        IncorrectPasswordError,
-        UnsupportedSecuritySchemeError
+    enum class Error {
+        None,
+        Unknown,
+        DataNotYetAvailable,
+        FileNotFound,
+        InvalidFileFormat,
+        IncorrectPassword,
+        UnsupportedSecurityScheme
     };
-    Q_ENUM(DocumentError)
+    Q_ENUM(Error)
 
-    enum MetaDataField {
+    enum class MetaDataField {
         Title,
         Subject,
         Author,
@@ -90,10 +59,18 @@ public:
     };
     Q_ENUM(MetaDataField)
 
-    explicit QPdfDocument(QObject *parent = nullptr);
-    ~QPdfDocument();
+    enum class PageModelRole {
+        Label = Qt::UserRole,
+        PointSize,
+        NRoles
+    };
+    Q_ENUM(PageModelRole)
 
-    DocumentError load(const QString &fileName);
+    QPdfDocument() : QPdfDocument(nullptr) {}
+    explicit QPdfDocument(QObject *parent);
+    ~QPdfDocument() override;
+
+    Error load(const QString &fileName);
 
     Status status() const;
 
@@ -103,13 +80,17 @@ public:
 
     QVariant metaData(MetaDataField field) const;
 
-    DocumentError error() const;
+    Error error() const;
 
     void close();
 
     int pageCount() const;
 
-    QSizeF pageSize(int page) const;
+    Q_INVOKABLE QSizeF pagePointSize(int page) const;
+
+    Q_INVOKABLE QString pageLabel(int page);
+
+    QAbstractListModel *pageModel();
 
     QImage render(int page, QSize imageSize, QPdfDocumentRenderOptions options = QPdfDocumentRenderOptions());
 
@@ -122,13 +103,18 @@ Q_SIGNALS:
     void passwordRequired();
     void statusChanged(QPdfDocument::Status status);
     void pageCountChanged(int pageCount);
+    void pageModelChanged();
 
 private:
-    friend class QPdfBookmarkModelPrivate;
+    friend struct QPdfBookmarkModelPrivate;
+    friend class QPdfFile;
     friend class QPdfLinkModelPrivate;
+    friend class QPdfPageModel;
     friend class QPdfSearchModel;
     friend class QPdfSearchModelPrivate;
     friend class QQuickPdfSelection;
+
+    QString fileName() const;
 
     Q_PRIVATE_SLOT(d, void _q_tryLoadingWithSizeFromContentHeader())
     Q_PRIVATE_SLOT(d, void _q_copyFromSequentialSourceDevice())

@@ -18,6 +18,7 @@
 #include "base/test/task_environment.h"
 #include "base/threading/sequence_bound.h"
 #include "base/threading/thread.h"
+#include "base/time/time.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -109,8 +110,8 @@ class FakePropertyProviderAsync {
       fidl::InterfaceRequest<::fuchsia::intl::PropertyProvider>
           provider_request)
       : thread_("Property Provider Thread") {
-    base::Thread::Options options(base::MessagePumpType::IO, 0);
-    CHECK(thread_.StartWithOptions(options));
+    CHECK(thread_.StartWithOptions(
+        base::Thread::Options(base::MessagePumpType::IO, 0)));
     property_provider_ = base::SequenceBound<FakePropertyProvider>(
         thread_.task_runner(), std::move(provider_request));
   }

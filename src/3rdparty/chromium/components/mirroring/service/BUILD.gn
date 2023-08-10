@@ -3,6 +3,7 @@
 # found in the LICENSE file.
 
 import("//testing/test.gni")
+import("//third_party/libaom/options.gni")
 
 component("mirroring_service") {
   sources = [
@@ -14,6 +15,8 @@ component("mirroring_service") {
     "message_dispatcher.h",
     "mirror_settings.cc",
     "mirror_settings.h",
+    "mirroring_features.cc",
+    "mirroring_features.h",
     "mirroring_service.cc",
     "mirroring_service.h",
     "receiver_response.cc",
@@ -32,8 +35,6 @@ component("mirroring_service") {
     "value_util.h",
     "video_capture_client.cc",
     "video_capture_client.h",
-    "wifi_status_monitor.cc",
-    "wifi_status_monitor.h",
   ]
 
   public_deps = [ "//base" ]
@@ -63,7 +64,8 @@ component("mirroring_service") {
     "//services/network/public/cpp",
     "//services/network/public/mojom",
     "//services/viz/public/cpp/gpu",
-    "//third_party/jsoncpp",
+    "//third_party/jsoncpp",  # Required by Open Screen API.
+    "//third_party/libaom:libaom_buildflags",
     "//third_party/openscreen/src/cast/streaming:common",
     "//ui/base",
     "//ui/gfx",
@@ -90,7 +92,6 @@ source_set("unittests") {
     "session_unittest.cc",
     "udp_socket_client_unittest.cc",
     "video_capture_client_unittest.cc",
-    "wifi_status_monitor_unittest.cc",
   ]
 
   deps = [

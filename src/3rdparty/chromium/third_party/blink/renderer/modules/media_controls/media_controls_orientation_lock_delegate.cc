@@ -6,12 +6,13 @@
 
 #include <memory>
 
+#include "base/time/time.h"
 #include "build/build_config.h"
 #include "third_party/blink/public/common/thread_safe_browser_interface_broker_proxy.h"
-#include "third_party/blink/public/common/widget/screen_info.h"
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
+#include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/screen.h"
 #include "third_party/blink/renderer/core/html/media/html_video_element.h"
 #include "third_party/blink/renderer/core/page/chrome_client.h"
@@ -24,11 +25,12 @@
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 #include "third_party/blink/renderer/platform/wtf/math_extras.h"
+#include "ui/display/screen_info.h"
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/platform/mojo/mojo_helper.h"
-#endif  // defined(OS_ANDROID)
+#endif  // BUILDFLAG(IS_ANDROID)
 
 #undef atan2  // to use std::atan2 instead of wtf_atan2
 #undef fmod   // to use std::fmod instead of wtf_fmod
@@ -157,14 +159,14 @@ void MediaControlsOrientationLockDelegate::MaybeListenToDeviceOrientation() {
   if (!RuntimeEnabledFeatures::VideoRotateToFullscreenEnabled())
     return;
 
-  if (is_auto_rotate_enabled_by_user_override_for_testing_ != base::nullopt) {
+  if (is_auto_rotate_enabled_by_user_override_for_testing_ != absl::nullopt) {
     GotIsAutoRotateEnabledByUser(
         is_auto_rotate_enabled_by_user_override_for_testing_.value());
     return;
   }
 
 // Check whether the user locked screen orientation at the OS level.
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   DCHECK(!monitor_.is_bound());
   Platform::Current()->GetBrowserInterfaceBroker()->GetInterface(
       monitor_.BindNewPipeAndPassReceiver(
@@ -174,7 +176,7 @@ void MediaControlsOrientationLockDelegate::MaybeListenToDeviceOrientation() {
       WrapPersistent(this)));
 #else
   GotIsAutoRotateEnabledByUser(true);  // Assume always enabled on other OSes.
-#endif  // defined(OS_ANDROID)
+#endif  // BUILDFLAG(IS_ANDROID)
 }
 
 void MediaControlsOrientationLockDelegate::GotIsAutoRotateEnabledByUser(
@@ -270,13 +272,13 @@ MediaControlsOrientationLockDelegate::ComputeOrientationLock() const {
 
   ChromeClient& chrome_client = frame->GetChromeClient();
   switch (chrome_client.GetScreenInfo(*frame).orientation_type) {
-    case mojom::blink::ScreenOrientation::kPortraitPrimary:
-    case mojom::blink::ScreenOrientation::kPortraitSecondary:
+    case display::mojom::blink::ScreenOrientation::kPortraitPrimary:
+    case display::mojom::blink::ScreenOrientation::kPortraitSecondary:
       return device::mojom::blink::ScreenOrientationLockType::PORTRAIT;
-    case mojom::blink::ScreenOrientation::kLandscapePrimary:
-    case mojom::blink::ScreenOrientation::kLandscapeSecondary:
+    case display::mojom::blink::ScreenOrientation::kLandscapePrimary:
+    case display::mojom::blink::ScreenOrientation::kLandscapeSecondary:
       return device::mojom::blink::ScreenOrientationLockType::LANDSCAPE;
-    case mojom::blink::ScreenOrientation::kUndefined:
+    case display::mojom::blink::ScreenOrientation::kUndefined:
       return device::mojom::blink::ScreenOrientationLockType::LANDSCAPE;
   }
 
@@ -300,8 +302,8 @@ MediaControlsOrientationLockDelegate::ComputeDeviceOrientation(
   // onto the device's screen in its natural orientation. (x,y) will lie within
   // the unit circle centered on (0,0), e.g. if the top of the device is
   // pointing upwards (x,y) will be (0,-1).
-  double x = -std::sin(deg2rad(gamma)) * std::cos(deg2rad(beta));
-  double y = -std::sin(deg2rad(beta));
+  double x = -std::sin(Deg2rad(gamma)) * std::cos(Deg2rad(beta));
+  double y = -std::sin(Deg2rad(beta));
 
   // Convert (x,y) to polar coordinates: 0 <= device_orientation_angle < 360 and
   // 0 <= r <= 1, such that device_orientation_angle is the clockwise angle in
@@ -315,13 +317,13 @@ MediaControlsOrientationLockDelegate::ComputeDeviceOrientation(
   // so we pass y=x and x=-y to atan2 to rotate by 90 degrees.
   double r = std::sqrt(x * x + y * y);
   double device_orientation_angle =
-      std::fmod(rad2deg(std::atan2(/* y= */ x, /* x= */ -y)) + 360, 360);
+      std::fmod(Rad2deg(std::atan2(/* y= */ x, /* x= */ -y)) + 360, 360);
 
   // If angle between device's screen and the horizontal plane is less than
   // kMinElevationAngle (chosen to approximately match Android's behavior), then
   // device is too flat to reliably determine orientation.
   constexpr double kMinElevationAngle = 24;  // degrees from horizontal plane
-  if (r < std::sin(deg2rad(kMinElevationAngle)))
+  if (r < std::sin(Deg2rad(kMinElevationAngle)))
     return DeviceOrientationType::kFlat;
 
   // device_orientation_angle snapped to nearest multiple of 90.

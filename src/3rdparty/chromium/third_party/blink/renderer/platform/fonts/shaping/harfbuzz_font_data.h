@@ -8,7 +8,6 @@
 #include "third_party/blink/renderer/platform/fonts/font_platform_data.h"
 #include "third_party/blink/renderer/platform/fonts/opentype/open_type_vertical_data.h"
 #include "third_party/blink/renderer/platform/fonts/shaping/harfbuzz_face.h"
-#include "third_party/blink/renderer/platform/wtf/assertions.h"
 #include "third_party/skia/include/core/SkFont.h"
 
 struct hb_font_t;
@@ -17,19 +16,19 @@ namespace blink {
 
 const unsigned kInvalidFallbackMetricsValue = static_cast<unsigned>(-1);
 
-// The HarfBuzzFontData struct carries user-pointer data for hb_font_t callback
-// functions/operations. It contains metrics and OpenType layout information
-// related to a font scaled to a particular size.
-struct HarfBuzzFontData {
+// The HarfBuzzFontData struct carries thread specific user-pointer data for
+// |hb_font_t| callback functions/operations. It contains metrics and OpenType
+// layout information related to a font scaled to a particular size.
+struct HarfBuzzFontData : public RefCounted<HarfBuzzFontData> {
   USING_FAST_MALLOC(HarfBuzzFontData);
 
  public:
-  HarfBuzzFontData()
-      : font_(),
-        space_in_gpos_(SpaceGlyphInOpenTypeTables::Unknown),
-        space_in_gsub_(SpaceGlyphInOpenTypeTables::Unknown),
-        vertical_data_(nullptr),
-        range_set_(nullptr) {}
+  static scoped_refptr<HarfBuzzFontData> Create(hb_font_t* hb_font) {
+    return base::AdoptRef(new HarfBuzzFontData(hb_font));
+  }
+
+  HarfBuzzFontData(const HarfBuzzFontData&) = delete;
+  HarfBuzzFontData& operator=(const HarfBuzzFontData&) = delete;
 
   // The vertical origin and vertical advance functions in HarfBuzzFace require
   // the ascent and height metrics as fallback in case no specific vertical
@@ -42,10 +41,9 @@ struct HarfBuzzFontData {
     unsigned dummy_ascent_inflation = 0;
     unsigned dummy_descent_inflation = 0;
 
-    font_ = SkFont();
-    platform_data.SetupSkFont(&font_);
+    font_ = platform_data.CreateSkFont();
 
-    if (UNLIKELY(vertical_layout == HarfBuzzFace::PrepareForVerticalLayout)) {
+    if (UNLIKELY(vertical_layout == HarfBuzzFace::kPrepareForVerticalLayout)) {
       FontMetrics::AscentDescentWithHacks(
           ascent, descent, dummy_ascent_inflation, dummy_descent_inflation,
           platform_data, font_);
@@ -90,6 +88,7 @@ struct HarfBuzzFontData {
     return vertical_data_;
   }
 
+  HbScoped<hb_font_t> unscaled_font_;
   SkFont font_;
 
   // Capture these scaled fallback metrics from FontPlatformData so that a
@@ -98,16 +97,18 @@ struct HarfBuzzFontData {
   float ascent_fallback_;
   float height_fallback_;
 
-  enum class SpaceGlyphInOpenTypeTables { Unknown, Present, NotPresent };
+  enum class SpaceGlyphInOpenTypeTables { kUnknown, kPresent, kNotPresent };
 
-  SpaceGlyphInOpenTypeTables space_in_gpos_;
-  SpaceGlyphInOpenTypeTables space_in_gsub_;
+  SpaceGlyphInOpenTypeTables space_in_gpos_ =
+      SpaceGlyphInOpenTypeTables::kUnknown;
+  SpaceGlyphInOpenTypeTables space_in_gsub_ =
+      SpaceGlyphInOpenTypeTables::kUnknown;
 
   scoped_refptr<OpenTypeVerticalData> vertical_data_;
   scoped_refptr<UnicodeRangeSet> range_set_;
 
  private:
-  DISALLOW_COPY_AND_ASSIGN(HarfBuzzFontData);
+  explicit HarfBuzzFontData(hb_font_t* hb_font) : unscaled_font_(hb_font) {}
 };
 
 }  // namespace blink

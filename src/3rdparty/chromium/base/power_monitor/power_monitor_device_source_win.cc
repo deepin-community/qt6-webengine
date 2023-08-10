@@ -4,12 +4,15 @@
 
 #include "base/power_monitor/power_monitor_device_source.h"
 
+#include <string>
+
 #include "base/logging.h"
 #include "base/power_monitor/power_monitor.h"
 #include "base/power_monitor/power_monitor_source.h"
-#include "base/strings/string16.h"
 #include "base/strings/string_util.h"
 #include "base/task/current_thread.h"
+#include "base/task/sequenced_task_runner.h"
+#include "base/task/thread_pool.h"
 #include "base/win/wrapped_window_proc.h"
 
 namespace base {
@@ -55,15 +58,39 @@ void ProcessWmPowerBroadcastMessage(WPARAM event_id) {
 
 }  // namespace
 
+void PowerMonitorDeviceSource::PlatformInit() {
+  // Only for testing.
+  if (!CurrentUIThread::IsSet()) {
+    return;
+  }
+  speed_limit_observer_ =
+      std::make_unique<base::SequenceBound<SpeedLimitObserverWin>>(
+          base::ThreadPool::CreateSequencedTaskRunner({}),
+          BindRepeating(&PowerMonitorSource::ProcessSpeedLimitEvent));
+}
+
+void PowerMonitorDeviceSource::PlatformDestroy() {
+  // Because |speed_limit_observer_| is sequence bound, the actual destruction
+  // happens asynchronously on its task runner. Until this has completed it is
+  // still possible for PowerMonitorSource::ProcessSpeedLimitEvent to be called.
+  speed_limit_observer_.reset();
+}
+
 // Function to query the system to see if it is currently running on
 // battery power.  Returns true if running on battery.
-bool PowerMonitorDeviceSource::IsOnBatteryPowerImpl() {
+bool PowerMonitorDeviceSource::IsOnBatteryPower() {
   SYSTEM_POWER_STATUS status;
   if (!GetSystemPowerStatus(&status)) {
     DPLOG(ERROR) << "GetSystemPowerStatus failed";
     return false;
   }
   return (status.ACLineStatus == 0);
+}
+
+int PowerMonitorDeviceSource::GetInitialSpeedLimit() {
+  // Returns the maximum value once at start. Subsequent actual values will be
+  // provided asynchronously via callbacks instead.
+  return PowerThermalObserver::kSpeedLimitMax;
 }
 
 PowerMonitorDeviceSource::PowerMessageWindow::PowerMessageWindow()

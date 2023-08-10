@@ -8,14 +8,12 @@
 #include <vector>
 
 #include "base/bind.h"
-#include "base/macros.h"
-#include "base/optional.h"
 #include "base/run_loop.h"
 #include "base/strings/string_piece.h"
 #include "base/test/bind.h"
 #include "base/test/task_environment.h"
-#include "fuchsia/base/fit_adapter.h"
-#include "fuchsia/base/result_receiver.h"
+#include "base/test/test_future.h"
+#include "fuchsia/base/test/fit_adapter.h"
 #include "fuchsia/engine/browser/cookie_manager_impl.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "net/cookies/cookie_access_result.h"
@@ -24,6 +22,7 @@
 #include "services/network/public/mojom/network_context.mojom.h"
 #include "services/network/test/fake_test_cert_verifier_params_factory.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace {
 
@@ -45,7 +44,8 @@ std::unique_ptr<net::CanonicalCookie> CreateCookie(base::StringPiece name,
       /*expiration_time=*/base::Time(), /*last_access_time=*/base::Time(),
       /*secure=*/true,
       /*httponly*/ false, net::CookieSameSite::NO_RESTRICTION,
-      net::COOKIE_PRIORITY_MEDIUM, /*same_party=*/false);
+      net::COOKIE_PRIORITY_MEDIUM, /*same_party=*/false,
+      /*partition_key=*/absl::nullopt);
 }
 
 class CookieManagerImplTest : public testing::Test {
@@ -57,6 +57,10 @@ class CookieManagerImplTest : public testing::Test {
         cookie_manager_(
             base::BindRepeating(&CookieManagerImplTest::GetNetworkContext,
                                 base::Unretained(this))) {}
+
+  CookieManagerImplTest(const CookieManagerImplTest&) = delete;
+  CookieManagerImplTest& operator=(const CookieManagerImplTest&) = delete;
+
   ~CookieManagerImplTest() override = default;
 
  protected:
@@ -98,8 +102,8 @@ class CookieManagerImplTest : public testing::Test {
   }
 
   // Synchronously fetches all cookies via the |cookie_manager_|.
-  // Returns a base::nullopt if the iterator closes before a GetNext() returns.
-  base::Optional<std::vector<fuchsia::web::Cookie>> GetAllCookies() {
+  // Returns a absl::nullopt if the iterator closes before a GetNext() returns.
+  absl::optional<std::vector<fuchsia::web::Cookie>> GetAllCookies() {
     base::RunLoop get_cookies_loop;
     fuchsia::web::CookiesIteratorPtr cookies_iterator;
     cookies_iterator.set_error_handler([&](zx_status_t status) {
@@ -108,7 +112,7 @@ class CookieManagerImplTest : public testing::Test {
     });
     cookie_manager_.GetCookieList(nullptr, nullptr,
                                   cookies_iterator.NewRequest());
-    base::Optional<std::vector<fuchsia::web::Cookie>> cookies;
+    absl::optional<std::vector<fuchsia::web::Cookie>> cookies;
     std::function<void(std::vector<fuchsia::web::Cookie>)> get_next_callback =
         [&](std::vector<fuchsia::web::Cookie> new_cookies) {
           if (!cookies.has_value()) {
@@ -139,41 +143,40 @@ class CookieManagerImplTest : public testing::Test {
   mojo::Remote<network::mojom::CookieManager> mojo_cookie_manager_;
 
   CookieManagerImpl cookie_manager_;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(CookieManagerImplTest);
 };
 
 // Calls GetNext() on the supplied |iterator| and lets the caller express
 // expectations on the results.
 class GetNextCookiesIteratorResult {
  public:
-  explicit GetNextCookiesIteratorResult(fuchsia::web::CookiesIterator* iterator)
-      : result_(loop_.QuitClosure()) {
-    iterator->GetNext(
-        cr_fuchsia::CallbackToFitFunction(result_.GetReceiveCallback()));
+  explicit GetNextCookiesIteratorResult(
+      fuchsia::web::CookiesIterator* iterator) {
+    iterator->GetNext(cr_fuchsia::CallbackToFitFunction(result_.GetCallback()));
   }
+
+  GetNextCookiesIteratorResult(const GetNextCookiesIteratorResult&) = delete;
+  GetNextCookiesIteratorResult& operator=(const GetNextCookiesIteratorResult&) =
+      delete;
 
   ~GetNextCookiesIteratorResult() = default;
 
   void ExpectSingleCookie(base::StringPiece name,
-                          base::Optional<base::StringPiece> value) {
+                          absl::optional<base::StringPiece> value) {
     ExpectCookieUpdates({{name, value}});
   }
 
   void ExpectDeleteSingleCookie(base::StringPiece name) {
-    ExpectCookieUpdates({{name, base::nullopt}});
+    ExpectCookieUpdates({{name, absl::nullopt}});
   }
 
   // Specifies the cookie name/value pairs expected in the GetNext() results.
-  // Deletions expectations are specified by using base::nullopt as the value.
+  // Deletions expectations are specified by using absl::nullopt as the value.
   void ExpectCookieUpdates(
-      std::map<base::StringPiece, base::Optional<base::StringPiece>> expected) {
-    loop_.Run();
-    ASSERT_TRUE(result_.has_value());
-    ASSERT_EQ(result_->size(), expected.size());
+      std::map<base::StringPiece, absl::optional<base::StringPiece>> expected) {
+    ASSERT_TRUE(result_.Wait());
+    ASSERT_EQ(result_.Get().size(), expected.size());
     std::map<base::StringPiece, base::StringPiece> result_updates;
-    for (auto& cookie_update : *result_) {
+    for (const auto& cookie_update : result_.Get()) {
       ASSERT_TRUE(cookie_update.has_id());
       ASSERT_TRUE(cookie_update.id().has_name());
       auto it = expected.find(cookie_update.id().name());
@@ -190,14 +193,11 @@ class GetNextCookiesIteratorResult {
     // If we ran |loop_| then this would hang, so just ensure any pending work
     // has been processed.
     base::RunLoop().RunUntilIdle();
-    EXPECT_FALSE(result_.has_value());
+    EXPECT_FALSE(result_.IsReady());
   }
 
  protected:
-  base::RunLoop loop_;
-  cr_fuchsia::ResultReceiver<std::vector<fuchsia::web::Cookie>> result_;
-
-  DISALLOW_COPY_AND_ASSIGN(GetNextCookiesIteratorResult);
+  base::test::TestFuture<std::vector<fuchsia::web::Cookie>> result_;
 };
 
 }  // namespace
@@ -363,7 +363,7 @@ TEST_F(CookieManagerImplTest, UpdateBatching) {
 
     GetNextCookiesIteratorResult global_updates(global_changes.get());
     global_updates.ExpectCookieUpdates(
-        {{kCookieName1, base::nullopt}, {kCookieName2, base::nullopt}});
+        {{kCookieName1, absl::nullopt}, {kCookieName2, absl::nullopt}});
   }
 }
 

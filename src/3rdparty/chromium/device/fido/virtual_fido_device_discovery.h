@@ -18,10 +18,33 @@ class VirtualFidoDeviceDiscovery
     : public FidoDeviceDiscovery,
       public base::SupportsWeakPtr<VirtualFidoDeviceDiscovery> {
  public:
-  VirtualFidoDeviceDiscovery(FidoTransportProtocol transport,
-                             scoped_refptr<VirtualFidoDevice::State> state,
-                             ProtocolVersion supported_protocol,
-                             const VirtualCtap2Device::Config& ctap2_config);
+  // Trace contains a history of the discovery objects that have been created by
+  // a given factory. VirtualFidoDeviceDiscovery gets a reference to this object
+  // and keeps its information up to date.
+  struct Trace : public base::RefCounted<Trace> {
+    Trace();
+    Trace(const Trace&) = delete;
+    Trace& operator=(const Trace&) = delete;
+
+    struct Discovery {
+      bool is_stopped = false;
+      bool is_destroyed = false;
+    };
+    std::vector<Discovery> discoveries;
+
+   private:
+    friend class base::RefCounted<Trace>;
+    ~Trace();
+  };
+
+  VirtualFidoDeviceDiscovery(
+      scoped_refptr<Trace> trace,
+      size_t trace_index,
+      FidoTransportProtocol transport,
+      scoped_refptr<VirtualFidoDevice::State> state,
+      ProtocolVersion supported_protocol,
+      const VirtualCtap2Device::Config& ctap2_config,
+      std::unique_ptr<EventStream<bool>> disconnect_events);
   ~VirtualFidoDeviceDiscovery() override;
   VirtualFidoDeviceDiscovery(const VirtualFidoDeviceDiscovery& other) = delete;
   VirtualFidoDeviceDiscovery& operator=(
@@ -29,11 +52,18 @@ class VirtualFidoDeviceDiscovery
 
  protected:
   void StartInternal() override;
+  bool MaybeStop() override;
 
  private:
+  void Disconnect(bool _);
+
+  scoped_refptr<Trace> trace_;
+  const size_t trace_index_;
   scoped_refptr<VirtualFidoDevice::State> state_;
   const ProtocolVersion supported_protocol_;
   const VirtualCtap2Device::Config ctap2_config_;
+  std::unique_ptr<EventStream<bool>> disconnect_events_;
+  std::string id_;
 };
 
 }  // namespace test

@@ -8,10 +8,9 @@
 #include <memory>
 
 #include "base/callback.h"
-#include "base/macros.h"
-#include "base/sequenced_task_runner.h"
 #include "base/synchronization/condition_variable.h"
-#include "base/task_runner.h"
+#include "base/task/sequenced_task_runner.h"
+#include "base/task/task_runner.h"
 #include "base/thread_annotations.h"
 #include "base/threading/simple_thread.h"
 #include "cc/raster/task_category.h"
@@ -21,7 +20,7 @@
 
 namespace base {
 class SingleThreadTaskRunner;
-}
+}  // namespace base
 
 namespace content {
 
@@ -92,6 +91,9 @@ class CONTENT_EXPORT CategorizedWorkerPool : public base::TaskRunner,
    public:
     explicit ClosureTask(base::OnceClosure closure);
 
+    ClosureTask(const ClosureTask&) = delete;
+    ClosureTask& operator=(const ClosureTask&) = delete;
+
     // Overridden from cc::Task:
     void RunOnWorkerThread() override;
 
@@ -100,8 +102,6 @@ class CONTENT_EXPORT CategorizedWorkerPool : public base::TaskRunner,
 
    private:
     base::OnceClosure closure_;
-
-    DISALLOW_COPY_AND_ASSIGN(ClosureTask);
   };
 
   void ScheduleTasksWithLockAcquired(cc::NamespaceToken token,

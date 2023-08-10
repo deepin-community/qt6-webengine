@@ -739,9 +739,6 @@ void GL_APIENTRY GLES2ShaderSource(GLuint shader,
 void GL_APIENTRY GLES2ShallowFinishCHROMIUM() {
   gles2::GetGLContext()->ShallowFinishCHROMIUM();
 }
-void GL_APIENTRY GLES2ShallowFlushCHROMIUM() {
-  gles2::GetGLContext()->ShallowFlushCHROMIUM();
-}
 void GL_APIENTRY GLES2OrderingBarrierCHROMIUM() {
   gles2::GetGLContext()->OrderingBarrierCHROMIUM();
 }
@@ -1595,15 +1592,6 @@ void GL_APIENTRY GLES2DiscardFramebufferEXT(GLenum target,
 }
 void GL_APIENTRY GLES2LoseContextCHROMIUM(GLenum current, GLenum other) {
   gles2::GetGLContext()->LoseContextCHROMIUM(current, other);
-}
-void GL_APIENTRY GLES2UnpremultiplyAndDitherCopyCHROMIUM(GLuint source_id,
-                                                         GLuint dest_id,
-                                                         GLint x,
-                                                         GLint y,
-                                                         GLsizei width,
-                                                         GLsizei height) {
-  gles2::GetGLContext()->UnpremultiplyAndDitherCopyCHROMIUM(
-      source_id, dest_id, x, y, width, height);
 }
 void GL_APIENTRY GLES2DrawBuffersEXT(GLsizei count, const GLenum* bufs) {
   gles2::GetGLContext()->DrawBuffersEXT(count, bufs);
@@ -2473,10 +2461,6 @@ extern const NameToFunc g_gles2_function_table[] = {
         reinterpret_cast<GLES2FunctionPointer>(glShallowFinishCHROMIUM),
     },
     {
-        "glShallowFlushCHROMIUM",
-        reinterpret_cast<GLES2FunctionPointer>(glShallowFlushCHROMIUM),
-    },
-    {
         "glOrderingBarrierCHROMIUM",
         reinterpret_cast<GLES2FunctionPointer>(glOrderingBarrierCHROMIUM),
     },
@@ -3114,11 +3098,6 @@ extern const NameToFunc g_gles2_function_table[] = {
     {
         "glLoseContextCHROMIUM",
         reinterpret_cast<GLES2FunctionPointer>(glLoseContextCHROMIUM),
-    },
-    {
-        "glUnpremultiplyAndDitherCopyCHROMIUM",
-        reinterpret_cast<GLES2FunctionPointer>(
-            glUnpremultiplyAndDitherCopyCHROMIUM),
     },
     {
         "glDrawBuffersEXT",

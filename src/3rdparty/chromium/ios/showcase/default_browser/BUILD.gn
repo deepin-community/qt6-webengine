@@ -11,13 +11,12 @@ source_set("default_browser") {
     "sc_default_browser_fullscreen_promo_coordinator.h",
     "sc_default_browser_fullscreen_promo_coordinator.mm",
   ]
-  deps += [ "//ios/chrome/browser/ui/whats_new" ]
+  deps += [ "//ios/chrome/browser/ui/default_promo" ]
   frameworks = [ "UIKit.framework" ]
   configs += [ "//build/config/compiler:enable_arc" ]
 }
 
 source_set("eg2_tests") {
-  defines = [ "CHROME_EARL_GREY_2" ]
   configs += [
     "//build/config/compiler:enable_arc",
     "//build/config/ios:xctest_config",

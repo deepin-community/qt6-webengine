@@ -8,7 +8,6 @@
 #include <memory>
 
 #include "content/child/child_thread_impl.h"
-#include "content/common/content_export.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "third_party/blink/public/mojom/service_worker/embedded_worker.mojom.h"
@@ -26,10 +25,8 @@ class ServiceWorkerContextClient;
 // the Mojo connection to the browser breaks first, the instance waits for the
 // service worker to stop and then deletes itself.
 //
-// All methods are called on the thread that creates the instance of this class.
-// Currently it's the main thread but it could be a background thread in the
-// future. https://crbug.com/692909
-class CONTENT_EXPORT EmbeddedWorkerInstanceClientImpl
+// Created and lives on a ThreadPool background thread.
+class EmbeddedWorkerInstanceClientImpl
     : public blink::mojom::EmbeddedWorkerInstanceClient {
  public:
   // Enum for UMA to record when StartWorker is received.
@@ -58,6 +55,11 @@ class CONTENT_EXPORT EmbeddedWorkerInstanceClientImpl
       const std::vector<std::string>& cors_exempt_header_list,
       mojo::PendingReceiver<blink::mojom::EmbeddedWorkerInstanceClient>
           receiver);
+
+  EmbeddedWorkerInstanceClientImpl(const EmbeddedWorkerInstanceClientImpl&) =
+      delete;
+  EmbeddedWorkerInstanceClientImpl& operator=(
+      const EmbeddedWorkerInstanceClientImpl&) = delete;
 
   ~EmbeddedWorkerInstanceClientImpl() override;
 
@@ -96,8 +98,6 @@ class CONTENT_EXPORT EmbeddedWorkerInstanceClientImpl
 
   // nullptr means worker is not running.
   std::unique_ptr<ServiceWorkerContextClient> service_worker_context_client_;
-
-  DISALLOW_COPY_AND_ASSIGN(EmbeddedWorkerInstanceClientImpl);
 };
 
 }  // namespace content

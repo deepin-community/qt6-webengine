@@ -6,22 +6,12 @@
 // NOLINT(build/header_guard)
 
 #include "build/build_config.h"
-#undef CONTENT_COMMON_FRAME_MESSAGES_H_
-#include "content/common/frame_messages.h"
-#ifndef CONTENT_COMMON_FRAME_MESSAGES_H_
-#error "Failed to include content/common/frame_messages.h"
-#endif
-#undef CONTENT_COMMON_MEDIA_MEDIA_PLAYER_DELEGATE_MESSAGES_H_
-#include "content/common/media/media_player_delegate_messages.h"
-#ifndef CONTENT_COMMON_MEDIA_MEDIA_PLAYER_DELEGATE_MESSAGES_H_
-#error "Failed to include content/common/media/media_player_delegate_messages.h"
-#endif
 #include "media/media_buildflags.h"
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 #undef CONTENT_COMMON_GIN_JAVA_BRIDGE_MESSAGES_H_
 #include "content/common/gin_java_bridge_messages.h"
 #ifndef CONTENT_COMMON_GIN_JAVA_BRIDGE_MESSAGES_H_
 #error "Failed to include content/common/gin_java_bridge_messages.h"
 #endif
-#endif  // defined(OS_ANDROID)
+#endif  // BUILDFLAG(IS_ANDROID)

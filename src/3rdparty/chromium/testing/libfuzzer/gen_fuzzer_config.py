@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python3
 #
 # Copyright (c) 2015 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
@@ -8,10 +8,14 @@
 Invoked by GN from fuzzer_test.gni.
 """
 
-import ConfigParser
 import argparse
 import os
 import sys
+
+if sys.version_info.major == 2:
+    from ConfigParser import ConfigParser
+else:
+    from configparser import ConfigParser
 
 
 def AddSectionOptions(config, section_name, options):
@@ -54,7 +58,7 @@ def main():
           args.grammar_options):
     return
 
-  config = ConfigParser.ConfigParser()
+  config = ConfigParser()
   libfuzzer_options = []
   if args.dict:
     libfuzzer_options.append(('dict', os.path.basename(args.dict)))

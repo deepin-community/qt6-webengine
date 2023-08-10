@@ -7,8 +7,11 @@
 
 #include <vector>
 
-#include "base/power_monitor/power_observer.h"
+#include "base/gtest_prod_util.h"
+#include "base/memory/raw_ptr.h"
+#include "base/time/time.h"
 #include "content/browser/scheduler/responsiveness/metric_source.h"
+#include "content/common/content_export.h"
 
 namespace content {
 namespace responsiveness {
@@ -16,12 +19,18 @@ namespace responsiveness {
 class Calculator;
 
 class CONTENT_EXPORT Watcher : public base::RefCounted<Watcher>,
-                               public MetricSource::Delegate,
-                               public base::PowerObserver {
+                               public MetricSource::Delegate {
  public:
   Watcher();
   void SetUp();
   void Destroy();
+
+  // Must be invoked once-and-only-once, after SetUp(), the first time
+  // MainMessageLoopRun() reaches idle (i.e. done running all tasks queued
+  // during startup). This will be used as a signal for the true end of
+  // "startup" and the beginning of recording
+  // Browser.Responsiveness.JankyIntervalsPerThirtySeconds3.
+  void OnFirstIdle();
 
  protected:
   friend class base::RefCounted<Watcher>;
@@ -48,13 +57,6 @@ class CONTENT_EXPORT Watcher : public base::RefCounted<Watcher>,
   void WillRunEventOnUIThread(const void* opaque_identifier) override;
   void DidRunEventOnUIThread(const void* opaque_identifier) override;
 
-  // base::PowerObserver interface implementation. The PowerObserver
-  // notifications are asynchronously callbacks on their registration sequence
-  // and may be delayed if there is a long queue of pending tasks to be
-  // executed.
-  void OnSuspend() override;
-  void OnResume() override;
-
  private:
   FRIEND_TEST_ALL_PREFIXES(ResponsivenessWatcherTest, TaskForwarding);
   FRIEND_TEST_ALL_PREFIXES(ResponsivenessWatcherTest, TaskNesting);
@@ -70,6 +72,9 @@ class CONTENT_EXPORT Watcher : public base::RefCounted<Watcher>,
                       base::TimeTicks execution_start_time);
 
     // An opaque identifier for the task or event.
+    //
+    // `identifier` is not a raw_ptr<...> for performance reasons (based on
+    // analysis of sampling profiler data and tab_search:top100:2020).
     const void* const identifier;
 
     // Whether the task was at some point in a queue that was blocked or low
@@ -128,6 +133,8 @@ class CONTENT_EXPORT Watcher : public base::RefCounted<Watcher>,
   // thread sets |calculator_io_|. On destruction, this class first tears down
   // all consumers of |calculator_io_|, and then clears the member and destroys
   // Calculator.
+  // `calculator_io_` is not a raw_ptr<...> because Calculator isn't supported
+  // in raw_ptr for performance reasons. See crbug.com/1287151.
   Calculator* calculator_io_ = nullptr;
 };
 

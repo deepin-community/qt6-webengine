@@ -7,11 +7,10 @@
 
 #include <memory>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "build/build_config.h"
 #include "components/viz/common/surfaces/frame_sink_id_allocator.h"
 #include "components/viz/common/surfaces/subtree_capture_id_allocator.h"
-#include "components/viz/service/main/viz_compositor_thread_runner_impl.h"
 #include "content/browser/compositor/image_transport_factory.h"
 #include "gpu/command_buffer/common/context_result.h"
 #include "gpu/ipc/client/gpu_channel_host.h"
@@ -55,6 +54,11 @@ class VizProcessTransportFactory : public ui::ContextFactory,
       gpu::GpuChannelEstablishFactory* gpu_channel_establish_factory,
       scoped_refptr<base::SingleThreadTaskRunner> resize_task_runner,
       viz::CompositingModeReporterImpl* compositing_mode_reporter);
+
+  VizProcessTransportFactory(const VizProcessTransportFactory&) = delete;
+  VizProcessTransportFactory& operator=(const VizProcessTransportFactory&) =
+      delete;
+
   ~VizProcessTransportFactory() override;
 
   // Connects HostFrameSinkManager to FrameSinkManagerImpl in viz process.
@@ -123,11 +127,12 @@ class VizProcessTransportFactory : public ui::ContextFactory,
   gpu::ContextResult TryCreateContextsForGpuCompositing(
       scoped_refptr<gpu::GpuChannelHost> gpu_channel_host);
 
-  gpu::GpuChannelEstablishFactory* const gpu_channel_establish_factory_;
+  const raw_ptr<gpu::GpuChannelEstablishFactory> gpu_channel_establish_factory_;
 
   // Controls the compositing mode based on what mode the display compositors
   // are using.
-  viz::CompositingModeReporterImpl* const compositing_mode_reporter_;
+  [[maybe_unused]] const raw_ptr<viz::CompositingModeReporterImpl>
+      compositing_mode_reporter_;
 
   // ContextProvider used on worker threads for rasterization.
   scoped_refptr<viz::RasterContextProvider> worker_context_provider_;
@@ -138,15 +143,11 @@ class VizProcessTransportFactory : public ui::ContextFactory,
 
   std::unique_ptr<cc::SingleThreadTaskGraphRunner> task_graph_runner_;
 
-  // Will start and run the VizCompositorThread for using an in-process display
-  // compositor.
-  std::unique_ptr<viz::VizCompositorThreadRunnerImpl> viz_compositor_thread_;
-
   base::flat_map<ui::Compositor*, CompositorData> compositor_data_map_;
 
   viz::FrameSinkIdAllocator frame_sink_id_allocator_;
   viz::SubtreeCaptureIdAllocator subtree_capture_id_allocator_;
-  viz::HostFrameSinkManager* const host_frame_sink_manager_;
+  const raw_ptr<viz::HostFrameSinkManager> host_frame_sink_manager_;
 
   scoped_refptr<base::SingleThreadTaskRunner> const resize_task_runner_;
 
@@ -154,7 +155,6 @@ class VizProcessTransportFactory : public ui::ContextFactory,
 
   base::WeakPtrFactory<VizProcessTransportFactory> weak_ptr_factory_{this};
   bool shutdown_ = false;
-  DISALLOW_COPY_AND_ASSIGN(VizProcessTransportFactory);
 };
 
 }  // namespace content

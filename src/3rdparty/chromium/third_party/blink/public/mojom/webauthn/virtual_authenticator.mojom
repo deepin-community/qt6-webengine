@@ -33,6 +33,8 @@ struct VirtualAuthenticatorOptions {
   bool has_user_verification;
   bool is_user_present = true;
   bool has_large_blob;
+  bool has_cred_blob;
+  bool has_min_pin_length;
 };
 
 // Encapsulates both public (key handle) and private information associated

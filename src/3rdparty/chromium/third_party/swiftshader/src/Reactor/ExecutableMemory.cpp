@@ -33,7 +33,7 @@
 #	include <unistd.h>
 #endif
 
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) && !defined(ANDROID_HOST_BUILD) && !defined(ANDROID_NDK_BUILD)
 #	include <sys/prctl.h>
 #endif
 
@@ -49,12 +49,18 @@
 #define STRINGIFY(x) #x
 #define MACRO_STRINGIFY(x) STRINGIFY(x)
 
+// A Clang extension to determine compiler features.
+// We use it to detect Sanitizer builds (e.g. -fsanitize=memory).
+#ifndef __has_feature
+#	define __has_feature(x) 0
+#endif
+
 namespace rr {
 namespace {
 
 struct Allocation
 {
-	//	size_t bytes;
+	// size_t bytes;
 	unsigned char *block;
 };
 
@@ -87,7 +93,7 @@ void *allocateRaw(size_t bytes, size_t alignment)
 		aligned = (unsigned char *)((uintptr_t)(block + sizeof(Allocation) + alignment - 1) & -(intptr_t)alignment);
 		Allocation *allocation = (Allocation *)(aligned - sizeof(Allocation));
 
-		//	allocation->bytes = bytes;
+		// allocation->bytes = bytes;
 		allocation->block = block;
 	}
 
@@ -100,16 +106,16 @@ DWORD permissionsToProtectMode(int permissions)
 {
 	switch(permissions)
 	{
-		case PERMISSION_READ:
-			return PAGE_READONLY;
-		case PERMISSION_EXECUTE:
-			return PAGE_EXECUTE;
-		case PERMISSION_READ | PERMISSION_WRITE:
-			return PAGE_READWRITE;
-		case PERMISSION_READ | PERMISSION_EXECUTE:
-			return PAGE_EXECUTE_READ;
-		case PERMISSION_READ | PERMISSION_WRITE | PERMISSION_EXECUTE:
-			return PAGE_EXECUTE_READWRITE;
+	case PERMISSION_READ:
+		return PAGE_READONLY;
+	case PERMISSION_EXECUTE:
+		return PAGE_EXECUTE;
+	case PERMISSION_READ | PERMISSION_WRITE:
+		return PAGE_READWRITE;
+	case PERMISSION_READ | PERMISSION_EXECUTE:
+		return PAGE_EXECUTE_READ;
+	case PERMISSION_READ | PERMISSION_WRITE | PERMISSION_EXECUTE:
+		return PAGE_EXECUTE_READWRITE;
 	}
 	return PAGE_NOACCESS;
 }
@@ -136,7 +142,7 @@ int permissionsToMmapProt(int permissions)
 #endif  // !defined(_WIN32) && !defined(__Fuchsia__)
 
 #if defined(__linux__) && defined(REACTOR_ANONYMOUS_MMAP_NAME)
-#	if !defined(__ANDROID__)
+#	if !defined(__ANDROID__) || defined(ANDROID_HOST_BUILD) || defined(ANDROID_NDK_BUILD)
 // Create a file descriptor for anonymous memory with the given
 // name. Returns -1 on failure.
 // TODO: remove once libc wrapper exists.
@@ -170,12 +176,12 @@ int anonymousFd()
 	static int fd = memfd_create(MACRO_STRINGIFY(REACTOR_ANONYMOUS_MMAP_NAME), 0);
 	return fd;
 }
-#	else   // defined(__ANDROID__)
+#	else   // __ANDROID__ && !ANDROID_HOST_BUILD && !ANDROID_NDK_BUILD
 int anonymousFd()
 {
 	return -1;
 }
-#	endif  // defined(__ANDROID__)
+#	endif  // __ANDROID__ && !ANDROID_HOST_BUILD && !ANDROID_NDK_BUILD
 
 // Ensure there is enough space in the "anonymous" fd for length.
 void ensureAnonFileSize(int anonFd, size_t length)
@@ -231,7 +237,10 @@ void *allocate(size_t bytes, size_t alignment)
 {
 	void *memory = allocateRaw(bytes, alignment);
 
-	if(memory)
+	// Zero-initialize the memory, for security reasons.
+	// MemorySanitizer builds skip this so that we can detect when we
+	// inadvertently rely on this, which would indicate a bug.
+	if(memory && !__has_feature(memory_sanitizer))
 	{
 		memset(memory, 0, bytes);
 	}
@@ -289,7 +298,7 @@ void *allocateMemoryPages(size_t bytes, int permissions, bool need_exec)
 	{
 		mapping = nullptr;
 	}
-#	if defined(__ANDROID__)
+#	if defined(__ANDROID__) && !defined(ANDROID_HOST_BUILD) && !defined(ANDROID_NDK_BUILD)
 	else
 	{
 		// On Android, prefer to use a non-standard prctl called
@@ -299,7 +308,7 @@ void *allocateMemoryPages(size_t bytes, int permissions, bool need_exec)
 		prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, mapping, length,
 		      MACRO_STRINGIFY(REACTOR_ANONYMOUS_MMAP_NAME));
 	}
-#	endif  // __ANDROID__
+#	endif  // __ANDROID__ && !ANDROID_HOST_BUILD && !ANDROID_NDK_BUILD
 #elif defined(__Fuchsia__)
 	zx_handle_t vmo;
 	if(zx_vmo_create(length, 0, &vmo) != ZX_OK)

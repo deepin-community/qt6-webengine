@@ -30,7 +30,7 @@
 
       @media (prefers-color-scheme: dark) {
         dialog {
-          --scroll-border-color: var(--google-grey-refresh-700);
+          --scroll-border-color: var(--google-grey-700);
           background-color: var(--google-grey-900);
           /* Note: the colors in linear-gradient() are intentionally the same to
            * add a 4% white layer on top of the fully opaque background-color. */
@@ -65,7 +65,7 @@
 
       :host ::slotted([slot=body]) {
         color: var(--cr-secondary-text-color);
-        padding: 0 20px;
+        padding: 0 var(--cr-dialog-body-padding-horizontal, 20px);
       }
 
       :host ::slotted([slot=title]) {
@@ -83,9 +83,9 @@
       :host ::slotted([slot=button-container]) {
         display: flex;
         justify-content: flex-end;
-        padding-bottom: 16px;
-        padding-inline-end: 16px;
-        padding-inline-start: 16px;
+        padding-bottom: var(--cr-dialog-button-container-padding-bottom, 16px);
+        padding-inline-end: var(--cr-dialog-button-container-padding-horizontal, 16px);
+        padding-inline-start: var(--cr-dialog-button-container-padding-horizontal, 16px);
         padding-top: 24px;
       }
 
@@ -151,7 +151,7 @@
     </style>
     <!-- TODO(crbug/1139958): Remove "not chromeos" block when chromeVox issue is fixed-->
     <!--Update both "not chromeos" and "chromeos" blocks if either changes-->
-<if expr="not chromeos">
+<if expr="not chromeos_ash">
     <dialog id="dialog" on-close="onNativeDialogClose_"
         on-cancel="onNativeDialogCancel_" part="dialog"
         aria-labelledby="title">
@@ -177,7 +177,7 @@
       </div>
     </dialog>
 </if>
-<if expr="chromeos">
+<if expr="chromeos_ash">
     <dialog id="dialog" on-close="onNativeDialogClose_"
         on-cancel="onNativeDialogCancel_" part="dialog">
     <!-- This wrapper is necessary, such that the "pulse" animation is not

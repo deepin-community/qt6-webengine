@@ -25,6 +25,13 @@
 
 namespace device {
 
+bool ArImageTransport::UseSharedBuffer() {
+  // When available (Android O and up), use AHardwareBuffer-based shared
+  // images for frame transport.
+  static bool val = base::AndroidHardwareBufferCompat::IsSupportAvailable();
+  return val;
+}
+
 ArImageTransport::ArImageTransport(
     std::unique_ptr<MailboxToSurfaceBridge> mailbox_bridge)
     : gl_thread_task_runner_(base::ThreadTaskRunnerHandle::Get()),
@@ -67,11 +74,7 @@ void ArImageTransport::Initialize(WebXrPresentationState* webxr,
 
   glGenFramebuffersEXT(1, &camera_fbo_);
 
-  // When available (Android O and up), use AHardwareBuffer-based shared
-  // images for frame transport.
-  shared_buffer_draw_ = base::AndroidHardwareBufferCompat::IsSupportAvailable();
-
-  if (shared_buffer_draw_) {
+  if (UseSharedBuffer()) {
     DVLOG(2) << __func__ << ": UseSharedBuffer()=true";
   } else {
     DVLOG(2) << __func__ << ": UseSharedBuffer()=false, setting up surface";
@@ -125,7 +128,7 @@ void ArImageTransport::OnFrameAvailable() {
   // UV transform, that's usually a Y flip.
   transport_surface_texture_->GetTransformMatrix(
       &transport_surface_texture_uv_matrix_[0]);
-  transport_surface_texture_uv_transform_.matrix().setColMajorf(
+  transport_surface_texture_uv_transform_.matrix().setColMajor(
       transport_surface_texture_uv_matrix_);
 
   on_transport_frame_available_.Run(transport_surface_texture_uv_transform_);
@@ -372,7 +375,7 @@ void ArImageTransport::CopyTextureToFramebuffer(
 
   // Draw the ARCore texture!
   float uv_transform_floats[16];
-  uv_transform.matrix().asColMajorf(uv_transform_floats);
+  uv_transform.matrix().getColMajor(uv_transform_floats);
   ar_renderer_->Draw(texture, uv_transform_floats);
 }
 

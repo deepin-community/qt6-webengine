@@ -12,10 +12,9 @@
 #include <vector>
 
 #include "base/gtest_prod_util.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
-#include "base/optional.h"
 #include "build/build_config.h"
 #include "components/media_router/browser/media_router.h"
 #include "components/media_router/browser/presentation/presentation_service_delegate_observers.h"
@@ -27,6 +26,7 @@
 #include "content/public/browser/presentation_service_delegate.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace content {
 class PresentationScreenAvailabilityListener;
@@ -62,6 +62,11 @@ class PresentationServiceDelegateImpl
   // and attaches it to the specified WebContents.
   static PresentationServiceDelegateImpl* GetOrCreateForWebContents(
       content::WebContents* web_contents);
+
+  PresentationServiceDelegateImpl(const PresentationServiceDelegateImpl&) =
+      delete;
+  PresentationServiceDelegateImpl& operator=(
+      const PresentationServiceDelegateImpl&) = delete;
 
   ~PresentationServiceDelegateImpl() override;
 
@@ -119,10 +124,11 @@ class PresentationServiceDelegateImpl
   void OnPresentationResponse(const content::PresentationRequest& request,
                               mojom::RoutePresentationConnectionPtr connection,
                               const RouteRequestResult& result) override;
+  std::vector<MediaRoute> GetMediaRoutes() override;
   base::WeakPtr<WebContentsPresentationManager> GetWeakPtr() override;
 
   // Returns the WebContents that owns this instance.
-  content::WebContents* web_contents() const { return web_contents_; }
+  content::WebContents* web_contents() { return &GetWebContents(); }
 
   bool HasScreenAvailabilityListenerForTest(
       int render_process_id,
@@ -155,10 +161,10 @@ class PresentationServiceDelegateImpl
   explicit PresentationServiceDelegateImpl(content::WebContents* web_contents);
 
   PresentationFrame* GetOrAddPresentationFrame(
-      const content::GlobalFrameRoutingId& render_frame_host_id);
+      const content::GlobalRenderFrameHostId& render_frame_host_id);
 
   void OnJoinRouteResponse(
-      const content::GlobalFrameRoutingId& render_frame_host_id,
+      const content::GlobalRenderFrameHostId& render_frame_host_id,
       const GURL& presentation_url,
       const std::string& presentation_id,
       content::PresentationConnectionCallback success_cb,
@@ -167,7 +173,7 @@ class PresentationServiceDelegateImpl
       const RouteRequestResult& result);
 
   void OnStartPresentationSucceeded(
-      const content::GlobalFrameRoutingId& render_frame_host_id,
+      const content::GlobalRenderFrameHostId& render_frame_host_id,
       content::PresentationConnectionCallback success_cb,
       const blink::mojom::PresentationInfo& new_presentation_info,
       mojom::RoutePresentationConnectionPtr connection,
@@ -177,14 +183,14 @@ class PresentationServiceDelegateImpl
   // presentation and its corresponding MediaRoute has been created.
   // The PresentationFrame will be created if it does not already exist.
   void AddPresentation(
-      const content::GlobalFrameRoutingId& render_frame_host_id,
+      const content::GlobalRenderFrameHostId& render_frame_host_id,
       const blink::mojom::PresentationInfo& presentation_info,
       const MediaRoute& route);
 
   // Notifies the PresentationFrame of |render_frame_host_id| that a
   // presentation and its corresponding MediaRoute has been removed.
   void RemovePresentation(
-      const content::GlobalFrameRoutingId& render_frame_host_id,
+      const content::GlobalRenderFrameHostId& render_frame_host_id,
       const std::string& presentation_id);
 
   // Clears the default presentation request for the owning WebContents and
@@ -195,12 +201,12 @@ class PresentationServiceDelegateImpl
   // Returns the ID of the route corresponding to |presentation_id| in the given
   // frame, or empty if no such route exist.
   MediaRoute::Id GetRouteId(
-      const content::GlobalFrameRoutingId& render_frame_host_id,
+      const content::GlobalRenderFrameHostId& render_frame_host_id,
       const std::string& presentation_id) const;
 
-#if !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
   // Returns true if auto-join requests should be cancelled for |origin|.
-  bool ShouldCancelAutoJoinForOrigin(const url::Origin& origin) const;
+  bool ShouldCancelAutoJoinForOrigin(const url::Origin& origin);
 #endif
 
   // Ensures that |connection| contains a valid pair of
@@ -208,7 +214,7 @@ class PresentationServiceDelegateImpl
   // used for all Presentation API communication in a newly-connected
   // presentation.
   void EnsurePresentationConnection(
-      const content::GlobalFrameRoutingId& render_frame_host_id,
+      const content::GlobalRenderFrameHostId& render_frame_host_id,
       const blink::mojom::PresentationInfo& presentation_info,
       mojom::RoutePresentationConnectionPtr* connection);
 
@@ -216,10 +222,17 @@ class PresentationServiceDelegateImpl
       const content::PresentationRequest* request);
   void NotifyMediaRoutesChanged();
 
-  // References to the WebContents that owns this instance, and associated
-  // browser profile's MediaRouter instance.
-  content::WebContents* const web_contents_;
-  MediaRouter* router_;
+  // Invoked by the MR when a Presentation Connection state changes in a frame.
+  // It calls |RemovePresentation()| when the connection is closed/terminated.
+  void OnConnectionStateChanged(
+      const content::GlobalRenderFrameHostId& render_frame_host_id,
+      const blink::mojom::PresentationInfo& connection,
+      const content::PresentationConnectionStateChangedCallback&
+          state_changed_cb,
+      const content::PresentationConnectionStateChangeInfo& info);
+
+  // Reference to the associated browser profile's MediaRouter instance.
+  raw_ptr<MediaRouter> router_;
 
   // References to the observers listening for changes to the default
   // presentation and presentation MediaRoutes associated with the
@@ -228,7 +241,7 @@ class PresentationServiceDelegateImpl
       presentation_observers_;
 
   // Default presentation request for the owning WebContents.
-  base::Optional<content::PresentationRequest> default_presentation_request_;
+  absl::optional<content::PresentationRequest> default_presentation_request_;
 
   // Callback to invoke when the default presentation has started.
   content::DefaultPresentationConnectionCallback
@@ -241,9 +254,9 @@ class PresentationServiceDelegateImpl
 
   // Maps a frame identifier to a PresentationFrame object for frames
   // that are using Presentation API.
-  std::unordered_map<content::GlobalFrameRoutingId,
+  std::unordered_map<content::GlobalRenderFrameHostId,
                      std::unique_ptr<PresentationFrame>,
-                     content::GlobalFrameRoutingIdHasher>
+                     content::GlobalRenderFrameHostIdHasher>
       presentation_frames_;
 
   PresentationServiceDelegateObservers observers_;
@@ -251,8 +264,6 @@ class PresentationServiceDelegateImpl
   base::WeakPtrFactory<PresentationServiceDelegateImpl> weak_factory_{this};
 
   WEB_CONTENTS_USER_DATA_KEY_DECL();
-
-  DISALLOW_COPY_AND_ASSIGN(PresentationServiceDelegateImpl);
 };
 
 }  // namespace media_router

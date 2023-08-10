@@ -5,20 +5,26 @@
 #include "media/capture/video/win/video_capture_device_mf_win.h"
 
 #include <d3d11_4.h>
+#include <ks.h>
 #include <mfapi.h>
 #include <mferror.h>
 #include <stddef.h>
 #include <wincodec.h>
 
+#include <memory>
 #include <thread>
 #include <utility>
 
 #include "base/bind.h"
 #include "base/location.h"
+#include "base/logging.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/synchronization/waitable_event.h"
+#include "base/threading/platform_thread.h"
 #include "base/win/scoped_co_mem.h"
 #include "base/win/windows_version.h"
 #include "media/capture/mojom/image_capture_types.h"
@@ -46,6 +52,9 @@ namespace media {
 
 namespace {
 
+// How many times we try to restart D3D11 path.
+constexpr int kMaxD3DRestarts = 2;
+
 class MFPhotoCallback final
     : public base::RefCountedThreadSafe<MFPhotoCallback>,
       public IMFCaptureEngineOnSampleCallback {
@@ -53,6 +62,9 @@ class MFPhotoCallback final
   MFPhotoCallback(VideoCaptureDevice::TakePhotoCallback callback,
                   VideoCaptureFormat format)
       : callback_(std::move(callback)), format_(format) {}
+
+  MFPhotoCallback(const MFPhotoCallback&) = delete;
+  MFPhotoCallback& operator=(const MFPhotoCallback&) = delete;
 
   IFACEMETHODIMP QueryInterface(REFIID riid, void** object) override {
     if (riid == IID_IUnknown || riid == IID_IMFCaptureEngineOnSampleCallback) {
@@ -122,8 +134,6 @@ class MFPhotoCallback final
 
   VideoCaptureDevice::TakePhotoCallback callback_;
   const VideoCaptureFormat format_;
-
-  DISALLOW_COPY_AND_ASSIGN(MFPhotoCallback);
 };
 
 // Locks the given buffer using the fastest supported method when constructed,
@@ -203,8 +213,8 @@ scoped_refptr<IMFCaptureEngineOnSampleCallback> CreateMFPhotoCallback(
 }
 
 void LogError(const Location& from_here, HRESULT hr) {
-  DPLOG(ERROR) << from_here.ToString()
-               << " hr = " << logging::SystemErrorCodeToString(hr);
+  LOG(ERROR) << from_here.ToString()
+             << " hr = " << logging::SystemErrorCodeToString(hr);
 }
 
 bool GetFrameSizeFromMediaType(IMFMediaType* type, gfx::Size* frame_size) {
@@ -226,10 +236,39 @@ bool GetFrameRateFromMediaType(IMFMediaType* type, float* frame_rate) {
   return true;
 }
 
+struct PixelFormatMap {
+  GUID mf_source_media_subtype;
+  VideoPixelFormat pixel_format;
+};
+
+VideoPixelFormat MfSubTypeToSourcePixelFormat(
+    const GUID& mf_source_media_subtype) {
+  static const PixelFormatMap kPixelFormatMap[] = {
+
+      {MFVideoFormat_I420, PIXEL_FORMAT_I420},
+      {MFVideoFormat_YUY2, PIXEL_FORMAT_YUY2},
+      {MFVideoFormat_UYVY, PIXEL_FORMAT_UYVY},
+      {MFVideoFormat_RGB24, PIXEL_FORMAT_RGB24},
+      {MFVideoFormat_RGB32, PIXEL_FORMAT_XRGB},
+      {MFVideoFormat_ARGB32, PIXEL_FORMAT_ARGB},
+      {MFVideoFormat_MJPG, PIXEL_FORMAT_MJPEG},
+      {MFVideoFormat_NV12, PIXEL_FORMAT_NV12},
+      {MFVideoFormat_YV12, PIXEL_FORMAT_YV12},
+      {GUID_ContainerFormatJpeg, PIXEL_FORMAT_MJPEG}};
+
+  for (const auto& kEntry : kPixelFormatMap) {
+    if (kEntry.mf_source_media_subtype == mf_source_media_subtype) {
+      return kEntry.pixel_format;
+    }
+  }
+  return PIXEL_FORMAT_UNKNOWN;
+}
+
 bool GetFormatFromSourceMediaType(IMFMediaType* source_media_type,
                                   bool photo,
                                   bool use_hardware_format,
-                                  VideoCaptureFormat* format) {
+                                  VideoCaptureFormat* format,
+                                  VideoPixelFormat* source_pixel_format) {
   GUID major_type_guid;
   if (FAILED(source_media_type->GetGUID(MF_MT_MAJOR_TYPE, &major_type_guid)) ||
       (major_type_guid != MFMediaType_Image &&
@@ -246,6 +285,7 @@ bool GetFormatFromSourceMediaType(IMFMediaType* source_media_type,
     return false;
   }
 
+  *source_pixel_format = MfSubTypeToSourcePixelFormat(sub_type_guid);
   return true;
 }
 
@@ -264,6 +304,7 @@ HRESULT CopyAttribute(IMFAttributes* source_attributes,
 }
 
 struct MediaFormatConfiguration {
+  bool is_hardware_format;
   GUID mf_source_media_subtype;
   GUID mf_sink_media_subtype;
   VideoPixelFormat pixel_format;
@@ -273,13 +314,6 @@ bool GetMediaFormatConfigurationFromMFSourceMediaSubtype(
     const GUID& mf_source_media_subtype,
     bool use_hardware_format,
     MediaFormatConfiguration* media_format_configuration) {
-  // Special case handling of the NV12 format when using hardware capture
-  // to ensure that captured buffers are passed through without copies
-  if (use_hardware_format && mf_source_media_subtype == MFVideoFormat_NV12) {
-    *media_format_configuration = {MFVideoFormat_NV12, MFVideoFormat_NV12,
-                                   PIXEL_FORMAT_NV12};
-    return true;
-  }
   static const MediaFormatConfiguration kMediaFormatConfigurationMap[] = {
       // IMFCaptureEngine inevitably performs the video frame decoding itself.
       // This means that the sink must always be set to an uncompressed video
@@ -287,30 +321,56 @@ bool GetMediaFormatConfigurationFromMFSourceMediaSubtype(
 
       // Since chromium uses I420 at the other end of the pipe, MF known video
       // output formats are always set to I420.
-      {MFVideoFormat_I420, MFVideoFormat_I420, PIXEL_FORMAT_I420},
-      {MFVideoFormat_YUY2, MFVideoFormat_I420, PIXEL_FORMAT_I420},
-      {MFVideoFormat_UYVY, MFVideoFormat_I420, PIXEL_FORMAT_I420},
-      {MFVideoFormat_RGB24, MFVideoFormat_I420, PIXEL_FORMAT_I420},
-      {MFVideoFormat_RGB32, MFVideoFormat_I420, PIXEL_FORMAT_I420},
-      {MFVideoFormat_ARGB32, MFVideoFormat_I420, PIXEL_FORMAT_I420},
-      {MFVideoFormat_MJPG, MFVideoFormat_I420, PIXEL_FORMAT_I420},
-      {MFVideoFormat_NV12, MFVideoFormat_I420, PIXEL_FORMAT_I420},
-      {MFVideoFormat_YV12, MFVideoFormat_I420, PIXEL_FORMAT_I420},
+      {false, MFVideoFormat_I420, MFVideoFormat_I420, PIXEL_FORMAT_I420},
+      {false, MFVideoFormat_YUY2, MFVideoFormat_I420, PIXEL_FORMAT_I420},
+      {false, MFVideoFormat_UYVY, MFVideoFormat_I420, PIXEL_FORMAT_I420},
+      {false, MFVideoFormat_RGB24, MFVideoFormat_I420, PIXEL_FORMAT_I420},
+      {false, MFVideoFormat_RGB32, MFVideoFormat_I420, PIXEL_FORMAT_I420},
+      {false, MFVideoFormat_ARGB32, MFVideoFormat_I420, PIXEL_FORMAT_I420},
+      {false, MFVideoFormat_MJPG, MFVideoFormat_I420, PIXEL_FORMAT_I420},
+      {false, MFVideoFormat_NV12, MFVideoFormat_I420, PIXEL_FORMAT_I420},
+      {false, MFVideoFormat_YV12, MFVideoFormat_I420, PIXEL_FORMAT_I420},
 
       // Depth cameras use 16-bit uncompressed video formats.
       // We ask IMFCaptureEngine to let the frame pass through, without
       // transcoding, since transcoding would lead to precision loss.
-      {kMediaSubTypeY16, kMediaSubTypeY16, PIXEL_FORMAT_Y16},
-      {kMediaSubTypeZ16, kMediaSubTypeZ16, PIXEL_FORMAT_Y16},
-      {kMediaSubTypeINVZ, kMediaSubTypeINVZ, PIXEL_FORMAT_Y16},
-      {MFVideoFormat_D16, MFVideoFormat_D16, PIXEL_FORMAT_Y16},
+      {false, kMediaSubTypeY16, kMediaSubTypeY16, PIXEL_FORMAT_Y16},
+      {false, kMediaSubTypeZ16, kMediaSubTypeZ16, PIXEL_FORMAT_Y16},
+      {false, kMediaSubTypeINVZ, kMediaSubTypeINVZ, PIXEL_FORMAT_Y16},
+      {false, MFVideoFormat_D16, MFVideoFormat_D16, PIXEL_FORMAT_Y16},
 
       // Photo type
-      {GUID_ContainerFormatJpeg, GUID_ContainerFormatJpeg, PIXEL_FORMAT_MJPEG}};
+      {false, GUID_ContainerFormatJpeg, GUID_ContainerFormatJpeg,
+       PIXEL_FORMAT_MJPEG},
+
+      // For hardware path we always convert to NV12, since it's the only
+      // supported by GMBs format.
+      {true, MFVideoFormat_I420, MFVideoFormat_NV12, PIXEL_FORMAT_NV12},
+      {true, MFVideoFormat_YUY2, MFVideoFormat_NV12, PIXEL_FORMAT_NV12},
+      {true, MFVideoFormat_UYVY, MFVideoFormat_NV12, PIXEL_FORMAT_NV12},
+      {true, MFVideoFormat_RGB24, MFVideoFormat_NV12, PIXEL_FORMAT_NV12},
+      {true, MFVideoFormat_RGB32, MFVideoFormat_NV12, PIXEL_FORMAT_NV12},
+      {true, MFVideoFormat_ARGB32, MFVideoFormat_NV12, PIXEL_FORMAT_NV12},
+      {true, MFVideoFormat_MJPG, MFVideoFormat_NV12, PIXEL_FORMAT_NV12},
+      {true, MFVideoFormat_NV12, MFVideoFormat_NV12, PIXEL_FORMAT_NV12},
+      {true, MFVideoFormat_YV12, MFVideoFormat_NV12, PIXEL_FORMAT_NV12},
+
+      // 16-bit formats can't be converted without loss of precision,
+      // so if leave an option to get Y16 pixel format even though the
+      // HW path won't be used for it.
+      {true, kMediaSubTypeY16, kMediaSubTypeY16, PIXEL_FORMAT_Y16},
+      {true, kMediaSubTypeZ16, kMediaSubTypeZ16, PIXEL_FORMAT_Y16},
+      {true, kMediaSubTypeINVZ, kMediaSubTypeINVZ, PIXEL_FORMAT_Y16},
+      {true, MFVideoFormat_D16, MFVideoFormat_D16, PIXEL_FORMAT_Y16},
+
+      // Photo type
+      {true, GUID_ContainerFormatJpeg, GUID_ContainerFormatJpeg,
+       PIXEL_FORMAT_MJPEG}};
 
   for (const auto& kMediaFormatConfiguration : kMediaFormatConfigurationMap) {
-    if (kMediaFormatConfiguration.mf_source_media_subtype ==
-        mf_source_media_subtype) {
+    if (kMediaFormatConfiguration.is_hardware_format == use_hardware_format &&
+        kMediaFormatConfiguration.mf_source_media_subtype ==
+            mf_source_media_subtype) {
       *media_format_configuration = kMediaFormatConfiguration;
       return true;
     }
@@ -506,7 +566,7 @@ void GetTextureSizeAndFormat(ID3D11Texture2D* texture,
 }
 
 HRESULT CopyTextureToGpuMemoryBuffer(ID3D11Texture2D* texture,
-                                     gfx::GpuMemoryBufferHandle gmb_handle) {
+                                     HANDLE dxgi_handle) {
   Microsoft::WRL::ComPtr<ID3D11Device> texture_device;
   texture->GetDevice(&texture_device);
 
@@ -520,8 +580,7 @@ HRESULT CopyTextureToGpuMemoryBuffer(ID3D11Texture2D* texture,
 
   // Open shared resource from GpuMemoryBuffer on source texture D3D11 device
   Microsoft::WRL::ComPtr<ID3D11Texture2D> target_texture;
-  hr = device1->OpenSharedResource1(gmb_handle.dxgi_handle.Get(),
-                                    IID_PPV_ARGS(&target_texture));
+  hr = device1->OpenSharedResource1(dxgi_handle, IID_PPV_ARGS(&target_texture));
   if (FAILED(hr)) {
     DLOG(ERROR) << "Failed to open shared camera target texture: "
                 << logging::SystemErrorCodeToString(hr);
@@ -607,8 +666,7 @@ class MFVideoCallback final
     base::TimeTicks reference_time(base::TimeTicks::Now());
     LONGLONG raw_time_stamp = 0;
     sample->GetSampleTime(&raw_time_stamp);
-    base::TimeDelta timestamp =
-        base::TimeDelta::FromMicroseconds(raw_time_stamp / 10);
+    base::TimeDelta timestamp = base::Microseconds(raw_time_stamp / 10);
 
     DWORD count = 0;
     sample->GetBufferCount(&count);
@@ -639,7 +697,7 @@ class MFVideoCallback final
 
   // Protects access to |observer_|.
   base::Lock lock_;
-  VideoCaptureDeviceMFWin* observer_ GUARDED_BY(lock_);
+  raw_ptr<VideoCaptureDeviceMFWin> observer_ GUARDED_BY(lock_);
 };
 
 // static
@@ -664,7 +722,7 @@ VideoCaptureControlSupport VideoCaptureDeviceMFWin::GetControlSupport(
   VideoCaptureControlSupport control_support;
 
   ComPtr<IAMCameraControl> camera_control;
-  HRESULT hr = source.As(&camera_control);
+  [[maybe_unused]] HRESULT hr = source.As(&camera_control);
   DLOG_IF_FAILED_WITH_HRESULT("Failed to retrieve IAMCameraControl", hr);
   ComPtr<IAMVideoProcAmp> video_control;
   hr = source.As(&video_control);
@@ -703,8 +761,7 @@ HRESULT VideoCaptureDeviceMFWin::ExecuteHresultCallbackWithRetries(
   do {
     hr = callback.Run();
     if (FAILED(hr))
-      base::PlatformThread::Sleep(
-          base::TimeDelta::FromMilliseconds(retry_delay_in_ms_));
+      base::PlatformThread::Sleep(base::Milliseconds(retry_delay_in_ms_));
 
     // Give up after some amount of time
   } while (hr == MF_E_INVALIDREQUEST && retry_count++ < max_retry_count_);
@@ -790,12 +847,14 @@ HRESULT VideoCaptureDeviceMFWin::FillCapabilities(
     while (SUCCEEDED(hr = GetAvailableDeviceMediaType(
                          source, stream_index, media_type_index, &type))) {
       VideoCaptureFormat format;
+      VideoPixelFormat source_pixel_format;
       if (GetFormatFromSourceMediaType(
               type.Get(), photo,
               /*use_hardware_format=*/!photo &&
                   static_cast<bool>(dxgi_device_manager_),
-              &format))
-        capabilities->emplace_back(media_type_index, format, stream_index);
+              &format, &source_pixel_format))
+        capabilities->emplace_back(media_type_index, format, stream_index,
+                                   source_pixel_format);
       type.Reset();
       ++media_type_index;
     }
@@ -805,6 +864,28 @@ HRESULT VideoCaptureDeviceMFWin::FillCapabilities(
     if (FAILED(hr)) {
       return hr;
     }
+  }
+
+  // Usually windows inserts fake NV12 stream before each MJPEG
+  // stream. The fake stream has the same resolution and framerate.
+  // This is observed but undocumented behavior, which might change.
+  // |maybe_fake| is used as a tie breaker between otherwise identical
+  // formats.
+  // TODO(crbug.com/1323677): Do a less minimal fix and add unit tests.
+  if (capabilities->empty()) {
+    return hr;
+  }
+  auto prev_capability = capabilities->begin();
+  auto cur_capability = prev_capability;
+  ++cur_capability;
+  while (cur_capability != capabilities->end()) {
+    if (cur_capability->source_pixel_format == PIXEL_FORMAT_MJPEG &&
+        prev_capability->source_pixel_format == PIXEL_FORMAT_NV12 &&
+        prev_capability->supported_format == cur_capability->supported_format) {
+      prev_capability->maybe_fake = true;
+    }
+    prev_capability = cur_capability;
+    ++cur_capability;
   }
 
   return hr;
@@ -824,7 +905,7 @@ VideoCaptureDeviceMFWin::VideoCaptureDeviceMFWin(
     ComPtr<IMFMediaSource> source,
     scoped_refptr<DXGIDeviceManager> dxgi_device_manager,
     ComPtr<IMFCaptureEngine> engine)
-    : facing_mode_(device_descriptor.facing),
+    : device_descriptor_(device_descriptor),
       create_mf_photo_callback_(base::BindRepeating(&CreateMFPhotoCallback)),
       is_initialized_(false),
       max_retry_count_(200),
@@ -863,7 +944,6 @@ VideoCaptureDeviceMFWin::~VideoCaptureDeviceMFWin() {
 }
 
 bool VideoCaptureDeviceMFWin::Init() {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(!is_initialized_);
   HRESULT hr;
 
@@ -880,7 +960,6 @@ bool VideoCaptureDeviceMFWin::Init() {
       return false;
     }
   }
-
   ComPtr<IMFAttributes> attributes;
   hr = MFCreateAttributes(&attributes, 1);
   if (FAILED(hr)) {
@@ -922,7 +1001,13 @@ void VideoCaptureDeviceMFWin::AllocateAndStart(
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   base::AutoLock lock(lock_);
+  return AllocateAndStartLocked(params, std::move(client));
+}
 
+void VideoCaptureDeviceMFWin::AllocateAndStartLocked(
+    const VideoCaptureParams& params,
+    std::unique_ptr<VideoCaptureDevice::Client> client) {
+  params_ = params;
   client_ = std::move(client);
   DCHECK_EQ(false, is_started_);
 
@@ -948,8 +1033,8 @@ void VideoCaptureDeviceMFWin::AllocateAndStart(
   }
 
   if (!photo_capabilities_.empty()) {
-    selected_photo_capability_.reset(
-        new CapabilityWin(photo_capabilities_.front()));
+    selected_photo_capability_ =
+        std::make_unique<CapabilityWin>(photo_capabilities_.front());
   }
 
   CapabilityList video_capabilities;
@@ -1066,10 +1151,23 @@ void VideoCaptureDeviceMFWin::AllocateAndStart(
     return;
   }
 
-  selected_video_capability_.reset(
-      new CapabilityWin(best_match_video_capability));
+  selected_video_capability_ =
+      std::make_unique<CapabilityWin>(best_match_video_capability);
 
   is_started_ = true;
+
+  base::UmaHistogramEnumeration(
+      "Media.VideoCapture.Win.Device.InternalPixelFormat",
+      best_match_video_capability.source_pixel_format,
+      media::VideoPixelFormat::PIXEL_FORMAT_MAX);
+  base::UmaHistogramEnumeration(
+      "Media.VideoCapture.Win.Device.CapturePixelFormat",
+      best_match_video_capability.supported_format.pixel_format,
+      media::VideoPixelFormat::PIXEL_FORMAT_MAX);
+  base::UmaHistogramEnumeration(
+      "Media.VideoCapture.Win.Device.RequestedPixelFormat",
+      params.requested_format.pixel_format,
+      media::VideoPixelFormat::PIXEL_FORMAT_MAX);
 }
 
 void VideoCaptureDeviceMFWin::StopAndDeAllocate() {
@@ -1133,8 +1231,10 @@ void VideoCaptureDeviceMFWin::TakePhoto(TakePhotoCallback callback) {
   }
 
   VideoCaptureFormat format;
+  VideoPixelFormat source_format;
   hr = GetFormatFromSourceMediaType(sink_media_type.Get(), true,
-                                    /*use_hardware_format=*/false, &format)
+                                    /*use_hardware_format=*/false, &format,
+                                    &source_format)
            ? S_OK
            : E_FAIL;
   if (FAILED(hr)) {
@@ -1310,7 +1410,7 @@ void VideoCaptureDeviceMFWin::SetPhotoOptions(
 
     const CapabilityWin best_match = GetBestMatchedPhotoCapability(
         current_source_media_type, requested_size, photo_capabilities_);
-    selected_photo_capability_.reset(new CapabilityWin(best_match));
+    selected_photo_capability_ = std::make_unique<CapabilityWin>(best_match);
   }
 
   if (camera_control_ && video_control_) {
@@ -1440,6 +1540,13 @@ void VideoCaptureDeviceMFWin::SetPhotoOptions(
 
   std::move(callback).Run(true);
 }
+
+void VideoCaptureDeviceMFWin::OnUtilizationReport(
+    media::VideoCaptureFeedback feedback) {
+  base::AutoLock lock(lock_);
+  last_feedback_ = feedback;
+}
+
 void VideoCaptureDeviceMFWin::OnIncomingCapturedData(
     IMFMediaBuffer* buffer,
     base::TimeTicks reference_time,
@@ -1464,8 +1571,14 @@ HRESULT VideoCaptureDeviceMFWin::DeliverTextureToClient(
   HRESULT hr = texture_device->GetDeviceRemovedReason();
 
   if (FAILED(hr)) {
-    DLOG(ERROR) << "Camera texture device lost.";
-    DCHECK(dxgi_device_manager_->ResetDevice());
+    // Make sure the main device is reset.
+    hr = dxgi_device_manager_->CheckDeviceRemovedAndGetDevice(nullptr);
+    LOG(ERROR) << "Camera texture device lost: "
+               << logging::SystemErrorCodeToString(hr);
+    base::UmaHistogramSparse("Media.VideoCapture.Win.D3DDeviceRemovedReason",
+                             hr);
+    // Even if device was reset successfully, we can't continue
+    // because the texture is tied to the old device.
     return hr;
   }
 
@@ -1482,17 +1595,33 @@ HRESULT VideoCaptureDeviceMFWin::DeliverTextureToClient(
   auto result = client_->ReserveOutputBuffer(
       texture_size, pixel_format, kDummyFrameFeedbackId, &capture_buffer);
   if (result != VideoCaptureDevice::Client::ReserveResult::kSucceeded) {
-    DLOG(ERROR) << "Failed to reserve output capture buffer: " << (int)result;
+    LOG(ERROR) << "Failed to reserve output capture buffer: " << (int)result;
     return MF_E_UNEXPECTED;
   }
 
-  hr = CopyTextureToGpuMemoryBuffer(
-      texture, capture_buffer.handle_provider->GetGpuMemoryBufferHandle());
+  auto gmb_handle = capture_buffer.handle_provider->GetGpuMemoryBufferHandle();
+  if (!gmb_handle.dxgi_handle.IsValid()) {
+    // If the device is removed and GMB tracker fails to recreate it,
+    // an empty gmb handle may be returned here.
+    return MF_E_UNEXPECTED;
+  }
+  hr = CopyTextureToGpuMemoryBuffer(texture, gmb_handle.dxgi_handle.Get());
 
   if (FAILED(hr)) {
-    DLOG(ERROR) << "Failed to copy camera device texture to output texture: "
-                << logging::SystemErrorCodeToString(hr);
+    LOG(ERROR) << "Failed to copy camera device texture to output texture: "
+               << logging::SystemErrorCodeToString(hr);
     return hr;
+  }
+
+  capture_buffer.is_premapped = false;
+  if (last_feedback_.require_mapped_frame) {
+    // Only a flag on the Buffer is set here; the region itself isn't passed
+    // anywhere because it was passed when the buffer was created.
+    // Now the flag would tell the consumer that the region contains actual
+    // frame data.
+    if (capture_buffer.handle_provider->DuplicateAsUnsafeRegion().IsValid()) {
+      capture_buffer.is_premapped = true;
+    }
   }
 
   VideoRotation frame_rotation = VIDEO_ROTATION_0;
@@ -1548,10 +1677,14 @@ void VideoCaptureDeviceMFWin::OnIncomingCapturedDataInternal(
     // We always calculate camera rotation for the first frame. We also cache
     // the latest value to use when AutoRotation is turned off.
     if (!camera_rotation_.has_value() || IsAutoRotationEnabled())
-      camera_rotation_ = GetCameraRotation(facing_mode_);
+      camera_rotation_ = GetCameraRotation(device_descriptor_.facing);
 
     Microsoft::WRL::ComPtr<ID3D11Texture2D> texture;
+    // Use the hardware path only if it is enabled and the selected pixel format
+    // is NV12 (which is the only supported one).
     if (dxgi_device_manager_ &&
+        selected_video_capability_->supported_format.pixel_format ==
+            PIXEL_FORMAT_NV12 &&
         SUCCEEDED(GetTextureFromMFBuffer(buffer, &texture))) {
       HRESULT hr =
           DeliverTextureToClient(texture.Get(), reference_time, timestamp);
@@ -1567,7 +1700,7 @@ void VideoCaptureDeviceMFWin::OnIncomingCapturedDataInternal(
 
   ScopedBufferLock locked_buffer(buffer);
   if (!locked_buffer.data()) {
-    DLOG(ERROR) << "Locked buffer delivered nullptr";
+    LOG(ERROR) << "Locked buffer delivered nullptr";
     frame_drop_reason = VideoCaptureFrameDropReason::
         kWinMediaFoundationLockingBufferDelieveredNullptr;
     return;
@@ -1620,13 +1753,12 @@ void VideoCaptureDeviceMFWin::OnFrameDropped(
 }
 
 void VideoCaptureDeviceMFWin::OnEvent(IMFMediaEvent* media_event) {
-  base::AutoLock lock(lock_);
-
   HRESULT hr;
   GUID capture_event_guid = GUID_NULL;
 
   media_event->GetStatus(&hr);
   media_event->GetExtendedType(&capture_event_guid);
+
   // TODO(http://crbug.com/1093521): Add cases for Start
   // MF_CAPTURE_ENGINE_PREVIEW_STARTED and MF_CAPTURE_ENGINE_PREVIEW_STOPPED
   // When MF_CAPTURE_ENGINE_ERROR is returned the captureengine object is no
@@ -1639,9 +1771,51 @@ void VideoCaptureDeviceMFWin::OnEvent(IMFMediaEvent* media_event) {
     capture_initialize_.Signal();
   }
 
-  if (FAILED(hr))
+  // Lock is taken after events are signalled, because if the capture
+  // is being restarted, lock is currently owned by another thread running
+  // OnEvent().
+  base::AutoLock lock(lock_);
+
+  if (hr == DXGI_ERROR_DEVICE_REMOVED && dxgi_device_manager_ != nullptr) {
+    // Removed device can happen for external reasons.
+    // We should restart capture.
+    Microsoft::WRL::ComPtr<ID3D11Device> recreated_d3d_device;
+    const bool try_d3d_path = num_restarts_ < kMaxD3DRestarts;
+    if (try_d3d_path) {
+      HRESULT removed_hr = dxgi_device_manager_->CheckDeviceRemovedAndGetDevice(
+          &recreated_d3d_device);
+      LOG(ERROR) << "OnEvent: Device was Removed. Reason: "
+                 << logging::SystemErrorCodeToString(removed_hr);
+    } else {
+      // Too many restarts. Fallback to the software path.
+      dxgi_device_manager_ = nullptr;
+    }
+
+    engine_ = nullptr;
+    is_initialized_ = false;
+    is_started_ = false;
+    source_ = nullptr;
+    capture_error_.Reset();
+    capture_initialize_.Reset();
+
+    if ((!try_d3d_path || recreated_d3d_device) && RecreateMFSource() &&
+        Init()) {
+      AllocateAndStartLocked(params_, std::move(client_));
+      // If AllocateAndStart fails somehow, OnError() will be called
+      // internally. Therefore, it's safe to always override |hr| here.
+      hr = S_OK;
+      ++num_restarts_;
+    } else {
+      LOG(ERROR) << "Failed to re-initialize.";
+      hr = MF_E_UNEXPECTED;
+    }
+  }
+
+  if (FAILED(hr)) {
+    base::UmaHistogramSparse("Media.VideoCapture.Win.ErrorEvent", hr);
     OnError(VideoCaptureError::kWinMediaFoundationGetMediaEventStatusFailed,
             FROM_HERE, hr);
+  }
 }
 
 void VideoCaptureDeviceMFWin::OnError(VideoCaptureError error,
@@ -1683,7 +1857,7 @@ HRESULT VideoCaptureDeviceMFWin::WaitOnCaptureEvent(GUID capture_event_guid) {
   }
 
   DWORD wait_result =
-      ::WaitForMultipleObjects(base::size(events), events, FALSE, INFINITE);
+      ::WaitForMultipleObjects(std::size(events), events, FALSE, INFINITE);
   switch (wait_result) {
     case WAIT_OBJECT_0:
       break;
@@ -1697,5 +1871,37 @@ HRESULT VideoCaptureDeviceMFWin::WaitOnCaptureEvent(GUID capture_event_guid) {
       break;
   }
   return hr;
+}
+
+bool VideoCaptureDeviceMFWin::RecreateMFSource() {
+  const bool is_sensor_api = device_descriptor_.capture_api ==
+                             VideoCaptureApi::WIN_MEDIA_FOUNDATION_SENSOR;
+  ComPtr<IMFAttributes> attributes;
+  HRESULT hr = MFCreateAttributes(&attributes, is_sensor_api ? 3 : 2);
+  if (FAILED(hr)) {
+    LOG(ERROR) << "Failed to create attributes: "
+               << logging::SystemErrorCodeToString(hr);
+    return false;
+  }
+  attributes->SetGUID(MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE,
+                      MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID);
+  if (is_sensor_api) {
+    attributes->SetGUID(MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_CATEGORY,
+                        KSCATEGORY_SENSOR_CAMERA);
+  }
+  attributes->SetString(
+      MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK,
+      base::SysUTF8ToWide(device_descriptor_.device_id).c_str());
+  hr = MFCreateDeviceSource(attributes.Get(), &source_);
+  if (FAILED(hr)) {
+    LOG(ERROR) << "MFCreateDeviceSource failed: "
+               << logging::SystemErrorCodeToString(hr);
+    return false;
+  }
+
+  if (dxgi_device_manager_) {
+    dxgi_device_manager_->RegisterWithMediaSource(source_);
+  }
+  return true;
 }
 }  // namespace media

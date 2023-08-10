@@ -15,7 +15,7 @@ namespace spellcheck {
 
 bool UseBrowserSpellChecker();
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 extern const base::Feature kWinUseBrowserSpellChecker;
 
 // If the kWinDelaySpellcheckServiceInit feature flag is enabled, don't
@@ -38,15 +38,18 @@ extern const base::Feature kWinUseBrowserSpellChecker;
 //    --disable-sync-types="Dictionary"
 extern const base::Feature kWinDelaySpellcheckServiceInit;
 
+// When set, do not perform the expensive operation of retrieving suggestions
+// for all misspelled words while performing a text check. Instead retrieve
+// suggestions on demand when the context menu is brought up with a misspelled
+// word selected.
+extern const base::Feature kWinRetrieveSuggestionsOnlyOnDemand;
+
 bool WindowsVersionSupportsSpellchecker();
-#endif  // defined(OS_WIN)
+#endif  // BUILDFLAG(IS_WIN)
 
-#if defined(OS_ANDROID)
-extern const base::Feature kAndroidSpellChecker;
-extern const base::Feature kAndroidSpellCheckerNonLowEnd;
-
+#if BUILDFLAG(IS_ANDROID)
 bool IsAndroidSpellCheckFeatureEnabled();
-#endif  // defined(OS_ANDROID)
+#endif  // BUILDFLAG(IS_ANDROID)
 
 #endif  // BUILDFLAG(ENABLE_SPELLCHECK)
 

@@ -10,15 +10,14 @@
 
 #include "base/bind.h"
 #include "base/callback_helpers.h"
+#include "base/containers/contains.h"
 #include "base/guid.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/macros.h"
 #include "base/memory/ptr_util.h"
-#include "base/optional.h"
-#include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "chromeos/dbus/shill/shill_third_party_vpn_driver_client.h"
@@ -35,6 +34,7 @@
 #include "extensions/browser/event_router.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/unloaded_extension_reason.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 
 namespace chromeos {
@@ -56,6 +56,10 @@ class VpnService::VpnConfiguration : public ShillThirdPartyVpnObserver {
                    const std::string& configuration_name,
                    const std::string& key,
                    base::WeakPtr<VpnService> vpn_service);
+
+  VpnConfiguration(const VpnConfiguration&) = delete;
+  VpnConfiguration& operator=(const VpnConfiguration&) = delete;
+
   ~VpnConfiguration() override;
 
   const std::string& extension_id() const { return extension_id_; }
@@ -88,8 +92,6 @@ class VpnService::VpnConfiguration : public ShillThirdPartyVpnObserver {
   std::string service_path_;
 
   base::WeakPtr<VpnService> vpn_service_;
-
-  DISALLOW_COPY_AND_ASSIGN(VpnConfiguration);
 };
 
 VpnService::VpnConfiguration::VpnConfiguration(
@@ -114,9 +116,8 @@ void VpnService::VpnConfiguration::OnPacketReceived(
   if (pepper_vpn_provider_proxy_) {
     pepper_vpn_provider_proxy_->SendOnPacketReceived(data);
   } else {
-    std::unique_ptr<base::ListValue> event_args =
-        api_vpn::OnPacketReceived::Create(
-            std::vector<uint8_t>(data.begin(), data.end()));
+    auto event_args = api_vpn::OnPacketReceived::Create(
+        std::vector<uint8_t>(data.begin(), data.end()));
     vpn_service_->SendSignalToExtension(
         extension_id_, extensions::events::VPN_PROVIDER_ON_PACKET_RECEIVED,
         api_vpn::OnPacketReceived::kEventName, std::move(event_args));
@@ -147,9 +148,8 @@ void VpnService::VpnConfiguration::OnPlatformMessage(uint32_t message) {
 
   // TODO(kaliamoorthi): Update the lower layers to get the error message and
   // pass in the error instead of std::string().
-  std::unique_ptr<base::ListValue> event_args =
-      api_vpn::OnPlatformMessage::Create(configuration_name_, platform_message,
-                                         std::string());
+  auto event_args = api_vpn::OnPlatformMessage::Create(
+      configuration_name_, platform_message, std::string());
 
   vpn_service_->SendSignalToExtension(
       extension_id_, extensions::events::VPN_PROVIDER_ON_PLATFORM_MESSAGE,
@@ -158,7 +158,10 @@ void VpnService::VpnConfiguration::OnPlatformMessage(uint32_t message) {
 
 class VpnService::VpnServiceProxyImpl : public content::VpnServiceProxy {
  public:
-  VpnServiceProxyImpl(base::WeakPtr<VpnService> vpn_service);
+  explicit VpnServiceProxyImpl(base::WeakPtr<VpnService> vpn_service);
+
+  VpnServiceProxyImpl(const VpnServiceProxyImpl&) = delete;
+  VpnServiceProxyImpl& operator=(const VpnServiceProxyImpl&) = delete;
 
   void Bind(const std::string& extension_id,
             const std::string& configuration_id,
@@ -174,8 +177,6 @@ class VpnService::VpnServiceProxyImpl : public content::VpnServiceProxy {
 
  private:
   base::WeakPtr<VpnService> vpn_service_;
-
-  DISALLOW_COPY_AND_ASSIGN(VpnServiceProxyImpl);
 };
 
 VpnService::VpnServiceProxyImpl::VpnServiceProxyImpl(
@@ -292,7 +293,7 @@ void VpnService::OnConfigurationRemoved(const std::string& service_path,
 
   VpnConfiguration* configuration =
       service_path_to_configuration_map_[service_path];
-  std::unique_ptr<base::ListValue> event_args =
+  auto event_args =
       api_vpn::OnConfigRemoved::Create(configuration->configuration_name());
   SendSignalToExtension(configuration->extension_id(),
                         extensions::events::VPN_PROVIDER_ON_CONFIG_REMOVED,
@@ -303,7 +304,7 @@ void VpnService::OnConfigurationRemoved(const std::string& service_path,
 }
 
 void VpnService::OnGetShillProperties(const std::string& service_path,
-                                      base::Optional<base::Value> dictionary) {
+                                      absl::optional<base::Value> dictionary) {
   if (!dictionary || service_path_to_configuration_map_.find(service_path) !=
                          service_path_to_configuration_map_.end()) {
     return;
@@ -429,7 +430,7 @@ void VpnService::DestroyConfiguration(const std::string& extension_id,
 
   network_configuration_handler_->RemoveConfiguration(
       service_path,
-      /*remove_confirmer=*/base::nullopt,
+      /*remove_confirmer=*/absl::nullopt,
       base::BindOnce(&VpnService::OnRemoveConfigurationSuccess,
                      weak_factory_.GetWeakPtr(), std::move(success)),
       base::BindOnce(&VpnService::OnRemoveConfigurationFailure,
@@ -560,8 +561,7 @@ void VpnService::OnCreateConfigurationSuccess(
 void VpnService::OnCreateConfigurationFailure(
     VpnService::FailureCallback callback,
     VpnConfiguration* configuration,
-    const std::string& error_name,
-    std::unique_ptr<base::DictionaryValue> error_data) {
+    const std::string& error_name) {
   DestroyConfigurationInternal(configuration);
   std::move(callback).Run(error_name, std::string());
 }
@@ -573,8 +573,7 @@ void VpnService::OnRemoveConfigurationSuccess(
 
 void VpnService::OnRemoveConfigurationFailure(
     VpnService::FailureCallback callback,
-    const std::string& error_name,
-    std::unique_ptr<base::DictionaryValue> error_data) {
+    const std::string& error_name) {
   std::move(callback).Run(error_name, std::string());
 }
 
@@ -582,7 +581,7 @@ void VpnService::SendSignalToExtension(
     const std::string& extension_id,
     extensions::events::HistogramValue histogram_value,
     const std::string& event_name,
-    std::unique_ptr<base::ListValue> event_args) {
+    std::vector<base::Value> event_args) {
   std::unique_ptr<extensions::Event> event(new extensions::Event(
       histogram_value, event_name, std::move(event_args), browser_context_));
 

@@ -29,7 +29,7 @@ namespace blink {
 
 namespace {
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 float g_device_scale_factor_for_testing = 0.0;
 #endif
 
@@ -44,7 +44,7 @@ void AppendDataToRequestBody(
 
 void AppendFileRangeToRequestBody(
     const scoped_refptr<network::ResourceRequestBody>& request_body,
-    const base::Optional<base::string16>& file_path,
+    const absl::optional<std::u16string>& file_path,
     int file_start,
     int file_length,
     base::Time file_modification_time) {
@@ -59,7 +59,7 @@ void AppendFileRangeToRequestBody(
 
 void AppendReferencedFilesFromHttpBody(
     const std::vector<network::DataElement>& elements,
-    std::vector<base::Optional<base::string16>>* referenced_files) {
+    std::vector<absl::optional<std::u16string>>* referenced_files) {
   for (size_t i = 0; i < elements.size(); ++i) {
     if (elements[i].type() == network::DataElement::Tag::kFile) {
       referenced_files->emplace_back(
@@ -69,8 +69,8 @@ void AppendReferencedFilesFromHttpBody(
 }
 
 bool AppendReferencedFilesFromDocumentState(
-    const std::vector<base::Optional<base::string16>>& document_state,
-    std::vector<base::Optional<base::string16>>* referenced_files) {
+    const std::vector<absl::optional<std::u16string>>& document_state,
+    std::vector<absl::optional<std::u16string>>* referenced_files) {
   if (document_state.empty())
     return true;
 
@@ -99,7 +99,7 @@ bool AppendReferencedFilesFromDocumentState(
       return false;
 
     index++;  // Skip over name.
-    const base::Optional<base::string16>& type = document_state[index++];
+    const absl::optional<std::u16string>& type = document_state[index++];
 
     if (index >= document_state.size())
       return false;
@@ -129,7 +129,7 @@ bool AppendReferencedFilesFromDocumentState(
 
 bool RecursivelyAppendReferencedFiles(
     const ExplodedFrameState& frame_state,
-    std::vector<base::Optional<base::string16>>* referenced_files) {
+    std::vector<absl::optional<std::u16string>>* referenced_files) {
   if (frame_state.http_body.request_body) {
     AppendReferencedFilesFromHttpBody(
         *frame_state.http_body.request_body->elements(), referenced_files);
@@ -189,6 +189,9 @@ struct SerializeObject {
 // 26: Switch to mojo-based serialization.
 // 27: Add serialized scroll anchor to FrameState.
 // 28: Add initiator origin to FrameState.
+// 29: Add navigation API key.
+// 30: Add navigation API state.
+// 31: Add protect url in navigation API bit.
 // NOTE: If the version is -1, then the pickle contains only a URL string.
 // See ReadPageState.
 //
@@ -196,7 +199,7 @@ const int kMinVersion = 11;
 // NOTE: When changing the version, please add a backwards compatibility test.
 // See PageStateSerializationTest.DumpExpectedPageStateForBackwardsCompat for
 // instructions on how to generate the new test case.
-const int kCurrentVersion = 28;
+const int kCurrentVersion = 31;
 
 // A bunch of convenience functions to write to/read from SerializeObjects.  The
 // de-serializers assume the input data will be in the correct format and fall
@@ -290,10 +293,10 @@ std::string ReadStdString(SerializeObject* obj) {
   return std::string();
 }
 
-// Pickles a base::string16 as <int length>:<char*16 data> tuple>.
-void WriteString(const base::string16& str, SerializeObject* obj) {
-  const base::char16* data = str.data();
-  size_t length_in_bytes = str.length() * sizeof(base::char16);
+// Pickles a std::u16string as <int length>:<char*16 data> tuple>.
+void WriteString(const std::u16string& str, SerializeObject* obj) {
+  const char16_t* data = str.data();
+  size_t length_in_bytes = str.length() * sizeof(char16_t);
 
   CHECK_LT(length_in_bytes,
            static_cast<size_t>(std::numeric_limits<int>::max()));
@@ -302,8 +305,8 @@ void WriteString(const base::string16& str, SerializeObject* obj) {
 }
 
 // If str is a null optional, this simply pickles a length of -1. Otherwise,
-// delegates to the base::string16 overload.
-void WriteString(const base::Optional<base::string16>& str,
+// delegates to the std::u16string overload.
+void WriteString(const absl::optional<std::u16string>& str,
                  SerializeObject* obj) {
   if (!str) {
     obj->pickle.WriteInt(-1);
@@ -312,9 +315,9 @@ void WriteString(const base::Optional<base::string16>& str,
   }
 }
 
-// This reads a serialized base::Optional<base::string16> from obj. If a string
+// This reads a serialized absl::optional<std::u16string> from obj. If a string
 // can't be read, nullptr is returned.
-const base::char16* ReadStringNoCopy(SerializeObject* obj, int* num_chars) {
+const char16_t* ReadStringNoCopy(SerializeObject* obj, int* num_chars) {
   int length_in_bytes;
   if (!obj->iter.ReadInt(&length_in_bytes)) {
     obj->parse_error = true;
@@ -331,14 +334,14 @@ const base::char16* ReadStringNoCopy(SerializeObject* obj, int* num_chars) {
   }
 
   if (num_chars)
-    *num_chars = length_in_bytes / sizeof(base::char16);
-  return reinterpret_cast<const base::char16*>(data);
+    *num_chars = length_in_bytes / sizeof(char16_t);
+  return reinterpret_cast<const char16_t*>(data);
 }
 
-base::Optional<base::string16> ReadString(SerializeObject* obj) {
+absl::optional<std::u16string> ReadString(SerializeObject* obj) {
   int num_chars;
-  const base::char16* chars = ReadStringNoCopy(obj, &num_chars);
-  base::Optional<base::string16> result;
+  const char16_t* chars = ReadStringNoCopy(obj, &num_chars);
+  absl::optional<std::u16string> result;
   if (chars)
     result.emplace(chars, num_chars);
   return result;
@@ -370,7 +373,7 @@ size_t ReadAndValidateVectorSize(SerializeObject* obj, size_t element_size) {
 }
 
 // Writes a Vector of strings into a SerializeObject for serialization.
-void WriteStringVector(const std::vector<base::Optional<base::string16>>& data,
+void WriteStringVector(const std::vector<absl::optional<std::u16string>>& data,
                        SerializeObject* obj) {
   WriteAndValidateVectorSize(data, obj);
   for (size_t i = 0; i < data.size(); ++i) {
@@ -379,9 +382,9 @@ void WriteStringVector(const std::vector<base::Optional<base::string16>>& data,
 }
 
 void ReadStringVector(SerializeObject* obj,
-                      std::vector<base::Optional<base::string16>>* result) {
+                      std::vector<absl::optional<std::u16string>>* result) {
   size_t num_elements =
-      ReadAndValidateVectorSize(obj, sizeof(base::Optional<base::string16>));
+      ReadAndValidateVectorSize(obj, sizeof(absl::optional<std::u16string>));
 
   result->resize(num_elements);
   for (size_t i = 0; i < num_elements; ++i)
@@ -432,7 +435,7 @@ void ReadResourceRequestBody(
                                 length);
       }
     } else if (type == HTTPBodyElementType::kTypeFile) {
-      base::Optional<base::string16> file_path = ReadString(obj);
+      absl::optional<std::u16string> file_path = ReadString(obj);
       int64_t file_start = ReadInteger64(obj);
       int64_t file_length = ReadInteger64(obj);
       double file_modification_time = ReadReal(obj);
@@ -563,7 +566,7 @@ void ReadFrameState(
   if (obj->version < 14)
     ReadString(obj);  // Skip unused referrer string.
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   if (obj->version == 11) {
     // Now-unused values that shipped in this version of Chrome for Android when
     // it was on a private branch.
@@ -788,6 +791,11 @@ void WriteFrameState(const ExplodedFrameState& state,
   frame->http_body = mojom::HttpBody::New();
   WriteHttpBody(state.http_body, frame->http_body.get());
 
+  frame->navigation_api_key = state.navigation_api_key;
+  frame->navigation_api_id = state.navigation_api_id;
+  frame->navigation_api_state = state.navigation_api_state;
+  frame->protect_url_in_navigation_api = state.protect_url_in_navigation_api;
+
   // Subitems
   const std::vector<ExplodedFrameState>& children = state.children;
   for (const auto& child : children) {
@@ -839,6 +847,11 @@ void ReadFrameState(mojom::FrameState* frame, ExplodedFrameState* state) {
   } else {
     state->http_body.request_body = nullptr;
   }
+
+  state->navigation_api_key = frame->navigation_api_key;
+  state->navigation_api_id = frame->navigation_api_id;
+  state->navigation_api_state = frame->navigation_api_state;
+  state->protect_url_in_navigation_api = frame->protect_url_in_navigation_api;
 
   state->children.resize(frame->children.size());
   int i = 0;
@@ -958,6 +971,10 @@ void ExplodedFrameState::assign(const ExplodedFrameState& other) {
   scroll_anchor_selector = other.scroll_anchor_selector;
   scroll_anchor_offset = other.scroll_anchor_offset;
   scroll_anchor_simhash = other.scroll_anchor_simhash;
+  navigation_api_key = other.navigation_api_key;
+  navigation_api_id = other.navigation_api_id;
+  navigation_api_state = other.navigation_api_state;
+  protect_url_in_navigation_api = other.protect_url_in_navigation_api;
   children = other.children;
 }
 
@@ -1003,7 +1020,7 @@ void LegacyEncodePageStateForTesting(const ExplodedPageState& exploded,
   *encoded = obj.GetAsString();
 }
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 bool DecodePageStateWithDeviceScaleFactorForTesting(
     const std::string& encoded,
     float device_scale_factor,

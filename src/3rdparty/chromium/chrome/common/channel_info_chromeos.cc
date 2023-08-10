@@ -32,7 +32,7 @@ void SetChannel(const std::string& channel) {
 
 }  // namespace
 
-std::string GetChannelName() {
+std::string GetChannelName(WithExtendedStable with_extended_stable) {
 #if BUILDFLAG(GOOGLE_CHROME_BRANDING)
   switch (GetChannel()) {
     case version_info::Channel::STABLE:
@@ -46,8 +46,9 @@ std::string GetChannelName() {
     default:
       return "unknown";
   }
-#endif
+#else
   return std::string();
+#endif
 }
 
 version_info::Channel GetChannel() {
@@ -64,6 +65,10 @@ version_info::Channel GetChannel() {
   }
 #endif
   return g_chromeos_channel;
+}
+
+bool IsExtendedStableChannel() {
+  return false;  // Not supported on Chrome OS Ash.
 }
 
 std::string GetChannelSuffixForDataDir() {

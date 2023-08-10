@@ -8,9 +8,9 @@
 
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/strings/string_util.h"
+#include "base/strings/stringprintf.h"
 #include "base/test/bind.h"
 #include "base/threading/thread_restrictions.h"
 #include "content/browser/renderer_host/navigation_request.h"
@@ -23,6 +23,7 @@
 #include "content/public/test/navigation_handle_observer.h"
 #include "content/public/test/test_utils.h"
 #include "content/shell/browser/shell.h"
+#include "content/test/content_browser_test_utils_internal.h"
 #include "mojo/public/c/system/trap.h"
 #include "mojo/public/c/system/types.h"
 #include "mojo/public/cpp/system/data_pipe.h"
@@ -46,7 +47,7 @@ class NavigationMhtmlBrowserTest : public ContentBrowserTest {
   }
 
   RenderFrameHostImpl* main_frame_host() {
-    return web_contents()->GetFrameTree()->root()->current_frame_host();
+    return web_contents()->GetPrimaryFrameTree().root()->current_frame_host();
   }
 
  protected:
@@ -60,6 +61,10 @@ class NavigationMhtmlBrowserTest : public ContentBrowserTest {
 class MhtmlArchive {
  public:
   MhtmlArchive() = default;
+
+  MhtmlArchive(const MhtmlArchive&) = delete;
+  MhtmlArchive& operator=(const MhtmlArchive&) = delete;
+
   ~MhtmlArchive() {
     base::ScopedAllowBlockingForTesting allow_blocking_;
     EXPECT_TRUE(file_directory_.Delete());
@@ -125,8 +130,6 @@ class MhtmlArchive {
  private:
   base::ScopedTempDir file_directory_;
   std::string content_;
-
-  DISALLOW_COPY_AND_ASSIGN(MhtmlArchive);
 };
 
 }  // namespace
@@ -567,15 +570,15 @@ IN_PROC_BROWSER_TEST_F(NavigationMhtmlBrowserTest, CSPEmbeddedEnforcement) {
   RenderFrameHostImpl* rfh_3 = main_document->child_at(0)->current_frame_host();
 
   // Same-origin without Allow-CSP-From:* => response allowed.
-  EXPECT_FALSE(rfh_1->is_error_page());
+  EXPECT_FALSE(rfh_1->IsErrorDocument());
 
   // Cross-origin without Allow-CSP-From:* => response blocked;
   // TODO(https://crbug.com/1112965) Add support for CSPEE in MHTML documents.
   // An error page should be displayed here.
-  EXPECT_FALSE(rfh_2->is_error_page());
+  EXPECT_FALSE(rfh_2->IsErrorDocument());
 
   // Cross-origin with Allow-CSP-From:* => response allowed.
-  EXPECT_FALSE(rfh_3->is_error_page());
+  EXPECT_FALSE(rfh_3->IsErrorDocument());
 }
 
 IN_PROC_BROWSER_TEST_F(NavigationMhtmlBrowserTest,
@@ -632,8 +635,8 @@ IN_PROC_BROWSER_TEST_F(NavigationMhtmlBrowserTest,
 
   // While archive loading is still in progress and nothing has been committed,
   // trigger a same-document navigation.
-  url::Replacements<char> replacements;
-  replacements.SetRef("fragment", url::Component(0, strlen("fragment")));
+  GURL::Replacements replacements;
+  replacements.SetRefStr("fragment");
   const GURL mhtml_url_with_fragment =
       mhtml_url.ReplaceComponents(replacements);
   // TODO(dcheng): Using NavigateToURL() here seems to cause the test to hang.
@@ -744,10 +747,12 @@ IN_PROC_BROWSER_TEST_F(NavigationMhtmlBrowserTest, DataIframe) {
   EXPECT_TRUE(NavigateToURL(shell(), mhtml_url));
 
   // All MHTML frames should have an opaque origin.
-  for (RenderFrameHost* frame : shell()->web_contents()->GetAllFrames()) {
-    EXPECT_TRUE(frame->GetLastCommittedOrigin().opaque())
-        << "frame->GetLastCommittedURL() = " << frame->GetLastCommittedURL();
-  }
+  shell()->web_contents()->GetMainFrame()->ForEachRenderFrameHost(
+      base::BindRepeating([](RenderFrameHost* frame) {
+        EXPECT_TRUE(frame->GetLastCommittedOrigin().opaque())
+            << "frame->GetLastCommittedURL() = "
+            << frame->GetLastCommittedURL();
+      }));
 }
 
 // Regression test for https://crbug.com/1168249.
@@ -775,6 +780,32 @@ IN_PROC_BROWSER_TEST_F(NavigationMhtmlBrowserTest, PreloadedTextTrack) {
   // documents). To detect such NOTREACHED (via renderer crash) it is sufficient
   // for the test to wait for DidStopLoading notification (which is done
   // underneath NavigateToURL called above).
+}
+
+// MHTML document with a base URL of |kUnreachableWebDataURL| should not be
+// treated as an error page.
+IN_PROC_BROWSER_TEST_F(NavigationMhtmlBrowserTest, ErrorBaseURL) {
+  NavigationController& controller = web_contents()->GetController();
+  FrameTreeNode* root = static_cast<WebContentsImpl*>(web_contents())
+                            ->GetPrimaryFrameTree()
+                            .root();
+
+  // Prepare an MHTML document with the base URL set to the error page URL.
+  MhtmlArchive mhtml_archive;
+  mhtml_archive.AddHtmlDocument(GURL(kUnreachableWebDataURL), "foo");
+  GURL mhtml_url = mhtml_archive.Write("index.mhtml");
+
+  // Navigate to the MHTML document.
+  FrameNavigateParamsCapturer params_capturer(root);
+  EXPECT_TRUE(NavigateToURL(shell(), mhtml_url));
+  params_capturer.Wait();
+
+  // Check that the RenderFrameHost, NavigationRequest and NavigationEntry all
+  // agree that the document is not an error page.
+  RenderFrameHostImpl* main_document = main_frame_host();
+  EXPECT_FALSE(main_document->IsErrorDocument());
+  EXPECT_FALSE(params_capturer.is_error_page());
+  EXPECT_NE(PAGE_TYPE_ERROR, controller.GetLastCommittedEntry()->GetPageType());
 }
 
 }  // namespace content

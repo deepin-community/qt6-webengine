@@ -53,8 +53,10 @@ std::unique_ptr<SctpTransportProxy> CreateProxy(
   DCHECK(worker_thread);
   LocalFrame* frame = To<LocalDOMWindow>(context)->GetFrame();
   DCHECK(frame);
-  return SctpTransportProxy::Create(*frame, main_thread, worker_thread,
-                                    native_transport, delegate);
+  return SctpTransportProxy::Create(
+      *frame, main_thread, worker_thread,
+      rtc::scoped_refptr<webrtc::SctpTransportInterface>(native_transport),
+      delegate);
 }
 
 }  // namespace
@@ -66,8 +68,8 @@ RTCSctpTransport::RTCSctpTransport(
                        native_transport,
                        context->GetTaskRunner(TaskType::kNetworking),
 #if BUILDFLAG(ENABLE_WEBRTC)
-                       PeerConnectionDependencyFactory::GetInstance()
-                           ->GetWebRtcNetworkTaskRunner()
+                       PeerConnectionDependencyFactory::From(*context)
+                           .GetWebRtcNetworkTaskRunner()
 #else
                        nullptr
 #endif
@@ -106,9 +108,9 @@ double RTCSctpTransport::maxMessageSize() const {
   return std::numeric_limits<double>::infinity();
 }
 
-base::Optional<int16_t> RTCSctpTransport::maxChannels() const {
+absl::optional<int16_t> RTCSctpTransport::maxChannels() const {
   if (!current_state_.MaxChannels())
-    return base::nullopt;
+    return absl::nullopt;
   return current_state_.MaxChannels().value();
 }
 

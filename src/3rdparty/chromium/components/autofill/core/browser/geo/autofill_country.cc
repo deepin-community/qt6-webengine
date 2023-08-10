@@ -34,13 +34,6 @@ AutofillCountry::AutofillCountry(const std::string& country_code,
                       ? country_data_map->GetCountryCodeForAlias(country_code)
                       : country_code;
 
-  // If there is no entry in the |CountryDataMap| for the
-  // |country_code_for_country_data| use the country code  derived from the
-  // locale. This reverts to US.
-  country_data_map->HasRequiredFieldsForAddressImport(country_code_)
-      ? country_code_
-      : CountryCodeForLocale(locale);
-
   // Acquire the country address data.
   required_fields_for_address_import_ =
       country_data_map->GetRequiredFieldsForAddressImport(country_code_);
@@ -75,9 +68,9 @@ const std::string AutofillCountry::CountryCodeForLocale(
 }
 
 AutofillCountry::AutofillCountry(const std::string& country_code,
-                                 const base::string16& name,
-                                 const base::string16& postal_code_label,
-                                 const base::string16& state_label)
+                                 const std::u16string& name,
+                                 const std::u16string& postal_code_label,
+                                 const std::u16string& state_label)
     : country_code_(country_code), name_(name) {}
 
 // Prints a formatted log of a |AutofillCountry| to a |LogBuffer|.

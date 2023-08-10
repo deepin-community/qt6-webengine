@@ -2,18 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <math.h>
+
 #include <limits>
 
 #include "build/build_config.h"
 #include "core/fxcrt/fx_string.h"
 #include "core/fxcrt/fx_system.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/base/stl_util.h"
+#include "third_party/base/cxx17_backports.h"
 
 // Unit test covering cases where PDFium replaces well-known library
 // functionality on any given platformn.
 
-#if !defined(OS_WIN)
+#if !BUILDFLAG(IS_WIN)
 
 namespace {
 
@@ -261,7 +263,7 @@ TEST(fxcrt, FXSYS_i64toa) {
       "111111111111111111111111111111111111111111111111111111111111111");
 }
 
-#endif  // !defined(OS_WIN)
+#endif  // !BUILDFLAG(IS_WIN)
 
 TEST(fxcrt, FXSYS_wcsftime) {
   struct tm good_time = {};

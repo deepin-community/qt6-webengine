@@ -8,23 +8,24 @@
 #include <string.h>
 
 #include <algorithm>
-#include <cstddef>
 #include <limits>
 #include <utility>
 
 #include "base/logging.h"
-#include "base/macros.h"
-#include "base/memory/aligned_memory.h"
+#include "base/memory/nonscannable_memory.h"
 #include "base/memory/ptr_util.h"
+#include "base/memory/raw_ptr.h"
 #include "base/numerics/safe_math.h"
 #include "base/process/process_handle.h"
+#include "base/trace_event/typed_macros.h"
 #include "build/build_config.h"
 #include "mojo/core/configuration.h"
 #include "mojo/core/core.h"
+#include "mojo/core/embedder/features.h"
 
-#if defined(OS_MAC)
+#if BUILDFLAG(IS_MAC)
 #include "base/mac/mach_logging.h"
-#elif defined(OS_WIN)
+#elif BUILDFLAG(IS_WIN)
 #include "base/win/win_util.h"
 #endif
 
@@ -32,6 +33,16 @@ namespace mojo {
 namespace core {
 
 namespace {
+
+std::atomic_bool g_use_trivial_messages{false};
+
+// To ensure amortized O(1) appends, need to be >1. Most STL implementations
+// use 2, but it may be too much for us, and we do see OOM crashes in the
+// reallocation.
+//
+// TODO(1301294): Consider asking the memory allocator for a
+// suitable size.
+constexpr float kGrowthFactor = 1.5;
 
 static_assert(
     IsAlignedForChannelMessage(sizeof(Channel::Message::LegacyHeader)),
@@ -61,9 +72,10 @@ const size_t kMaxAttachedHandles = 64;
 
 static_assert(alignof(std::max_align_t) >= kChannelMessageAlignment, "");
 Channel::AlignedBuffer MakeAlignedBuffer(size_t size) {
-  // No need to call base::AlignedAlloc() since malloc() already had the proper
-  // alignment.
-  void* ptr = malloc(size);
+  // Generic allocators (such as malloc) return a pointer that is suitably
+  // aligned for storing any type of object with a fundamental alignment
+  // requirement. Buffers have no additional alignment requirement beyond that.
+  void* ptr = base::AllocNonScannable(size);
   // Even though the allocator is configured in such a way that it crashes
   // rather than return nullptr, ASAN and friends don't know about that. This
   // CHECK() prevents Clusterfuzz from complaining. crbug.com/1180576.
@@ -71,125 +83,166 @@ Channel::AlignedBuffer MakeAlignedBuffer(size_t size) {
   return Channel::AlignedBuffer(static_cast<char*>(ptr));
 }
 
+struct TrivialMessage;
+
+// A complex message can be large or contain file handles.
+struct ComplexMessage : public Channel::Message {
+  ComplexMessage() = default;
+  ComplexMessage(size_t capacity,
+                 size_t max_handles,
+                 size_t payload_size,
+                 MessageType message_type);
+
+  ComplexMessage(const ComplexMessage&) = delete;
+  ComplexMessage& operator=(const ComplexMessage&) = delete;
+
+  ~ComplexMessage() override = default;
+
+  // Message impl:
+  void SetHandles(std::vector<PlatformHandle> new_handles) override;
+  void SetHandles(std::vector<PlatformHandleInTransit> new_handles) override;
+  std::vector<PlatformHandleInTransit> TakeHandles() override;
+  size_t NumHandlesForTransit() const override;
+
+  const void* data() const override { return data_.get(); }
+  void* mutable_data() const override { return data_.get(); }
+  size_t capacity() const override;
+
+  bool ExtendPayload(size_t new_payload_size) override;
+
+ private:
+  friend struct Channel::Message;
+  friend struct TrivialMessage;
+
+  // The message data buffer.
+  Channel::AlignedBuffer data_;
+
+  // The capacity of the buffer at |data_|.
+  size_t capacity_ = 0;
+
+  // Maximum number of handles which may be attached to this message.
+  size_t max_handles_ = 0;
+
+  std::vector<PlatformHandleInTransit> handle_vector_;
+
+#if BUILDFLAG(IS_WIN)
+  // On Windows, handles are serialised into the extra header section.
+  raw_ptr<HandleEntry> handles_ = nullptr;
+#elif BUILDFLAG(IS_MAC)
+  // On OSX, handles are serialised into the extra header section.
+  MachPortsExtraHeader* mach_ports_header_ = nullptr;
+#endif
+};
+
+struct TrivialMessage : public Channel::Message {
+  TrivialMessage(const TrivialMessage&) = delete;
+  TrivialMessage& operator=(const TrivialMessage&) = delete;
+
+  ~TrivialMessage() override = default;
+
+  // TryConstruct should be used to build a TrivialMessage.
+  static Channel::MessagePtr TryConstruct(size_t payload_size,
+                                          MessageType message_type);
+
+  // Message impl:
+  const void* data() const override { return &data_[0]; }
+  void* mutable_data() const override {
+    return const_cast<uint8_t*>(&data_[0]);
+  }
+
+  size_t capacity() const override;
+
+  bool ExtendPayload(size_t new_payload_size) override;
+
+  // The following interface methods are NOT supported on a Trivial message.
+  void SetHandles(std::vector<PlatformHandle> new_handles) override;
+  void SetHandles(std::vector<PlatformHandleInTransit> new_handles) override;
+  std::vector<PlatformHandleInTransit> TakeHandles() override;
+  size_t NumHandlesForTransit() const override;
+
+ private:
+  friend struct Channel::Message;
+  TrivialMessage() = default;
+
+  alignas(sizeof(void*)) uint8_t data_[256 - sizeof(Channel::Message)];
+
+  static constexpr size_t kInternalCapacity = sizeof(data_);
+};
+
+static_assert(sizeof(TrivialMessage) == 256,
+              "Expected TrivialMessage to be 256 bytes");
+
 }  // namespace
 
-Channel::Message::Message() = default;
+// static
+Channel::MessagePtr Channel::Message::CreateMessage(size_t payload_size,
+                                                    size_t max_handles) {
+  return CreateMessage(payload_size, payload_size, max_handles);
+}
 
-Channel::Message::Message(size_t payload_size, size_t max_handles)
-    : Message(payload_size, payload_size, max_handles) {}
+// static
+Channel::MessagePtr Channel::Message::CreateMessage(size_t payload_size,
+                                                    size_t max_handles,
+                                                    MessageType message_type) {
+  return CreateMessage(payload_size, payload_size, max_handles, message_type);
+}
 
-Channel::Message::Message(size_t payload_size,
-                          size_t max_handles,
-                          MessageType message_type)
-    : Message(payload_size, payload_size, max_handles, message_type) {}
-
-Channel::Message::Message(size_t capacity,
-                          size_t payload_size,
-                          size_t max_handles)
+// static
+Channel::MessagePtr Channel::Message::CreateMessage(size_t capacity,
+                                                    size_t payload_size,
+                                                    size_t max_handles) {
 #if defined(MOJO_CORE_LEGACY_PROTOCOL)
-    : Message(capacity, payload_size, max_handles, MessageType::NORMAL_LEGACY) {
-}
+  return CreateMessage(capacity, payload_size, max_handles,
+                       Message::MessageType::NORMAL_LEGACY);
 #else
-    : Message(capacity, payload_size, max_handles, MessageType::NORMAL) {
+  return CreateMessage(capacity, payload_size, max_handles,
+                       Message::MessageType::NORMAL);
+#endif
 }
-#endif
 
-Channel::Message::Message(size_t capacity,
-                          size_t payload_size,
-                          size_t max_handles,
-                          MessageType message_type)
-    : max_handles_(max_handles) {
-  DCHECK_GE(capacity, payload_size);
-  DCHECK_LE(max_handles_, kMaxAttachedHandles);
-
-  const bool is_legacy_message = (message_type == MessageType::NORMAL_LEGACY);
-  size_t extra_header_size = 0;
-#if defined(OS_WIN)
-  // On Windows we serialize HANDLEs into the extra header space.
-  extra_header_size = max_handles_ * sizeof(HandleEntry);
-#elif defined(OS_FUCHSIA)
-  // On Fuchsia we serialize handle types into the extra header space.
-  extra_header_size = max_handles_ * sizeof(HandleInfoEntry);
-#elif defined(OS_MAC)
-  // On OSX, some of the platform handles may be mach ports, which are
-  // serialised into the message buffer. Since there could be a mix of fds and
-  // mach ports, we store the mach ports as an <index, port> pair (of uint32_t),
-  // so that the original ordering of handles can be re-created.
-  if (max_handles) {
-    extra_header_size =
-        sizeof(MachPortsExtraHeader) + (max_handles * sizeof(MachPortsEntry));
-  }
-#endif
-  // Pad extra header data to be aliged to |kChannelMessageAlignment| bytes.
-  if (!IsAlignedForChannelMessage(extra_header_size)) {
-    extra_header_size += kChannelMessageAlignment -
-                         (extra_header_size % kChannelMessageAlignment);
-  }
-  DCHECK(IsAlignedForChannelMessage(extra_header_size));
-  const size_t header_size =
-      is_legacy_message ? sizeof(LegacyHeader) : sizeof(Header);
-  DCHECK(extra_header_size == 0 || !is_legacy_message);
-
-  capacity_ = header_size + extra_header_size + capacity;
-  size_ = header_size + extra_header_size + payload_size;
-  data_ = MakeAlignedBuffer(capacity_);
-  // Only zero out the header and not the payload. Since the payload is going to
-  // be memcpy'd, zeroing the payload is unnecessary work and a significant
-  // performance issue when dealing with large messages. Any sanitizer errors
-  // complaining about an uninitialized read in the payload area should be
-  // treated as an error and fixed.
-  memset(data_.get(), 0, header_size + extra_header_size);
-
-  DCHECK(base::IsValueInRangeForNumericType<uint32_t>(size_));
-  legacy_header()->num_bytes = static_cast<uint32_t>(size_);
-
-  DCHECK(base::IsValueInRangeForNumericType<uint16_t>(header_size +
-                                                      extra_header_size));
-  legacy_header()->message_type = message_type;
-
-  if (is_legacy_message) {
-    legacy_header()->num_handles = static_cast<uint16_t>(max_handles);
-  } else {
-    header()->num_header_bytes =
-        static_cast<uint16_t>(header_size + extra_header_size);
-  }
-
-  if (max_handles_ > 0) {
-#if defined(OS_WIN)
-    handles_ = reinterpret_cast<HandleEntry*>(mutable_extra_header());
-    // Initialize all handles to invalid values.
-    for (size_t i = 0; i < max_handles_; ++i)
-      handles_[i].handle = base::win::HandleToUint32(INVALID_HANDLE_VALUE);
-#elif defined(OS_MAC)
-    mach_ports_header_ =
-        reinterpret_cast<MachPortsExtraHeader*>(mutable_extra_header());
-    mach_ports_header_->num_ports = 0;
-    // Initialize all handles to invalid values.
-    for (size_t i = 0; i < max_handles_; ++i) {
-      mach_ports_header_->entries[i] = {0};
+// static
+Channel::MessagePtr Channel::Message::CreateMessage(size_t capacity,
+                                                    size_t payload_size,
+                                                    size_t max_handles,
+                                                    MessageType message_type) {
+  if (g_use_trivial_messages &&
+      (capacity + std::max(sizeof(Header), sizeof(LegacyHeader))) <=
+          TrivialMessage::kInternalCapacity &&
+      max_handles == 0) {
+    // The TrivialMessage has a fixed capacity so if the requested capacity
+    // plus a header can fit then we can try to construct a TrivialMessage.
+    auto msg = TrivialMessage::TryConstruct(payload_size, message_type);
+    if (msg) {
+      return msg;
     }
-#endif
   }
+
+  return base::WrapUnique<Channel::Message>(
+      new ComplexMessage(capacity, payload_size, max_handles, message_type));
 }
 
-Channel::Message::~Message() = default;
+// static
+void Channel::set_use_trivial_messages(bool use_trivial_messages) {
+  g_use_trivial_messages = use_trivial_messages;
+}
 
 // static
 Channel::MessagePtr Channel::Message::CreateRawForFuzzing(
     base::span<const unsigned char> data) {
-  auto message = base::WrapUnique(new Message);
+  auto message = std::make_unique<ComplexMessage>();
   message->size_ = data.size();
   if (data.size()) {
     message->data_ = MakeAlignedBuffer(data.size());
     std::copy(data.begin(), data.end(), message->data_.get());
   }
-  return message;
+  return base::WrapUnique<Channel::Message>(message.release());
 }
 
 // static
 Channel::MessagePtr Channel::Message::Deserialize(
     const void* data,
     size_t data_num_bytes,
+    HandlePolicy handle_policy,
     base::ProcessHandle from_process) {
   if (data_num_bytes < sizeof(LegacyHeader))
     return nullptr;
@@ -233,11 +286,11 @@ Channel::MessagePtr Channel::Message::Deserialize(
     return nullptr;
   }
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   uint32_t max_handles = extra_header_size / sizeof(HandleEntry);
-#elif defined(OS_FUCHSIA)
+#elif BUILDFLAG(IS_FUCHSIA)
   uint32_t max_handles = extra_header_size / sizeof(HandleInfoEntry);
-#elif defined(OS_MAC)
+#elif BUILDFLAG(IS_MAC)
   if (extra_header_size > 0 &&
       extra_header_size < sizeof(MachPortsExtraHeader)) {
     DLOG(ERROR) << "Decoding invalid message: " << extra_header_size << " < "
@@ -256,7 +309,7 @@ Channel::MessagePtr Channel::Message::Deserialize(
     DLOG(ERROR) << "Decoding invalid message: unexpected extra_header_size > 0";
     return nullptr;
   }
-#endif  // defined(OS_WIN)
+#endif  // BUILDFLAG(IS_WIN)
 
   const uint16_t num_handles =
       header ? header->num_handles : legacy_header->num_handles;
@@ -266,8 +319,13 @@ Channel::MessagePtr Channel::Message::Deserialize(
     return nullptr;
   }
 
-  MessagePtr message(
-      new Message(payload_size, max_handles, legacy_header->message_type));
+  if (num_handles > 0 && handle_policy == HandlePolicy::kRejectHandles) {
+    DLOG(ERROR) << "Rejecting message with unexpected handle attachments.";
+    return nullptr;
+  }
+
+  MessagePtr message =
+      CreateMessage(payload_size, max_handles, legacy_header->message_type);
   DCHECK_EQ(message->data_num_bytes(), data_num_bytes);
 
   // Copy all payload bytes.
@@ -289,10 +347,11 @@ Channel::MessagePtr Channel::Message::Deserialize(
     message->legacy_header()->num_handles = legacy_header->num_handles;
   }
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   std::vector<PlatformHandleInTransit> handles(num_handles);
   for (size_t i = 0; i < num_handles; i++) {
-    HANDLE handle = base::win::Uint32ToHandle(message->handles_[i].handle);
+    HANDLE handle = base::win::Uint32ToHandle(
+        static_cast<ComplexMessage*>(message.get())->handles_[i].handle);
     if (PlatformHandleInTransit::IsPseudoHandle(handle))
       return nullptr;
     if (from_process == base::kNullProcessHandle) {
@@ -310,47 +369,32 @@ Channel::MessagePtr Channel::Message::Deserialize(
   return message;
 }
 
-size_t Channel::Message::capacity() const {
-  if (is_legacy_message())
-    return capacity_ - sizeof(LegacyHeader);
-  return capacity_ - header()->num_header_bytes;
-}
-
-void Channel::Message::ExtendPayload(size_t new_payload_size) {
-  size_t capacity_without_header = capacity();
-  size_t header_size = capacity_ - capacity_without_header;
-  if (new_payload_size > capacity_without_header) {
-    size_t new_capacity =
-        std::max(capacity_without_header * 2, new_payload_size) + header_size;
-    AlignedBuffer new_data = MakeAlignedBuffer(new_capacity);
-    memcpy(new_data.get(), data_.get(), capacity_);
-    data_ = std::move(new_data);
-    capacity_ = new_capacity;
-
-    if (max_handles_ > 0) {
-// We also need to update the cached extra header addresses in case the
-// payload buffer has been relocated.
-#if defined(OS_WIN)
-      handles_ = reinterpret_cast<HandleEntry*>(mutable_extra_header());
-#elif defined(OS_MAC)
-      mach_ports_header_ =
-          reinterpret_cast<MachPortsExtraHeader*>(mutable_extra_header());
-#endif
-    }
+// static
+void Channel::Message::ExtendPayload(MessagePtr& message,
+                                     size_t new_payload_size) {
+  if (message->ExtendPayload(new_payload_size)) {
+    return;
   }
-  size_ = header_size + new_payload_size;
-  DCHECK(base::IsValueInRangeForNumericType<uint32_t>(size_));
-  legacy_header()->num_bytes = static_cast<uint32_t>(size_);
+
+  // ComplexMessage will never fail to extend the payload; therefore, if we do
+  // fail it's because the message is a TrivialMessage which has run out of
+  // space. In which case we will upgrade the message type to a ComplexMessage.
+  size_t capacity_without_header = message->capacity();
+  auto m = base::WrapUnique<Channel::Message>(
+      new ComplexMessage(new_payload_size, new_payload_size, 0,
+                         message->legacy_header()->message_type));
+  memcpy(m->mutable_payload(), message->payload(), capacity_without_header);
+  message.swap(m);
 }
 
 const void* Channel::Message::extra_header() const {
   DCHECK(!is_legacy_message());
-  return data_.get() + sizeof(Header);
+  return reinterpret_cast<const uint8_t*>(data()) + sizeof(Header);
 }
 
 void* Channel::Message::mutable_extra_header() {
   DCHECK(!is_legacy_message());
-  return data_.get() + sizeof(Header);
+  return reinterpret_cast<uint8_t*>(mutable_data()) + sizeof(Header);
 }
 
 size_t Channel::Message::extra_header_size() const {
@@ -360,13 +404,14 @@ size_t Channel::Message::extra_header_size() const {
 void* Channel::Message::mutable_payload() {
   if (is_legacy_message())
     return static_cast<void*>(legacy_header() + 1);
-  return data_.get() + header()->num_header_bytes;
+  return reinterpret_cast<uint8_t*>(mutable_data()) +
+         header()->num_header_bytes;
 }
 
 const void* Channel::Message::payload() const {
   if (is_legacy_message())
     return static_cast<const void*>(legacy_header() + 1);
-  return data_.get() + header()->num_header_bytes;
+  return reinterpret_cast<const uint8_t*>(data()) + header()->num_header_bytes;
 }
 
 size_t Channel::Message::payload_size() const {
@@ -390,15 +435,130 @@ bool Channel::Message::is_legacy_message() const {
 }
 
 Channel::Message::LegacyHeader* Channel::Message::legacy_header() const {
-  return reinterpret_cast<LegacyHeader*>(data_.get());
+  return reinterpret_cast<LegacyHeader*>(mutable_data());
 }
 
 Channel::Message::Header* Channel::Message::header() const {
   DCHECK(!is_legacy_message());
-  return reinterpret_cast<Header*>(data_.get());
+  return reinterpret_cast<Header*>(mutable_data());
 }
 
-void Channel::Message::SetHandles(std::vector<PlatformHandle> new_handles) {
+ComplexMessage::ComplexMessage(size_t capacity,
+                               size_t payload_size,
+                               size_t max_handles,
+                               MessageType message_type)
+    : max_handles_(max_handles) {
+  DCHECK_GE(capacity, payload_size);
+  DCHECK_LE(max_handles_, kMaxAttachedHandles);
+
+  const bool is_legacy_message = (message_type == MessageType::NORMAL_LEGACY);
+  size_t extra_header_size = 0;
+#if BUILDFLAG(IS_WIN)
+  // On Windows we serialize HANDLEs into the extra header space.
+  extra_header_size = max_handles_ * sizeof(HandleEntry);
+#elif BUILDFLAG(IS_FUCHSIA)
+  // On Fuchsia we serialize handle types into the extra header space.
+  extra_header_size = max_handles_ * sizeof(HandleInfoEntry);
+#elif BUILDFLAG(IS_MAC)
+  // On OSX, some of the platform handles may be mach ports, which are
+  // serialised into the message buffer. Since there could be a mix of fds and
+  // mach ports, we store the mach ports as an <index, port> pair (of uint32_t),
+  // so that the original ordering of handles can be re-created.
+  if (max_handles) {
+    extra_header_size =
+        sizeof(MachPortsExtraHeader) + (max_handles * sizeof(MachPortsEntry));
+  }
+#endif
+  // Pad extra header data to be aliged to |kChannelMessageAlignment| bytes.
+  if (!IsAlignedForChannelMessage(extra_header_size)) {
+    extra_header_size += kChannelMessageAlignment -
+                         (extra_header_size % kChannelMessageAlignment);
+  }
+  DCHECK(IsAlignedForChannelMessage(extra_header_size));
+  const size_t header_size =
+      is_legacy_message ? sizeof(LegacyHeader) : sizeof(Header);
+  DCHECK(extra_header_size == 0 || !is_legacy_message);
+
+  capacity_ = header_size + extra_header_size + capacity;
+  size_ = header_size + extra_header_size + payload_size;
+  data_ = MakeAlignedBuffer(capacity_);
+  // Only zero out the header and not the payload. Since the payload is going to
+  // be memcpy'd, zeroing the payload is unnecessary work and a significant
+  // performance issue when dealing with large messages. Any sanitizer errors
+  // complaining about an uninitialized read in the payload area should be
+  // treated as an error and fixed.
+  memset(mutable_data(), 0, header_size + extra_header_size);
+
+  DCHECK(base::IsValueInRangeForNumericType<uint32_t>(size_));
+  legacy_header()->num_bytes = static_cast<uint32_t>(size_);
+
+  DCHECK(base::IsValueInRangeForNumericType<uint16_t>(header_size +
+                                                      extra_header_size));
+  legacy_header()->message_type = message_type;
+
+  if (is_legacy_message) {
+    legacy_header()->num_handles = static_cast<uint16_t>(max_handles);
+  } else {
+    header()->num_header_bytes =
+        static_cast<uint16_t>(header_size + extra_header_size);
+  }
+
+  if (max_handles_ > 0) {
+#if BUILDFLAG(IS_WIN)
+    handles_ = reinterpret_cast<HandleEntry*>(mutable_extra_header());
+    // Initialize all handles to invalid values.
+    for (size_t i = 0; i < max_handles_; ++i)
+      handles_[i].handle = base::win::HandleToUint32(INVALID_HANDLE_VALUE);
+#elif BUILDFLAG(IS_MAC)
+    mach_ports_header_ =
+        reinterpret_cast<MachPortsExtraHeader*>(mutable_extra_header());
+    mach_ports_header_->num_ports = 0;
+    // Initialize all handles to invalid values.
+    for (size_t i = 0; i < max_handles_; ++i) {
+      mach_ports_header_->entries[i] = {0};
+    }
+#endif
+  }
+}
+
+size_t ComplexMessage::capacity() const {
+  if (is_legacy_message())
+    return capacity_ - sizeof(LegacyHeader);
+  return capacity_ - header()->num_header_bytes;
+}
+
+bool ComplexMessage::ExtendPayload(size_t new_payload_size) {
+  size_t capacity_without_header = capacity();
+  size_t header_size = capacity_ - capacity_without_header;
+  if (new_payload_size > capacity_without_header) {
+    size_t new_capacity =
+        std::max(static_cast<size_t>(capacity_without_header * kGrowthFactor),
+                 new_payload_size) +
+        header_size;
+    Channel::AlignedBuffer new_data = MakeAlignedBuffer(new_capacity);
+    memcpy(new_data.get(), data_.get(), capacity_);
+    data_ = std::move(new_data);
+    capacity_ = new_capacity;
+
+    if (max_handles_ > 0) {
+// We also need to update the cached extra header addresses in case the
+// payload buffer has been relocated.
+#if BUILDFLAG(IS_WIN)
+      handles_ = reinterpret_cast<HandleEntry*>(mutable_extra_header());
+#elif BUILDFLAG(IS_MAC)
+      mach_ports_header_ =
+          reinterpret_cast<MachPortsExtraHeader*>(mutable_extra_header());
+#endif
+    }
+  }
+  size_ = header_size + new_payload_size;
+  DCHECK(base::IsValueInRangeForNumericType<uint32_t>(size_));
+  legacy_header()->num_bytes = static_cast<uint32_t>(size_);
+
+  return true;
+}
+
+void ComplexMessage::SetHandles(std::vector<PlatformHandle> new_handles) {
   std::vector<PlatformHandleInTransit> handles;
   handles.reserve(new_handles.size());
   for (auto& h : new_handles) {
@@ -407,7 +567,7 @@ void Channel::Message::SetHandles(std::vector<PlatformHandle> new_handles) {
   SetHandles(std::move(handles));
 }
 
-void Channel::Message::SetHandles(
+void ComplexMessage::SetHandles(
     std::vector<PlatformHandleInTransit> new_handles) {
   if (is_legacy_message()) {
     // Old semantics for ChromeOS and Android
@@ -428,7 +588,7 @@ void Channel::Message::SetHandles(
   CHECK_LE(new_handles.size(), max_handles_);
   header()->num_handles = static_cast<uint16_t>(new_handles.size());
   std::swap(handle_vector_, new_handles);
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   memset(handles_, 0, extra_header_size());
   for (size_t i = 0; i < handle_vector_.size(); i++) {
     HANDLE handle = handle_vector_[i].remote_handle();
@@ -436,9 +596,9 @@ void Channel::Message::SetHandles(
       handle = handle_vector_[i].handle().GetHandle().Get();
     handles_[i].handle = base::win::HandleToUint32(handle);
   }
-#endif  // defined(OS_WIN)
+#endif  // BUILDFLAG(IS_WIN)
 
-#if defined(OS_MAC)
+#if BUILDFLAG(IS_MAC)
   if (mach_ports_header_) {
     for (size_t i = 0; i < max_handles_; ++i) {
       mach_ports_header_->entries[i] = {0};
@@ -452,12 +612,78 @@ void Channel::Message::SetHandles(
 #endif
 }
 
-std::vector<PlatformHandleInTransit> Channel::Message::TakeHandles() {
+std::vector<PlatformHandleInTransit> ComplexMessage::TakeHandles() {
   return std::move(handle_vector_);
 }
 
-size_t Channel::Message::NumHandlesForTransit() const {
+size_t ComplexMessage::NumHandlesForTransit() const {
   return handle_vector_.size();
+}
+
+// static
+Channel::MessagePtr TrivialMessage::TryConstruct(size_t payload_size,
+                                                 MessageType message_type) {
+  const bool is_legacy_message = (message_type == MessageType::NORMAL_LEGACY);
+  const size_t header_size =
+      is_legacy_message ? sizeof(LegacyHeader) : sizeof(Header);
+
+  size_t size = header_size + payload_size;
+  if (size > kInternalCapacity) {
+    return nullptr;
+  }
+
+  auto message = base::WrapUnique(new TrivialMessage);
+  memset(message->mutable_data(), 0, sizeof(TrivialMessage::data_));
+
+  DCHECK(base::IsValueInRangeForNumericType<uint32_t>(size));
+  message->size_ = size;
+  message->legacy_header()->num_bytes = static_cast<uint32_t>(size);
+  message->legacy_header()->message_type = message_type;
+
+  if (!is_legacy_message) {
+    DCHECK(base::IsValueInRangeForNumericType<uint16_t>(header_size));
+    message->header()->num_header_bytes = static_cast<uint16_t>(header_size);
+  }
+
+  return base::WrapUnique<Channel::Message>(message.release());
+}
+
+size_t TrivialMessage::capacity() const {
+  if (is_legacy_message())
+    return kInternalCapacity - sizeof(LegacyHeader);
+  return kInternalCapacity - header()->num_header_bytes;
+}
+
+bool TrivialMessage::ExtendPayload(size_t new_payload_size) {
+  size_t capacity_without_header = capacity();
+  size_t header_size = kInternalCapacity - capacity_without_header;
+  size_t required_size = new_payload_size + header_size;
+  if (required_size > kInternalCapacity) {
+    return false;
+  }
+
+  // We can just bump up the internal size as it's less than the capacity.
+  size_ = required_size;
+  DCHECK(base::IsValueInRangeForNumericType<uint32_t>(size_));
+  legacy_header()->num_bytes = static_cast<uint32_t>(size_);
+  return true;
+}
+
+void TrivialMessage::SetHandles(std::vector<PlatformHandle> new_handles) {
+  CHECK(new_handles.empty());
+}
+
+void TrivialMessage::SetHandles(
+    std::vector<PlatformHandleInTransit> new_handles) {
+  CHECK(new_handles.empty());
+}
+
+std::vector<PlatformHandleInTransit> TrivialMessage::TakeHandles() {
+  return std::vector<PlatformHandleInTransit>();
+}
+
+size_t TrivialMessage::NumHandlesForTransit() const {
+  return 0;
 }
 
 // Helper class for managing a Channel's read buffer allocations. This maintains
@@ -488,6 +714,9 @@ class Channel::ReadBuffer {
     data_ = MakeAlignedBuffer(size_);
   }
 
+  ReadBuffer(const ReadBuffer&) = delete;
+  ReadBuffer& operator=(const ReadBuffer&) = delete;
+
   ~ReadBuffer() { DCHECK(data_); }
 
   const char* occupied_bytes() const {
@@ -502,7 +731,8 @@ class Channel::ReadBuffer {
   // |num_bytes| more bytes; returns the address of the first available byte.
   char* Reserve(size_t num_bytes) {
     if (num_occupied_bytes_ + num_bytes > size_) {
-      size_ = std::max(size_ * 2, num_occupied_bytes_ + num_bytes);
+      size_ = std::max(static_cast<size_t>(size_ * kGrowthFactor),
+                       num_occupied_bytes_ + num_bytes);
       AlignedBuffer new_data = MakeAlignedBuffer(size_);
       memcpy(new_data.get(), data_.get(), num_occupied_bytes_);
       data_ = std::move(new_data);
@@ -571,8 +801,6 @@ class Channel::ReadBuffer {
 
   // The total number of occupied bytes, including discarded bytes.
   size_t num_occupied_bytes_ = 0;
-
-  DISALLOW_COPY_AND_ASSIGN(ReadBuffer);
 };
 
 Channel::Channel(Delegate* delegate,
@@ -635,7 +863,8 @@ bool Channel::OnReadComplete(size_t bytes_read, size_t* next_read_size_hint) {
 Channel::DispatchResult Channel::TryDispatchMessage(
     base::span<const char> buffer,
     size_t* size_hint) {
-  bool did_consume_message = false;
+  TRACE_EVENT(TRACE_DISABLED_BY_DEFAULT("toplevel.ipc"),
+              "Mojo dispatch message");
 
   // We have at least enough data available for a LegacyHeader.
   const Message::LegacyHeader* legacy_header =
@@ -711,12 +940,8 @@ Channel::DispatchResult Channel::TryDispatchMessage(
                           std::move(handles))) {
       return DispatchResult::kError;
     }
-    did_consume_message = true;
-  } else if (deferred) {
-    did_consume_message = true;
-  } else if (delegate_) {
+  } else if (!deferred && delegate_) {
     delegate_->OnChannelMessage(payload, payload_size, std::move(handles));
-    did_consume_message = true;
   }
 
   *size_hint = legacy_header->num_bytes;
@@ -736,8 +961,8 @@ bool Channel::OnControlMessage(Message::MessageType message_type,
 }
 
 // Currently only Non-nacl CrOs, Linux, and Android support upgrades.
-#if defined(OS_NACL) || \
-    (!(defined(OS_CHROMEOS) || defined(OS_LINUX) || defined(OS_ANDROID)))
+#if BUILDFLAG(IS_NACL) || (!(BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_LINUX) || \
+                             BUILDFLAG(IS_ANDROID)))
 // static
 MOJO_SYSTEM_IMPL_EXPORT bool Channel::SupportsChannelUpgrade() {
   return false;

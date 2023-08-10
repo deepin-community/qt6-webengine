@@ -160,11 +160,11 @@ protected:
     }
 
 private:
-    static constexpr int kNumPolygons = 8;
-    static constexpr int kCellSize = 100;
-    static constexpr int kNumExtraStyles = 2;
-    static constexpr int kNumStrokeWidths = 3;
-    static constexpr int kNumJoins = 3;
+    inline static constexpr int kNumPolygons = 8;
+    inline static constexpr int kCellSize = 100;
+    inline static constexpr int kNumExtraStyles = 2;
+    inline static constexpr int kNumStrokeWidths = 3;
+    inline static constexpr int kNumJoins = 3;
 
     SkTArray<SkPath> fPolygons;
     using INHERITED = GM;
@@ -173,5 +173,22 @@ private:
 //////////////////////////////////////////////////////////////////////////////
 
 DEF_GM(return new PolygonsGM;)
+
+// see crbug.com/1197461
+DEF_SIMPLE_GM(conjoined_polygons, canvas, 400, 400) {
+    SkPathBuilder b;
+    b.moveTo(0.f, 120.f);
+    b.lineTo(0.f, 0.f);
+    b.lineTo(50.f, 330.f);
+    b.lineTo(90.f, 0.f);
+    b.lineTo(340.f, 0.f);
+    b.lineTo(90.f, 330.f);
+    b.lineTo(50.f, 330.f);
+    b.close();
+
+    SkPaint paint;
+    paint.setAntiAlias(true);
+    canvas->drawPath(b.detach(), paint);
+}
 
 }  // namespace skiagm

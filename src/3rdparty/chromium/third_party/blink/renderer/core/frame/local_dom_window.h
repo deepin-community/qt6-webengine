@@ -27,31 +27,36 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_FRAME_LOCAL_DOM_WINDOW_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_FRAME_LOCAL_DOM_WINDOW_H_
 
+#include <memory>
+
 #include "services/metrics/public/cpp/ukm_recorder.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
+#include "third_party/blink/public/common/frame/payment_request_token.h"
+#include "third_party/blink/public/common/metrics/post_message_counter.h"
 #include "third_party/blink/public/common/tokens/tokens.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_value.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/events/event_target.h"
-#include "third_party/blink/renderer/core/events/page_transition_event.h"
+#include "third_party/blink/renderer/core/editing/spellcheck/spell_checker.h"
+#include "third_party/blink/renderer/core/editing/suggestion/text_suggestion_controller.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/frame/dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
-#include "third_party/blink/renderer/core/geometry/dom_rect.h"
+#include "third_party/blink/renderer/core/frame/use_counter_impl.h"
+#include "third_party/blink/renderer/core/html/closewatcher/close_watcher.h"
 #include "third_party/blink/renderer/core/loader/frame_loader.h"
-#include "third_party/blink/renderer/core/scroll/scrollable_area.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_map.h"
+#include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_set.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/platform/heap/prefinalizer.h"
+#include "third_party/blink/renderer/platform/storage/blink_storage_key.h"
 #include "third_party/blink/renderer/platform/supplementable.h"
-#include "third_party/blink/renderer/platform/wtf/assertions.h"
 #include "third_party/blink/renderer/platform/wtf/casting.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
 
-#include <memory>
-
 namespace blink {
 
-class ApplicationCache;
 class BarProp;
 class CSSStyleDeclaration;
 class CustomElementRegistry;
@@ -62,10 +67,12 @@ class DOMVisualViewport;
 class Element;
 class ExceptionState;
 class External;
+class Fence;
 class FrameConsole;
 class History;
 class IdleRequestOptions;
-class ImpressionParams;
+class InputMethodController;
+class LocalFrame;
 class MediaQueryList;
 class MessageEvent;
 class Modulator;
@@ -83,11 +90,8 @@ class TrustedTypePolicyFactory;
 class V8FrameRequestCallback;
 class V8IdleRequestCallback;
 class V8VoidFunction;
+struct WebPictureInPictureWindowOptions;
 class WindowAgent;
-
-class InputMethodController;
-class TextSuggestionController;
-class SpellChecker;
 
 enum PageTransitionEventPersistence {
   kPageTransitionEventNotPersisted = 0,
@@ -102,7 +106,7 @@ class CORE_EXPORT LocalDOMWindow final : public DOMWindow,
   USING_PRE_FINALIZER(LocalDOMWindow, Dispose);
 
  public:
-  class CORE_EXPORT EventListenerObserver : public GarbageCollectedMixin {
+  class CORE_EXPORT EventListenerObserver : public cppgc::GarbageCollectedMixin {
    public:
     virtual void DidAddEventListener(LocalDOMWindow*, const AtomicString&) = 0;
     virtual void DidRemoveEventListener(LocalDOMWindow*,
@@ -112,7 +116,7 @@ class CORE_EXPORT LocalDOMWindow final : public DOMWindow,
 
   static LocalDOMWindow* From(const ScriptState*);
 
-  LocalDOMWindow(LocalFrame&, WindowAgent*);
+  LocalDOMWindow(LocalFrame&, WindowAgent*, bool anonymous);
   ~LocalDOMWindow() override;
 
   // Returns the token identifying the frame that this ExecutionContext was
@@ -156,13 +160,13 @@ class CORE_EXPORT LocalDOMWindow final : public DOMWindow,
   String UserAgent() const final;
   UserAgentMetadata GetUserAgentMetadata() const final;
   HttpsState GetHttpsState() const final;
-  ResourceFetcher* Fetcher() const final;
+  ResourceFetcher* Fetcher() final;
   bool CanExecuteScripts(ReasonForCallingCanExecuteScripts) final;
   void ExceptionThrown(ErrorEvent*) final;
   void AddInspectorIssue(mojom::blink::InspectorIssueInfoPtr) final;
+  void AddInspectorIssue(AuditsIssue) final;
   EventTarget* ErrorEventTarget() final { return this; }
   String OutgoingReferrer() const final;
-  network::mojom::ReferrerPolicy GetReferrerPolicy() const final;
   CoreProbeSink* GetProbeSink() final;
   const BrowserInterfaceBrokerProxy& GetBrowserInterfaceBroker() const final;
   FrameOrWorkerScheduler* GetScheduler() final;
@@ -171,10 +175,8 @@ class CORE_EXPORT LocalDOMWindow final : public DOMWindow,
     return GetTrustedTypesForWorld(*GetCurrentWorld());
   }
   ScriptWrappable* ToScriptWrappable() final { return this; }
-  void CountPotentialFeaturePolicyViolation(
-      mojom::blink::FeaturePolicyFeature) const final;
-  void ReportFeaturePolicyViolation(
-      mojom::blink::FeaturePolicyFeature,
+  void ReportPermissionsPolicyViolation(
+      mojom::blink::PermissionsPolicyFeature,
       mojom::blink::PolicyDisposition,
       const String& message = g_empty_string) const final;
   void ReportDocumentPolicyViolation(
@@ -184,6 +186,7 @@ class CORE_EXPORT LocalDOMWindow final : public DOMWindow,
       // If source_file is set to empty string,
       // current JS file would be used as source_file instead.
       const String& source_file = g_empty_string) const final;
+  void SetIsInBackForwardCache(bool) final;
 
   void AddConsoleMessageImpl(ConsoleMessage*, bool discard_duplicates) final;
 
@@ -193,6 +196,15 @@ class CORE_EXPORT LocalDOMWindow final : public DOMWindow,
   // Count |feature| only when this window is associated with a cross-origin
   // iframe.
   void CountUseOnlyInCrossOriginIframe(mojom::blink::WebFeature feature);
+
+  // Count |feature| only when this window is associated with a cross-site
+  // iframe. A "site" is a scheme and registrable domain.
+  void CountUseOnlyInCrossSiteIframe(mojom::blink::WebFeature feature) override;
+
+  // Count permissions policy feature usage through use counter.
+  void CountPermissionsPolicyUsage(
+      mojom::blink::PermissionsPolicyFeature feature,
+      UseCounterImpl::PermissionsPolicyUsageType type);
 
   Document* InstallNewDocument(const DocumentInit&);
 
@@ -230,8 +242,6 @@ class CORE_EXPORT LocalDOMWindow final : public DOMWindow,
 
   DOMVisualViewport* visualViewport();
 
-  HeapVector<Member<DOMRect>> getWindowSegments() const;
-
   const AtomicString& name() const;
   void setName(const AtomicString&);
 
@@ -250,8 +260,6 @@ class CORE_EXPORT LocalDOMWindow final : public DOMWindow,
   // WebKit extensions
   double devicePixelRatio() const;
 
-  ApplicationCache* applicationCache();
-
   // This is the interface orientation in degrees. Some examples are:
   //  0 is straight up; -90 is when the device is rotated 90 clockwise;
   //  90 is when rotated counter clockwise.
@@ -259,7 +267,6 @@ class CORE_EXPORT LocalDOMWindow final : public DOMWindow,
 
   DOMSelection* getSelection();
 
-  void blur() override;
   void print(ScriptState*);
   void stop();
 
@@ -353,19 +360,9 @@ class CORE_EXPORT LocalDOMWindow final : public DOMWindow,
                   const String& features,
                   ExceptionState&);
 
-  DOMWindow* open(v8::Isolate*,
-                  const String& url_string,
-                  const AtomicString& target,
-                  const String& features,
-                  bool unused,
-                  ExceptionState&);
-
-  DOMWindow* open(v8::Isolate*,
-                  const String& url_string,
-                  const AtomicString& target,
-                  const String& features,
-                  const ImpressionParams* impression_params,
-                  ExceptionState&);
+  DOMWindow* openPictureInPictureWindow(v8::Isolate*,
+                                        const WebPictureInPictureWindowOptions&,
+                                        ExceptionState&);
 
   FrameConsole* GetFrameConsole() const;
 
@@ -418,7 +415,12 @@ class CORE_EXPORT LocalDOMWindow final : public DOMWindow,
 
   // Returns true if this window is cross-site to the main frame. Defaults to
   // false in a detached window.
+  // Note: This uses an outdated definition of "site" which only includes the
+  // registrable domain and not the scheme. IsCrossSiteSubframeIncludingScheme()
+  // uses HTML's definition of "site" as a registrable domain and scheme.
   bool IsCrossSiteSubframe() const;
+
+  bool IsCrossSiteSubframeIncludingScheme() const;
 
   void DispatchPersistedPageshowEvent(base::TimeTicks navigation_start);
 
@@ -435,10 +437,35 @@ class CORE_EXPORT LocalDOMWindow final : public DOMWindow,
   void ClearIsolatedWorldCSPForTesting(int32_t world_id);
 
   bool CrossOriginIsolatedCapability() const override;
+  bool DirectSocketCapability() const override;
 
   // These delegate to the document_.
   ukm::UkmRecorder* UkmRecorder() override;
   ukm::SourceId UkmSourceID() const override;
+
+  const BlinkStorageKey& GetStorageKey() const { return storage_key_; }
+  void SetStorageKey(const BlinkStorageKey& storage_key);
+
+  void DidReceiveUserActivation();
+
+  // Returns the state of the |PaymentRequestToken| in this document.
+  bool IsPaymentRequestTokenActive() const;
+
+  // Consumes the |PaymentRequestToken| if it was active in this document .
+  bool ConsumePaymentRequestToken();
+
+  // Called when a network request buffered an additional `num_bytes` while this
+  // frame is in back-forward cache.
+  void DidBufferLoadWhileInBackForwardCache(size_t num_bytes);
+
+  // Whether the window is anonymous or not.
+  bool anonymous() const { return anonymous_; }
+
+  Fence* fence();
+
+  CloseWatcher::WatcherStack* closewatcher_stack() {
+    return closewatcher_stack_;
+  }
 
  protected:
   // EventTarget overrides.
@@ -448,9 +475,7 @@ class CORE_EXPORT LocalDOMWindow final : public DOMWindow,
                             const RegisteredEventListener&) override;
 
   // Protected DOMWindow overrides.
-  void SchedulePostMessage(MessageEvent*,
-                           scoped_refptr<const SecurityOrigin> target,
-                           LocalDOMWindow* source) override;
+  void SchedulePostMessage(PostedMessage*) override;
 
  private:
   class NetworkStateObserver;
@@ -460,14 +485,14 @@ class CORE_EXPORT LocalDOMWindow final : public DOMWindow,
   bool IsLocalDOMWindow() const override { return true; }
   bool IsRemoteDOMWindow() const override { return false; }
 
-  bool HasInsecureContextInAncestors() override;
+  bool HasInsecureContextInAncestors() const override;
 
   void Dispose();
 
   void DispatchLoadEvent();
 
   // Return the viewport size including scrollbars.
-  IntSize GetViewportSize() const;
+  gfx::Size GetViewportSize() const;
 
   Member<ScriptController> script_controller_;
 
@@ -499,11 +524,13 @@ class CORE_EXPORT LocalDOMWindow final : public DOMWindow,
 
   Vector<String> origin_policy_ids_;
 
-  mutable Member<ApplicationCache> application_cache_;
-
   scoped_refptr<SerializedScriptValue> pending_state_object_;
 
   HeapHashSet<WeakMember<EventListenerObserver>> event_listener_observers_;
+
+  // Tracker for delegated PaymentRequest.  This is related to
+  // |Frame::user_activation_state_|.
+  PaymentRequestToken payment_request_token_;
 
   // https://dom.spec.whatwg.org/#window-current-event
   // We represent the "undefined" value as nullptr.
@@ -533,7 +560,8 @@ class CORE_EXPORT LocalDOMWindow final : public DOMWindow,
 
   // Tracks which features have already been potentially violated in this
   // document. This helps to count them only once per page load.
-  // We don't use std::bitset to avoid to include feature_policy.mojom-blink.h.
+  // We don't use std::bitset to avoid to include
+  // permissions_policy.mojom-blink.h.
   mutable Vector<bool> potentially_violated_features_;
 
   // Token identifying the LocalFrame that this window was associated with at
@@ -546,15 +574,30 @@ class CORE_EXPORT LocalDOMWindow final : public DOMWindow,
   // from |DocumentPolicyViolationReport::MatchId()|.
   mutable HashSet<unsigned> document_policy_violation_reports_sent_;
 
-  // A list of the most recently recorded source frame UKM source IDs for the
-  // PostMessage.Incoming.Frame UKM event, in order to partially deduplicate
-  // logged events. Its size is limited to 20. See SchedulePostMessage() where
-  // this UKM is logged.
-  // TODO(crbug.com/1112491): Remove when no longer needed.
-  Deque<ukm::SourceId> post_message_ukm_recorded_source_ids_;
+  // Tracks metrics related to postMessage usage.
+  // TODO(crbug.com/1159586): Remove when no longer needed.
+  PostMessageCounter post_message_counter_;
+
+  // The storage key for this LocalDomWindow.
+  BlinkStorageKey storage_key_;
 
   // Fire "online" and "offline" events.
   Member<NetworkStateObserver> network_state_observer_;
+
+  // The total bytes buffered by all network requests in this frame while frozen
+  // due to back-forward cache. This number gets reset when the frame gets out
+  // of the back-forward cache.
+  size_t total_bytes_buffered_while_in_back_forward_cache_ = 0;
+
+  // Anonymous Iframe:
+  // https://github.com/camillelamy/explainers/blob/main/anonymous_iframes.md
+  const bool anonymous_;
+
+  // Collection of fenced frame APIs.
+  // https://github.com/shivanigithub/fenced-frame/issues/14
+  Member<Fence> fence_;
+
+  Member<CloseWatcher::WatcherStack> closewatcher_stack_;
 };
 
 template <>

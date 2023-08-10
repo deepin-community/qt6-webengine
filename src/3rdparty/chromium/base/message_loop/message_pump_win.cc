@@ -8,11 +8,12 @@
 #include <cstdint>
 #include <type_traits>
 
+#include "base/auto_reset.h"
 #include "base/bind.h"
+#include "base/cxx17_backports.h"
 #include "base/debug/alias.h"
 #include "base/feature_list.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/numerics/ranges.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/trace_event/base_tracing.h"
 #include "base/tracing_buildflags.h"
@@ -69,24 +70,19 @@ MessagePumpWin::~MessagePumpWin() = default;
 void MessagePumpWin::Run(Delegate* delegate) {
   DCHECK_CALLED_ON_VALID_THREAD(bound_thread_);
 
-  RunState s;
-  s.delegate = delegate;
-  s.should_quit = false;
-  s.run_depth = state_ ? state_->run_depth + 1 : 1;
+  RunState run_state(delegate);
+  if (run_state_)
+    run_state.is_nested = true;
 
-  RunState* previous_state = state_;
-  state_ = &s;
-
+  AutoReset<RunState*> auto_reset_run_state(&run_state_, &run_state);
   DoRunLoop();
-
-  state_ = previous_state;
 }
 
 void MessagePumpWin::Quit() {
   DCHECK_CALLED_ON_VALID_THREAD(bound_thread_);
 
-  DCHECK(state_);
-  state_->should_quit = true;
+  DCHECK(run_state_);
+  run_state_->should_quit = true;
 }
 
 //-----------------------------------------------------------------------------
@@ -130,7 +126,8 @@ void MessagePumpForUI::ScheduleWork() {
                        TRACE_EVENT_SCOPE_THREAD);
 }
 
-void MessagePumpForUI::ScheduleDelayedWork(const TimeTicks& delayed_work_time) {
+void MessagePumpForUI::ScheduleDelayedWork(
+    const Delegate::NextWorkInfo& next_work_info) {
   DCHECK_CALLED_ON_VALID_THREAD(bound_thread_);
 
   // Since this is always called from |bound_thread_|, there is almost always
@@ -150,15 +147,8 @@ void MessagePumpForUI::ScheduleDelayedWork(const TimeTicks& delayed_work_time) {
   // TODO(gab): This could potentially be replaced by a ForegroundIdleProc hook
   // if Windows ends up being the only platform requiring ScheduleDelayedWork().
   if (in_native_loop_ && !work_scheduled_) {
-    // TODO(gab): Consider passing a NextWorkInfo object to ScheduleDelayedWork
-    // to take advantage of |recent_now| here too.
-    ScheduleNativeTimer({delayed_work_time, TimeTicks::Now()});
+    ScheduleNativeTimer(next_work_info);
   }
-}
-
-void MessagePumpForUI::EnableWmQuit() {
-  DCHECK_CALLED_ON_VALID_THREAD(bound_thread_);
-  enable_wm_quit_ = true;
 }
 
 void MessagePumpForUI::AddObserver(Observer* observer) {
@@ -218,13 +208,13 @@ void MessagePumpForUI::DoRunLoop() {
 
     bool more_work_is_plausible = ProcessNextWindowsMessage();
     in_native_loop_ = false;
-    if (state_->should_quit)
+    if (run_state_->should_quit)
       break;
 
-    Delegate::NextWorkInfo next_work_info = state_->delegate->DoWork();
+    Delegate::NextWorkInfo next_work_info = run_state_->delegate->DoWork();
     in_native_loop_ = false;
     more_work_is_plausible |= next_work_info.is_immediate();
-    if (state_->should_quit)
+    if (run_state_->should_quit)
       break;
 
     if (installed_native_timer_) {
@@ -238,12 +228,12 @@ void MessagePumpForUI::DoRunLoop() {
     if (more_work_is_plausible)
       continue;
 
-    more_work_is_plausible = state_->delegate->DoIdleWork();
+    more_work_is_plausible = run_state_->delegate->DoIdleWork();
     // DoIdleWork() shouldn't end up in native nested loops and thus shouldn't
     // have any chance of reinstalling a native timer.
     DCHECK(!in_native_loop_);
     DCHECK(!installed_native_timer_);
-    if (state_->should_quit)
+    if (run_state_->should_quit)
       break;
 
     if (more_work_is_plausible)
@@ -262,7 +252,7 @@ void MessagePumpForUI::WaitForWork(Delegate::NextWorkInfo next_work_info) {
   for (DWORD delay = GetSleepTimeoutMs(next_work_info.delayed_run_time,
                                        next_work_info.recent_now);
        delay != 0; delay = GetSleepTimeoutMs(next_work_info.delayed_run_time)) {
-    state_->delegate->BeforeWait();
+    run_state_->delegate->BeforeWait();
 
     // Tell the optimizer to retain these values to simplify analyzing hangs.
     base::debug::Alias(&delay);
@@ -286,15 +276,17 @@ void MessagePumpForUI::WaitForWork(Delegate::NextWorkInfo next_work_info) {
       // current thread.
 
       // As in ProcessNextWindowsMessage().
-      auto scoped_do_native_work = state_->delegate->BeginNativeWork();
+      auto scoped_do_work_item = run_state_->delegate->BeginWorkItem();
       {
-        TRACE_EVENT0("base", "MessagePumpForUI::WaitForWork GetQueueStatus");
+        TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("base"),
+                     "MessagePumpForUI::WaitForWork GetQueueStatus");
         if (HIWORD(::GetQueueStatus(QS_SENDMESSAGE)) & QS_SENDMESSAGE)
           return;
       }
       {
         MSG msg;
-        TRACE_EVENT0("base", "MessagePumpForUI::WaitForWork PeekMessage");
+        TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("base"),
+                     "MessagePumpForUI::WaitForWork PeekMessage");
         if (::PeekMessage(&msg, nullptr, 0, 0, PM_NOREMOVE))
           return;
       }
@@ -319,7 +311,7 @@ void MessagePumpForUI::HandleWorkMessage() {
   // If we are being called outside of the context of Run, then don't try to do
   // any work.  This could correspond to a MessageBox call or something of that
   // sort.
-  if (!state_) {
+  if (!run_state_) {
     // Since we handled a kMsgHaveWork message, we must still update this flag.
     work_scheduled_ = false;
     return;
@@ -330,11 +322,11 @@ void MessagePumpForUI::HandleWorkMessage() {
   // messages that may be in the Windows message queue.
   ProcessPumpReplacementMessage();
 
-  Delegate::NextWorkInfo next_work_info = state_->delegate->DoWork();
+  Delegate::NextWorkInfo next_work_info = run_state_->delegate->DoWork();
   if (next_work_info.is_immediate()) {
     ScheduleWork();
   } else {
-    state_->delegate->BeforeWait();
+    run_state_->delegate->BeforeWait();
     ScheduleNativeTimer(next_work_info);
   }
 }
@@ -359,14 +351,14 @@ void MessagePumpForUI::HandleTimerMessage() {
   // If we are being called outside of the context of Run, then don't do
   // anything.  This could correspond to a MessageBox call or something of
   // that sort.
-  if (!state_)
+  if (!run_state_)
     return;
 
-  Delegate::NextWorkInfo next_work_info = state_->delegate->DoWork();
+  Delegate::NextWorkInfo next_work_info = run_state_->delegate->DoWork();
   if (next_work_info.is_immediate()) {
     ScheduleWork();
   } else {
-    state_->delegate->BeforeWait();
+    run_state_->delegate->BeforeWait();
     ScheduleNativeTimer(next_work_info);
   }
 }
@@ -416,8 +408,8 @@ void MessagePumpForUI::ScheduleNativeTimer(
   } else {
     // TODO(gab): ::SetTimer()'s documentation claims it does this for us.
     // Consider removing this safety net.
-    delay_msec = ClampToRange(delay_msec, UINT(USER_TIMER_MINIMUM),
-                              UINT(USER_TIMER_MAXIMUM));
+    delay_msec =
+        clamp(delay_msec, UINT(USER_TIMER_MINIMUM), UINT(USER_TIMER_MAXIMUM));
 
     // Tell the optimizer to retain the delay to simplify analyzing hangs.
     base::debug::Alias(&delay_msec);
@@ -459,12 +451,12 @@ bool MessagePumpForUI::ProcessNextWindowsMessage() {
     // |had_messages| as ::GetQueueStatus() is an optimistic check that may
     // racily have missed an incoming event -- it doesn't hurt to have empty
     // internal units of work when ::PeekMessage turns out to be a no-op).
-    // Instantiate |scoped_do_native_work| ahead of GetQueueStatus() so that
+    // Instantiate |scoped_do_work| ahead of GetQueueStatus() so that
     // trace events it emits fully outscope GetQueueStatus' events
     // (GetQueueStatus() itself not being expected to do work; it's fine to use
-    // only on ScopedDoNativeWork for both calls -- we trace them independently
+    // only one ScopedDoWorkItem for both calls -- we trace them independently
     // just in case internal work stalls).
-    auto scoped_do_native_work = state_->delegate->BeginNativeWork();
+    auto scoped_do_work_item = run_state_->delegate->BeginWorkItem();
 
     {
       // Individually trace ::GetQueueStatus and ::PeekMessage because sampling
@@ -475,7 +467,8 @@ bool MessagePumpForUI::ProcessNextWindowsMessage() {
       // sampling profiler's thread while the sampled thread is swapped out on
       // this frame).
       TRACE_EVENT0(
-          "base", "MessagePumpForUI::ProcessNextWindowsMessage GetQueueStatus");
+          TRACE_DISABLED_BY_DEFAULT("base"),
+          "MessagePumpForUI::ProcessNextWindowsMessage GetQueueStatus");
       DWORD queue_status = ::GetQueueStatus(QS_SENDMESSAGE);
 
       // If there are sent messages in the queue then PeekMessage internally
@@ -491,7 +484,8 @@ bool MessagePumpForUI::ProcessNextWindowsMessage() {
       // and emit the boolean param to see if it ever janks independently (ref.
       // comment on GetQueueStatus).
       TRACE_EVENT(
-          "base", "MessagePumpForUI::ProcessNextWindowsMessage PeekMessage",
+          TRACE_DISABLED_BY_DEFAULT("base"),
+          "MessagePumpForUI::ProcessNextWindowsMessage PeekMessage",
           [&](perfetto::EventContext ctx) {
             perfetto::protos::pbzero::ChromeMessagePump* msg_pump_data =
                 ctx.event()->set_chrome_message_pump();
@@ -509,17 +503,10 @@ bool MessagePumpForUI::ProcessNextWindowsMessage() {
 bool MessagePumpForUI::ProcessMessageHelper(const MSG& msg) {
   DCHECK_CALLED_ON_VALID_THREAD(bound_thread_);
 
-  TRACE_EVENT1("base,toplevel", "MessagePumpForUI::ProcessMessageHelper",
-               "message", msg.message);
   if (msg.message == WM_QUIT) {
     // WM_QUIT is the standard way to exit a ::GetMessage() loop. Our
-    // MessageLoop has its own quit mechanism, so WM_QUIT should only terminate
-    // it if |enable_wm_quit_| is explicitly set (and is generally unexpected
-    // otherwise).
-    if (enable_wm_quit_) {
-      state_->should_quit = true;
-      return false;
-    }
+    // MessageLoop has its own quit mechanism, so WM_QUIT is generally
+    // unexpected.
     UMA_HISTOGRAM_ENUMERATION("Chrome.MessageLoopProblem",
                               RECEIVED_WM_QUIT_ERROR, MESSAGE_LOOP_PROBLEM_MAX);
     return true;
@@ -529,7 +516,14 @@ bool MessagePumpForUI::ProcessMessageHelper(const MSG& msg) {
   if (msg.message == kMsgHaveWork && msg.hwnd == message_window_.hwnd())
     return ProcessPumpReplacementMessage();
 
-  auto scoped_do_native_work = state_->delegate->BeginNativeWork();
+  auto scoped_do_work_item = run_state_->delegate->BeginWorkItem();
+
+  TRACE_EVENT("base,toplevel", "MessagePumpForUI DispatchMessage",
+              [&](perfetto::EventContext ctx) {
+                ctx.event<perfetto::protos::pbzero::ChromeTrackEvent>()
+                    ->set_chrome_message_pump_for_ui()
+                    ->set_message_id(msg.message);
+              });
 
   for (Observer& observer : observers_)
     observer.WillDispatchMSG(msg);
@@ -556,25 +550,15 @@ bool MessagePumpForUI::ProcessPumpReplacementMessage() {
   MSG msg;
   bool have_message = false;
   {
-    // ::PeekMessage may process internal events. Consider it native work.
-    auto scoped_do_native_work = state_->delegate->BeginNativeWork();
-
-    TRACE_EVENT0("base",
+    // Note: Ideally this call wouldn't process sent-messages (as we already did
+    // that in the PeekMessage call that lead to receiving this kMsgHaveWork),
+    // but there's no way to specify this (omitting PM_QS_SENDMESSAGE as in
+    // crrev.com/791043 doesn't do anything). Hence this call must be considered
+    // as a potential work item.
+    TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("base"),
                  "MessagePumpForUI::ProcessPumpReplacementMessage PeekMessage");
-
-    // The system headers don't define PM_QS_ALLEVENTS; it's equivalent to
-    // PM_QS_INPUT | PM_QS_PAINT | PM_QS_POSTMESSAGE. i.e., anything but
-    // QS_SENDMESSAGE.
-    // Since we're looking to replace our kMsgHaveWork posted message, we can
-    // ignore sent messages (which never compete with posted messages in the
-    // initial PeekMessage call).
-    constexpr auto PM_QS_ALLEVENTS = QS_ALLEVENTS << 16;
-    static_assert(
-        PM_QS_ALLEVENTS == (PM_QS_INPUT | PM_QS_PAINT | PM_QS_POSTMESSAGE), "");
-    static_assert((PM_QS_ALLEVENTS & PM_QS_SENDMESSAGE) == 0, "");
-
-    have_message = ::PeekMessage(&msg, nullptr, 0, 0,
-                                 PM_REMOVE | PM_QS_ALLEVENTS) != FALSE;
+    auto scoped_do_work_item = run_state_->delegate->BeginWorkItem();
+    have_message = ::PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE) != FALSE;
   }
 
   // Expect no message or a message different than kMsgHaveWork.
@@ -614,7 +598,7 @@ bool MessagePumpForUI::ProcessPumpReplacementMessage() {
     // ProcessPumpReplacementMessage() which finds the WM_TIMER message
     // installed by ScheduleNativeTimer(). That message needs to be handled
     // directly as handing it off to ProcessMessageHelper() below would cause an
-    // unnecessary ScopedDoNativeWork which may incorrectly lead the Delegate's
+    // unnecessary ScopedDoWorkItem which may incorrectly lead the Delegate's
     // heuristics to conclude that the DoWork() in HandleTimerMessage() is
     // nested inside a native task. It's also safe to skip the below
     // ScheduleWork() as it is not mandatory before invoking DoWork() and
@@ -647,7 +631,7 @@ MessagePumpForIO::IOHandler::~IOHandler() = default;
 MessagePumpForIO::MessagePumpForIO() {
   port_.Set(::CreateIoCompletionPort(INVALID_HANDLE_VALUE, nullptr,
                                      reinterpret_cast<ULONG_PTR>(nullptr), 1));
-  DCHECK(port_.IsValid());
+  DCHECK(port_.is_valid());
 }
 
 MessagePumpForIO::~MessagePumpForIO() = default;
@@ -662,7 +646,7 @@ void MessagePumpForIO::ScheduleWork() {
 
   // Make sure the MessagePump does some work for us.
   const BOOL ret = ::PostQueuedCompletionStatus(
-      port_.Get(), 0, reinterpret_cast<ULONG_PTR>(this),
+      port_.get(), 0, reinterpret_cast<ULONG_PTR>(this),
       reinterpret_cast<OVERLAPPED*>(this));
   if (ret)
     return;  // Post worked perfectly.
@@ -677,7 +661,8 @@ void MessagePumpForIO::ScheduleWork() {
                        TRACE_EVENT_SCOPE_THREAD);
 }
 
-void MessagePumpForIO::ScheduleDelayedWork(const TimeTicks& delayed_work_time) {
+void MessagePumpForIO::ScheduleDelayedWork(
+    const Delegate::NextWorkInfo& next_work_info) {
   DCHECK_CALLED_ON_VALID_THREAD(bound_thread_);
 
   // Since this is always called from |bound_thread_|, there is nothing to do as
@@ -690,7 +675,7 @@ HRESULT MessagePumpForIO::RegisterIOHandler(HANDLE file_handle,
   DCHECK_CALLED_ON_VALID_THREAD(bound_thread_);
 
   HANDLE port = ::CreateIoCompletionPort(
-      file_handle, port_.Get(), reinterpret_cast<ULONG_PTR>(handler), 1);
+      file_handle, port_.get(), reinterpret_cast<ULONG_PTR>(handler), 1);
   return (port != nullptr) ? S_OK : HRESULT_FROM_WIN32(GetLastError());
 }
 
@@ -700,7 +685,7 @@ bool MessagePumpForIO::RegisterJobObject(HANDLE job_handle,
 
   JOBOBJECT_ASSOCIATE_COMPLETION_PORT info;
   info.CompletionKey = handler;
-  info.CompletionPort = port_.Get();
+  info.CompletionPort = port_.get();
   return ::SetInformationJobObject(job_handle,
                                    JobObjectAssociateCompletionPortInformation,
                                    &info, sizeof(info)) != FALSE;
@@ -722,27 +707,27 @@ void MessagePumpForIO::DoRunLoop() {
     // had no work, then it is a good time to consider sleeping (waiting) for
     // more work.
 
-    Delegate::NextWorkInfo next_work_info = state_->delegate->DoWork();
+    Delegate::NextWorkInfo next_work_info = run_state_->delegate->DoWork();
     bool more_work_is_plausible = next_work_info.is_immediate();
-    if (state_->should_quit)
+    if (run_state_->should_quit)
       break;
 
-    state_->delegate->BeforeWait();
-    more_work_is_plausible |= WaitForIOCompletion(0, nullptr);
-    if (state_->should_quit)
-      break;
-
-    if (more_work_is_plausible)
-      continue;
-
-    more_work_is_plausible = state_->delegate->DoIdleWork();
-    if (state_->should_quit)
+    run_state_->delegate->BeforeWait();
+    more_work_is_plausible |= WaitForIOCompletion(0);
+    if (run_state_->should_quit)
       break;
 
     if (more_work_is_plausible)
       continue;
 
-    state_->delegate->BeforeWait();
+    more_work_is_plausible = run_state_->delegate->DoIdleWork();
+    if (run_state_->should_quit)
+      break;
+
+    if (more_work_is_plausible)
+      continue;
+
+    run_state_->delegate->BeforeWait();
     WaitForWork(next_work_info);
   }
 }
@@ -754,52 +739,39 @@ void MessagePumpForIO::WaitForWork(Delegate::NextWorkInfo next_work_info) {
 
   // We do not support nested IO message loops. This is to avoid messy
   // recursion problems.
-  DCHECK_EQ(1, state_->run_depth) << "Cannot nest an IO message loop!";
+  DCHECK(!run_state_->is_nested) << "Cannot nest an IO message loop!";
 
   DWORD timeout = GetSleepTimeoutMs(next_work_info.delayed_run_time,
                                     next_work_info.recent_now);
 
   // Tell the optimizer to retain these values to simplify analyzing hangs.
   base::debug::Alias(&timeout);
-  WaitForIOCompletion(timeout, nullptr);
+  WaitForIOCompletion(timeout);
 }
 
-bool MessagePumpForIO::WaitForIOCompletion(DWORD timeout, IOHandler* filter) {
+bool MessagePumpForIO::WaitForIOCompletion(DWORD timeout) {
   DCHECK_CALLED_ON_VALID_THREAD(bound_thread_);
 
   IOItem item;
-  if (completed_io_.empty() || !MatchCompletedIOItem(filter, &item)) {
-    // We have to ask the system for another IO completion.
-    if (!GetIOItem(timeout, &item))
-      return false;
+  if (!GetIOItem(timeout, &item))
+    return false;
 
-    if (ProcessInternalIOItem(item))
-      return true;
-  }
+  if (ProcessInternalIOItem(item))
+    return true;
 
-  if (filter && item.handler != filter) {
-    // Save this item for later
-    completed_io_.push_back(item);
-  } else {
-    TRACE_EVENT(
-        "base,toplevel", "IOHandler::OnIOCompleted",
-        [&](perfetto::EventContext ctx) {
-          ctx.event()->set_chrome_message_pump()->set_io_handler_location_iid(
-              base::trace_event::InternedSourceLocation::Get(
-                  &ctx, base::trace_event::TraceSourceLocation(
-                            item.handler->io_handler_location())));
-        });
+  auto scoped_do_work_item = run_state_->delegate->BeginWorkItem();
 
-    // |state_| can be null when WaitForIOCompletion() is invoked outside of
-    // Run() in rare unit tests that statically invoke
-    // CurrentIOThread::WaitForIOCompletion(). In all other circumstances,
-    // report the upcoming IO item handling as native work.
-    Delegate::ScopedDoNativeWork scoped_do_native_work;
-    if (state_)
-      scoped_do_native_work = state_->delegate->BeginNativeWork();
-    item.handler->OnIOCompleted(item.context, item.bytes_transfered,
-                                item.error);
-  }
+  TRACE_EVENT(
+      "base,toplevel", "IOHandler::OnIOCompleted",
+      [&](perfetto::EventContext ctx) {
+        ctx.event()->set_chrome_message_pump()->set_io_handler_location_iid(
+            base::trace_event::InternedSourceLocation::Get(
+                &ctx, base::trace_event::TraceSourceLocation(
+                          item.handler->io_handler_location())));
+      });
+
+  item.handler->OnIOCompleted(item.context, item.bytes_transfered, item.error);
+
   return true;
 }
 
@@ -810,7 +782,7 @@ bool MessagePumpForIO::GetIOItem(DWORD timeout, IOItem* item) {
   memset(item, 0, sizeof(*item));
   ULONG_PTR key = reinterpret_cast<ULONG_PTR>(nullptr);
   OVERLAPPED* overlapped = nullptr;
-  if (!::GetQueuedCompletionStatus(port_.Get(), &item->bytes_transfered, &key,
+  if (!::GetQueuedCompletionStatus(port_.get(), &item->bytes_transfered, &key,
                                    &overlapped, timeout)) {
     if (!overlapped)
       return false;  // Nothing in the queue.
@@ -826,28 +798,14 @@ bool MessagePumpForIO::GetIOItem(DWORD timeout, IOItem* item) {
 bool MessagePumpForIO::ProcessInternalIOItem(const IOItem& item) {
   DCHECK_CALLED_ON_VALID_THREAD(bound_thread_);
 
-  if (reinterpret_cast<void*>(this) == reinterpret_cast<void*>(item.context) &&
-      reinterpret_cast<void*>(this) == reinterpret_cast<void*>(item.handler)) {
+  if (reinterpret_cast<void*>(this) ==
+          reinterpret_cast<void*>(item.context.get()) &&
+      reinterpret_cast<void*>(this) ==
+          reinterpret_cast<void*>(item.handler.get())) {
     // This is our internal completion.
     DCHECK(!item.bytes_transfered);
     work_scheduled_ = false;
     return true;
-  }
-  return false;
-}
-
-// Returns a completion item that was previously received.
-bool MessagePumpForIO::MatchCompletedIOItem(IOHandler* filter, IOItem* item) {
-  DCHECK_CALLED_ON_VALID_THREAD(bound_thread_);
-
-  DCHECK(!completed_io_.empty());
-  for (std::list<IOItem>::iterator it = completed_io_.begin();
-       it != completed_io_.end(); ++it) {
-    if (!filter || it->handler == filter) {
-      *item = *it;
-      completed_io_.erase(it);
-      return true;
-    }
   }
   return false;
 }

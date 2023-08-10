@@ -7,11 +7,14 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "components/password_manager/core/browser/android_affiliation/lookup_affiliation_response_parser.h"
+#include "components/variations/net/variations_http_headers.h"
 #include "net/base/load_flags.h"
 #include "net/base/url_util.h"
+#include "net/http/http_status_code.h"
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/network/public/cpp/simple_url_loader.h"
+#include "services/network/public/mojom/url_response_head.mojom.h"
 
 namespace password_manager {
 
@@ -27,9 +30,32 @@ enum class AffiliationFetchResult {
 
 namespace {
 
-void LogFetchResult(AffiliationFetchResult result) {
+void LogFetchResult(AffiliationFetchResult result,
+                    base::TimeDelta fetch_time,
+                    size_t response_size = 0) {
   base::UmaHistogramEnumeration(
       "PasswordManager.AffiliationFetcher.FetchResult", result);
+
+  switch (result) {
+    case AffiliationFetchResult::kSuccess:
+      base::UmaHistogramTimes(
+          "PasswordManager.AffiliationFetcher.FetchTime.Success", fetch_time);
+      base::UmaHistogramCounts1M(
+          "PasswordManager.AffiliationFetcher.ResponseSize.Success",
+          response_size);
+      break;
+    case AffiliationFetchResult::kMalformed:
+      base::UmaHistogramTimes(
+          "PasswordManager.AffiliationFetcher.FetchTime.Malformed", fetch_time);
+      base::UmaHistogramCounts1M(
+          "PasswordManager.AffiliationFetcher.ResponseSize.Malformed",
+          response_size);
+      break;
+    case AffiliationFetchResult::kFailure:
+      base::UmaHistogramTimes(
+          "PasswordManager.AffiliationFetcher.FetchTime.Failure", fetch_time);
+      break;
+  }
 }
 
 }  // namespace
@@ -70,6 +96,9 @@ void AffiliationFetcherBase::FinalizeRequest(
   resource_request->credentials_mode = network::mojom::CredentialsMode::kOmit;
   resource_request->method = "POST";
 
+  variations::AppendVariationsHeaderUnknownSignedIn(
+      query_url, variations::InIncognito::kNo, resource_request.get());
+
   DCHECK(!simple_url_loader_);
   simple_url_loader_ = network::SimpleURLLoader::Create(
       std::move(resource_request), traffic_annotation);
@@ -97,9 +126,12 @@ bool AffiliationFetcherBase::ParseResponse(
   //     case so the caller can be notified and it can act accordingly.
   //   * The |result| will be free of duplicate or empty equivalence classes.
 
-  affiliation_pb::LookupAffiliationResponse response;
-  if (!response.ParseFromString(serialized_response))
+  affiliation_pb::LookupAffiliationByHashPrefixResponse response;
+  if (!response.ParseFromString(serialized_response)) {
+    base::UmaHistogramBoolean(
+        "PasswordManager.AffiliationFetcher.FailedToParseResponse", true);
     return false;
+  }
 
   return ParseLookupAffiliationResponse(GetRequestedFacetURIs(), response,
                                         result);
@@ -107,27 +139,19 @@ bool AffiliationFetcherBase::ParseResponse(
 
 void AffiliationFetcherBase::OnSimpleLoaderComplete(
     std::unique_ptr<std::string> response_body) {
-  base::UmaHistogramTimes("PasswordManager.AffiliationFetcher.FetchTime",
-                          fetch_timer_.Elapsed());
+  base::TimeDelta fetch_time = fetch_timer_.Elapsed();
   // Note that invoking the |delegate_| may destroy |this| synchronously, so the
   // invocation must happen last.
-  auto result_data = std::make_unique<AffiliationFetcherDelegate::Result>();
-  if (response_body) {
-    if (ParseResponse(*response_body, result_data.get())) {
-      LogFetchResult(AffiliationFetchResult::kSuccess);
-      delegate_->OnFetchSucceeded(this, std::move(result_data));
-    } else {
-      LogFetchResult(AffiliationFetchResult::kMalformed);
-      delegate_->OnMalformedResponse(this);
-    }
-  } else {
-    LogFetchResult(AffiliationFetchResult::kFailure);
-    int response_code = -1;
-    if (simple_url_loader_->ResponseInfo() &&
-        simple_url_loader_->ResponseInfo()->headers) {
-      response_code =
-          simple_url_loader_->ResponseInfo()->headers->response_code();
-    }
+  bool success = simple_url_loader_->NetError() == net::OK;
+  int response_code = 0;
+  if (simple_url_loader_->ResponseInfo() &&
+      simple_url_loader_->ResponseInfo()->headers) {
+    response_code =
+        simple_url_loader_->ResponseInfo()->headers->response_code();
+  }
+
+  if (!success || net::HTTP_OK != response_code) {
+    LogFetchResult(AffiliationFetchResult::kFailure, fetch_time);
     base::UmaHistogramSparse(
         "PasswordManager.AffiliationFetcher.FetchHttpResponseCode",
         response_code);
@@ -136,6 +160,18 @@ void AffiliationFetcherBase::OnSimpleLoaderComplete(
         "PasswordManager.AffiliationFetcher.FetchErrorCode",
         -simple_url_loader_->NetError());
     delegate_->OnFetchFailed(this);
+    return;
+  }
+
+  auto result_data = std::make_unique<AffiliationFetcherDelegate::Result>();
+  if (ParseResponse(*response_body, result_data.get())) {
+    LogFetchResult(AffiliationFetchResult::kSuccess, fetch_time,
+                   response_body->size());
+    delegate_->OnFetchSucceeded(this, std::move(result_data));
+  } else {
+    LogFetchResult(AffiliationFetchResult::kMalformed, fetch_time,
+                   response_body->size());
+    delegate_->OnMalformedResponse(this);
   }
 }
 

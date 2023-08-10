@@ -15,6 +15,7 @@
 
 #include "core/fpdfapi/parser/cpdf_document.h"
 #include "core/fpdfapi/parser/cpdf_parser.h"
+#include "core/fxcrt/retain_ptr.h"
 #include "core/fxcrt/unowned_ptr.h"
 
 class CPDF_CrossRefAvail;
@@ -26,57 +27,34 @@ class CPDF_PageObjectAvail;
 class CPDF_ReadValidator;
 class CPDF_SyntaxParser;
 
-enum PDF_DATAAVAIL_STATUS {
-  PDF_DATAAVAIL_HEADER = 0,
-  PDF_DATAAVAIL_FIRSTPAGE,
-  PDF_DATAAVAIL_HINTTABLE,
-  PDF_DATAAVAIL_LOADALLCROSSREF,
-  PDF_DATAAVAIL_ROOT,
-  PDF_DATAAVAIL_INFO,
-  PDF_DATAAVAIL_PAGETREE,
-  PDF_DATAAVAIL_PAGE,
-  PDF_DATAAVAIL_PAGE_LATERLOAD,
-  PDF_DATAAVAIL_RESOURCES,
-  PDF_DATAAVAIL_DONE,
-  PDF_DATAAVAIL_ERROR,
-  PDF_DATAAVAIL_LOADALLFILE,
-};
-
-enum PDF_PAGENODE_TYPE {
-  PDF_PAGENODE_UNKNOWN = 0,
-  PDF_PAGENODE_PAGE,
-  PDF_PAGENODE_PAGES,
-  PDF_PAGENODE_ARRAY,
-};
-
 class CPDF_DataAvail final : public Observable::ObserverIface {
  public:
   // Must match PDF_DATA_* definitions in public/fpdf_dataavail.h, but cannot
   // #include that header. fpdfsdk/fpdf_dataavail.cpp has static_asserts
   // to make sure the two sets of values match.
   enum DocAvailStatus {
-    DataError = -1,        // PDF_DATA_ERROR
-    DataNotAvailable = 0,  // PDF_DATA_NOTAVAIL
-    DataAvailable = 1,     // PDF_DATA_AVAIL
+    kDataError = -1,        // PDF_DATA_ERROR
+    kDataNotAvailable = 0,  // PDF_DATA_NOTAVAIL
+    kDataAvailable = 1,     // PDF_DATA_AVAIL
   };
 
   // Must match PDF_*LINEAR* definitions in public/fpdf_dataavail.h, but cannot
   // #include that header. fpdfsdk/fpdf_dataavail.cpp has static_asserts
   // to make sure the two sets of values match.
   enum DocLinearizationStatus {
-    LinearizationUnknown = -1,  // PDF_LINEARIZATION_UNKNOWN
-    NotLinearized = 0,          // PDF_NOT_LINEARIZED
-    Linearized = 1,             // PDF_LINEARIZED
+    kLinearizationUnknown = -1,  // PDF_LINEARIZATION_UNKNOWN
+    kNotLinearized = 0,          // PDF_NOT_LINEARIZED
+    kLinearized = 1,             // PDF_LINEARIZED
   };
 
   // Must match PDF_FORM_* definitions in public/fpdf_dataavail.h, but cannot
   // #include that header. fpdfsdk/fpdf_dataavail.cpp has static_asserts
   // to make sure the two sets of values match.
   enum DocFormStatus {
-    FormError = -1,        // PDF_FORM_ERROR
-    FormNotAvailable = 0,  // PDF_FORM_NOTAVAIL
-    FormAvailable = 1,     // PDF_FORM_AVAIL
-    FormNotExist = 2,      // PDF_FORM_NOTEXIST
+    kFormError = -1,        // PDF_FORM_ERROR
+    kFormNotAvailable = 0,  // PDF_FORM_NOTAVAIL
+    kFormAvailable = 1,     // PDF_FORM_AVAIL
+    kFormNotExist = 2,      // PDF_FORM_NOTEXIST
   };
 
   class FileAvail {
@@ -92,8 +70,7 @@ class CPDF_DataAvail final : public Observable::ObserverIface {
   };
 
   CPDF_DataAvail(FileAvail* pFileAvail,
-                 const RetainPtr<IFX_SeekableReadStream>& pFileRead,
-                 bool bSupportHintTable);
+                 const RetainPtr<IFX_SeekableReadStream>& pFileRead);
   ~CPDF_DataAvail() override;
 
   // Observable::ObserverIface:
@@ -110,18 +87,36 @@ class CPDF_DataAvail final : public Observable::ObserverIface {
   std::pair<CPDF_Parser::Error, std::unique_ptr<CPDF_Document>> ParseDocument(
       std::unique_ptr<CPDF_Document::RenderDataIface> pRenderData,
       std::unique_ptr<CPDF_Document::PageDataIface> pPageData,
-      const char* password);
+      const ByteString& password);
 
   const CPDF_HintTables* GetHintTables() const { return m_pHintTables.get(); }
 
  private:
+  enum class InternalStatus : uint8_t {
+    kHeader = 0,
+    kFirstPage,
+    kHintTable,
+    kLoadAllCrossRef,
+    kRoot,
+    kInfo,
+    kPageTree,
+    kPage,
+    kPageLaterLoad,
+    kResources,
+    kDone,
+    kError,
+    kLoadAllFile,
+  };
+
   class PageNode {
    public:
+    enum class Type { kUnknown = 0, kPage, kPages, kArray };
+
     PageNode();
     ~PageNode();
 
-    PDF_PAGENODE_TYPE m_type;
-    uint32_t m_dwPageNo;
+    Type m_type = Type::kUnknown;
+    uint32_t m_dwPageNo = 0;
     std::vector<std::unique_ptr<PageNode>> m_ChildNodes;
   };
 
@@ -172,11 +167,12 @@ class CPDF_DataAvail final : public Observable::ObserverIface {
   RetainPtr<CPDF_Dictionary> m_pRoot;
   std::unique_ptr<CPDF_LinearizedHeader> m_pLinearized;
   bool m_bDocAvail = false;
+  InternalStatus m_internalStatus = InternalStatus::kHeader;
   std::unique_ptr<CPDF_CrossRefAvail> m_pCrossRefAvail;
-  PDF_DATAAVAIL_STATUS m_docStatus = PDF_DATAAVAIL_HEADER;
   const FX_FILESIZE m_dwFileLen;
   UnownedPtr<CPDF_Document> m_pDocument;
   std::vector<uint32_t> m_PageObjList;
+  std::set<uint32_t> m_SeenPageObjList;
   uint32_t m_PagesObjNum = 0;
   bool m_bLinearedDataOK = false;
   bool m_bMainXRefLoadTried = false;
@@ -191,7 +187,6 @@ class CPDF_DataAvail final : public Observable::ObserverIface {
   std::set<uint32_t> m_pageMapCheckState;
   std::set<uint32_t> m_pagesLoadState;
   std::unique_ptr<CPDF_HintTables> m_pHintTables;
-  const bool m_bSupportHintTable;
   std::map<uint32_t, std::unique_ptr<CPDF_PageObjectAvail>> m_PagesObjAvail;
   std::map<const CPDF_Object*, std::unique_ptr<CPDF_PageObjectAvail>>
       m_PagesResourcesAvail;

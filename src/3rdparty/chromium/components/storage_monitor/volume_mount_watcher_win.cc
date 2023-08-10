@@ -14,19 +14,19 @@
 #include <winioctl.h>
 
 #include <algorithm>
+#include <string>
 
 #include "base/bind.h"
 #include "base/callback_helpers.h"
 #include "base/containers/contains.h"
-#include "base/strings/string16.h"
+#include "base/logging.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/system/sys_info.h"
-#include "base/task/post_task.h"
+#include "base/task/task_runner_util.h"
 #include "base/task/thread_pool.h"
-#include "base/task_runner_util.h"
 #include "base/time/time.h"
 #include "base/win/scoped_handle.h"
 #include "components/storage_monitor/media_storage_util.h"
@@ -174,7 +174,7 @@ bool GetDeviceDetails(const base::FilePath& device_path, StorageInfo* info) {
   // TODO(gbillock): if volume_label.empty(), get the vendor/model information
   // for the volume.
   *info = StorageInfo(device_id, mount_point, base::WideToUTF16(volume_label),
-                      base::string16(), base::string16(), total_size_in_bytes);
+                      std::u16string(), std::u16string(), total_size_in_bytes);
   return true;
 }
 
@@ -255,8 +255,7 @@ void EjectDeviceInThreadPool(
                                 0, nullptr, 0, &bytes_returned, nullptr);
   if (!locked) {
     const int kNumLockRetries = 1;
-    const base::TimeDelta kLockRetryInterval =
-        base::TimeDelta::FromMilliseconds(500);
+    const base::TimeDelta kLockRetryInterval = base::Milliseconds(500);
     if (iteration < kNumLockRetries) {
       // Try again -- the lock may have been a transient one. This happens on
       // things like AV disk lock for some reason, or another process

@@ -9,20 +9,17 @@
 #include <utility>
 
 #include "base/memory/ref_counted.h"
+#include "base/unguessable_token.h"
 #include "base/values.h"
 #include "content/browser/service_worker/service_worker_host.h"
 #include "content/browser/worker_host/dedicated_worker_host.h"
 #include "content/browser/worker_host/shared_worker_host.h"
-#include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
-#include "content/public/browser/site_instance.h"
 #include "content/public/browser/storage_partition.h"
 #include "mojo/public/cpp/bindings/self_owned_receiver.h"
 #include "net/base/network_isolation_key.h"
-#include "net/reporting/reporting_report.h"
-#include "net/reporting/reporting_service.h"
 #include "services/network/public/mojom/network_context.mojom.h"
 #include "third_party/blink/public/mojom/reporting/reporting.mojom.h"
 #include "url/gurl.h"
@@ -35,9 +32,13 @@ class ReportingServiceProxyImpl : public blink::mojom::ReportingServiceProxy {
  public:
   ReportingServiceProxyImpl(
       int render_process_id,
+      const base::UnguessableToken& reporting_source,
       const net::NetworkIsolationKey& network_isolation_key)
       : render_process_id_(render_process_id),
-        network_isolation_key_(network_isolation_key) {}
+        reporting_source_(reporting_source),
+        network_isolation_key_(network_isolation_key) {
+    DCHECK(!reporting_source.is_empty());
+  }
 
   ReportingServiceProxyImpl(const ReportingServiceProxyImpl&) = delete;
   ReportingServiceProxyImpl& operator=(const ReportingServiceProxyImpl&) =
@@ -48,7 +49,7 @@ class ReportingServiceProxyImpl : public blink::mojom::ReportingServiceProxy {
   void QueueInterventionReport(const GURL& url,
                                const std::string& id,
                                const std::string& message,
-                               const base::Optional<std::string>& source_file,
+                               const absl::optional<std::string>& source_file,
                                int line_number,
                                int column_number) override {
     auto body = std::make_unique<base::DictionaryValue>();
@@ -65,9 +66,9 @@ class ReportingServiceProxyImpl : public blink::mojom::ReportingServiceProxy {
 
   void QueueDeprecationReport(const GURL& url,
                               const std::string& id,
-                              base::Optional<base::Time> anticipated_removal,
+                              absl::optional<base::Time> anticipated_removal,
                               const std::string& message,
-                              const base::Optional<std::string>& source_file,
+                              const absl::optional<std::string>& source_file,
                               int line_number,
                               int column_number) override {
     auto body = std::make_unique<base::DictionaryValue>();
@@ -88,12 +89,12 @@ class ReportingServiceProxyImpl : public blink::mojom::ReportingServiceProxy {
   void QueueCspViolationReport(const GURL& url,
                                const std::string& group,
                                const std::string& document_url,
-                               const base::Optional<std::string>& referrer,
-                               const base::Optional<std::string>& blocked_url,
+                               const absl::optional<std::string>& referrer,
+                               const absl::optional<std::string>& blocked_url,
                                const std::string& effective_directive,
                                const std::string& original_policy,
-                               const base::Optional<std::string>& source_file,
-                               const base::Optional<std::string>& script_sample,
+                               const absl::optional<std::string>& source_file,
+                               const absl::optional<std::string>& script_sample,
                                const std::string& disposition,
                                uint16_t status_code,
                                int line_number,
@@ -119,12 +120,12 @@ class ReportingServiceProxyImpl : public blink::mojom::ReportingServiceProxy {
     QueueReport(url, group, "csp-violation", std::move(body));
   }
 
-  void QueueFeaturePolicyViolationReport(
+  void QueuePermissionsPolicyViolationReport(
       const GURL& url,
       const std::string& policy_id,
       const std::string& disposition,
-      const base::Optional<std::string>& message,
-      const base::Optional<std::string>& source_file,
+      const absl::optional<std::string>& message,
+      const absl::optional<std::string>& source_file,
       int line_number,
       int column_number) override {
     auto body = std::make_unique<base::DictionaryValue>();
@@ -147,8 +148,8 @@ class ReportingServiceProxyImpl : public blink::mojom::ReportingServiceProxy {
       const std::string& group,
       const std::string& policy_id,
       const std::string& disposition,
-      const base::Optional<std::string>& message,
-      const base::Optional<std::string>& source_file,
+      const absl::optional<std::string>& message,
+      const absl::optional<std::string>& source_file,
       int line_number,
       int column_number) override {
     auto body = std::make_unique<base::DictionaryValue>();
@@ -175,14 +176,14 @@ class ReportingServiceProxyImpl : public blink::mojom::ReportingServiceProxy {
     auto* rph = RenderProcessHost::FromID(render_process_id_);
     if (!rph)
       return;
-
     rph->GetStoragePartition()->GetNetworkContext()->QueueReport(
-        type, group, url, network_isolation_key_,
-        /*user_agent=*/base::nullopt,
+        type, group, url, reporting_source_, network_isolation_key_,
+        /*user_agent=*/absl::nullopt,
         base::Value::FromUniquePtrValue(std::move(body)));
   }
 
   const int render_process_id_;
+  const base::UnguessableToken reporting_source_;
   const net::NetworkIsolationKey network_isolation_key_;
 };
 
@@ -194,6 +195,7 @@ void CreateReportingServiceProxyForFrame(
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   mojo::MakeSelfOwnedReceiver(std::make_unique<ReportingServiceProxyImpl>(
                                   render_frame_host->GetProcess()->GetID(),
+                                  render_frame_host->GetReportingSource(),
                                   render_frame_host->GetNetworkIsolationKey()),
                               std::move(receiver));
 }
@@ -205,6 +207,7 @@ void CreateReportingServiceProxyForServiceWorker(
   mojo::MakeSelfOwnedReceiver(
       std::make_unique<ReportingServiceProxyImpl>(
           service_worker_host->worker_process_id(),
+          service_worker_host->GetReportingSource(),
           service_worker_host->GetNetworkIsolationKey()),
       std::move(receiver));
 }
@@ -215,6 +218,7 @@ void CreateReportingServiceProxyForSharedWorker(
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   mojo::MakeSelfOwnedReceiver(std::make_unique<ReportingServiceProxyImpl>(
                                   shared_worker_host->GetProcessHost()->GetID(),
+                                  shared_worker_host->GetReportingSource(),
                                   shared_worker_host->GetNetworkIsolationKey()),
                               std::move(receiver));
 }
@@ -226,6 +230,7 @@ void CreateReportingServiceProxyForDedicatedWorker(
   mojo::MakeSelfOwnedReceiver(
       std::make_unique<ReportingServiceProxyImpl>(
           dedicated_worker_host->GetProcessHost()->GetID(),
+          dedicated_worker_host->GetReportingSource(),
           dedicated_worker_host->GetNetworkIsolationKey()),
       std::move(receiver));
 }

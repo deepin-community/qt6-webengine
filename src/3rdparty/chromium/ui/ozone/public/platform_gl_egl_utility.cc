@@ -17,13 +17,9 @@ bool PlatformGLEGLUtility::HasVisualManager() {
   return false;
 }
 
-bool PlatformGLEGLUtility::UpdateVisualsOnGpuInfoChanged(
-    bool software_rendering,
-    uint32_t default_visual_id,
-    uint32_t transparent_visual_id) {
-  NOTREACHED() << "This must not be called if the platform does not support "
-                  "X11 visuals.";
-  return false;
+absl::optional<base::ScopedEnvironmentVariableOverride>
+PlatformGLEGLUtility::MaybeGetScopedDisplayUnsetForVulkan() {
+  return absl::nullopt;
 }
 
 }  // namespace ui

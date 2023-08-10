@@ -79,18 +79,11 @@ TEST_F(WebNodeSimTest, IsFocused) {
 
   WebNode input_node(GetDocument().getElementById("focusable"));
   EXPECT_FALSE(input_node.IsFocusable());
-  EXPECT_EQ(!RuntimeEnabledFeatures::BlockHTMLParserOnStyleSheetsEnabled(),
-            GetDocument().GetStyleEngine().HasPendingRenderBlockingSheets());
+  EXPECT_FALSE(GetDocument().HaveRenderBlockingStylesheetsLoaded());
 
   main_resource.Finish();
   css_resource.Complete("dummy {}");
   test::RunPendingTasks();
-
-  if (RuntimeEnabledFeatures::BlockHTMLParserOnStyleSheetsEnabled()) {
-    // Need to re-initialize the WebNode since it was null on construction.
-    EXPECT_TRUE(input_node.IsNull());
-    input_node = GetDocument().getElementById("focusable");
-  }
   EXPECT_TRUE(input_node.IsFocusable());
 }
 

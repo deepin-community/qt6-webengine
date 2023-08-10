@@ -9,11 +9,10 @@
 #include <memory>
 #include <set>
 
-#include "base/macros.h"
+#include "base/tracing/perfetto_task_runner.h"
 #include "mojo/public/cpp/bindings/receiver_set.h"
 #include "mojo/public/cpp/bindings/unique_receiver_set.h"
 #include "services/tracing/perfetto/consumer_host.h"
-#include "services/tracing/public/cpp/perfetto/task_runner.h"
 #include "services/tracing/public/mojom/perfetto_service.mojom.h"
 
 namespace perfetto {
@@ -30,6 +29,10 @@ class PerfettoService : public mojom::PerfettoService {
  public:
   explicit PerfettoService(scoped_refptr<base::SequencedTaskRunner>
                                task_runner_for_testing = nullptr);
+
+  PerfettoService(const PerfettoService&) = delete;
+  PerfettoService& operator=(const PerfettoService&) = delete;
+
   ~PerfettoService() override;
 
   static PerfettoService* GetInstance();
@@ -75,7 +78,9 @@ class PerfettoService : public mojom::PerfettoService {
     return active_service_pids_initialized_;
   }
 
-  PerfettoTaskRunner* perfetto_task_runner() { return &perfetto_task_runner_; }
+  base::tracing::PerfettoTaskRunner* perfetto_task_runner() {
+    return &perfetto_task_runner_;
+  }
 
  private:
   void BindOnSequence(mojo::PendingReceiver<mojom::PerfettoService> receiver);
@@ -84,7 +89,7 @@ class PerfettoService : public mojom::PerfettoService {
   void OnServiceDisconnect();
   void OnDisconnectFromProcess(base::ProcessId pid);
 
-  PerfettoTaskRunner perfetto_task_runner_;
+  base::tracing::PerfettoTaskRunner perfetto_task_runner_;
   std::unique_ptr<perfetto::TracingService> service_;
   mojo::ReceiverSet<mojom::PerfettoService, uint32_t> receivers_;
   mojo::UniqueReceiverSet<mojom::ProducerHost, uint32_t> producer_receivers_;
@@ -92,8 +97,6 @@ class PerfettoService : public mojom::PerfettoService {
   std::set<base::ProcessId> active_service_pids_;
   std::map<base::ProcessId, int> num_active_connections_;
   bool active_service_pids_initialized_ = false;
-
-  DISALLOW_COPY_AND_ASSIGN(PerfettoService);
 };
 
 }  // namespace tracing

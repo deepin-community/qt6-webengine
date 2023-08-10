@@ -12,7 +12,7 @@
 #include "core/fxcodec/jbig2/JBig2_Context.h"
 #include "core/fxcrt/fx_safe_types.h"
 #include "third_party/base/check.h"
-#include "third_party/base/stl_util.h"
+#include "third_party/base/cxx17_backports.h"
 
 namespace {
 
@@ -134,7 +134,7 @@ CJBig2_HuffmanTable::CJBig2_HuffmanTable(size_t idx) {
   DCHECK(idx < kNumHuffmanTables);
   const HuffmanTable& table = kHuffmanTables[idx];
   HTOOB = table.HTOOB;
-  NTEMP = table.size;
+  NTEMP = pdfium::base::checked_cast<uint32_t>(table.size);
   m_bOK = ParseFromStandardTable(idx);
   DCHECK(m_bOK);
 }

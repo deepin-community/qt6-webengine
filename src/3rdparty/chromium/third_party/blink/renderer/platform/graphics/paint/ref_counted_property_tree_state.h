@@ -5,6 +5,7 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_GRAPHICS_PAINT_REF_COUNTED_PROPERTY_TREE_STATE_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_GRAPHICS_PAINT_REF_COUNTED_PROPERTY_TREE_STATE_H_
 
+#include "base/dcheck_is_on.h"
 #include "third_party/blink/renderer/platform/graphics/paint/property_tree_state.h"
 
 namespace blink {
@@ -36,10 +37,10 @@ class PLATFORM_EXPORT RefCountedPropertyTreeState {
     return PropertyTreeStateOrAlias(Transform(), Clip(), Effect());
   }
 
-  void ClearChangedTo(const PropertyTreeStateOrAlias& to) const {
-    Transform().ClearChangedTo(&to.Transform());
-    Clip().ClearChangedTo(&to.Clip());
-    Effect().ClearChangedTo(&to.Effect());
+  void ClearChangedToRoot(int sequence_number) const {
+    Transform().ClearChangedToRoot(sequence_number);
+    Clip().ClearChangedToRoot(sequence_number);
+    Effect().ClearChangedToRoot(sequence_number);
   }
 
   String ToString() const { return GetPropertyTreeState().ToString(); }

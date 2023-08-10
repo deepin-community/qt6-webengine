@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "base/command_line.h"
+#include "base/strings/stringprintf.h"
 #include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
@@ -24,6 +25,7 @@
 #include "services/video_capture/public/mojom/device_factory.mojom.h"
 #include "services/video_capture/public/mojom/devices_changed_observer.mojom.h"
 #include "services/video_capture/public/mojom/producer.mojom.h"
+#include "services/video_capture/public/mojom/video_capture_service.mojom.h"
 #include "services/video_capture/public/mojom/video_source_provider.mojom.h"
 #include "services/video_capture/public/mojom/virtual_device.mojom.h"
 
@@ -62,6 +64,11 @@ class WebRtcVideoCaptureServiceEnumerationBrowserTest
   WebRtcVideoCaptureServiceEnumerationBrowserTest() {
     scoped_feature_list_.InitAndEnableFeature(features::kMojoVideoCapture);
   }
+
+  WebRtcVideoCaptureServiceEnumerationBrowserTest(
+      const WebRtcVideoCaptureServiceEnumerationBrowserTest&) = delete;
+  WebRtcVideoCaptureServiceEnumerationBrowserTest& operator=(
+      const WebRtcVideoCaptureServiceEnumerationBrowserTest&) = delete;
 
   ~WebRtcVideoCaptureServiceEnumerationBrowserTest() override {}
 
@@ -166,25 +173,21 @@ class WebRtcVideoCaptureServiceEnumerationBrowserTest
       int expected_device_count) {
     const std::string javascript_to_execute = base::StringPrintf(
         kEnumerateVideoCaptureDevicesAndVerify, expected_device_count);
-    std::string result;
-    ASSERT_TRUE(
-        ExecuteScriptAndExtractString(shell(), javascript_to_execute, &result));
-    ASSERT_EQ("OK", result);
+    ASSERT_EQ("OK", EvalJs(shell(), javascript_to_execute,
+                           EXECUTE_SCRIPT_USE_MANUAL_REPLY));
   }
 
   void RegisterForDeviceChangeEventInRenderer() {
-    ASSERT_TRUE(ExecuteScript(shell(), kRegisterForDeviceChangeEvent));
+    ASSERT_TRUE(ExecJs(shell(), kRegisterForDeviceChangeEvent));
   }
 
   void WaitForDeviceChangeEventInRenderer() {
-    std::string result;
-    ASSERT_TRUE(ExecuteScriptAndExtractString(
-        shell(), kWaitForDeviceChangeEvent, &result));
-    ASSERT_EQ("OK", result);
+    ASSERT_EQ("OK", EvalJs(shell(), kWaitForDeviceChangeEvent,
+                           EXECUTE_SCRIPT_USE_MANUAL_REPLY));
   }
 
   void ResetHasReceivedChangedEventFlag() {
-    ASSERT_TRUE(ExecuteScript(shell(), kResetHasReceivedChangedEventFlag));
+    ASSERT_TRUE(ExecJs(shell(), kResetHasReceivedChangedEventFlag));
   }
 
   // Implementation of video_capture::mojom::DevicesChangedObserver:
@@ -231,8 +234,6 @@ class WebRtcVideoCaptureServiceEnumerationBrowserTest
   mojo::Remote<video_capture::mojom::VideoSourceProvider>
       video_source_provider_;
   base::OnceClosure closure_to_be_called_on_devices_changed_;
-
-  DISALLOW_COPY_AND_ASSIGN(WebRtcVideoCaptureServiceEnumerationBrowserTest);
 };
 
 IN_PROC_BROWSER_TEST_P(WebRtcVideoCaptureServiceEnumerationBrowserTest,
@@ -268,7 +269,8 @@ IN_PROC_BROWSER_TEST_P(WebRtcVideoCaptureServiceEnumerationBrowserTest,
 
 // The mediadevices.ondevicechange event is currently not supported on Android.
 // Flaky on ChromeOS.  https://crbug.com/1126373
-#if defined(OS_ANDROID) || BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_CHROMEOS_ASH) || \
+    BUILDFLAG(IS_CHROMEOS_LACROS)
 #define MAYBE_AddingAndRemovingVirtualDeviceTriggersMediaElementOnDeviceChange \
   DISABLED_AddingAndRemovingVirtualDeviceTriggersMediaElementOnDeviceChange
 #else

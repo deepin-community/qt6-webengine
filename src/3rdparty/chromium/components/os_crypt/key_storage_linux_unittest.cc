@@ -5,7 +5,7 @@
 #include "components/os_crypt/key_storage_linux.h"
 
 #include "base/bind.h"
-#include "base/sequenced_task_runner.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/test/test_simple_task_runner.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -15,11 +15,15 @@ class FakeKeyStorageLinux : public KeyStorageLinux {
  public:
   explicit FakeKeyStorageLinux(base::SequencedTaskRunner* task_runner)
       : task_runner_(task_runner) {}
+
+  FakeKeyStorageLinux(const FakeKeyStorageLinux&) = delete;
+  FakeKeyStorageLinux& operator=(const FakeKeyStorageLinux&) = delete;
+
   ~FakeKeyStorageLinux() override = default;
 
  protected:
   bool Init() override { return true; }
-  base::Optional<std::string> GetKeyImpl() override {
+  absl::optional<std::string> GetKeyImpl() override {
     return std::string("1234");
   }
 
@@ -27,16 +31,16 @@ class FakeKeyStorageLinux : public KeyStorageLinux {
 
  private:
   base::SequencedTaskRunner* task_runner_;
-  DISALLOW_COPY_AND_ASSIGN(FakeKeyStorageLinux);
 };
 
 class KeyStorageLinuxTest : public testing::Test {
  public:
   KeyStorageLinuxTest() = default;
-  ~KeyStorageLinuxTest() override = default;
 
- private:
-  DISALLOW_COPY_AND_ASSIGN(KeyStorageLinuxTest);
+  KeyStorageLinuxTest(const KeyStorageLinuxTest&) = delete;
+  KeyStorageLinuxTest& operator=(const KeyStorageLinuxTest&) = delete;
+
+  ~KeyStorageLinuxTest() override = default;
 };
 
 TEST_F(KeyStorageLinuxTest, SkipPostingToSameTaskRunner) {

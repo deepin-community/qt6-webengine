@@ -12,8 +12,8 @@
 #include <vector>
 
 #include "base/callback.h"
-#include "base/macros.h"
-#include "base/optional.h"
+#include "base/memory/raw_ptr.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace syncer {
 class ModelError;
@@ -32,40 +32,46 @@ class AutofillTable;
 class AutofillProfileSyncDifferenceTracker {
  public:
   explicit AutofillProfileSyncDifferenceTracker(AutofillTable* table);
+
+  AutofillProfileSyncDifferenceTracker(
+      const AutofillProfileSyncDifferenceTracker&) = delete;
+  AutofillProfileSyncDifferenceTracker& operator=(
+      const AutofillProfileSyncDifferenceTracker&) = delete;
+
   virtual ~AutofillProfileSyncDifferenceTracker();
 
   // Adds a new |remote| entry to the diff tracker, originating from the sync
   // server. The provided |remote| entry must be valid.
-  base::Optional<syncer::ModelError> IncorporateRemoteProfile(
+  absl::optional<syncer::ModelError> IncorporateRemoteProfile(
       std::unique_ptr<AutofillProfile> remote);
 
   // Informs the diff tracker that the entry with |storage_key| has been deleted
   // from the sync server. |storage_key| must be non-empty.
-  virtual base::Optional<syncer::ModelError> IncorporateRemoteDelete(
+  virtual absl::optional<syncer::ModelError> IncorporateRemoteDelete(
       const std::string& storage_key);
 
   // Writes all local changes to the provided autofill |table_|. After flushing,
   // not further remote changes should get incorporated.
-  base::Optional<syncer::ModelError> FlushToLocal(
+  absl::optional<syncer::ModelError> FlushToLocal(
       base::OnceClosure autofill_changes_callback);
 
   // Writes into |profiles_to_upload_to_sync| all autofill profiles to be sent
   // to the sync server, and into |profiles_to_delete_from_sync| the storage
   // keys of all profiles to be deleted from the server. After flushing, no
   // further remote changes should get incorporated.
-  virtual base::Optional<syncer::ModelError> FlushToSync(
+  virtual absl::optional<syncer::ModelError> FlushToSync(
       std::vector<std::unique_ptr<AutofillProfile>>* profiles_to_upload_to_sync,
       std::vector<std::string>* profiles_to_delete_from_sync);
 
  protected:
-  // If the entry is found, |entry| will be return, otherwise base::nullopt is
+  // If the entry is found, |entry| will be return, otherwise absl::nullopt is
   // returned.
-  base::Optional<AutofillProfile> ReadEntry(const std::string& storage_key);
+  absl::optional<AutofillProfile> ReadEntry(const std::string& storage_key);
 
   // Tries to find a local entry that is mergeable with |remote| (according to
   // |comparator|). If such an entry is found, it is returned. Otherwise,
-  // base::nullopt is returned.
-  base::Optional<AutofillProfile> FindMergeableLocalEntry(
+  // absl::nullopt is returned.
+  absl::optional<AutofillProfile> FindMergeableLocalEntry(
       const AutofillProfile& remote,
       const AutofillProfileComparator& comparator);
 
@@ -82,7 +88,7 @@ class AutofillProfileSyncDifferenceTracker {
   bool InitializeLocalOnlyEntriesIfNeeded();
 
   // The table for reading local data.
-  AutofillTable* const table_;
+  const raw_ptr<AutofillTable> table_;
 
   // This class loads local data from |table_| lazily. This field tracks if that
   // has happened or not yet.
@@ -106,38 +112,39 @@ class AutofillProfileSyncDifferenceTracker {
   // sides and need to be deleted from sync (because the conflict resolution
   // preferred the local copies).
   std::set<std::string> delete_from_sync_;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(AutofillProfileSyncDifferenceTracker);
 };
 
 class AutofillProfileInitialSyncDifferenceTracker
     : public AutofillProfileSyncDifferenceTracker {
  public:
   explicit AutofillProfileInitialSyncDifferenceTracker(AutofillTable* table);
+
+  AutofillProfileInitialSyncDifferenceTracker(
+      const AutofillProfileInitialSyncDifferenceTracker&) = delete;
+  AutofillProfileInitialSyncDifferenceTracker& operator=(
+      const AutofillProfileInitialSyncDifferenceTracker&) = delete;
+
   ~AutofillProfileInitialSyncDifferenceTracker() override;
 
-  base::Optional<syncer::ModelError> IncorporateRemoteDelete(
+  absl::optional<syncer::ModelError> IncorporateRemoteDelete(
       const std::string& storage_key) override;
 
-  base::Optional<syncer::ModelError> FlushToSync(
+  absl::optional<syncer::ModelError> FlushToSync(
       std::vector<std::unique_ptr<AutofillProfile>>* profiles_to_upload_to_sync,
       std::vector<std::string>* profiles_to_delete_from_sync) override;
 
   // Performs an additional pass through remote entries incorporated from sync
   // to find any similarities with local entries. Should be run after all
   // entries get incorporated but before flushing results to local/sync.
-  base::Optional<syncer::ModelError> MergeSimilarEntriesForInitialSync(
+  absl::optional<syncer::ModelError> MergeSimilarEntriesForInitialSync(
       const std::string& app_locale);
 
  private:
   // Returns a local entry that is mergeable with |remote| if it exists.
-  // Otherwise, returns base::nullopt.
-  base::Optional<AutofillProfile> FindMergeableLocalEntry(
+  // Otherwise, returns absl::nullopt.
+  absl::optional<AutofillProfile> FindMergeableLocalEntry(
       const AutofillProfile& remote,
       const AutofillProfileComparator& comparator);
-
-  DISALLOW_COPY_AND_ASSIGN(AutofillProfileInitialSyncDifferenceTracker);
 };
 
 }  // namespace autofill

@@ -7,6 +7,7 @@
 #include <stddef.h>
 
 #include <algorithm>
+#include <memory>
 #include <ostream>
 #include <utility>
 
@@ -28,7 +29,7 @@ GURL::GURL(const GURL& other)
       is_valid_(other.is_valid_),
       parsed_(other.parsed_) {
   if (other.inner_url_)
-    inner_url_.reset(new GURL(*other.inner_url_));
+    inner_url_ = std::make_unique<GURL>(*other.inner_url_);
   // Valid filesystem urls should always have an inner_url_.
   DCHECK(!is_valid_ || !SchemeIsFileSystem() || inner_url_);
 }
@@ -51,7 +52,7 @@ GURL::GURL(base::StringPiece16 url_string) {
 }
 
 GURL::GURL(const std::string& url_string, RetainWhiteSpaceSelector) {
-  InitCanonical(base::StringPiece(url_string), false);
+  InitCanonical(url_string, false);
 }
 
 GURL::GURL(const char* canonical_spec,
@@ -69,9 +70,8 @@ GURL::GURL(std::string canonical_spec, const url::Parsed& parsed, bool is_valid)
   InitializeFromCanonicalSpec();
 }
 
-template<typename STR>
-void GURL::InitCanonical(base::BasicStringPiece<STR> input_spec,
-                         bool trim_path_end) {
+template <typename T, typename CharT>
+void GURL::InitCanonical(T input_spec, bool trim_path_end) {
   url::StdStringCanonOutput output(&spec_);
   is_valid_ = url::Canonicalize(
       input_spec.data(), static_cast<int>(input_spec.length()), trim_path_end,
@@ -79,8 +79,8 @@ void GURL::InitCanonical(base::BasicStringPiece<STR> input_spec,
 
   output.Complete();  // Must be done before using string.
   if (is_valid_ && SchemeIsFileSystem()) {
-    inner_url_.reset(new GURL(spec_.data(), parsed_.Length(),
-                              *parsed_.inner_parsed(), true));
+    inner_url_ = std::make_unique<GURL>(spec_.data(), parsed_.Length(),
+                                        *parsed_.inner_parsed(), true);
   }
   // Valid URLs always have non-empty specs.
   DCHECK(!is_valid_ || !spec_.empty());
@@ -88,9 +88,8 @@ void GURL::InitCanonical(base::BasicStringPiece<STR> input_spec,
 
 void GURL::InitializeFromCanonicalSpec() {
   if (is_valid_ && SchemeIsFileSystem()) {
-    inner_url_.reset(
-        new GURL(spec_.data(), parsed_.Length(),
-                 *parsed_.inner_parsed(), true));
+    inner_url_ = std::make_unique<GURL>(spec_.data(), parsed_.Length(),
+                                        *parsed_.inner_parsed(), true);
   }
 
 #ifndef NDEBUG
@@ -112,17 +111,17 @@ void GURL::InitializeFromCanonicalSpec() {
       // removed from a "foo:hello #ref" URL (see http://crbug.com/291747).
       GURL test_url(spec_, RETAIN_TRAILING_PATH_WHITEPACE);
 
-      DCHECK(test_url.is_valid_ == is_valid_);
-      DCHECK(test_url.spec_ == spec_);
+      DCHECK_EQ(test_url.is_valid_, is_valid_);
+      DCHECK_EQ(test_url.spec_, spec_);
 
-      DCHECK(test_url.parsed_.scheme == parsed_.scheme);
-      DCHECK(test_url.parsed_.username == parsed_.username);
-      DCHECK(test_url.parsed_.password == parsed_.password);
-      DCHECK(test_url.parsed_.host == parsed_.host);
-      DCHECK(test_url.parsed_.port == parsed_.port);
-      DCHECK(test_url.parsed_.path == parsed_.path);
-      DCHECK(test_url.parsed_.query == parsed_.query);
-      DCHECK(test_url.parsed_.ref == parsed_.ref);
+      DCHECK_EQ(test_url.parsed_.scheme, parsed_.scheme);
+      DCHECK_EQ(test_url.parsed_.username, parsed_.username);
+      DCHECK_EQ(test_url.parsed_.password, parsed_.password);
+      DCHECK_EQ(test_url.parsed_.host, parsed_.host);
+      DCHECK_EQ(test_url.parsed_.port, parsed_.port);
+      DCHECK_EQ(test_url.parsed_.path, parsed_.path);
+      DCHECK_EQ(test_url.parsed_.query, parsed_.query);
+      DCHECK_EQ(test_url.parsed_.ref, parsed_.ref);
     }
   }
 #endif
@@ -140,7 +139,7 @@ GURL& GURL::operator=(const GURL& other) {
   else if (inner_url_)
     *inner_url_ = *other.inner_url_;
   else
-    inner_url_.reset(new GURL(*other.inner_url_));
+    inner_url_ = std::make_unique<GURL>(*other.inner_url_);
 
   return *this;
 }
@@ -191,9 +190,9 @@ GURL GURL::Resolve(base::StringPiece relative) const {
   output.Complete();
   result.is_valid_ = true;
   if (result.SchemeIsFileSystem()) {
-    result.inner_url_.reset(
-        new GURL(result.spec_.data(), result.parsed_.Length(),
-                 *result.parsed_.inner_parsed(), true));
+    result.inner_url_ =
+        std::make_unique<GURL>(result.spec_.data(), result.parsed_.Length(),
+                               *result.parsed_.inner_parsed(), true);
   }
   return result;
 }
@@ -217,16 +216,15 @@ GURL GURL::Resolve(base::StringPiece16 relative) const {
   output.Complete();
   result.is_valid_ = true;
   if (result.SchemeIsFileSystem()) {
-    result.inner_url_.reset(
-        new GURL(result.spec_.data(), result.parsed_.Length(),
-                 *result.parsed_.inner_parsed(), true));
+    result.inner_url_ =
+        std::make_unique<GURL>(result.spec_.data(), result.parsed_.Length(),
+                               *result.parsed_.inner_parsed(), true);
   }
   return result;
 }
 
 // Note: code duplicated below (it's inconvenient to use a template here).
-GURL GURL::ReplaceComponents(
-    const url::Replacements<char>& replacements) const {
+GURL GURL::ReplaceComponents(const Replacements& replacements) const {
   GURL result;
 
   // Not allowed for invalid URLs.
@@ -239,17 +237,13 @@ GURL GURL::ReplaceComponents(
       NULL, &output, &result.parsed_);
 
   output.Complete();
-  if (result.is_valid_ && result.SchemeIsFileSystem()) {
-    result.inner_url_.reset(new GURL(result.spec_.data(),
-                                     result.parsed_.Length(),
-                                     *result.parsed_.inner_parsed(), true));
-  }
+
+  result.ProcessFileSystemURLAfterReplaceComponents();
   return result;
 }
 
 // Note: code duplicated above (it's inconvenient to use a template here).
-GURL GURL::ReplaceComponents(
-    const url::Replacements<base::char16>& replacements) const {
+GURL GURL::ReplaceComponents(const ReplacementsW& replacements) const {
   GURL result;
 
   // Not allowed for invalid URLs.
@@ -262,24 +256,31 @@ GURL GURL::ReplaceComponents(
       NULL, &output, &result.parsed_);
 
   output.Complete();
-  if (result.is_valid_ && result.SchemeIsFileSystem()) {
-    result.inner_url_.reset(new GURL(result.spec_.data(),
-                                     result.parsed_.Length(),
-                                     *result.parsed_.inner_parsed(), true));
-  }
+
+  result.ProcessFileSystemURLAfterReplaceComponents();
+
   return result;
 }
 
-GURL GURL::GetOrigin() const {
+void GURL::ProcessFileSystemURLAfterReplaceComponents() {
+  if (!is_valid_)
+    return;
+  if (SchemeIsFileSystem()) {
+    inner_url_ = std::make_unique<GURL>(spec_.data(), parsed_.Length(),
+                                        *parsed_.inner_parsed(), true);
+  }
+}
+
+GURL GURL::DeprecatedGetOriginAsURL() const {
   // This doesn't make sense for invalid or nonstandard URLs, so return
   // the empty URL.
   if (!is_valid_ || (!IsStandard() && !IsCustom()))
     return GURL();
 
   if (SchemeIsFileSystem())
-    return inner_url_->GetOrigin();
+    return inner_url_->DeprecatedGetOriginAsURL();
 
-  url::Replacements<char> replacements;
+  Replacements replacements;
   replacements.ClearUsername();
   replacements.ClearPassword();
   replacements.ClearPath();
@@ -296,7 +297,7 @@ GURL GURL::GetAsReferrer() const {
   if (!has_ref() && !has_username() && !has_password())
     return GURL(*this);
 
-  url::Replacements<char> replacements;
+  Replacements replacements;
   replacements.ClearRef();
   replacements.ClearUsername();
   replacements.ClearPassword();
@@ -351,7 +352,7 @@ bool GURL::SchemeIs(base::StringPiece lower_ascii_scheme) const {
   DCHECK(base::IsStringASCII(lower_ascii_scheme));
   DCHECK(base::ToLowerASCII(lower_ascii_scheme) == lower_ascii_scheme);
 
-  if (parsed_.scheme.len <= 0)
+  if (!has_scheme())
     return lower_ascii_scheme.empty();
   return scheme_piece() == lower_ascii_scheme;
 }
@@ -365,7 +366,7 @@ bool GURL::SchemeIsWSOrWSS() const {
 }
 
 bool GURL::SchemeIsCryptographic() const {
-  if (parsed_.scheme.len <= 0)
+  if (!has_scheme())
     return false;
   return SchemeIsCryptographic(scheme_piece());
 }
@@ -376,6 +377,13 @@ bool GURL::SchemeIsCryptographic(base::StringPiece lower_ascii_scheme) {
 
   return lower_ascii_scheme == url::kHttpsScheme ||
          lower_ascii_scheme == url::kWssScheme;
+}
+
+bool GURL::SchemeIsLocal() const {
+  // The `filesystem:` scheme is not in the Fetch spec, but Chromium still
+  // supports it in large part. It should be treated as a local scheme too.
+  return SchemeIs(url::kAboutScheme) || SchemeIs(url::kBlobScheme) ||
+         SchemeIs(url::kDataScheme) || SchemeIs(url::kFileSystemScheme);
 }
 
 int GURL::IntPort() const {
@@ -418,11 +426,11 @@ base::StringPiece GURL::PathForRequestPiece() const {
 }
 
 std::string GURL::PathForRequest() const {
-  return PathForRequestPiece().as_string();
+  return std::string(PathForRequestPiece());
 }
 
 std::string GURL::HostNoBrackets() const {
-  return HostNoBracketsPiece().as_string();
+  return std::string(HostNoBracketsPiece());
 }
 
 base::StringPiece GURL::HostNoBracketsPiece() const {
@@ -507,14 +515,14 @@ bool GURL::IsAboutPath(base::StringPiece actual_path,
 
   if ((actual_path.size() == allowed_path.size() + 1) &&
       actual_path.back() == '/') {
-    DCHECK_EQ(actual_path, allowed_path.as_string() + '/');
+    DCHECK_EQ(actual_path, std::string(allowed_path) + '/');
     return true;
   }
 
   return false;
 }
 
-void GURL::WriteIntoTracedValue(perfetto::TracedValue context) const {
+void GURL::WriteIntoTrace(perfetto::TracedValue context) const {
   std::move(context).WriteString(possibly_invalid_spec());
 }
 
@@ -548,3 +556,15 @@ bool operator!=(const GURL& x, const base::StringPiece& spec) {
 bool operator!=(const base::StringPiece& spec, const GURL& x) {
   return !(x == spec);
 }
+
+namespace url::debug {
+
+ScopedUrlCrashKey::ScopedUrlCrashKey(base::debug::CrashKeyString* crash_key,
+                                     const GURL& url)
+    : scoped_string_value_(
+          crash_key,
+          url.is_empty() ? "<empty url>" : url.possibly_invalid_spec()) {}
+
+ScopedUrlCrashKey::~ScopedUrlCrashKey() = default;
+
+}  // namespace url::debug

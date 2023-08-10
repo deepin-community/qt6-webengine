@@ -15,13 +15,13 @@ namespace base {
 
 FilteredServiceDirectory::FilteredServiceDirectory(
     sys::ServiceDirectory* directory)
-    : directory_(std::move(directory)) {
-}
+    : directory_(std::move(directory)) {}
 
 FilteredServiceDirectory::~FilteredServiceDirectory() {}
 
-void FilteredServiceDirectory::AddService(base::StringPiece service_name) {
-  outgoing_directory_.AddPublicService(
+zx_status_t FilteredServiceDirectory::AddService(
+    base::StringPiece service_name) {
+  return outgoing_directory_.AddPublicService(
       std::make_unique<vfs::Service>(
           [this, service_name = std::string(service_name)](
               zx::channel channel, async_dispatcher_t* dispatcher) {
@@ -31,12 +31,13 @@ void FilteredServiceDirectory::AddService(base::StringPiece service_name) {
       std::string(service_name));
 }
 
-void FilteredServiceDirectory::ConnectClient(
-    fidl::InterfaceRequest<::fuchsia::io::Directory> dir_request) {
+zx_status_t FilteredServiceDirectory::ConnectClient(
+    fidl::InterfaceRequest<fuchsia::io::Directory> dir_request) {
   // sys::OutgoingDirectory puts public services under ./svc . Connect to that
   // directory and return client handle for the connection,
-  outgoing_directory_.GetOrCreateDirectory("svc")->Serve(
-      ::fuchsia::io::OPEN_RIGHT_READABLE | ::fuchsia::io::OPEN_RIGHT_WRITABLE,
+  return outgoing_directory_.GetOrCreateDirectory("svc")->Serve(
+      fuchsia::io::OpenFlags::RIGHT_READABLE |
+          fuchsia::io::OpenFlags::RIGHT_WRITABLE,
       dir_request.TakeChannel());
 }
 

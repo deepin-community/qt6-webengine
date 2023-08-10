@@ -9,7 +9,9 @@
 
 #include "base/bind.h"
 #include "base/callback.h"
+#include "base/containers/contains.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
+#include "services/network/public/mojom/network_context.mojom.h"
 
 using net::registry_controlled_domains::GetDomainAndRegistry;
 using net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES;
@@ -57,7 +59,9 @@ bool MatchesOrigin(const std::set<url::Origin>& origins,
 bool MatchesURL(const std::set<url::Origin>& origins,
                 const std::set<std::string>& registerable_domains,
                 BrowsingDataFilterBuilder::Mode mode,
+                bool is_cross_site_clear_site_data,
                 const GURL& url) {
+  DCHECK(!is_cross_site_clear_site_data);
   return MatchesOrigin(origins, registerable_domains, mode,
                        url::Origin::Create(url));
 }
@@ -77,6 +81,14 @@ bool MatchesPluginSiteForRegisterableDomainsAndIPs(
 
   return ((mode == BrowsingDataFilterBuilder::Mode::kDelete) ==
           (domains_and_ips.find(domain_or_ip) != domains_and_ips.end()));
+}
+
+template <typename T>
+base::RepeatingCallback<bool(const T&)> NotReachedFilter() {
+  return base::BindRepeating([](const T&) {
+    NOTREACHED();
+    return false;
+  });
 }
 
 }  // namespace
@@ -121,6 +133,32 @@ void BrowsingDataFilterBuilderImpl::AddRegisterableDomain(
   domains_.insert(domain);
 }
 
+void BrowsingDataFilterBuilderImpl::SetCookiePartitionKeyCollection(
+    const net::CookiePartitionKeyCollection& cookie_partition_key_collection) {
+  // This method should only be called when the current
+  // `cookie_partition_key_collection_` is the default value.
+  DCHECK(cookie_partition_key_collection_.ContainsAllKeys());
+  cookie_partition_key_collection_ = cookie_partition_key_collection;
+}
+
+bool BrowsingDataFilterBuilderImpl::IsCrossSiteClearSiteData() const {
+  if (cookie_partition_key_collection_.IsEmpty() ||
+      cookie_partition_key_collection_.ContainsAllKeys()) {
+    return false;
+  }
+  for (const auto& domain : domains_) {
+    auto secure_site =
+        net::SchemefulSite(url::Origin::Create(GURL("https://" + domain)));
+    auto insecure_site =
+        net::SchemefulSite(url::Origin::Create(GURL("http://" + domain)));
+    for (const auto& key : cookie_partition_key_collection_.PartitionKeys()) {
+      if (key.site() == secure_site || key.site() == insecure_site)
+        return false;
+    }
+  }
+  return true;
+}
+
 bool BrowsingDataFilterBuilderImpl::MatchesAllOriginsAndDomains() {
   return mode_ == Mode::kPreserve && origins_.empty() && domains_.empty();
 }
@@ -129,11 +167,14 @@ base::RepeatingCallback<bool(const GURL&)>
 BrowsingDataFilterBuilderImpl::BuildUrlFilter() {
   if (MatchesAllOriginsAndDomains())
     return base::BindRepeating([](const GURL&) { return true; });
-  return base::BindRepeating(&MatchesURL, origins_, domains_, mode_);
+  return base::BindRepeating(&MatchesURL, origins_, domains_, mode_,
+                             IsCrossSiteClearSiteData());
 }
 
 base::RepeatingCallback<bool(const url::Origin&)>
 BrowsingDataFilterBuilderImpl::BuildOriginFilter() {
+  if (!cookie_partition_key_collection_.ContainsAllKeys())
+    return NotReachedFilter<url::Origin>();
   if (MatchesAllOriginsAndDomains())
     return base::BindRepeating([](const url::Origin&) { return true; });
   return base::BindRepeating(&MatchesOrigin, origins_, domains_, mode_);
@@ -149,6 +190,10 @@ BrowsingDataFilterBuilderImpl::BuildNetworkServiceFilter() {
 
   if (MatchesAllOriginsAndDomains())
     return nullptr;
+
+  if (!cookie_partition_key_collection_.ContainsAllKeys())
+    return nullptr;
+
   network::mojom::ClearDataFilterPtr filter =
       network::mojom::ClearDataFilter::New();
   filter->type = (mode_ == Mode::kDelete)
@@ -168,6 +213,9 @@ BrowsingDataFilterBuilderImpl::BuildCookieDeletionFilter() {
          "different scoping, such as RegistrableDomainFilterBuilder.";
   auto deletion_filter = network::mojom::CookieDeletionFilter::New();
 
+  deletion_filter->cookie_partition_key_collection =
+      cookie_partition_key_collection_;
+
   switch (mode_) {
     case Mode::kDelete:
       deletion_filter->including_domains.emplace(domains_.begin(),
@@ -183,6 +231,8 @@ BrowsingDataFilterBuilderImpl::BuildCookieDeletionFilter() {
 
 base::RepeatingCallback<bool(const std::string& site)>
 BrowsingDataFilterBuilderImpl::BuildPluginFilter() {
+  if (!cookie_partition_key_collection_.ContainsAllKeys())
+    return NotReachedFilter<std::string>();
   DCHECK(origins_.empty()) <<
       "Origin-based deletion is not suitable for plugins. Please use "
       "different scoping, such as RegistrableDomainFilterBuilder.";

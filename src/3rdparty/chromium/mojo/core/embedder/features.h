@@ -7,19 +7,32 @@
 
 #include "base/component_export.h"
 #include "base/feature_list.h"
+#include "base/metrics/field_trial_params.h"
 #include "build/build_config.h"
 
 namespace mojo {
 namespace core {
 
-#if defined(OS_POSIX) && !defined(OS_NACL) && !defined(OS_MAC)
-#if defined(OS_LINUX) || defined(OS_CHROMEOS) || defined(OS_ANDROID)
+#if BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_NACL) && !BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID)
+COMPONENT_EXPORT(MOJO_CORE_EMBEDDER_FEATURES)
 extern const base::Feature kMojoLinuxChannelSharedMem;
-extern const base::FeatureParam<int> kMojoLinuxChannelSharedMemPages;
-#endif  // defined(OS_LINUX) || defined(OS_CHROMEOS) || defined(OS_ANDROID)
 
+COMPONENT_EXPORT(MOJO_CORE_EMBEDDER_FEATURES)
+extern const base::FeatureParam<int> kMojoLinuxChannelSharedMemPages;
+
+COMPONENT_EXPORT(MOJO_CORE_EMBEDDER_FEATURES)
+extern const base::FeatureParam<bool> kMojoLinuxChannelSharedMemEfdZeroOnWake;
+#endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) ||
+        // BUILDFLAG(IS_ANDROID)
+
+COMPONENT_EXPORT(MOJO_CORE_EMBEDDER_FEATURES)
 extern const base::Feature kMojoPosixUseWritev;
-#endif  // defined(OS_POSIX) && !defined(OS_NACL) && !defined(OS_MAC)
+
+#endif  // BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_NACL) && !BUILDFLAG(IS_MAC)
+
+COMPONENT_EXPORT(MOJO_CORE_EMBEDDER_FEATURES)
+extern const base::Feature kMojoInlineMessagePayloads;
 
 }  // namespace core
 }  // namespace mojo

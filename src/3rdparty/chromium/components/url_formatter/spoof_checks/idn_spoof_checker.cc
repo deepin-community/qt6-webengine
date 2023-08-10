@@ -4,8 +4,9 @@
 
 #include "components/url_formatter/spoof_checks/idn_spoof_checker.h"
 
+#include "base/bits.h"
 #include "base/check_op.h"
-#include "base/i18n/uchar.h"
+#include "base/containers/contains.h"
 #include "base/logging.h"
 #include "base/no_destructor.h"
 #include "base/numerics/safe_conversions.h"
@@ -26,19 +27,10 @@ namespace url_formatter {
 
 namespace {
 
-uint8_t BitLength(uint32_t input) {
-  uint8_t number_of_bits = 0;
-  while (input != 0) {
-    number_of_bits++;
-    input >>= 1;
-  }
-  return number_of_bits;
-}
-
 class TopDomainPreloadDecoder : public net::extras::PreloadDecoder {
  public:
   using net::extras::PreloadDecoder::PreloadDecoder;
-  ~TopDomainPreloadDecoder() override {}
+  ~TopDomainPreloadDecoder() override = default;
 
   bool ReadEntry(net::extras::PreloadDecoder::BitReader* reader,
                  const std::string& search,
@@ -46,8 +38,9 @@ class TopDomainPreloadDecoder : public net::extras::PreloadDecoder {
                  bool* out_found) override {
     // Make sure the assigned bit length is enough to encode all SkeletonType
     // values.
-    DCHECK_EQ(kSkeletonTypeBitLength,
-              BitLength(url_formatter::SkeletonType::kMaxValue));
+    DCHECK_EQ(
+        kSkeletonTypeBitLength,
+        base::bits::Log2Floor(url_formatter::SkeletonType::kMaxValue) + 1);
 
     bool is_same_skeleton;
 
@@ -139,11 +132,11 @@ bool HasUnsafeMiddleDot(const icu::UnicodeString& label_string,
 }
 
 bool IsSubdomainOf(base::StringPiece16 hostname,
-                   const base::string16& top_domain) {
+                   const std::u16string& top_domain) {
   DCHECK_NE(hostname, top_domain);
   DCHECK(!hostname.empty());
   DCHECK(!top_domain.empty());
-  return base::EndsWith(hostname, base::ASCIIToUTF16(".") + top_domain,
+  return base::EndsWith(hostname, u"." + top_domain,
                         base::CompareCase::INSENSITIVE_ASCII);
 }
 
@@ -292,7 +285,7 @@ IDNSpoofChecker::IDNSpoofChecker() {
   // The ideal fix would be to change the omnibox font used for Thai. In
   // that case, the Linux-only list should be revisited and potentially
   // removed.
-#if defined(OS_LINUX) || defined(OS_CHROMEOS)
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
        "[ทนบพรหเแ๐ดลปฟม]",
 #else
        "[บพเแ๐]",
@@ -358,7 +351,7 @@ IDNSpoofChecker::Result IDNSpoofChecker::SafeToDisplayAsUnicode(
     base::StringPiece16 top_level_domain_unicode) {
   UErrorCode status = U_ZERO_ERROR;
   int32_t result =
-      uspoof_check(checker_, base::i18n::ToUCharPtr(label.data()),
+      uspoof_check(checker_, label.data(),
                    base::checked_cast<int32_t>(label.size()), nullptr, &status);
   // If uspoof_check fails (due to library failure), or if any of the checks
   // fail, treat the IDN as unsafe.
@@ -440,7 +433,8 @@ IDNSpoofChecker::Result IDNSpoofChecker::SafeToDisplayAsUnicode(
   // label is made of Latin. Checking with lgc_letters set here should be fine
   // because script mixing of LGC is already rejected.
   if (non_ascii_latin_letters_.containsSome(label_string) &&
-      !skeleton_generator_->ShouldRemoveDiacriticsFromLabel(label_string)) {
+      !(skeleton_generator_ &&
+        skeleton_generator_->ShouldRemoveDiacriticsFromLabel(label_string))) {
     return Result::kNonAsciiLatinCharMixedWithNonLatin;
   }
 
@@ -545,7 +539,7 @@ TopDomainEntry IDNSpoofChecker::GetSimilarTopDomain(
     DCHECK(!skeleton.empty());
     TopDomainEntry matching_top_domain = LookupSkeletonInTopDomains(skeleton);
     if (!matching_top_domain.domain.empty()) {
-      const base::string16 top_domain =
+      const std::u16string top_domain =
           base::UTF8ToUTF16(matching_top_domain.domain);
       // Return an empty result if hostname is a top domain itself, or a
       // subdomain of top domain. This prevents subdomains of top domains from
@@ -561,8 +555,6 @@ TopDomainEntry IDNSpoofChecker::GetSimilarTopDomain(
 }
 
 Skeletons IDNSpoofChecker::GetSkeletons(base::StringPiece16 hostname) const {
-  // skeleton_generator_ may be null if uspoof_open fails. It's unclear why this
-  // happens, see crbug.com/1169079.
   return skeleton_generator_ ? skeleton_generator_->GetSkeletons(hostname)
                              : Skeletons();
 }
@@ -603,6 +595,13 @@ TopDomainEntry IDNSpoofChecker::LookupSkeletonInTopDomains(
     labels.erase(labels.begin());
   }
   return TopDomainEntry();
+}
+
+std::u16string IDNSpoofChecker::MaybeRemoveDiacritics(
+    const std::u16string& hostname) {
+  return skeleton_generator_
+             ? skeleton_generator_->MaybeRemoveDiacritics(hostname)
+             : hostname;
 }
 
 void IDNSpoofChecker::SetAllowedUnicodeSet(UErrorCode* status) {
@@ -663,7 +662,7 @@ void IDNSpoofChecker::SetAllowedUnicodeSet(UErrorCode* status) {
   // No need to block U+144A (Canadian Syllabics West-Cree P) separately
   // because it's blocked from mixing with other scripts including Latin.
 
-#if defined(OS_APPLE)
+#if BUILDFLAG(IS_APPLE)
   // The following characters are reported as present in the default macOS
   // system UI font, but they render as blank. Remove them from the allowed
   // set to prevent spoofing until the font issue is resolved.

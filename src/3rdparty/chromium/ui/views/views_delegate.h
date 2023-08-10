@@ -9,15 +9,13 @@
 #include <string>
 #include <utility>
 
-#if defined(OS_WIN)
+#include "build/build_config.h"
+
+#if BUILDFLAG(IS_WIN)
 #include <windows.h>
 #endif
 
 #include "base/callback.h"
-#include "base/location.h"
-#include "base/macros.h"
-#include "base/strings/string16.h"
-#include "build/build_config.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/views/buildflags.h"
@@ -30,7 +28,7 @@ class Rect;
 }  // namespace gfx
 
 namespace ui {
-#if defined(OS_APPLE)
+#if BUILDFLAG(IS_MAC)
 class ContextFactory;
 #endif
 class TouchEditingControllerFactory;
@@ -61,7 +59,7 @@ class VIEWS_EXPORT ViewsDelegate {
   using NativeWidgetFactory =
       base::RepeatingCallback<NativeWidget*(const Widget::InitParams&,
                                             internal::NativeWidgetDelegate*)>;
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   enum AppbarAutohideEdge {
     EDGE_TOP = 1 << 0,
     EDGE_LEFT = 1 << 1,
@@ -79,6 +77,9 @@ class VIEWS_EXPORT ViewsDelegate {
     // handling should stop for this event.
     CLOSE_MENU,
   };
+
+  ViewsDelegate(const ViewsDelegate&) = delete;
+  ViewsDelegate& operator=(const ViewsDelegate&) = delete;
 
   virtual ~ViewsDelegate();
 
@@ -112,8 +113,8 @@ class VIEWS_EXPORT ViewsDelegate {
 
   // For accessibility, notify the delegate that a menu item was focused
   // so that alternate feedback (speech / magnified text) can be provided.
-  virtual void NotifyMenuItemFocused(const base::string16& menu_name,
-                                     const base::string16& menu_item_name,
+  virtual void NotifyMenuItemFocused(const std::u16string& menu_name,
+                                     const std::u16string& menu_item_name,
                                      int item_index,
                                      int item_count,
                                      bool has_submenu);
@@ -129,7 +130,7 @@ class VIEWS_EXPORT ViewsDelegate {
   // this returns true.
   virtual bool ShouldCloseMenuIfMouseCaptureLost() const;
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   // Retrieves the default window icon to use for windows if none is specified.
   virtual HICON GetDefaultWindowIcon() const;
   // Retrieves the small window icon to use for windows if none is specified.
@@ -138,7 +139,7 @@ class VIEWS_EXPORT ViewsDelegate {
   // environment.
   virtual bool IsWindowInMetro(gfx::NativeWindow window) const;
 #elif BUILDFLAG(ENABLE_DESKTOP_AURA) && \
-    (defined(OS_LINUX) || defined(OS_CHROMEOS))
+    (BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS))
   virtual gfx::ImageSkia* GetDefaultWindowIcon() const;
 #endif
 
@@ -166,7 +167,7 @@ class VIEWS_EXPORT ViewsDelegate {
   // maximized windows; otherwise to restored windows.
   virtual bool WindowManagerProvidesTitleBar(bool maximized);
 
-#if defined(OS_APPLE)
+#if BUILDFLAG(IS_MAC)
   // Returns the context factory for new windows.
   virtual ui::ContextFactory* GetContextFactory();
 #endif
@@ -174,7 +175,7 @@ class VIEWS_EXPORT ViewsDelegate {
   // Returns the user-visible name of the application.
   virtual std::string GetApplicationName();
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   // Starts a query for the appbar autohide edges of the specified monitor and
   // returns the current value.  If the query finds the edges have changed from
   // the current value, |callback| is subsequently invoked.  If the edges have
@@ -202,8 +203,6 @@ class VIEWS_EXPORT ViewsDelegate {
 #endif
 
   NativeWidgetFactory native_widget_factory_;
-
-  DISALLOW_COPY_AND_ASSIGN(ViewsDelegate);
 };
 
 }  // namespace views

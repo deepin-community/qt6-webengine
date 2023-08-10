@@ -21,13 +21,10 @@ namespace {
 
 // id-ce-issuingDistributionPoint OBJECT IDENTIFIER ::= { id-ce 28 }
 // In dotted notation: 2.5.29.28
-der::Input IssuingDistributionPointOid() {
-  static const uint8_t oid[] = {0x55, 0x1d, 0x1c};
-  return der::Input(oid);
-}
+inline constexpr uint8_t kIssuingDistributionPointOid[] = {0x55, 0x1d, 0x1c};
 
-WARN_UNUSED_RESULT bool NormalizeNameTLV(const der::Input& name_tlv,
-                                         std::string* out_normalized_name) {
+[[nodiscard]] bool NormalizeNameTLV(const der::Input& name_tlv,
+                                    std::string* out_normalized_name) {
   der::Parser parser(name_tlv);
   der::Input name_rdn;
   net::CertErrors unused_errors;
@@ -91,7 +88,7 @@ bool ParseCrlTbsCertList(const der::Input& tbs_tlv, ParsedCrlTbsCertList* out) {
 
   //         version                 Version OPTIONAL,
   //                                      -- if present, MUST be v2
-  base::Optional<der::Input> version_der;
+  absl::optional<der::Input> version_der;
   if (!tbs_parser.ReadOptionalTag(der::kInteger, &version_der))
     return false;
   if (version_der.has_value()) {
@@ -132,7 +129,7 @@ bool ParseCrlTbsCertList(const der::Input& tbs_tlv, ParsedCrlTbsCertList* out) {
       return false;
     out->next_update = next_update_time;
   } else {
-    out->next_update = base::nullopt;
+    out->next_update = absl::nullopt;
   }
 
   //         revokedCertificates     SEQUENCE OF SEQUENCE  { ... } OPTIONAL,
@@ -146,7 +143,7 @@ bool ParseCrlTbsCertList(const der::Input& tbs_tlv, ParsedCrlTbsCertList* out) {
       return false;
     out->revoked_certificates_tlv = revoked_certificates_tlv;
   } else {
-    out->revoked_certificates_tlv = base::nullopt;
+    out->revoked_certificates_tlv = absl::nullopt;
   }
 
   //         crlExtensions           [0]  EXPLICIT Extensions OPTIONAL
@@ -190,7 +187,7 @@ bool ParseIssuingDistributionPoint(
     return false;
 
   //  distributionPoint          [0] DistributionPointName OPTIONAL,
-  base::Optional<der::Input> distribution_point;
+  absl::optional<der::Input> distribution_point;
   if (!idp_parser.ReadOptionalTag(
           der::kTagContextSpecific | der::kTagConstructed | 0,
           &distribution_point)) {
@@ -202,7 +199,7 @@ bool ParseIssuingDistributionPoint(
     der::Parser dp_name_parser(*distribution_point);
     //        fullName                [0]     GeneralNames,
     //        nameRelativeToCRLIssuer [1]     RelativeDistinguishedName }
-    base::Optional<der::Input> der_full_name;
+    absl::optional<der::Input> der_full_name;
     if (!dp_name_parser.ReadOptionalTag(
             der::kTagContextSpecific | der::kTagConstructed | 0,
             &der_full_name)) {
@@ -227,7 +224,7 @@ bool ParseIssuingDistributionPoint(
   *out_only_contains_cert_type = ContainedCertsType::ANY_CERTS;
 
   //  onlyContainsUserCerts      [1] BOOLEAN DEFAULT FALSE,
-  base::Optional<der::Input> only_contains_user_certs;
+  absl::optional<der::Input> only_contains_user_certs;
   if (!idp_parser.ReadOptionalTag(der::kTagContextSpecific | 1,
                                   &only_contains_user_certs)) {
     return false;
@@ -242,7 +239,7 @@ bool ParseIssuingDistributionPoint(
   }
 
   //  onlyContainsCACerts        [2] BOOLEAN DEFAULT FALSE,
-  base::Optional<der::Input> only_contains_ca_certs;
+  absl::optional<der::Input> only_contains_ca_certs;
   if (!idp_parser.ReadOptionalTag(der::kTagContextSpecific | 2,
                                   &only_contains_ca_certs)) {
     return false;
@@ -275,7 +272,7 @@ bool ParseIssuingDistributionPoint(
 CRLRevocationStatus GetCRLStatusForCert(
     const der::Input& cert_serial,
     CrlVersion crl_version,
-    const base::Optional<der::Input>& revoked_certificates_tlv) {
+    const absl::optional<der::Input>& revoked_certificates_tlv) {
   if (!revoked_certificates_tlv.has_value()) {
     // RFC 5280 Section 5.1.2.6: "When there are no revoked certificates, the
     // revoked certificates list MUST be absent."
@@ -368,6 +365,18 @@ CRLRevocationStatus CheckCRL(base::StringPiece raw_crl,
                              const base::Time& verify_time,
                              const base::TimeDelta& max_age) {
   DCHECK_LT(target_cert_index, valid_chain.size());
+
+  if (cert_dp.reasons) {
+    // Reason codes are not supported. If the distribution point contains a
+    // subset of reasons then skip it. We aren't interested in subsets of CRLs
+    // and the RFC states that there MUST be a CRL that covers all reasons.
+    return CRLRevocationStatus::UNKNOWN;
+  }
+  if (cert_dp.crl_issuer) {
+    // Indirect CRLs are not supported.
+    return CRLRevocationStatus::UNKNOWN;
+  }
+
   const ParsedCertificate* target_cert = valid_chain[target_cert_index].get();
 
   // 6.3.3 (a) Update the local CRL cache by obtaining a complete CRL, a
@@ -418,10 +427,10 @@ CRLRevocationStatus CheckCRL(base::StringPiece raw_crl,
   //               field in the complete CRL matches cRLIssuer in the DP and
   //               that the complete CRL contains an issuing distribution
   //               point extension with the indirectCRL boolean asserted.
-  if (cert_dp.has_crl_issuer) {
-    // Indirect CRLs are not supported.
-    return CRLRevocationStatus::UNKNOWN;
-  }
+  //
+  // Nothing is done here since distribution points with crlIssuer were skipped
+  // above.
+
   // 6.3.3 (b) (1) Otherwise, verify that the CRL issuer matches the
   //               certificate issuer.
   //
@@ -458,7 +467,7 @@ CRLRevocationStatus CheckCRL(base::StringPiece raw_crl,
     // 6.3.3 (b) (2) If the complete CRL includes an issuing distribution point
     //               (IDP) CRL extension, check the following:
     ParsedExtension idp_extension;
-    if (ConsumeExtension(IssuingDistributionPointOid(), &extensions,
+    if (ConsumeExtension(der::Input(kIssuingDistributionPointOid), &extensions,
                          &idp_extension)) {
       std::unique_ptr<GeneralNames> distribution_point_names;
       ContainedCertsType only_contains_cert_type;
@@ -477,8 +486,10 @@ CRLRevocationStatus CheckCRL(base::StringPiece raw_crl,
         // 5.2.5.  The identical encoding MUST be used in the distributionPoint
         //         fields of the certificate and the CRL.
         // TODO(https://crbug.com/749276): Check other name types?
-        if (!ContainsExactMatchingName(
-                cert_dp.uris,
+        if (!cert_dp.distribution_point_fullname ||
+            !ContainsExactMatchingName(
+                cert_dp.distribution_point_fullname
+                    ->uniform_resource_identifiers,
                 distribution_point_names->uniform_resource_identifiers)) {
           return CRLRevocationStatus::UNKNOWN;
         }

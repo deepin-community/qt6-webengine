@@ -15,9 +15,9 @@
 #include "base/compiler_specific.h"
 #include "base/files/scoped_file.h"
 #include "base/logging.h"
-#include "base/macros.h"
 #include "base/notreached.h"
 #include "base/posix/eintr_wrapper.h"
+#include "build/build_config.h"
 #include "sandbox/linux/bpf_dsl/bpf_dsl.h"
 #include "sandbox/linux/bpf_dsl/codegen.h"
 #include "sandbox/linux/bpf_dsl/policy.h"
@@ -58,7 +58,7 @@ bool KernelSupportsSeccompBPF() {
 // flags that are unlikely to ever be used by the kernel. A normal kernel would
 // return -EINVAL, but a buggy LG kernel would return 1.
 bool KernelHasLGBug() {
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   // sys_set_media will see this as NULL, which should be a safe (non-crashing)
   // way to invoke it. A genuine seccomp syscall will see it as
   // SECCOMP_SET_MODE_STRICT.
@@ -73,7 +73,7 @@ bool KernelHasLGBug() {
   if (rv != -1) {
     return true;
   }
-#endif  // defined(OS_ANDROID)
+#endif  // BUILDFLAG(IS_ANDROID)
 
   return false;
 }
@@ -154,7 +154,6 @@ bool SandboxBPF::StartSandbox(SeccompLevel seccomp_level, bool enable_ibpb) {
     SANDBOX_DIE(
         "Cannot repeatedly start sandbox. Create a separate Sandbox "
         "object instead.");
-    return false;
   }
 
   if (!proc_fd_.is_valid()) {
@@ -171,7 +170,6 @@ bool SandboxBPF::StartSandbox(SeccompLevel seccomp_level, bool enable_ibpb) {
     if (!supports_tsync) {
       SANDBOX_DIE("Cannot start sandbox; kernel does not support synchronizing "
                   "filters for a threadgroup");
-      return false;
     }
   }
 
@@ -189,7 +187,8 @@ bool SandboxBPF::StartSandbox(SeccompLevel seccomp_level, bool enable_ibpb) {
 }
 
 void SandboxBPF::SetProcFd(base::ScopedFD proc_fd) {
-  proc_fd_.swap(proc_fd);
+  if (proc_fd_.get() != proc_fd.get())
+    proc_fd_ = std::move(proc_fd);
 }
 
 // static

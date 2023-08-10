@@ -9,6 +9,7 @@
 #include "base/containers/contains.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/no_destructor.h"
 #include "content/public/browser/web_ui.h"
 
 namespace chromeos {
@@ -88,6 +89,9 @@ void EduCoexistenceStateTracker::OnConsentLogged(
     const content::WebUI* web_ui,
     const std::string& account_email) {
   DCHECK(base::Contains(state_tracker_, web_ui));
+
+  // Update the webui state that consent was logged.
+  OnWebUiStateChanged(web_ui, FlowResult::kConsentLogged);
 
   if (state_tracker_[web_ui].consent_logged_callback) {
     DCHECK_EQ(state_tracker_[web_ui].email, account_email);

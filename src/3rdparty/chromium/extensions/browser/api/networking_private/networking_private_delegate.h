@@ -10,11 +10,10 @@
 #include <vector>
 
 #include "base/callback.h"
-#include "base/macros.h"
-#include "base/optional.h"
 #include "base/values.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "extensions/common/api/networking_private.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace extensions {
 
@@ -25,8 +24,7 @@ class NetworkingPrivateDelegateObserver;
 // networking_private.idl for descriptions of the expected inputs and results.
 class NetworkingPrivateDelegate : public KeyedService {
  public:
-  using DictionaryCallback =
-      base::OnceCallback<void(std::unique_ptr<base::DictionaryValue>)>;
+  using DictionaryCallback = base::OnceCallback<void(base::Value)>;
   using VoidCallback = base::OnceCallback<void()>;
   using BoolCallback = base::OnceCallback<void(bool)>;
   using StringCallback = base::OnceCallback<void(const std::string&)>;
@@ -38,24 +36,30 @@ class NetworkingPrivateDelegate : public KeyedService {
 
   // Returns |result| on success, or |result|=nullopt and |error| on failure.
   using PropertiesCallback =
-      base::OnceCallback<void(base::Optional<base::Value> result,
-                              base::Optional<std::string> error)>;
+      base::OnceCallback<void(absl::optional<base::Value> result,
+                              absl::optional<std::string> error)>;
 
   // Delegate for forwarding UI requests, e.g. for showing the account UI.
   class UIDelegate {
    public:
     UIDelegate();
+
+    UIDelegate(const UIDelegate&) = delete;
+    UIDelegate& operator=(const UIDelegate&) = delete;
+
     virtual ~UIDelegate();
 
     // Navigate to the acoount details page for the cellular network associated
     // with |guid|.
     virtual void ShowAccountDetails(const std::string& guid) const = 0;
-
-   private:
-    DISALLOW_COPY_AND_ASSIGN(UIDelegate);
   };
 
   NetworkingPrivateDelegate();
+
+  NetworkingPrivateDelegate(const NetworkingPrivateDelegate&) = delete;
+  NetworkingPrivateDelegate& operator=(const NetworkingPrivateDelegate&) =
+      delete;
+
   ~NetworkingPrivateDelegate() override;
 
   void set_ui_delegate(std::unique_ptr<UIDelegate> ui_delegate) {
@@ -73,12 +77,12 @@ class NetworkingPrivateDelegate : public KeyedService {
                         DictionaryCallback success_callback,
                         FailureCallback failure_callback) = 0;
   virtual void SetProperties(const std::string& guid,
-                             std::unique_ptr<base::DictionaryValue> properties,
+                             base::Value properties,
                              bool allow_set_shared_config,
                              VoidCallback success_callback,
                              FailureCallback failure_callback) = 0;
   virtual void CreateNetwork(bool shared,
-                             std::unique_ptr<base::DictionaryValue> properties,
+                             base::Value properties,
                              StringCallback success_callback,
                              FailureCallback failure_callback) = 0;
   virtual void ForgetNetwork(const std::string& guid,
@@ -124,7 +128,7 @@ class NetworkingPrivateDelegate : public KeyedService {
   // Synchronous methods
 
   // Returns a list of ONC type strings.
-  virtual std::unique_ptr<base::ListValue> GetEnabledNetworkTypes() = 0;
+  virtual base::Value GetEnabledNetworkTypes() = 0;
 
   // Returns a list of DeviceStateProperties.
   virtual std::unique_ptr<DeviceStateList> GetDeviceStateList() = 0;
@@ -133,10 +137,10 @@ class NetworkingPrivateDelegate : public KeyedService {
   // dictionary is expected to be a superset of the networkingPrivate
   // GlobalPolicy dictionary. Any properties not in GlobalPolicy will be
   // ignored.
-  virtual std::unique_ptr<base::DictionaryValue> GetGlobalPolicy() = 0;
+  virtual base::Value GetGlobalPolicy() = 0;
 
   // Returns a dictionary of certificate lists.
-  virtual std::unique_ptr<base::DictionaryValue> GetCertificateLists() = 0;
+  virtual base::Value GetCertificateLists() = 0;
 
   // Returns true if the ONC network type |type| is enabled.
   virtual bool EnableNetworkType(const std::string& type) = 0;
@@ -159,8 +163,6 @@ class NetworkingPrivateDelegate : public KeyedService {
  private:
   // Interface for UI methods. May be null.
   std::unique_ptr<UIDelegate> ui_delegate_;
-
-  DISALLOW_COPY_AND_ASSIGN(NetworkingPrivateDelegate);
 };
 
 }  // namespace extensions

@@ -12,6 +12,7 @@
 #include "base/containers/contains.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/stl_util.h"
 #include "base/strings/string_piece.h"
 #include "base/threading/scoped_blocking_call.h"
 #include "base/values.h"
@@ -23,26 +24,28 @@
 #include "components/printing/common/cloud_print_cdd_conversion.h"
 #include "printing/backend/print_backend.h"
 #include "printing/backend/print_backend_consts.h"
+#include "printing/mojom/print.mojom.h"
+#include "printing/print_job_constants.h"
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/strings/grit/components_strings.h"
 #include "ui/base/l10n/l10n_util.h"
-#endif  // defined(OS_WIN)
+#endif  // BUILDFLAG(IS_WIN)
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "chrome/common/printing/ipp_l10n.h"
 #include "components/strings/grit/components_strings.h"
 #include "ui/base/l10n/l10n_util.h"
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 #if BUILDFLAG(PRINT_MEDIA_L10N_ENABLED)
 #include "chrome/common/printing/print_media_l10n.h"
-#if defined(OS_MAC)
+#if BUILDFLAG(IS_MAC)
 #include "printing/printing_features.h"
-#endif  // defined(OS_MAC)
+#endif  // BUILDFLAG(IS_MAC)
 #endif  // BUILDFLAG(PRINT_MEDIA_L10N_ENABLED)
 
 namespace printing {
@@ -72,27 +75,27 @@ void PopulateAllPaperDisplayNames(PrinterSemanticCapsAndDefaults& info) {
 }
 #endif  // BUILDFLAG(PRINT_MEDIA_L10N_ENABLED)
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 void PopulateAdvancedCapsLocalization(
     std::vector<AdvancedCapability>* advanced_capabilities) {
   auto& l10n_map = CapabilityLocalizationMap();
   for (AdvancedCapability& capability : *advanced_capabilities) {
-    auto it = l10n_map.find(capability.name);
-    if (it != l10n_map.end())
-      capability.display_name = l10n_util::GetStringUTF8(it->second);
+    auto capability_it = l10n_map.find(capability.name);
+    if (capability_it != l10n_map.end())
+      capability.display_name = l10n_util::GetStringUTF8(capability_it->second);
 
     for (AdvancedCapabilityValue& value : capability.values) {
-      auto it = l10n_map.find(capability.name + "/" + value.name);
-      if (it != l10n_map.end())
-        value.display_name = l10n_util::GetStringUTF8(it->second);
+      auto value_it = l10n_map.find(capability.name + "/" + value.name);
+      if (value_it != l10n_map.end())
+        value.display_name = l10n_util::GetStringUTF8(value_it->second);
     }
   }
 }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 #ifndef TOOLKIT_QT
-// Returns a dictionary representing printer capabilities as CDD, or an empty
-// value if no capabilities are provided.
+// Returns a dictionary representing printer capabilities as CDD, or
+// a Value of type NONE if no capabilities are provided.
 base::Value AssemblePrinterCapabilities(
     const std::string& device_name,
     const PrinterSemanticCapsAndDefaults::Papers& user_defined_papers,
@@ -100,11 +103,11 @@ base::Value AssemblePrinterCapabilities(
     PrinterSemanticCapsAndDefaults* caps) {
   DCHECK(!device_name.empty());
   if (!caps)
-    return base::Value(base::Value::Type::DICTIONARY);
+    return base::Value();
 
 #if BUILDFLAG(PRINT_MEDIA_L10N_ENABLED)
   bool populate_paper_display_names = true;
-#if defined(OS_MAC)
+#if BUILDFLAG(IS_MAC)
   // Paper display name localization requires standardized vendor ID names
   // populated by CUPS IPP. If the CUPS IPP backend is not enabled, localization
   // will not properly occur.
@@ -117,12 +120,12 @@ base::Value AssemblePrinterCapabilities(
 
   caps->user_defined_papers = std::move(user_defined_papers);
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   if (!has_secure_protocol)
     caps->pin_supported = false;
 
   PopulateAdvancedCapsLocalization(&caps->advanced_capabilities);
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
   return cloud_print::PrinterSemanticCapsAndDefaultsToCdd(*caps);
 }
@@ -130,7 +133,7 @@ base::Value AssemblePrinterCapabilities(
 
 }  // namespace
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 std::string GetUserFriendlyName(const std::string& printer_name) {
   // `printer_name` may be a UNC path like \\printserver\printername.
   if (!base::StartsWith(printer_name, "\\\\",
@@ -167,21 +170,23 @@ base::Value AssemblePrinterSettings(
 
   base::Value options(base::Value::Type::DICTIONARY);
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   printer_info.SetKey(
       kCUPSEnterprisePrinter,
       base::Value(base::Contains(basic_info.options, kCUPSEnterprisePrinter) &&
                   basic_info.options.at(kCUPSEnterprisePrinter) == kValueTrue));
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
   printer_info.SetKey(kSettingPrinterOptions, std::move(options));
 
   base::Value printer_info_capabilities(base::Value::Type::DICTIONARY);
   printer_info_capabilities.SetKey(kPrinter, std::move(printer_info));
-  printer_info_capabilities.SetKey(
-      kSettingCapabilities,
-      AssemblePrinterCapabilities(device_name, user_defined_papers,
-                                  has_secure_protocol, caps));
+  base::Value capabilities = AssemblePrinterCapabilities(
+      device_name, user_defined_papers, has_secure_protocol, caps);
+  if (capabilities.is_dict()) {
+    printer_info_capabilities.SetKey(kSettingCapabilities,
+                                     std::move(capabilities));
+  }
   return printer_info_capabilities;
 }
 
@@ -198,12 +203,13 @@ base::Value GetSettingsOnBlockingTaskRunner(
   crash_keys::ScopedPrinterInfo crash_key(
       print_backend->GetPrinterDriverInfo(device_name));
 
-  auto caps = base::make_optional<PrinterSemanticCapsAndDefaults>();
-  if (!print_backend->GetPrinterSemanticCapsAndDefaults(device_name, &*caps)) {
+  auto caps = absl::make_optional<PrinterSemanticCapsAndDefaults>();
+  if (print_backend->GetPrinterSemanticCapsAndDefaults(device_name, &*caps) !=
+      mojom::ResultCode::kSuccess) {
     // Failed to get capabilities, but proceed to assemble the settings to
     // return what information we do have.
     LOG(WARNING) << "Failed to get capabilities for " << device_name;
-    caps = base::nullopt;
+    caps = absl::nullopt;
   }
 
   return AssemblePrinterSettings(device_name, basic_info, user_defined_papers,

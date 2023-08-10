@@ -7,6 +7,7 @@ module autofill.mojom;
 import "mojo/public/mojom/base/text_direction.mojom";
 import "mojo/public/mojom/base/time.mojom";
 import "mojo/public/mojom/base/string16.mojom";
+import "mojo/public/mojom/base/unguessable_token.mojom";
 import "ui/gfx/geometry/mojom/geometry.mojom";
 import "url/mojom/origin.mojom";
 import "url/mojom/url.mojom";
@@ -66,6 +67,58 @@ enum ButtonTitleType {
   SPAN = 7                         // e.g. <span name='btn'>
 };
 
+// Describes various criteria (e.g. there are empty fields in the form) that
+// affect whether a form is ready for submission. Don't change IDs as they are
+// used for metrics.
+// TODO(crbug.com/1299394): Which criteria will be used for the actual launch
+// is a subject to change. For now, we collect metrics to test two versions:
+// - |kFieldAfterPasswordField| is the criterion to enable submission in the
+//   regular launch.
+// - |kTwoFields| is the criterion to enable submission in the conservative
+//   launch.
+// After the launch, passing the state to the browser will be useless.
+// Therefore, the enum will be removed.
+enum SubmissionReadinessState {
+  // No information received. Supposed to be unused on Android.
+  kNoInformation = 0,
+  // Error occurred while assessing submission readiness. Ideally, Chrome
+  // should not report such votes. Otherwise, |CalculateSubmissionReadiness|
+  // should be corrected.
+  kError = 1,
+
+  // Various blockers of forms submission.
+  // The username field is not found.
+  kNoUsernameField = 2,
+  // There are fields between username and password fields.
+  kFieldBetweenUsernameAndPassword = 3,
+  // There is a field right after the password field by focus traversal.
+  kFieldAfterPasswordField = 4,
+  // There are other empty fields. If the |kFieldBetweenUsernameAndPassword| or
+  // |kFieldAfterPasswordField| criteria are matched, they should be reported,
+  // not this one.
+  kEmptyFields = 5,
+  // No empty fields and there are more than two visible fields.
+  kMoreThanTwoFields = 6,
+
+  // The most conservative criterion for submission.
+  // There are only two visible fields: username and password.
+  kTwoFields = 7,
+};
+
+// autofill::FrameToken
+struct FrameToken {
+  // The token wrapped by a LocalFrameToken or a RemoteFrameToken.
+  mojo_base.mojom.UnguessableToken token;
+  // Indicates whether |token| represents a LocalFrameToken.
+  bool is_local;
+};
+
+// autofill::
+struct FrameTokenWithPredecessor {
+  FrameToken token;
+  int32 predecessor;
+};
+
 // autofill::FormRendererId
 struct FormRendererId {
   uint32 id;
@@ -74,6 +127,12 @@ struct FormRendererId {
 // autofill::FieldRendererId
 struct FieldRendererId {
   uint32 id;
+};
+
+// autofill::SelectOption
+struct SelectOption {
+  mojo_base.mojom.String16 value;
+  mojo_base.mojom.String16 content;
 };
 
 // autofill::FormFieldData
@@ -119,6 +178,7 @@ struct FormFieldData {
   mojo_base.mojom.String16 aria_label;
   mojo_base.mojom.String16 aria_description;
   FieldRendererId unique_renderer_id;
+  FormRendererId host_form_id;
   uint32 properties_mask;
   int32 form_control_ax_id;
 
@@ -134,8 +194,7 @@ struct FormFieldData {
   bool is_readonly;
   mojo_base.mojom.String16 user_input;
 
-  array<mojo_base.mojom.String16> option_values;
-  array<mojo_base.mojom.String16> option_contents;
+  array<SelectOption> options;
 
   LabelSource label_source;
 
@@ -156,14 +215,11 @@ struct FormData {
   mojo_base.mojom.String16 name_attribute;
   mojo_base.mojom.String16 name;
   array<ButtonTitleInfo> button_titles;
-  url.mojom.Url url;
-  url.mojom.Url full_url;
   url.mojom.Url action;
   bool is_action_empty;
-  url.mojom.Origin main_frame_origin;
   bool is_form_tag;
-  bool is_formless_checkout;
   FormRendererId unique_renderer_id;
+  array<FrameTokenWithPredecessor> child_frames;
   SubmissionIndicatorEvent submission_event;
   array<FormFieldData> fields;
   array<FieldRendererId> username_predictions;
@@ -172,6 +228,7 @@ struct FormData {
 
 // autofill::FormFieldDataPredictions
 struct FormFieldDataPredictions {
+  string host_form_signature;
   string signature;
   string heuristic_type;
   string server_type;
@@ -245,4 +302,10 @@ enum AutofillState {
   // There are available autocomplete suggestions for the input. Autocomplete
   // only fills in a single input.
   kAutocompleteAvailable,
+};
+
+// The possible actions that the renderer can take on receiving form data.
+enum RendererFormDataAction {
+  kFill,     // The renderer should fill the form data.
+  kPreview,  // The renderer should preview the form data.
 };

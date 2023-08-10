@@ -1,8 +1,10 @@
 {
-    "project": "chromium-m90",
-    "project_title": "Chromium M90",
-    "is_main": false,
-    "is_lts_branch": true,
-    "ref": "refs/branch-heads/4430",
-    "chrome_project": "chrome-m90"
+    "project": "chromium-m102",
+    "project_title": "Chromium M102",
+    "ref": "refs/branch-heads/5005",
+    "chrome_project": "chrome-m102",
+    "branch_types": [
+        "cros-lts",
+        "desktop-extended-stable"
+    ]
 }

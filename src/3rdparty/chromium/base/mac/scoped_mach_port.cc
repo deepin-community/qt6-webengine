@@ -6,8 +6,7 @@
 
 #include "base/mac/mach_logging.h"
 
-namespace base {
-namespace mac {
+namespace base::mac {
 namespace internal {
 
 // static
@@ -37,7 +36,7 @@ void PortSetTraits::Free(mach_port_t port) {
 
 bool CreateMachPort(ScopedMachReceiveRight* receive,
                     ScopedMachSendRight* send,
-                    Optional<mach_port_msgcount_t> queue_limit) {
+                    absl::optional<mach_port_msgcount_t> queue_limit) {
   mach_port_options_t options{};
   options.flags = (send != nullptr ? MPO_INSERT_SEND_RIGHT : 0);
 
@@ -72,5 +71,4 @@ ScopedMachSendRight RetainMachSendRight(mach_port_t port) {
   return {};
 }
 
-}  // namespace mac
-}  // namespace base
+}  // namespace base::mac

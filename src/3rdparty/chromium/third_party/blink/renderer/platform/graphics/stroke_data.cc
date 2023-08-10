@@ -28,7 +28,6 @@
 
 #include <memory>
 
-#include "third_party/blink/renderer/platform/graphics/paint/paint_flags.h"
 #include "third_party/blink/renderer/platform/graphics/stroke_data.h"
 #include "third_party/skia/include/effects/SkDashPathEffect.h"
 
@@ -37,7 +36,7 @@ namespace blink {
 void StrokeData::SetLineDash(const DashArray& dashes, float dash_offset) {
   // FIXME: This is lifted directly off SkiaSupport, lines 49-74
   // so it is not guaranteed to work correctly.
-  size_t dash_length = dashes.size();
+  wtf_size_t dash_length = dashes.size();
   if (!dash_length) {
     // If no dash is set, revert to solid stroke
     // FIXME: do we need to set NoStroke in some cases?
@@ -46,19 +45,19 @@ void StrokeData::SetLineDash(const DashArray& dashes, float dash_offset) {
     return;
   }
 
-  size_t count = !(dash_length % 2) ? dash_length : dash_length * 2;
+  wtf_size_t count = !(dash_length % 2) ? dash_length : dash_length * 2;
   auto intervals = std::make_unique<SkScalar[]>(count);
 
-  for (unsigned i = 0; i < count; i++)
+  for (wtf_size_t i = 0; i < count; i++)
     intervals[i] = dashes[i % dash_length];
 
   dash_ = SkDashPathEffect::Make(intervals.get(), count, dash_offset);
 }
 
-void StrokeData::SetupPaint(PaintFlags* flags,
+void StrokeData::SetupPaint(cc::PaintFlags* flags,
                             const int length,
                             const int dash_thickness) const {
-  flags->setStyle(PaintFlags::kStroke_Style);
+  flags->setStyle(cc::PaintFlags::kStroke_Style);
   flags->setStrokeWidth(SkFloatToScalar(thickness_));
   flags->setStrokeCap(line_cap_);
   flags->setStrokeJoin(line_join_);
@@ -67,7 +66,7 @@ void StrokeData::SetupPaint(PaintFlags* flags,
   SetupPaintDashPathEffect(flags, length, dash_thickness);
 }
 
-void StrokeData::SetupPaintDashPathEffect(PaintFlags* flags,
+void StrokeData::SetupPaintDashPathEffect(cc::PaintFlags* flags,
                                           const int length,
                                           const int dash_thickness) const {
   int dash_width = dash_thickness ? dash_thickness : thickness_;
@@ -97,7 +96,7 @@ void StrokeData::SetupPaintDashPathEffect(PaintFlags* flags,
       flags->setPathEffect(SkDashPathEffect::Make(intervals, 2, 0));
     }
   } else if (style_ == kDottedStroke) {
-    flags->setStrokeCap((PaintFlags::Cap)kRoundCap);
+    flags->setStrokeCap(cc::PaintFlags::Cap::kRound_Cap);
     // Adjust the width to get equal dot spacing as much as possible.
     float per_dot_length = dash_width * 2;
     if (length < per_dot_length) {

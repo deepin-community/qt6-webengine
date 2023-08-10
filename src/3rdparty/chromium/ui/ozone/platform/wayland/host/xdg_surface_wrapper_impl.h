@@ -8,9 +8,7 @@
 #include "ui/ozone/platform/wayland/host/shell_surface_wrapper.h"
 
 #include <cstdint>
-#include <string>
 
-#include "base/strings/string16.h"
 #include "ui/ozone/platform/wayland/common/wayland_object.h"
 
 namespace gfx {
@@ -34,19 +32,22 @@ class XDGSurfaceWrapperImpl : public ShellSurfaceWrapper {
   // ShellSurfaceWrapper overrides:
   bool Initialize() override;
   void AckConfigure(uint32_t serial) override;
+  bool IsConfigured() override;
   void SetWindowGeometry(const gfx::Rect& bounds) override;
 
+  struct xdg_surface* xdg_surface() const;
+
+ private:
   // xdg_surface_listener
   static void Configure(void* data,
                         struct xdg_surface* xdg_surface,
                         uint32_t serial);
 
-  struct xdg_surface* xdg_surface() const;
-
- private:
   // Non-owing WaylandWindow that uses this surface wrapper.
   WaylandWindow* const wayland_window_;
   WaylandConnection* const connection_;
+
+  bool is_configured_ = false;
 
   wl::Object<struct xdg_surface> xdg_surface_;
 };

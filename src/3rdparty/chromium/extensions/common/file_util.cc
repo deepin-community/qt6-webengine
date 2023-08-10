@@ -20,7 +20,6 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/json/json_file_value_serializer.h"
 #include "base/logging.h"
-#include "base/macros.h"
 #include "base/metrics/field_trial.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
@@ -44,6 +43,8 @@
 #include "net/base/filename_util.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "url/gurl.h"
+
+using extensions::mojom::ManifestLocation;
 
 namespace extensions {
 namespace file_util {
@@ -193,7 +194,7 @@ void UninstallExtension(const base::FilePath& extensions_dir,
 }
 
 scoped_refptr<Extension> LoadExtension(const base::FilePath& extension_path,
-                                       Manifest::Location location,
+                                       ManifestLocation location,
                                        int flags,
                                        std::string* error) {
   return LoadExtension(extension_path, nullptr, std::string(), location, flags,
@@ -202,7 +203,7 @@ scoped_refptr<Extension> LoadExtension(const base::FilePath& extension_path,
 
 scoped_refptr<Extension> LoadExtension(const base::FilePath& extension_path,
                                        const std::string& extension_id,
-                                       Manifest::Location location,
+                                       ManifestLocation location,
                                        int flags,
                                        std::string* error) {
   return LoadExtension(extension_path, nullptr, extension_id, location, flags,
@@ -213,7 +214,7 @@ scoped_refptr<Extension> LoadExtension(
     const base::FilePath& extension_path,
     const base::FilePath::CharType* manifest_file,
     const std::string& extension_id,
-    Manifest::Location location,
+    ManifestLocation location,
     int flags,
     std::string* error) {
   std::unique_ptr<base::DictionaryValue> manifest;
@@ -492,7 +493,7 @@ bool ValidateExtensionIconSet(const ExtensionIconSet& icon_set,
       return false;
     }
 
-    if (extension->location() == Manifest::UNPACKED) {
+    if (extension->location() == ManifestLocation::kUnpacked) {
       const bool is_sufficiently_visible =
           image_util::IsIconAtPathSufficientlyVisible(path);
       const bool is_sufficiently_visible_rendered =
@@ -543,55 +544,6 @@ MessageBundle* LoadMessageBundle(
       locale_path, default_locale, gzip_permission, error);
 
   return message_bundle;
-}
-
-MessageBundle::SubstitutionMap* LoadMessageBundleSubstitutionMap(
-    const base::FilePath& extension_path,
-    const std::string& extension_id,
-    const std::string& default_locale,
-    extension_l10n_util::GzippedMessagesPermission gzip_permission) {
-  return LoadMessageBundleSubstitutionMapFromPaths(
-      {extension_path}, extension_id, default_locale, gzip_permission);
-}
-
-MessageBundle::SubstitutionMap* LoadNonLocalizedMessageBundleSubstitutionMap(
-    const std::string& extension_id) {
-  MessageBundle::SubstitutionMap* return_value =
-      new MessageBundle::SubstitutionMap();
-
-  // Add @@extension_id reserved message here.
-  return_value->insert(
-      std::make_pair(MessageBundle::kExtensionIdKey, extension_id));
-
-  return return_value;
-}
-
-MessageBundle::SubstitutionMap* LoadMessageBundleSubstitutionMapFromPaths(
-    const std::vector<base::FilePath>& paths,
-    const std::string& extension_id,
-    const std::string& default_locale,
-    extension_l10n_util::GzippedMessagesPermission gzip_permission) {
-  MessageBundle::SubstitutionMap* return_value =
-      LoadNonLocalizedMessageBundleSubstitutionMap(extension_id);
-
-  // Touch disk only if extension is localized.
-  if (default_locale.empty())
-    return return_value;
-
-  std::string error;
-  for (const base::FilePath& path : paths) {
-    std::unique_ptr<MessageBundle> bundle(
-        LoadMessageBundle(path, default_locale, gzip_permission, &error));
-    if (bundle) {
-      for (const auto& iter : *bundle->dictionary()) {
-        // |insert| only adds new entries, and does not replace entries in
-        // the main extension or previously processed imports.
-        return_value->insert(std::make_pair(iter.first, iter.second));
-      }
-    }
-  }
-
-  return return_value;
 }
 
 base::FilePath GetVerifiedContentsPath(const base::FilePath& extension_path) {

@@ -12,7 +12,6 @@
 #include "base/bind.h"
 #include "base/logging.h"
 #include "base/posix/eintr_wrapper.h"
-#include "base/task/post_task.h"
 #include "base/task/thread_pool.h"
 #include "ui/gfx/gpu_fence.h"
 #include "ui/gfx/presentation_feedback.h"
@@ -77,7 +76,7 @@ bool HardwareDisplayPlaneManagerLegacy::Commit(CommitRequest commit_request,
 bool HardwareDisplayPlaneManagerLegacy::Commit(
     HardwareDisplayPlaneList* plane_list,
     scoped_refptr<PageFlipRequest> page_flip_request,
-    std::unique_ptr<gfx::GpuFence>* out_fence) {
+    gfx::GpuFenceHandle* release_fence) {
   bool test_only = !page_flip_request;
   if (test_only) {
     for (HardwareDisplayPlane* plane : plane_list->plane_list) {
@@ -206,9 +205,9 @@ bool HardwareDisplayPlaneManagerLegacy::SetPlaneData(
 bool HardwareDisplayPlaneManagerLegacy::IsCompatible(
     HardwareDisplayPlane* plane,
     const DrmOverlayPlane& overlay,
-    uint32_t crtc_index) const {
+    uint32_t crtc_id) const {
   if (plane->type() == DRM_PLANE_TYPE_CURSOR ||
-      !plane->CanUseForCrtc(crtc_index))
+      !plane->CanUseForCrtcId(crtc_id))
     return false;
 
   // When using legacy kms we always scanout only one plane (the primary),

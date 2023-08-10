@@ -8,7 +8,7 @@
 
 #include "base/bind.h"
 #include "base/callback_helpers.h"
-#include "base/optional.h"
+#include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/task_environment.h"
@@ -23,6 +23,7 @@
 #include "services/proxy_resolver/proxy_resolver_v8_tracing.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 using net::test::IsError;
 using net::test::IsOk;
@@ -31,6 +32,7 @@ namespace proxy_resolver {
 namespace {
 
 const char kScriptData[] = "FooBarBaz";
+const char16_t kScriptData16[] = u"FooBarBaz";
 
 class FakeProxyResolver : public ProxyResolverV8Tracing {
  public:
@@ -61,7 +63,7 @@ enum Event {
 class TestProxyResolverFactory : public ProxyResolverV8TracingFactory {
  public:
   struct PendingRequest {
-    std::unique_ptr<ProxyResolverV8Tracing>* resolver;
+    raw_ptr<std::unique_ptr<ProxyResolverV8Tracing>> resolver;
     net::CompletionOnceCallback callback;
   };
 
@@ -78,7 +80,7 @@ class TestProxyResolverFactory : public ProxyResolverV8TracingFactory {
       std::unique_ptr<net::ProxyResolverFactory::Request>* request) override {
     requests_handled_++;
     waiter_->NotifyEvent(RESOLVER_CREATED);
-    EXPECT_EQ(base::ASCIIToUTF16(kScriptData), pac_script->utf16());
+    EXPECT_EQ(kScriptData16, pac_script->utf16());
     EXPECT_TRUE(resolver);
     pending_request_ = std::make_unique<PendingRequest>();
     pending_request_->resolver = resolver;
@@ -86,8 +88,8 @@ class TestProxyResolverFactory : public ProxyResolverV8TracingFactory {
 
     ASSERT_TRUE(bindings);
 
-    bindings->Alert(base::ASCIIToUTF16("alert"));
-    bindings->OnError(10, base::ASCIIToUTF16("error"));
+    bindings->Alert(u"alert");
+    bindings->OnError(10, u"error");
     EXPECT_TRUE(bindings->GetHostResolver());
   }
 
@@ -95,7 +97,7 @@ class TestProxyResolverFactory : public ProxyResolverV8TracingFactory {
   PendingRequest* pending_request() { return pending_request_.get(); }
 
  private:
-  net::EventWaiter<Event>* waiter_;
+  raw_ptr<net::EventWaiter<Event>> waiter_;
   size_t requests_handled_ = 0;
   std::unique_ptr<PendingRequest> pending_request_;
 };
@@ -161,7 +163,7 @@ class ProxyResolverFactoryImplTest
 
   base::test::TaskEnvironment task_environment_;
   std::unique_ptr<TestProxyResolverFactoryImpl> mock_factory_impl_;
-  TestProxyResolverFactory* mock_factory_;
+  raw_ptr<TestProxyResolverFactory> mock_factory_;
   mojo::Remote<mojom::ProxyResolverFactory> factory_;
 
   int instances_destroyed_ = 0;

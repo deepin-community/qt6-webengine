@@ -11,7 +11,6 @@
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/css/cssom/paint_worklet_input.h"
 #include "third_party/blink/renderer/core/css/cssom/paint_worklet_style_property_map.h"
-#include "third_party/blink/renderer/platform/geometry/float_size.h"
 #include "third_party/blink/renderer/platform/graphics/compositor_element_id.h"
 
 namespace blink {
@@ -39,9 +38,8 @@ class CORE_EXPORT CSSPaintWorkletInput : public PaintWorkletInput {
  public:
   CSSPaintWorkletInput(
       const String& name,
-      const FloatSize& container_size,
+      const gfx::SizeF& container_size,
       float effective_zoom,
-      float device_scale_factor,
       int worklet_id,
       PaintWorkletStylePropertyMap::CrossThreadData values,
       Vector<std::unique_ptr<CrossThreadStyleValue>> parsed_input_args,
@@ -51,7 +49,6 @@ class CORE_EXPORT CSSPaintWorkletInput : public PaintWorkletInput {
 
   // These accessors are safe on any thread.
   float EffectiveZoom() const { return effective_zoom_; }
-  float DeviceScaleFactor() const { return device_scale_factor_; }
   const Vector<std::unique_ptr<CrossThreadStyleValue>>& ParsedInputArguments()
       const {
     return parsed_input_arguments_;
@@ -63,12 +60,28 @@ class CORE_EXPORT CSSPaintWorkletInput : public PaintWorkletInput {
     return PaintWorkletStylePropertyMap::CopyCrossThreadData(style_map_data_);
   }
 
+  PaintWorkletInputType GetType() const override {
+    return PaintWorkletInputType::kCSS;
+  }
+
  private:
   const String name_;
   const float effective_zoom_;
-  const float device_scale_factor_;
   PaintWorkletStylePropertyMap::CrossThreadData style_map_data_;
   Vector<std::unique_ptr<CrossThreadStyleValue>> parsed_input_arguments_;
+};
+
+template <>
+struct DowncastTraits<CSSPaintWorkletInput> {
+  static bool AllowFrom(const cc::PaintWorkletInput& worklet_input) {
+    auto* input = DynamicTo<PaintWorkletInput>(worklet_input);
+    return input && AllowFrom(*input);
+  }
+
+  static bool AllowFrom(const PaintWorkletInput& worklet_input) {
+    return worklet_input.GetType() ==
+           PaintWorkletInput::PaintWorkletInputType::kCSS;
+  }
 };
 
 }  // namespace blink

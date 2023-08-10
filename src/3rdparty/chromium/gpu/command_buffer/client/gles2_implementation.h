@@ -8,7 +8,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <list>
 #include <map>
 #include <memory>
 #include <set>
@@ -19,9 +18,8 @@
 
 #include "base/compiler_specific.h"
 #include "base/containers/queue.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
-#include "base/optional.h"
 #include "base/trace_event/memory_dump_provider.h"
 #include "gpu/command_buffer/client/buffer_tracker.h"
 #include "gpu/command_buffer/client/client_context_state.h"
@@ -41,6 +39,7 @@
 #include "gpu/command_buffer/common/context_creation_attribs.h"
 #include "gpu/command_buffer/common/context_result.h"
 #include "gpu/command_buffer/common/debug_marker_manager.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace gpu {
 
@@ -88,6 +87,9 @@ class GLES2_IMPL_EXPORT GLES2Implementation : public GLES2Interface,
                       bool lose_context_when_out_of_memory,
                       bool support_client_side_arrays,
                       GpuControl* gpu_control);
+
+  GLES2Implementation(const GLES2Implementation&) = delete;
+  GLES2Implementation& operator=(const GLES2Implementation&) = delete;
 
   ~GLES2Implementation() override;
 
@@ -154,6 +156,7 @@ class GLES2_IMPL_EXPORT GLES2Implementation : public GLES2Interface,
   void GenUnverifiedSyncTokenCHROMIUM(GLbyte* sync_token) override;
   void VerifySyncTokensCHROMIUM(GLbyte** sync_tokens, GLsizei count) override;
   void WaitSyncTokenCHROMIUM(const GLbyte* sync_token) override;
+  void ShallowFlushCHROMIUM() override;
 
   void GetProgramInfoCHROMIUMHelper(GLuint program,
                                     std::vector<int8_t>* result);
@@ -368,7 +371,7 @@ class GLES2_IMPL_EXPORT GLES2Implementation : public GLES2Interface,
     ~DeferErrorCallbacks();
 
    private:
-    GLES2Implementation* gles2_implementation_;
+    raw_ptr<GLES2Implementation> gles2_implementation_;
   };
 
   struct DeferredErrorCallback {
@@ -388,7 +391,7 @@ class GLES2_IMPL_EXPORT GLES2Implementation : public GLES2Interface,
     ~SingleThreadChecker();
 
    private:
-    GLES2Implementation* gles2_implementation_;
+    raw_ptr<GLES2Implementation> gles2_implementation_;
   };
 
   // ImplementationBase implementation.
@@ -399,7 +402,8 @@ class GLES2_IMPL_EXPORT GLES2Implementation : public GLES2Interface,
   void OnGpuControlLostContextMaybeReentrant() final;
   void OnGpuControlErrorMessage(const char* message, int32_t id) final;
   void OnGpuControlSwapBuffersCompleted(
-      const SwapBuffersCompleteParams& params) final;
+      const SwapBuffersCompleteParams& params,
+      gfx::GpuFenceHandle release_fence) final;
   void OnGpuSwitched(gl::GpuPreference active_gpu_heuristic) final;
   void OnSwapBufferPresented(uint64_t swap_id,
                              const gfx::PresentationFeedback& feedback) final;
@@ -702,7 +706,7 @@ class GLES2_IMPL_EXPORT GLES2Implementation : public GLES2Interface,
                              PresentationCallback present_callback);
 
   GLES2Util util_;
-  GLES2CmdHelper* helper_;
+  raw_ptr<GLES2CmdHelper> helper_;
   std::string last_error_;
   DebugMarkerManager debug_marker_manager_;
   std::string this_in_hex_;
@@ -834,8 +838,8 @@ class GLES2_IMPL_EXPORT GLES2Implementation : public GLES2Interface,
   std::unique_ptr<BufferTracker> buffer_tracker_;
   std::unique_ptr<ReadbackBufferShadowTracker> readback_buffer_shadow_tracker_;
 
-  base::Optional<ScopedMappedMemoryPtr> font_mapped_buffer_;
-  base::Optional<ScopedTransferBufferPtr> raster_mapped_buffer_;
+  absl::optional<ScopedMappedMemoryPtr> font_mapped_buffer_;
+  absl::optional<ScopedTransferBufferPtr> raster_mapped_buffer_;
 
   base::RepeatingCallback<void(const char*, int32_t)> error_message_callback_;
   bool deferring_error_callbacks_ = false;
@@ -870,8 +874,6 @@ class GLES2_IMPL_EXPORT GLES2Implementation : public GLES2Interface,
   gl::GpuPreference active_gpu_heuristic_ = gl::GpuPreference::kDefault;
 
   base::WeakPtrFactory<GLES2Implementation> weak_ptr_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(GLES2Implementation);
 };
 
 inline bool GLES2Implementation::GetBufferParameteri64vHelper(

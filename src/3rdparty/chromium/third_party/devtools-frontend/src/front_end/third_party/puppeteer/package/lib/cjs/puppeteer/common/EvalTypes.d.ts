@@ -13,21 +13,23 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import { ElementHandle , JSHandle} from './JSHandle.js';
-
+import { JSHandle, ElementHandle } from './JSHandle.js';
 /**
  * @public
  */
-export declare type EvaluateFn<T = unknown> = string | ((arg1: T, ...args: unknown[]) => unknown);
+export declare type EvaluateFn<T = any> = string | ((arg1: T, ...args: any[]) => any);
+/**
+ * @public
+ */
 export declare type UnwrapPromiseLike<T> = T extends PromiseLike<infer U> ? U : T;
 /**
  * @public
  */
-export declare type EvaluateFnReturnType<T extends EvaluateFn> = T extends (...args: unknown[]) => infer R ? R : unknown;
+export declare type EvaluateFnReturnType<T extends EvaluateFn> = T extends (...args: any[]) => infer R ? R : any;
 /**
  * @public
  */
-export declare type EvaluateHandleFn = string | ((...args: unknown[]) => unknown);
+export declare type EvaluateHandleFn = string | ((...args: any[]) => any);
 /**
  * @public
  */
@@ -35,7 +37,7 @@ export declare type Serializable = number | string | boolean | null | BigInt | J
 /**
  * @public
  */
-export declare type JSONArray = Serializable[];
+export declare type JSONArray = readonly Serializable[];
 /**
  * @public
  */

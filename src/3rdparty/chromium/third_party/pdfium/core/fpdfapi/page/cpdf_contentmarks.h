@@ -7,11 +7,12 @@
 #ifndef CORE_FPDFAPI_PAGE_CPDF_CONTENTMARKS_H_
 #define CORE_FPDFAPI_PAGE_CPDF_CONTENTMARKS_H_
 
+#include <stddef.h>
+
 #include <memory>
 #include <vector>
 
 #include "core/fpdfapi/page/cpdf_contentmarkitem.h"
-#include "core/fxcrt/fx_system.h"
 #include "core/fxcrt/retain_ptr.h"
 
 class CPDF_Dictionary;
@@ -36,7 +37,6 @@ class CPDF_ContentMarks {
                                    CPDF_Dictionary* pDict,
                                    const ByteString& property_name);
   bool RemoveMark(CPDF_ContentMarkItem* pMarkItem);
-  void DeleteLastMark();
   size_t FindFirstDifference(const CPDF_ContentMarks* other) const;
 
  private:
@@ -58,7 +58,6 @@ class CPDF_ContentMarks {
                                      CPDF_Dictionary* pDict,
                                      const ByteString& property_name);
     bool RemoveMark(CPDF_ContentMarkItem* pMarkItem);
-    void DeleteLastMark();
 
    private:
     std::vector<RetainPtr<CPDF_ContentMarkItem>> m_Marks;

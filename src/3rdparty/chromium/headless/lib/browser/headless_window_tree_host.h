@@ -9,7 +9,6 @@
 
 #include <memory>
 
-#include "base/macros.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/events/platform/platform_event_dispatcher.h"
 #include "ui/gfx/geometry/rect.h"
@@ -31,6 +30,10 @@ class HeadlessWindowTreeHost : public aura::WindowTreeHost,
                                public ui::PlatformEventDispatcher {
  public:
   explicit HeadlessWindowTreeHost(bool use_external_begin_frame_control);
+
+  HeadlessWindowTreeHost(const HeadlessWindowTreeHost&) = delete;
+  HeadlessWindowTreeHost& operator=(const HeadlessWindowTreeHost&) = delete;
+
   ~HeadlessWindowTreeHost() override;
 
   void SetParentWindow(gfx::NativeWindow window);
@@ -50,7 +53,7 @@ class HeadlessWindowTreeHost : public aura::WindowTreeHost,
   void SetCapture() override;
   void ReleaseCapture() override;
   bool CaptureSystemKeyEventsImpl(
-      base::Optional<base::flat_set<ui::DomCode>> codes) override;
+      absl::optional<base::flat_set<ui::DomCode>> codes) override;
   void ReleaseSystemKeyEventCapture() override;
   bool IsKeyLocked(ui::DomCode dom_code) override;
   base::flat_map<std::string, std::string> GetKeyboardLayoutMap() override;
@@ -62,8 +65,6 @@ class HeadlessWindowTreeHost : public aura::WindowTreeHost,
   gfx::Rect bounds_;
   std::unique_ptr<aura::client::FocusClient> focus_client_;
   std::unique_ptr<aura::client::WindowParentingClient> window_parenting_client_;
-
-  DISALLOW_COPY_AND_ASSIGN(HeadlessWindowTreeHost);
 };
 
 }  // namespace headless

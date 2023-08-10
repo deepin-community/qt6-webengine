@@ -8,7 +8,7 @@
 
 #include "base/command_line.h"
 #include "base/feature_list.h"
-#include "base/sequenced_task_runner.h"
+#include "base/task/sequenced_task_runner.h"
 #include "build/build_config.h"
 #include "build/buildflag.h"
 #include "components/viz/common/gpu/raster_context_provider.h"
@@ -17,15 +17,12 @@
 #include "media/media_buildflags.h"
 #include "media/video/gpu_video_accelerator_factories.h"
 
-#if !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
 #include "media/filters/decrypting_audio_decoder.h"
 #include "media/filters/decrypting_video_decoder.h"
 #endif
 
-#if defined(OS_FUCHSIA)
-// TODO(crbug.com/1117629): Remove this dependency and update include_rules
-// that allow it.
-#include "fuchsia/engine/switches.h"
+#if BUILDFLAG(IS_FUCHSIA)
 #include "media/filters/fuchsia/fuchsia_video_decoder.h"
 #endif
 
@@ -65,7 +62,7 @@ void DefaultDecoderFactory::CreateAudioDecoders(
   if (is_shutdown_)
     return;
 
-#if !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
   // DecryptingAudioDecoder is only needed in External Clear Key testing to
   // cover the audio decrypt-and-decode path.
   if (base::FeatureList::IsEnabled(kExternalClearKeyForTesting)) {
@@ -100,28 +97,12 @@ DefaultDecoderFactory::GetSupportedVideoDecoderConfigsForWebRTC() {
     }
   }
 
-#if defined(OS_FUCHSIA)
-  // TODO(crbug.com/1173503): Implement capabilities for fuchsia.
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kDisableSoftwareVideoDecoders)) {
-    // Bypass software codec registration.
-    return supported_configs;
-  }
-#endif
-
   if (!base::FeatureList::IsEnabled(media::kExposeSwDecodersToWebRTC))
     return supported_configs;
 
 #if BUILDFLAG(ENABLE_LIBVPX)
-  SupportedVideoDecoderConfigs vpx_configs =
-      VpxVideoDecoder::SupportedConfigs();
-
-  for (auto& config : vpx_configs) {
-    if (config.profile_min >= VP9PROFILE_MIN &&
-        config.profile_max <= VP9PROFILE_MAX) {
-      supported_configs.emplace_back(config);
-    }
-  }
+  // When the VpxVideoDecoder has been updated for RTC add
+  // `VpxVideoDecoder::SupportedConfigs()` to `supported_configs`.
 #endif
 
 #if BUILDFLAG(ENABLE_LIBGAV1_DECODER)
@@ -142,10 +123,8 @@ DefaultDecoderFactory::GetSupportedVideoDecoderConfigsForWebRTC() {
   }
 
 #if BUILDFLAG(ENABLE_FFMPEG_VIDEO_DECODERS)
-  SupportedVideoDecoderConfigs ffmpeg_configs =
-      FFmpegVideoDecoder::SupportedConfigsForWebRTC();
-  supported_configs.insert(supported_configs.end(), ffmpeg_configs.begin(),
-                           ffmpeg_configs.end());
+  // When the FFmpegVideoDecoder has been updated for RTC add
+  // `FFmpegVideoDecoder::SupportedConfigsForWebRTC()` to `supported_configs`.
 #endif
 
   return supported_configs;
@@ -162,7 +141,7 @@ void DefaultDecoderFactory::CreateVideoDecoders(
   if (is_shutdown_)
     return;
 
-#if !defined(OS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID)
   video_decoders->push_back(
       std::make_unique<DecryptingVideoDecoder>(task_runner, media_log));
 #endif
@@ -170,7 +149,7 @@ void DefaultDecoderFactory::CreateVideoDecoders(
   // Perfer an external decoder since one will only exist if it is hardware
   // accelerated.
   if (external_decoder_factory_ && gpu_factories &&
-      gpu_factories->IsGpuVideoAcceleratorEnabled()) {
+      gpu_factories->IsGpuVideoDecodeAcceleratorEnabled()) {
     // |gpu_factories_| requires that its entry points be called on its
     // |GetTaskRunner()|. Since |pipeline_| will own decoders created from the
     // factories, require that their message loops are identical.
@@ -181,9 +160,9 @@ void DefaultDecoderFactory::CreateVideoDecoders(
         std::move(request_overlay_info_cb), target_color_space, video_decoders);
   }
 
-#if defined(OS_FUCHSIA)
+#if BUILDFLAG(IS_FUCHSIA)
   // TODO(crbug.com/1122116): Minimize Fuchsia-specific code paths.
-  if (gpu_factories && gpu_factories->IsGpuVideoAcceleratorEnabled()) {
+  if (gpu_factories && gpu_factories->IsGpuVideoDecodeAcceleratorEnabled()) {
     auto* context_provider = gpu_factories->GetMediaContextProvider();
 
     // GetMediaContextProvider() may return nullptr when the context was lost
@@ -194,17 +173,11 @@ void DefaultDecoderFactory::CreateVideoDecoders(
     //
     // TODO(crbug.com/580386): Handle context loss properly.
     if (context_provider) {
-      video_decoders->push_back(CreateFuchsiaVideoDecoder(context_provider));
+      video_decoders->push_back(FuchsiaVideoDecoder::Create(context_provider));
     } else {
       DLOG(ERROR)
           << "Can't create FuchsiaVideoDecoder due to GPU context loss.";
     }
-  }
-
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kDisableSoftwareVideoDecoders)) {
-    // Bypass software codec registration.
-    return;
   }
 #endif
 
@@ -228,6 +201,10 @@ void DefaultDecoderFactory::CreateVideoDecoders(
 #if BUILDFLAG(ENABLE_FFMPEG_VIDEO_DECODERS)
   video_decoders->push_back(std::make_unique<FFmpegVideoDecoder>(media_log));
 #endif
+}
+
+base::WeakPtr<DecoderFactory> DefaultDecoderFactory::GetWeakPtr() {
+  return weak_factory_.GetWeakPtr();
 }
 
 void DefaultDecoderFactory::Shutdown() {

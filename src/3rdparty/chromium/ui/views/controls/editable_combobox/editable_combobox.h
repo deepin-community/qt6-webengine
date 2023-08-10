@@ -6,17 +6,18 @@
 #define UI_VIEWS_CONTROLS_EDITABLE_COMBOBOX_EDITABLE_COMBOBOX_H_
 
 #include <memory>
+#include <string>
 #include <utility>
 
 #include "base/callback.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/scoped_observation.h"
-#include "base/strings/string16.h"
 #include "build/build_config.h"
+#include "ui/base/metadata/metadata_header_macros.h"
+#include "ui/base/models/image_model.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/views/controls/textfield/textfield_controller.h"
 #include "ui/views/layout/animating_layout_manager.h"
-#include "ui/views/metadata/metadata_header_macros.h"
 #include "ui/views/style/typography.h"
 #include "ui/views/view.h"
 #include "ui/views/view_observer.h"
@@ -76,12 +77,15 @@ class VIEWS_EXPORT EditableCombobox
                             int text_style = kDefaultTextStyle,
                             bool display_arrow = true);
 
+  EditableCombobox(const EditableCombobox&) = delete;
+  EditableCombobox& operator=(const EditableCombobox&) = delete;
+
   ~EditableCombobox() override;
 
   void SetModel(std::unique_ptr<ui::ComboboxModel> model);
 
-  const base::string16& GetText() const;
-  void SetText(const base::string16& text);
+  const std::u16string& GetText() const;
+  void SetText(const std::u16string& text);
 
   const gfx::FontList& GetFontList() const;
 
@@ -94,7 +98,7 @@ class VIEWS_EXPORT EditableCombobox
 
   // Sets the accessible name. Use SetAssociatedLabel instead if there is a
   // label associated with this combobox.
-  void SetAccessibleName(const base::string16& name);
+  void SetAccessibleName(const std::u16string& name);
 
   // Sets the associated label; use this instead of SetAccessibleName if there
   // is a label associated with this combobox.
@@ -107,7 +111,8 @@ class VIEWS_EXPORT EditableCombobox
   // Accessors of private members for tests.
   ui::ComboboxModel* GetComboboxModelForTest() { return combobox_model_.get(); }
   int GetItemCountForTest();
-  base::string16 GetItemForTest(int index);
+  std::u16string GetItemForTest(int index);
+  ui::ImageModel GetIconForTest(int index);
   MenuRunner* GetMenuRunnerForTest() { return menu_runner_.get(); }
   Textfield* GetTextfieldForTest() { return textfield_; }
 
@@ -121,7 +126,7 @@ class VIEWS_EXPORT EditableCombobox
   void OnItemSelected(int index);
 
   // Notifies listener of new content and updates the menu items to show.
-  void HandleNewContent(const base::string16& new_content);
+  void HandleNewContent(const std::u16string& new_content);
 
   // Toggles the dropdown menu in response to |event|.
   void ArrowButtonPressed(const ui::Event& event);
@@ -138,7 +143,7 @@ class VIEWS_EXPORT EditableCombobox
 
   // Overridden from TextfieldController:
   void ContentsChanged(Textfield* sender,
-                       const base::string16& new_contents) override;
+                       const std::u16string& new_contents) override;
   bool HandleKeyEvent(Textfield* sender,
                       const ui::KeyEvent& key_event) override;
 
@@ -149,8 +154,8 @@ class VIEWS_EXPORT EditableCombobox
   void OnLayoutIsAnimatingChanged(views::AnimatingLayoutManager* source,
                                   bool is_animating) override;
 
-  Textfield* textfield_;
-  Button* arrow_ = nullptr;
+  raw_ptr<Textfield> textfield_;
+  raw_ptr<Button> arrow_ = nullptr;
   std::unique_ptr<ui::ComboboxModel> combobox_model_;
 
   // The EditableComboboxMenuModel used by |menu_runner_|.
@@ -189,8 +194,6 @@ class VIEWS_EXPORT EditableCombobox
   bool dropdown_blocked_for_animation_ = false;
 
   base::ScopedObservation<View, ViewObserver> observation_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(EditableCombobox);
 };
 
 }  // namespace views

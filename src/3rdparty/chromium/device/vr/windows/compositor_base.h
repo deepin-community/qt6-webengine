@@ -9,6 +9,7 @@
 #include "base/threading/thread.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
+#include "device/vr/public/mojom/isolated_xr_service.mojom.h"
 #include "device/vr/public/mojom/vr_service.mojom.h"
 #include "device/vr/util/fps_meter.h"
 #include "device/vr/util/sliding_average.h"
@@ -22,7 +23,7 @@
 #include "mojo/public/cpp/platform/platform_handle.h"
 #include "ui/gfx/geometry/rect_f.h"
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 #include "device/vr/windows/d3d11_texture_helper.h"
 #endif
 
@@ -61,6 +62,10 @@ class XRCompositorCommon : public base::Thread,
       base::OnceCallback<void(bool result, mojom::XRSessionPtr)>;
 
   XRCompositorCommon();
+
+  XRCompositorCommon(const XRCompositorCommon&) = delete;
+  XRCompositorCommon& operator=(const XRCompositorCommon&) = delete;
+
   ~XRCompositorCommon() override;
 
   // on_presentation_ended will be called when this the compositor stops
@@ -92,7 +97,7 @@ class XRCompositorCommon : public base::Thread,
   void SetVisibilityState(mojom::XRVisibilityState visibility_state);
   const mojom::VRStageParametersPtr& GetCurrentStageParameters() const;
   void SetStageParameters(mojom::VRStageParametersPtr stage_parameters);
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   D3D11TextureHelper texture_helper_;
 #endif
   int16_t next_frame_id_ = 0;
@@ -189,7 +194,7 @@ class XRCompositorCommon : public base::Thread,
   SlidingTimeDeltaAverage webxr_js_time_;
   SlidingTimeDeltaAverage webxr_gpu_time_;
 
-  base::Optional<OutstandingFrame> pending_frame_;
+  absl::optional<OutstandingFrame> pending_frame_;
 
   bool is_presenting_ = false;  // True if we have a presenting session.
   bool webxr_visible_ = true;   // The browser may hide a presenting session.
@@ -214,8 +219,6 @@ class XRCompositorCommon : public base::Thread,
       mojom::XRVisibilityState::VISIBLE;
   mojom::VRStageParametersPtr current_stage_parameters_;
   uint32_t stage_parameters_id_;
-
-  DISALLOW_COPY_AND_ASSIGN(XRCompositorCommon);
 };
 
 }  // namespace device

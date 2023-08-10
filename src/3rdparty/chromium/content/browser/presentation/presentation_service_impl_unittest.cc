@@ -10,14 +10,14 @@
 #include <iterator>
 #include <memory>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/callback_helpers.h"
-#include "base/macros.h"
-#include "base/optional.h"
 #include "base/run_loop.h"
+#include "base/strings/stringprintf.h"
 #include "content/browser/presentation/presentation_test_utils.h"
 #include "content/public/browser/presentation_request.h"
 #include "content/public/browser/presentation_service_delegate.h"
@@ -30,7 +30,7 @@
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "testing/gmock/include/gmock/gmock.h"
-
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace content {
 
@@ -155,7 +155,7 @@ class PresentationServiceImplTest : public RenderViewHostImplTestHarness {
   std::unique_ptr<PresentationServiceImpl> service_impl_;
 
   MockPresentationController mock_controller_;
-  base::Optional<mojo::Receiver<PresentationController>> controller_receiver_;
+  absl::optional<mojo::Receiver<PresentationController>> controller_receiver_;
 
   GURL presentation_url1_;
   GURL presentation_url2_;
@@ -251,8 +251,7 @@ TEST_F(PresentationServiceImplTest, SetDefaultPresentationUrls) {
 
   mojo::PendingRemote<PresentationConnection> presentation_connection_remote;
   mojo::Remote<PresentationConnection> controller_remote;
-  ignore_result(
-      presentation_connection_remote.InitWithNewPipeAndPassReceiver());
+  std::ignore = presentation_connection_remote.InitWithNewPipeAndPassReceiver();
   std::move(callback).Run(PresentationConnectionResult::New(
       blink::mojom::PresentationInfo::New(presentation_url2_, kPresentationId),
       std::move(presentation_connection_remote),
@@ -486,7 +485,7 @@ TEST_F(PresentationServiceImplTest, ReceiverDelegateOnSubFrame) {
 
   PresentationServiceImpl service_impl(main_rfh(), contents(), nullptr,
                                        &mock_receiver_delegate_);
-  service_impl.is_main_frame_ = false;
+  service_impl.is_outermost_document_ = false;
 
   ReceiverConnectionAvailableCallback callback;
   EXPECT_CALL(mock_receiver_delegate_,

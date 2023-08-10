@@ -7,8 +7,14 @@
 #include <utility>
 
 #include "base/command_line.h"
+#include "base/hash/hash.h"
+#include "base/memory/ptr_util.h"
+#include "base/memory/raw_ptr.h"
+#include "base/rand_util.h"
 #include "base/scoped_observation.h"
+#include "base/strings/strcat.h"
 #include "build/build_config.h"
+#include "components/feed/core/common/pref_names.h"
 #include "components/feed/core/shared_prefs/pref_names.h"
 #include "components/feed/core/v2/feed_network_impl.h"
 #include "components/feed/core/v2/feed_store.h"
@@ -17,7 +23,7 @@
 #include "components/feed/core/v2/metrics_reporter.h"
 #include "components/feed/core/v2/persistent_key_value_store_impl.h"
 #include "components/feed/core/v2/prefs.h"
-#include "components/feed/core/v2/refresh_task_scheduler.h"
+#include "components/feed/core/v2/public/refresh_task_scheduler.h"
 #include "components/feed/feed_feature_list.h"
 #include "components/history/core/browser/history_service.h"
 #include "components/history/core/browser/history_service_observer.h"
@@ -39,7 +45,7 @@ class EulaObserver : public web_resource::EulaAcceptedNotifier::Observer {
   void OnEulaAccepted() override { feed_stream_->OnEulaAccepted(); }
 
  private:
-  FeedStream* feed_stream_;
+  raw_ptr<FeedStream> feed_stream_;
 };
 
 }  // namespace
@@ -78,8 +84,8 @@ class FeedService::HistoryObserverImpl
   }
 
  private:
-  FeedStream* feed_stream_;
-  signin::IdentityManager* identity_manager_;
+  raw_ptr<FeedStream> feed_stream_;
+  raw_ptr<signin::IdentityManager> identity_manager_;
   base::ScopedObservation<history::HistoryService,
                           history::HistoryServiceObserver>
       scoped_history_service_observer_{this};
@@ -87,8 +93,10 @@ class FeedService::HistoryObserverImpl
 
 class FeedService::NetworkDelegateImpl : public FeedNetworkImpl::Delegate {
  public:
-  explicit NetworkDelegateImpl(FeedService::Delegate* service_delegate)
-      : service_delegate_(service_delegate) {}
+  NetworkDelegateImpl(FeedService::Delegate* service_delegate,
+                      signin::IdentityManager* identity_manager)
+      : service_delegate_(service_delegate),
+        identity_manager_(identity_manager) {}
   NetworkDelegateImpl(const NetworkDelegateImpl&) = delete;
   NetworkDelegateImpl& operator=(const NetworkDelegateImpl&) = delete;
 
@@ -97,8 +105,16 @@ class FeedService::NetworkDelegateImpl : public FeedNetworkImpl::Delegate {
     return service_delegate_->GetLanguageTag();
   }
 
+  AccountInfo GetAccountInfo() override {
+    return AccountInfo(
+        identity_manager_->GetPrimaryAccountInfo(signin::ConsentLevel::kSync));
+  }
+
+  bool IsOffline() override { return net::NetworkChangeNotifier::IsOffline(); }
+
  private:
-  FeedService::Delegate* service_delegate_;
+  raw_ptr<FeedService::Delegate> service_delegate_;
+  raw_ptr<signin::IdentityManager> identity_manager_;
 };
 
 class FeedService::StreamDelegateImpl : public FeedStream::Delegate {
@@ -121,7 +137,7 @@ class FeedService::StreamDelegateImpl : public FeedStream::Delegate {
   bool IsEulaAccepted() override {
     return eula_notifier_.IsEulaAccepted() ||
            base::CommandLine::ForCurrentProcess()->HasSwitch(
-               "feedv2-accept-eula");
+               "feed-screenshot-mode");
   }
   bool IsOffline() override { return net::NetworkChangeNotifier::IsOffline(); }
   DisplayMetrics GetDisplayMetrics() override {
@@ -130,23 +146,34 @@ class FeedService::StreamDelegateImpl : public FeedStream::Delegate {
   std::string GetLanguageTag() override {
     return service_delegate_->GetLanguageTag();
   }
+  bool IsAutoplayEnabled() override {
+    return service_delegate_->IsAutoplayEnabled();
+  }
   void ClearAll() override { service_delegate_->ClearAll(); }
   void PrefetchImage(const GURL& url) override {
     service_delegate_->PrefetchImage(url);
   }
-  bool IsSignedIn() override {
-    return identity_manager_->HasPrimaryAccount(signin::ConsentLevel::kSync);
+  AccountInfo GetAccountInfo() override {
+    return AccountInfo(
+        identity_manager_->GetPrimaryAccountInfo(signin::ConsentLevel::kSync));
   }
   void RegisterExperiments(const Experiments& experiments) override {
     service_delegate_->RegisterExperiments(experiments);
   }
+  void RegisterFollowingFeedFollowCountFieldTrial(
+      size_t follow_count) override {
+    service_delegate_->RegisterFollowingFeedFollowCountFieldTrial(follow_count);
+  }
+  void RegisterFeedUserSettingsFieldTrial(base::StringPiece group) override {
+    service_delegate_->RegisterFeedUserSettingsFieldTrial(group);
+  }
 
  private:
-  FeedService::Delegate* service_delegate_;
+  raw_ptr<FeedService::Delegate> service_delegate_;
   web_resource::EulaAcceptedNotifier eula_notifier_;
   std::unique_ptr<EulaObserver> eula_observer_;
   std::unique_ptr<HistoryObserverImpl> history_observer_;
-  signin::IdentityManager* identity_manager_;
+  raw_ptr<signin::IdentityManager> identity_manager_;
 };
 
 class FeedService::IdentityManagerObserverImpl
@@ -176,8 +203,8 @@ class FeedService::IdentityManagerObserverImpl
   }
 
  private:
-  signin::IdentityManager* identity_manager_;
-  FeedStream* feed_stream_;
+  raw_ptr<signin::IdentityManager> identity_manager_;
+  raw_ptr<FeedStream> feed_stream_;
 };
 
 FeedService::FeedService(std::unique_ptr<FeedStream> stream)
@@ -193,8 +220,6 @@ FeedService::FeedService(
         key_value_store_database,
     signin::IdentityManager* identity_manager,
     history::HistoryService* history_service,
-    offline_pages::PrefetchService* prefetch_service,
-    offline_pages::OfflinePageModel* offline_page_model,
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
     scoped_refptr<base::SequencedTaskRunner> background_task_runner,
     const std::string& api_key,
@@ -203,7 +228,8 @@ FeedService::FeedService(
       refresh_task_scheduler_(std::move(refresh_task_scheduler)) {
   stream_delegate_ = std::make_unique<StreamDelegateImpl>(
       local_state, delegate_.get(), identity_manager);
-  network_delegate_ = std::make_unique<NetworkDelegateImpl>(delegate_.get());
+  network_delegate_ =
+      std::make_unique<NetworkDelegateImpl>(delegate_.get(), identity_manager);
   metrics_reporter_ = std::make_unique<MetricsReporter>(profile_prefs);
   feed_network_ = std::make_unique<FeedNetworkImpl>(
       network_delegate_.get(), identity_manager, api_key, url_loader_factory,
@@ -217,7 +243,8 @@ FeedService::FeedService(
       refresh_task_scheduler_.get(), metrics_reporter_.get(),
       stream_delegate_.get(), profile_prefs, feed_network_.get(),
       image_fetcher_.get(), store_.get(), persistent_key_value_store_.get(),
-      prefetch_service, offline_page_model, chrome_info);
+      chrome_info);
+  api_ = stream_.get();
 
   history_observer_ = std::make_unique<HistoryObserverImpl>(
       history_service, static_cast<FeedStream*>(stream_.get()),
@@ -230,17 +257,26 @@ FeedService::FeedService(
 
   delegate_->RegisterExperiments(prefs::GetExperiments(*profile_prefs));
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   application_status_listener_ =
       base::android::ApplicationStatusListener::New(base::BindRepeating(
           &FeedService::OnApplicationStateChange, base::Unretained(this)));
 #endif
 }
 
+FeedService::FeedService() = default;
+
+// static
+std::unique_ptr<FeedService> FeedService::CreateForTesting(FeedApi* api) {
+  auto result = base::WrapUnique(new FeedService());
+  result->api_ = api;
+  return result;
+}
+
 FeedService::~FeedService() = default;
 
-FeedStreamApi* FeedService::GetStream() {
-  return stream_.get();
+FeedApi* FeedService::GetStream() {
+  return api_;
 }
 
 void FeedService::ClearCachedData() {
@@ -252,7 +288,25 @@ bool FeedService::IsEnabled(const PrefService& pref_service) {
   return pref_service.GetBoolean(feed::prefs::kEnableSnippets);
 }
 
-#if defined(OS_ANDROID)
+// static
+uint64_t FeedService::GetReliabilityLoggingId(const std::string& metrics_id,
+                                              PrefService* prefs) {
+  // The reliability logging ID is generated from the UMA client ID so that it
+  // changes whenever the UMA client ID changes. We hash the UMA client ID with
+  // a random salt so that the UMA client ID can't be guessed from the
+  // reliability logging ID. The salt never leaves the client.
+  uint64_t salt;
+  if (!prefs->HasPrefPath(prefs::kReliabilityLoggingIdSalt)) {
+    salt = base::RandUint64();
+    prefs->SetUint64(prefs::kReliabilityLoggingIdSalt, salt);
+  } else {
+    salt = prefs->GetUint64(prefs::kReliabilityLoggingIdSalt);
+  }
+  return base::FastHash(base::StrCat(
+      {metrics_id, std::string(reinterpret_cast<char*>(&salt), sizeof(salt))}));
+}
+
+#if BUILDFLAG(IS_ANDROID)
 void FeedService::OnApplicationStateChange(
     base::android::ApplicationState state) {
   if (state == base::android::APPLICATION_STATE_HAS_RUNNING_ACTIVITIES) {

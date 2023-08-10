@@ -17,7 +17,6 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/memory/ref_counted.h"
 #include "base/run_loop.h"
-#include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
@@ -86,6 +85,9 @@ class PrefStoreReadObserver : public PrefStore::Observer {
     pref_store_->AddObserver(this);
   }
 
+  PrefStoreReadObserver(const PrefStoreReadObserver&) = delete;
+  PrefStoreReadObserver& operator=(const PrefStoreReadObserver&) = delete;
+
   ~PrefStoreReadObserver() override { pref_store_->RemoveObserver(this); }
 
   PersistentPrefStore::PrefReadError Read() {
@@ -108,8 +110,6 @@ class PrefStoreReadObserver : public PrefStore::Observer {
  private:
   scoped_refptr<PersistentPrefStore> pref_store_;
   base::OnceClosure stop_waiting_;
-
-  DISALLOW_COPY_AND_ASSIGN(PrefStoreReadObserver);
 };
 
 const char kUnprotectedPref[] = "unprotected_pref";
@@ -149,7 +149,7 @@ class ProfilePrefStoreManagerTest : public testing::Test,
 
     ProfilePrefStoreManager::RegisterProfilePrefs(profile_pref_registry_.get());
     for (const prefs::TrackedPreferenceMetadata* it = kConfiguration;
-         it != kConfiguration + base::size(kConfiguration); ++it) {
+         it != kConfiguration + std::size(kConfiguration); ++it) {
       if (it->strategy == PrefTrackingStrategy::ATOMIC) {
         profile_pref_registry_->RegisterStringPref(it->name, std::string());
       } else {
@@ -164,7 +164,7 @@ class ProfilePrefStoreManagerTest : public testing::Test,
     // registered above for this test as kPreferenceResetTime is already
     // registered in ProfilePrefStoreManager::RegisterProfilePrefs.
     prefs::TrackedPreferenceMetadata pref_reset_time_config = {
-        (*configuration_.rbegin())->reporting_id + 1,
+        static_cast<size_t>((*configuration_.rbegin())->reporting_id + 1),
         user_prefs::kPreferenceResetTime, EnforcementLevel::ENFORCE_ON_LOAD,
         PrefTrackingStrategy::ATOMIC};
     configuration_.push_back(
@@ -175,8 +175,8 @@ class ProfilePrefStoreManagerTest : public testing::Test,
   }
 
   void ReloadConfiguration() {
-    manager_.reset(new ProfilePrefStoreManager(profile_dir_.GetPath(), seed_,
-                                               "device_id"));
+    manager_ = std::make_unique<ProfilePrefStoreManager>(profile_dir_.GetPath(),
+                                                         seed_, "device_id");
   }
 
   void TearDown() override {
@@ -307,13 +307,12 @@ class ProfilePrefStoreManagerTest : public testing::Test,
   void ExpectStringValueEquals(const std::string& name,
                                const std::string& expected) {
     const base::Value* value = NULL;
-    std::string as_string;
     if (!pref_store_->GetValue(name, &value)) {
       ADD_FAILURE() << name << " is not a defined value.";
-    } else if (!value->GetAsString(&as_string)) {
+    } else if (!value->is_string()) {
       ADD_FAILURE() << name << " could not be coerced to a string.";
     } else {
-      EXPECT_EQ(expected, as_string);
+      EXPECT_EQ(expected, value->GetString());
     }
   }
 

@@ -205,18 +205,18 @@ int WebMStreamParser::ParseInfoAndTracks(const uint8_t* data, int size) {
 
   if (info_parser.duration() > 0) {
     int64_t duration_in_us = info_parser.duration() * timecode_scale_in_us;
-    params.duration = base::TimeDelta::FromMicroseconds(duration_in_us);
+    params.duration = base::Microseconds(duration_in_us);
   }
 
   params.timeline_offset = info_parser.date_utc();
 
   if (unknown_segment_size_ && (info_parser.duration() <= 0) &&
       !info_parser.date_utc().is_null()) {
-    params.liveness = DemuxerStream::LIVENESS_LIVE;
+    params.liveness = StreamLiveness::kLive;
   } else if (info_parser.duration() >= 0) {
-    params.liveness = DemuxerStream::LIVENESS_RECORDED;
+    params.liveness = StreamLiveness::kRecorded;
   } else {
-    params.liveness = DemuxerStream::LIVENESS_UNKNOWN;
+    params.liveness = StreamLiveness::kUnknown;
   }
 
   const AudioDecoderConfig& audio_config = tracks_parser.audio_decoder_config();
@@ -234,7 +234,7 @@ int WebMStreamParser::ParseInfoAndTracks(const uint8_t* data, int size) {
     return -1;
   }
 
-  cluster_parser_.reset(new WebMClusterParser(
+  cluster_parser_ = std::make_unique<WebMClusterParser>(
       timecode_scale_in_ns, tracks_parser.audio_track_num(),
       tracks_parser.GetAudioDefaultDuration(timecode_scale_in_ns),
       tracks_parser.video_track_num(),
@@ -242,7 +242,7 @@ int WebMStreamParser::ParseInfoAndTracks(const uint8_t* data, int size) {
       tracks_parser.text_tracks(), tracks_parser.ignored_tracks(),
       tracks_parser.audio_encryption_key_id(),
       tracks_parser.video_encryption_key_id(), audio_config.codec(),
-      media_log_));
+      media_log_);
 
   if (init_cb_) {
     params.detected_audio_track_count =

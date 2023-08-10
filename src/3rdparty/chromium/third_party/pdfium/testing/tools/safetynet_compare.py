@@ -4,6 +4,8 @@
 # found in the LICENSE file.
 """Compares the performance of two versions of the pdfium code."""
 
+from __future__ import print_function
+
 import argparse
 import functools
 import glob
@@ -16,7 +18,6 @@ import subprocess
 import sys
 import tempfile
 
-# pylint: disable=relative-import
 from common import GetBooleanGnArg
 from common import PrintErr
 from common import RunCommandPropagateErr
@@ -33,7 +34,7 @@ def RunSingleTestCaseParallel(this, run_label, build_dir, test_case):
   return (test_case, result)
 
 
-class CompareRun(object):
+class CompareRun:
   """A comparison between two branches of pdfium."""
 
   def __init__(self, args):
@@ -527,8 +528,7 @@ class CompareRun(object):
       output_filename = (
           'callgrind.out.%s.%s' % (test_case.replace('/', '_'), run_label))
       return os.path.join(self.args.output_dir, output_filename)
-    else:
-      return None
+    return None
 
   def _DrawConclusions(self, times_before_branch, times_after_branch):
     """Draws conclusions comparing results of test runs in two branches.
@@ -564,7 +564,7 @@ class CompareRun(object):
           ComparisonConclusions.GetOutputDict().
     """
     if self.args.machine_readable:
-      print json.dumps(conclusions_dict)
+      print(json.dumps(conclusions_dict))
     else:
       PrintConclusionsDictHumanReadable(
           conclusions_dict, colored=True, key=self.args.case_order)

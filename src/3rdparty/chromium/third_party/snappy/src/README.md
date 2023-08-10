@@ -1,7 +1,6 @@
 Snappy, a fast compressor/decompressor.
 
-[![Build Status](https://travis-ci.org/google/snappy.svg?branch=master)](https://travis-ci.org/google/snappy)
-[![Build status](https://ci.appveyor.com/api/projects/status/t9nubcqkwo8rw8yn/branch/master?svg=true)](https://ci.appveyor.com/project/pwnall/leveldb)
+[![Build Status](https://github.com/google/snappy/actions/workflows/build.yml/badge.svg)](https://github.com/google/snappy/actions/workflows/build.yml)
 
 Introduction
 ============
@@ -131,11 +130,6 @@ The testdata/ directory contains the files used by the microbenchmarks, which
 should provide a reasonably balanced starting point for benchmarking. (Note that
 baddata[1-3].snappy are not intended as benchmarks; they are used to verify
 correctness in the presence of corrupted data in the unit test.)
-
-The gflags library for handling of command-line flags is used if it's installed.
-You can find it at
-
-  https://gflags.github.io/gflags/
 
 
 Contact

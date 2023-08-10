@@ -6,6 +6,21 @@ module handwriting.mojom;
 
 // https://github.com/WICG/handwriting-recognition/blob/main/explainer.md
 
+// CrOS's handwriting service's API, defined in
+// //chromeos/services/machine_leaning/public/mojom and mirrored into platform2,
+// is largely derived from the types and interfaces defined below.
+//
+// The feature query APIs are not plumbed through, but otherwise, new
+// fields/methods likely need to be plumbed through the corresponding CrOS APIs
+// as well.
+//
+// Any changes in overlapping part may need to be kept synced in all these
+// three places,
+// 1. "chromeos/services/machine_learning/public/mojom/web_platform_handwriting.mojom"
+//    in chrome repo.
+// 2. "platform2/ml/mojom/web_platform_handwriting.mojom" in CrOS repo.
+// 3. This file.
+
 import "mojo/public/mojom/base/time.mojom";
 import "ui/gfx/geometry/mojom/geometry.mojom";
 
@@ -18,7 +33,7 @@ struct HandwritingPoint {
   gfx.mojom.PointF location;
   // The time elapsed since the starting time (e.g. when the first ink point
   // of the drawing is captured).
-  mojo_base.mojom.TimeDelta t;
+  mojo_base.mojom.TimeDelta? t;
 };
 
 // Represents a stroke which is just a series of points.
@@ -60,7 +75,7 @@ struct HandwritingSegment {
 };
 
 // Represents one single prediction result.
-// The final prediction output is an array of it.
+// The final prediction output is an array of these.
 // Corresponds to handwriting_prediction.idl.
 struct HandwritingPrediction {
   string text;
@@ -80,52 +95,49 @@ struct HandwritingHints {
   // previously recognized, or were given as the writing context (e.g.
   // "Write your name here:"). This is the linguistic context to help
   // disambiguate the handwriting (e.g. “Hello world” vs. “Hello word”).
-  string text_context;
+  // This could be null if the application doesn't or can't provide context. It
+  // could be the empty string if a text field is empty, e.g. the beginning of
+  // input.
+  string? text_context;
   // The maximum number of alternative predictions to generate.
   uint32 alternatives;
 };
 
-// Represents the struct for query features supported by the backend handwriting
-// recognizer.
-// Corresponds to handwriting_feature_query.idl.
-struct HandwritingFeatureQuery {
-  // If non-empty, queries whether the languages are supported.
-  // Languages are IETF BCP 47 language tags, e.g., "en", "zh-CN", "zh-Hans".
-  array<string> languages;
-  // Whether the "alternative" feature is queried.
+enum HandwritingRecognitionType {
+  kText,
+};
+
+enum HandwritingInputType {
+  kMouse,
+  kStylus,
+  kTouch,
+};
+
+// The description of supported hints.
+// Corresponds to handwriting_recognizer_query_result.idl
+struct HandwritingHintsQueryResult {
+  array<HandwritingRecognitionType> recognition_type;
+  array<HandwritingInputType> input_type;
+  bool text_context;
   bool alternatives;
-  // Whether the "segmentation" feature is queried.
-  bool segmentation_result;
 };
 
-// Because "bool" is not nullable, we need to define an enum to present the
-// status. And this will also be helpful when we need to extend it, for
-// example, adding `kNeedDownload`.
-// Add `kNotQueried` to make it possible to use `mojo::Converter` to convert
-// `HandwritingFeatureQueryResult` types (otherwise, there is no way to know
-// whether a feature is queried or not in the converter function.
-enum HandwritingFeatureStatus {
-  kNotQueried,
-  kSupported,
-  kNotSupported,
+// The recognizer query result.
+// Corresponds to handwriting_recognizer_query_result.idl
+struct QueryHandwritingRecognizerResult {
+  bool text_alternatives;
+  bool text_segmentation;
+  HandwritingHintsQueryResult hints;
 };
 
-// The feature query result.
-// Corresponds to handwriting_feature_query_result.idl.
-struct HandwritingFeatureQueryResult {
-  HandwritingFeatureStatus languages = kNotQueried;
-  HandwritingFeatureStatus alternatives = kNotQueried;
-  HandwritingFeatureStatus segmentation_result = kNotQueried;
-};
-
-// Used in creating recognizer.
+// Used in querying and creating recognizer.
 // Corresponds to handwriting_model_constraint.idl.
 struct HandwritingModelConstraint {
   // Languages are IETF BCP 47 language tags, e.g., "en", "zh-CN", "zh-Hans".
   array<string> languages;
 };
 
-// Interface for a renderer to use a specific speech recognition backend.
+// Interface for a renderer to use a specific handwriting recognition backend.
 // The browser handles the requests and forwards them to the appropriate
 // backend.
 interface HandwritingRecognizer {
@@ -141,7 +153,7 @@ interface HandwritingRecognizer {
 };
 
 // Per-document interface that allows the renderer to ask the browser for
-// a specific speech recognizer backend, query capabilities, et cetera.
+// a specific handwriting recognizer backend, query capabilities, et cetera.
 // Corresponds to `navigator_handwriting_recognition_service.idl`.
 interface HandwritingRecognitionService {
   // Creates a recognizer.
@@ -150,14 +162,17 @@ interface HandwritingRecognitionService {
   CreateHandwritingRecognizer(HandwritingModelConstraint constraint)
     => (CreateHandwritingRecognizerResult result,
         pending_remote<HandwritingRecognizer>? handwriting_recognizer);
-  // Queries the features supported by the platform.
-  // This is used by IDL API
-  // `blink::HandwritingRecognitionService::queryHandwritingRecognizerSupport`.
-  QueryHandwritingRecognizerSupport(HandwritingFeatureQuery query)
-    => (HandwritingFeatureQueryResult? result);
+
+  // Queries the features of the best recognizer satisfying `constraint`.
+  // `blink::HandwritingRecognitionService::queryHandwritingRecognizer`.
+  QueryHandwritingRecognizer(HandwritingModelConstraint? constraint)
+    => (QueryHandwritingRecognizerResult? result);
 };
 
 enum CreateHandwritingRecognizerResult {
   kOk,
   kError,
+  // The provided model constraint can't be satisfied (e.g. the language is
+  // not supported).
+  kNotSupported,
 };

@@ -8,9 +8,7 @@
 
 #include <cmath>
 
-#include "base/macros.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/strings/stringprintf.h"
 #include "ui/gfx/geometry/insets.h"
 
 namespace ui {

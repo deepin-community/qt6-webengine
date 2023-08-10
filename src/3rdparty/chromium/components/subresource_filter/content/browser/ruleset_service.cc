@@ -12,13 +12,12 @@
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/location.h"
-#include "base/macros.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/numerics/safe_conversions.h"
-#include "base/sequenced_task_runner.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/task/post_task.h"
-#include "base/task_runner_util.h"
+#include "base/task/sequenced_task_runner.h"
+#include "base/task/task_runner_util.h"
+#include "base/task/thread_pool.h"
 #include "base/threading/scoped_blocking_call.h"
 #include "base/trace_event/trace_event.h"
 #include "base/trace_event/traced_value.h"
@@ -75,14 +74,15 @@ class SentinelFile {
   explicit SentinelFile(const base::FilePath& version_directory)
       : path_(IndexedRulesetLocator::GetSentinelFilePath(version_directory)) {}
 
+  SentinelFile(const SentinelFile&) = delete;
+  SentinelFile& operator=(const SentinelFile&) = delete;
+
   bool IsPresent() { return base::PathExists(path_); }
   bool Create() { return base::WriteFile(path_, nullptr, 0) == 0; }
   bool Remove() { return base::DeleteFile(path_); }
 
  private:
   base::FilePath path_;
-
-  DISALLOW_COPY_AND_ASSIGN(SentinelFile);
 };
 
 }  // namespace
@@ -472,12 +472,12 @@ void RulesetService::OpenAndPublishRuleset(
       base::BindOnce(&RulesetService::OnRulesetSet, AsWeakPtr()));
 }
 
-void RulesetService::OnRulesetSet(base::File file) {
+void RulesetService::OnRulesetSet(RulesetFilePtr file) {
   // The file has just been successfully written, so a failure here is unlikely
   // unless |indexed_ruleset_base_dir_| has been tampered with or there are disk
   // errors. Still, restore the invariant that a valid version in preferences
   // always points to an existing version of disk by invalidating the prefs.
-  if (!file.IsValid()) {
+  if (!file->IsValid()) {
     IndexedRulesetVersion().SaveToPrefs(local_state_);
     return;
   }

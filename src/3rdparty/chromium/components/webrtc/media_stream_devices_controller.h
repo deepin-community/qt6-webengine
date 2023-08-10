@@ -9,6 +9,7 @@
 #include <string>
 
 #include "base/callback.h"
+#include "base/memory/raw_ptr.h"
 #include "build/build_config.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/webrtc/media_stream_device_enumerator_impl.h"
@@ -34,7 +35,7 @@ class MediaStreamDevicesController {
  public:
   typedef base::OnceCallback<void(const blink::MediaStreamDevices& devices,
                                   blink::mojom::MediaStreamRequestResult result,
-                                  bool blocked_by_feature_policy,
+                                  bool blocked_by_permissions_policy,
                                   ContentSetting audio_setting,
                                   ContentSetting video_setting)>
       ResultCallback;
@@ -64,13 +65,13 @@ class MediaStreamDevicesController {
       bool did_prompt_for_video,
       const std::vector<ContentSetting>& responses);
 
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   // Called when the Android OS-level prompt is answered.
   static void AndroidOSPromptAnswered(
       std::unique_ptr<MediaStreamDevicesController> controller,
       std::vector<ContentSetting> responses,
       bool android_prompt_granted);
-#endif  // defined(OS_ANDROID)
+#endif  // BUILDFLAG(IS_ANDROID)
 
   // Returns true if audio/video should be requested through the
   // PermissionManager. We won't try to request permission if the request is
@@ -84,7 +85,7 @@ class MediaStreamDevicesController {
                                        ContentSetting video_setting);
 
   // Runs |callback_| with the current audio/video permission settings.
-  void RunCallback(bool blocked_by_feature_policy);
+  void RunCallback(bool blocked_by_permissions_policy);
 
   // Returns the content settings for the given content type and request.
   ContentSetting GetContentSetting(
@@ -113,10 +114,10 @@ class MediaStreamDevicesController {
   ContentSetting video_setting_;
   blink::mojom::MediaStreamRequestResult denial_reason_;
 
-  content::WebContents* web_contents_;
+  raw_ptr<content::WebContents> web_contents_;
 
   // The object which lists available devices.
-  MediaStreamDeviceEnumerator* enumerator_;
+  raw_ptr<MediaStreamDeviceEnumerator> enumerator_;
 
   // This enumerator is used as |enumerator_| when the instance passed into the
   // constructor is null.

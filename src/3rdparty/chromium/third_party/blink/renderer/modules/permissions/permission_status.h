@@ -9,7 +9,7 @@
 #include "third_party/blink/renderer/bindings/core/v8/active_script_wrappable.h"
 #include "third_party/blink/renderer/core/dom/events/event_target.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_state_observer.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/mojo/heap_mojo_receiver.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
@@ -18,6 +18,7 @@ namespace blink {
 
 class ExecutionContext;
 class ScriptPromiseResolver;
+class Permissions;
 
 // Expose the status of a given permission type for the current
 // ExecutionContext.
@@ -31,15 +32,18 @@ class PermissionStatus final : public EventTargetWithInlineData,
   using MojoPermissionStatus = mojom::blink::PermissionStatus;
 
  public:
-  static PermissionStatus* Take(ScriptPromiseResolver*,
+  static PermissionStatus* Take(Permissions&,
+                                ScriptPromiseResolver*,
                                 MojoPermissionStatus,
                                 MojoPermissionDescriptor);
 
-  static PermissionStatus* CreateAndListen(ExecutionContext*,
+  static PermissionStatus* CreateAndListen(Permissions&,
+                                           ExecutionContext*,
                                            MojoPermissionStatus,
                                            MojoPermissionDescriptor);
 
-  PermissionStatus(ExecutionContext*,
+  PermissionStatus(Permissions&,
+                   ExecutionContext*,
                    MojoPermissionStatus,
                    MojoPermissionDescriptor);
   ~PermissionStatus() override;
@@ -56,6 +60,8 @@ class PermissionStatus final : public EventTargetWithInlineData,
   void ContextDestroyed() override {}
 
   String state() const;
+
+  String name() const;
 
   DEFINE_ATTRIBUTE_EVENT_LISTENER(change, kChange)
 

@@ -5,11 +5,8 @@
 #ifndef SERVICES_DATA_DECODER_PUBLIC_CPP_SAFE_WEB_BUNDLE_PARSER_H_
 #define SERVICES_DATA_DECODER_PUBLIC_CPP_SAFE_WEB_BUNDLE_PARSER_H_
 
-#include <string>
-
 #include "base/containers/flat_map.h"
 #include "base/files/file.h"
-#include "base/optional.h"
 #include "components/web_package/mojom/web_bundle_parser.mojom.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
@@ -23,6 +20,10 @@ namespace data_decoder {
 class SafeWebBundleParser {
  public:
   SafeWebBundleParser();
+
+  SafeWebBundleParser(const SafeWebBundleParser&) = delete;
+  SafeWebBundleParser& operator=(const SafeWebBundleParser&) = delete;
+
   // Remaining callbacks on flight will be dropped.
   ~SafeWebBundleParser();
 
@@ -70,8 +71,6 @@ class SafeWebBundleParser {
   base::OnceClosure disconnect_callback_;
   size_t response_callback_next_id_ = 0;
   bool disconnected_ = true;
-
-  DISALLOW_COPY_AND_ASSIGN(SafeWebBundleParser);
 };
 
 }  // namespace data_decoder

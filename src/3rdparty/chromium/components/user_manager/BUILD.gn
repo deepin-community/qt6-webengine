@@ -18,12 +18,14 @@ component("user_manager") {
 
   public_deps = [
     "//base",
-    "//base/util/values:values_util",
     "//components/account_id",
     "//ui/gfx",
   ]
 
-  deps = [ "//google_apis" ]
+  deps = [
+    "//components/crash/core/common",
+    "//google_apis",
+  ]
 
   defines = [ "USER_MANAGER_IMPLEMENTATION" ]
 
@@ -71,10 +73,17 @@ if (is_chromeos_ash) {
 
   source_set("unit_tests") {
     testonly = true
-    sources = [ "user_unittest.cc" ]
+    sources = [
+      "known_user_unittest.cc",
+      "user_unittest.cc",
+    ]
     deps = [
+      ":test_support",
       ":user_manager",
+      "//base/test:test_support",
       "//components/account_id",
+      "//components/prefs:test_support",
+      "//testing/gmock",
       "//testing/gtest",
     ]
   }

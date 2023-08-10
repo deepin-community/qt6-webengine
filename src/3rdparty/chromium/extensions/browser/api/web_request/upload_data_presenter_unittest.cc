@@ -26,10 +26,10 @@ TEST(WebRequestUploadDataPresenterTest, ParsedData) {
   net::UploadBytesElementReader element(block, sizeof(block) - 1);
 
   // Expected output.
-  std::unique_ptr<base::ListValue> values(new base::ListValue);
-  values->AppendString("value");
-  base::DictionaryValue expected_form;
-  expected_form.SetWithoutPathExpansion("key.with.dots", std::move(values));
+  base::Value values(base::Value::Type::LIST);
+  values.Append("value");
+  base::Value expected_form(base::Value::Type::DICTIONARY);
+  expected_form.SetKey("key.with.dots", std::move(values));
 
   // Real output.
   std::unique_ptr<ParsedDataPresenter> parsed_data_presenter(
@@ -41,7 +41,7 @@ TEST(WebRequestUploadDataPresenterTest, ParsedData) {
   std::unique_ptr<base::Value> result = parsed_data_presenter->Result();
   ASSERT_TRUE(result.get() != NULL);
 
-  EXPECT_TRUE(result->Equals(&expected_form));
+  EXPECT_EQ(*result, expected_form);
 }
 
 TEST(WebRequestUploadDataPresenterTest, RawData) {

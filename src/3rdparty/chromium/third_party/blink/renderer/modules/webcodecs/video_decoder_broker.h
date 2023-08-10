@@ -12,12 +12,12 @@
 #include "base/callback.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
-#include "base/optional.h"
 #include "base/sequence_checker.h"
-#include "media/base/decode_status.h"
+#include "media/base/decoder_status.h"
 #include "media/base/video_decoder.h"
 #include "media/base/video_frame.h"
 #include "media/video/gpu_video_accelerator_factories.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
 #include "third_party/blink/renderer/modules/webcodecs/hardware_preference.h"
@@ -45,17 +45,16 @@ class MediaVideoTaskWrapper;
 class CrossThreadVideoDecoderClient {
  public:
   struct DecoderDetails {
-    std::string display_name;
     media::VideoDecoderType decoder_id;
     bool is_platform_decoder;
     bool needs_bitstream_conversion;
     int max_decode_requests;
   };
 
-  virtual void OnInitialize(media::Status status,
-                            base::Optional<DecoderDetails> details) = 0;
+  virtual void OnInitialize(media::DecoderStatus status,
+                            absl::optional<DecoderDetails> details) = 0;
 
-  virtual void OnDecodeDone(int cb_id, media::Status status) = 0;
+  virtual void OnDecodeDone(int cb_id, media::DecoderStatus status) = 0;
 
   virtual void OnDecodeOutput(scoped_refptr<media::VideoFrame> frame,
                               bool can_read_without_stalling) = 0;
@@ -76,8 +75,6 @@ class CrossThreadVideoDecoderClient {
 class MODULES_EXPORT VideoDecoderBroker : public media::VideoDecoder,
                                           public CrossThreadVideoDecoderClient {
  public:
-  static constexpr char kDefaultDisplayName[] = "EmptyWebCodecsVideoDecoder";
-
   // |gpu_factories| may be null when GPU accelerated decoding is not available.
   explicit VideoDecoderBroker(
       ExecutionContext& execution_context,
@@ -91,7 +88,6 @@ class MODULES_EXPORT VideoDecoderBroker : public media::VideoDecoder,
 
   // VideoDecoder implementation.
   media::VideoDecoderType GetDecoderType() const override;
-  std::string GetDisplayName() const override;
   bool IsPlatformDecoder() const override;
   void Initialize(const media::VideoDecoderConfig& config,
                   bool low_delay,
@@ -114,9 +110,9 @@ class MODULES_EXPORT VideoDecoderBroker : public media::VideoDecoder,
   int CreateCallbackId();
 
   // MediaVideoTaskWrapper::CrossThreadVideoDecoderClient
-  void OnInitialize(media::Status status,
-                    base::Optional<DecoderDetails> details) override;
-  void OnDecodeDone(int cb_id, media::Status status) override;
+  void OnInitialize(media::DecoderStatus status,
+                    absl::optional<DecoderDetails> details) override;
+  void OnDecodeDone(int cb_id, media::DecoderStatus status) override;
   void OnDecodeOutput(scoped_refptr<media::VideoFrame> frame,
                       bool can_read_without_stalling) override;
   void OnReset(int cb_id) override;
@@ -132,12 +128,8 @@ class MODULES_EXPORT VideoDecoderBroker : public media::VideoDecoder,
   // Owner of state and methods to be used on media_task_runner_;
   std::unique_ptr<MediaVideoTaskWrapper> media_tasks_;
 
-  // Display name for current underlying decoder. Will be kDefaultDisplayName
-  // if no decoder is currently initialized.
-  std::string display_name_ = kDefaultDisplayName;
-
-  // Wrapper state for GetDisplayName(), IsPlatformDecoder() and others.
-  base::Optional<DecoderDetails> decoder_details_;
+  // Wrapper state for GetDecoderType(), IsPlatformDecoder() and others.
+  absl::optional<DecoderDetails> decoder_details_;
 
   // Set to match the underlying decoder's answer at every OnDecodeOutput().
   bool can_read_without_stalling_ = true;

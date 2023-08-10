@@ -15,10 +15,10 @@
 #include "base/hash/md5.h"
 #include "base/location.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task_runner.h"
+#include "base/task/single_thread_task_runner.h"
+#include "base/task/task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "build/build_config.h"
@@ -46,7 +46,7 @@ void RunOrPostGetMostVisitedURLsCallback(
     task_runner->PostTask(FROM_HERE, base::BindOnce(std::move(callback), urls));
 }
 
-// Checks if the titles stored in |old_list| and |new_list| have changes.
+// Checks if the titles stored in `old_list` and `new_list` have changes.
 bool DoTitlesDiffer(const MostVisitedURLList& old_list,
                     const MostVisitedURLList& new_list) {
   // If the two lists have different sizes, the most visited titles are
@@ -62,18 +62,17 @@ bool DoTitlesDiffer(const MostVisitedURLList& old_list,
 }
 
 // The delay for the first HistoryService query at startup.
-constexpr base::TimeDelta kFirstDelayAtStartup =
-    base::TimeDelta::FromSeconds(15);
+constexpr base::TimeDelta kFirstDelayAtStartup = base::Seconds(15);
 
 // The delay for the all HistoryService queries other than the first one.
-#if defined(OS_IOS) || defined(OS_ANDROID)
+#if BUILDFLAG(IS_IOS) || BUILDFLAG(IS_ANDROID)
 // On mobile, having the max at 60 minutes results in the topsites database
 // being not updated often enough since the app isn't usually running for long
 // stretches of time.
-constexpr base::TimeDelta kDelayForUpdates = base::TimeDelta::FromMinutes(5);
+constexpr base::TimeDelta kDelayForUpdates = base::Minutes(5);
 #else
-constexpr base::TimeDelta kDelayForUpdates = base::TimeDelta::FromMinutes(60);
-#endif  // defined(OS_IOS) || defined(OS_ANDROID)
+constexpr base::TimeDelta kDelayForUpdates = base::Minutes(60);
+#endif  // BUILDFLAG(IS_IOS) || BUILDFLAG(IS_ANDROID)
 
 // Key for preference listing the URLs that should not be shown as most visited
 // tiles.
@@ -143,19 +142,18 @@ void TopSitesImpl::SyncWithHistory() {
 }
 
 bool TopSitesImpl::HasBlockedUrls() const {
-  const base::DictionaryValue* blocked_urls =
+  const base::Value* blocked_urls =
       pref_service_->GetDictionary(kBlockedUrlsPrefsKey);
-  return blocked_urls && !blocked_urls->empty();
+  return blocked_urls && !blocked_urls->DictEmpty();
 }
 
 void TopSitesImpl::AddBlockedUrl(const GURL& url) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
-  auto dummy = std::make_unique<base::Value>();
   {
     DictionaryPrefUpdate update(pref_service_, kBlockedUrlsPrefsKey);
-    base::DictionaryValue* blocked_urls = update.Get();
-    blocked_urls->SetWithoutPathExpansion(GetURLHash(url), std::move(dummy));
+    base::Value* blocked_urls = update.Get();
+    blocked_urls->SetKey(GetURLHash(url), base::Value());
   }
 
   ResetThreadSafeCache();
@@ -166,7 +164,7 @@ void TopSitesImpl::RemoveBlockedUrl(const GURL& url) {
   DCHECK(thread_checker_.CalledOnValidThread());
   {
     DictionaryPrefUpdate update(pref_service_, kBlockedUrlsPrefsKey);
-    base::DictionaryValue* blocked_urls = update.Get();
+    base::Value* blocked_urls = update.Get();
     blocked_urls->RemoveKey(GetURLHash(url));
   }
   ResetThreadSafeCache();
@@ -175,17 +173,17 @@ void TopSitesImpl::RemoveBlockedUrl(const GURL& url) {
 
 bool TopSitesImpl::IsBlocked(const GURL& url) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  const base::DictionaryValue* blocked_urls =
+  const base::Value* blocked_urls =
       pref_service_->GetDictionary(kBlockedUrlsPrefsKey);
-  return blocked_urls && blocked_urls->HasKey(GetURLHash(url));
+  return blocked_urls && blocked_urls->FindKey(GetURLHash(url));
 }
 
 void TopSitesImpl::ClearBlockedUrls() {
   DCHECK(thread_checker_.CalledOnValidThread());
   {
     DictionaryPrefUpdate update(pref_service_, kBlockedUrlsPrefsKey);
-    base::DictionaryValue* blocked_urls = update.Get();
-    blocked_urls->Clear();
+    base::Value* blocked_urls = update.Get();
+    blocked_urls->DictClear();
   }
   ResetThreadSafeCache();
   NotifyTopSitesChanged(TopSitesObserver::ChangeReason::BLOCKED_URLS);
@@ -369,9 +367,9 @@ void TopSitesImpl::SetTopSites(MostVisitedURLList top_sites,
 int TopSitesImpl::num_results_to_request_from_history() const {
   DCHECK(thread_checker_.CalledOnValidThread());
 
-  const base::DictionaryValue* blocked_urls =
+  const base::Value* blocked_urls =
       pref_service_->GetDictionary(kBlockedUrlsPrefsKey);
-  return kTopSitesNumber + (blocked_urls ? blocked_urls->size() : 0);
+  return kTopSitesNumber + (blocked_urls ? blocked_urls->DictSize() : 0);
 }
 
 void TopSitesImpl::MoveStateToLoaded() {
@@ -398,7 +396,7 @@ void TopSitesImpl::MoveStateToLoaded() {
     std::move(callback).Run(urls);
 
   if (history_service_)
-    history_service_observation_.Observe(history_service_);
+    history_service_observation_.Observe(history_service_.get());
 
   NotifyTopSitesLoaded();
 }
@@ -419,7 +417,7 @@ void TopSitesImpl::ScheduleUpdateTimer() {
 void TopSitesImpl::OnGotMostVisitedURLs(MostVisitedURLList sites) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
-  // Set |top_sites_| directly so that SetTopSites() diffs correctly.
+  // Set `top_sites_` directly so that SetTopSites() diffs correctly.
   top_sites_ = sites;
   SetTopSites(std::move(sites), CALL_LOCATION_FROM_ON_GOT_MOST_VISITED_URLS);
 

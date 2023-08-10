@@ -4,7 +4,6 @@
 
 #include <memory>
 
-#include "base/stl_util.h"
 #include "base/test/values_test_util.h"
 #include "chrome/browser/ui/webui/print_preview/print_preview_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -23,6 +22,7 @@ const char kMediaSizes[] = "media_sizes";
 const char kPagesPerSheet[] = "Pages per sheet";
 const char kPaperType[] = "Paper Type";
 const char kPrinter[] = "printer";
+const char kResetToDefault[] = "reset_to_default";
 const char kValue[] = "value";
 const char kVendorCapability[] = "vendor_capability";
 
@@ -95,7 +95,8 @@ base::Value ValidList(const base::Value* list) {
 }
 
 bool HasValidEntry(const base::Value* list) {
-  return list && !list->GetList().empty() && !ValidList(list).GetList().empty();
+  return list && !list->GetListDeprecated().empty() &&
+         !ValidList(list).GetListDeprecated().empty();
 }
 
 void CompareStringKeys(const base::Value& expected,
@@ -107,9 +108,12 @@ void CompareStringKeys(const base::Value& expected,
 
 void ValidateList(const base::Value* list_out, const base::Value* input_list) {
   auto input_list_valid = ValidList(input_list);
-  ASSERT_EQ(list_out->GetList().size(), input_list_valid.GetList().size());
-  for (size_t index = 0; index < list_out->GetList().size(); index++) {
-    EXPECT_EQ(list_out->GetList()[index], input_list_valid.GetList()[index]);
+  ASSERT_EQ(list_out->GetListDeprecated().size(),
+            input_list_valid.GetListDeprecated().size());
+  for (size_t index = 0; index < list_out->GetListDeprecated().size();
+       index++) {
+    EXPECT_EQ(list_out->GetListDeprecated()[index],
+              input_list_valid.GetListDeprecated()[index]);
   }
 }
 
@@ -162,8 +166,9 @@ void ValidateVendorCaps(const base::Value* printer_out,
 
   ASSERT_TRUE(vendor_capability_out);
   size_t index = 0;
-  base::Value::ConstListView output_list = vendor_capability_out->GetList();
-  for (const auto& input_entry : input_vendor_caps->GetList()) {
+  base::Value::ConstListView output_list =
+      vendor_capability_out->GetListDeprecated();
+  for (const auto& input_entry : input_vendor_caps->GetListDeprecated()) {
     if (!HasValidEntry(
             input_entry
                 .FindKeyOfType(kSelectCapKey, base::Value::Type::DICTIONARY)
@@ -266,7 +271,7 @@ TEST_F(PrintPreviewUtilsTest, FilterBadVendorCapabilityAllElement) {
   base::DictionaryValue printer = GetCapabilitiesFull();
   base::Value* select_cap_0 =
       printer.FindKeyOfType(kVendorCapability, base::Value::Type::LIST)
-          ->GetList()[0]
+          ->GetListDeprecated()[0]
           .FindKeyOfType(kSelectCapKey, base::Value::Type::DICTIONARY);
   select_cap_0->RemoveKey(kOptionKey);
   base::Value::ListStorage option_list;
@@ -283,7 +288,7 @@ TEST_F(PrintPreviewUtilsTest, FilterBadVendorCapabilityOneElement) {
   base::DictionaryValue printer = GetCapabilitiesFull();
   base::Value* vendor_dictionary =
       printer.FindKeyOfType(kVendorCapability, base::Value::Type::LIST)
-          ->GetList()[0]
+          ->GetListDeprecated()[0]
           .FindKeyOfType(kSelectCapKey, base::Value::Type::DICTIONARY);
   vendor_dictionary->RemoveKey(kOptionKey);
   base::Value::ListStorage pages_per_sheet;
@@ -305,6 +310,35 @@ TEST_F(PrintPreviewUtilsTest, FilterBadVendorCapabilityOneElement) {
   cdd.SetKey(kPrinter, printer.Clone());
   auto cdd_out = ValidateCddForPrintPreview(std::move(cdd));
   ValidatePrinter(&cdd_out, printer);
+}
+
+bool GetDpiResetToDefault(base::Value cdd) {
+  base::Value* printer =
+      cdd.FindKeyOfType(kPrinter, base::Value::Type::DICTIONARY);
+  base::Value* dpi =
+      printer->FindKeyOfType(kDpi, base::Value::Type::DICTIONARY);
+  absl::optional<bool> reset_to_default = dpi->FindBoolKey(kResetToDefault);
+  EXPECT_TRUE(reset_to_default);
+  return *reset_to_default;
+}
+
+TEST_F(PrintPreviewUtilsTest, CddResetToDefault) {
+  base::DictionaryValue printer = GetCapabilitiesFull();
+  base::Value* dpi_dict =
+      printer.FindKeyOfType(kDpi, base::Value::Type::DICTIONARY);
+
+  base::DictionaryValue cdd;
+  dpi_dict->SetKey(kResetToDefault, base::Value(true));
+  cdd.SetKey(kPrinter, printer.Clone());
+  auto cdd_out = ValidateCddForPrintPreview(cdd.Clone());
+  ValidatePrinter(&cdd_out, printer);
+  EXPECT_TRUE(GetDpiResetToDefault(std::move(cdd_out)));
+
+  dpi_dict->SetKey(kResetToDefault, base::Value(false));
+  cdd.SetKey(kPrinter, printer.Clone());
+  cdd_out = ValidateCddForPrintPreview(std::move(cdd));
+  ValidatePrinter(&cdd_out, printer);
+  EXPECT_FALSE(GetDpiResetToDefault(std::move(cdd_out)));
 }
 
 }  // namespace printing

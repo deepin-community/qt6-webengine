@@ -6,8 +6,8 @@
 #define COMPONENTS_PERFORMANCE_MANAGER_PUBLIC_GRAPH_PROCESS_NODE_H_
 
 #include "base/callback_forward.h"
+#include "base/containers/enum_set.h"
 #include "base/containers/flat_set.h"
-#include "base/macros.h"
 #include "base/process/process.h"
 #include "base/task/task_traits.h"
 #include "components/performance_manager/public/graph/node.h"
@@ -44,7 +44,21 @@ class ProcessNode : public Node {
   using Observer = ProcessNodeObserver;
   class ObserverDefaultImpl;
 
+  // The type of content a renderer can host.
+  enum class ContentType : uint32_t {
+    kExtension = 1 << 0,
+    kMainFrame = 1 << 1,
+    kAd = 1 << 2,
+  };
+
+  using ContentTypes =
+      base::EnumSet<ContentType, ContentType::kExtension, ContentType::kAd>;
+
   ProcessNode();
+
+  ProcessNode(const ProcessNode&) = delete;
+  ProcessNode& operator=(const ProcessNode&) = delete;
+
   ~ProcessNode() override;
 
   // Returns the type of this process.
@@ -69,7 +83,7 @@ class ProcessNode : public Node {
 
   // Returns the exit status of this process. This will be empty if the process
   // has not yet exited.
-  virtual base::Optional<int32_t> GetExitStatus() const = 0;
+  virtual absl::optional<int32_t> GetExitStatus() const = 0;
 
   // Visits the frame nodes that are hosted in this process. The iteration is
   // halted if the visitor returns false. Returns true if every call to the
@@ -91,6 +105,10 @@ class ProcessNode : public Node {
   // Returns the most recently measured private memory footprint of the process.
   // This is roughly private, anonymous, non-discardable, resident or swapped
   // memory in kilobytes. For more details, see https://goo.gl/3kPb9S.
+  //
+  // Note: This is only valid if at least one component has expressed interest
+  // for process memory metrics by calling
+  // ProcessMetricsDecorator::RegisterInterestForProcessMetrics.
   virtual uint64_t GetPrivateFootprintKb() const = 0;
 
   // Returns the most recently measured resident set of the process, in
@@ -108,8 +126,9 @@ class ProcessNode : public Node {
   // Returns the current priority of the process.
   virtual base::TaskPriority GetPriority() const = 0;
 
- private:
-  DISALLOW_COPY_AND_ASSIGN(ProcessNode);
+  // Returns a bit field indicating what type of content this process has
+  // hosted, either currently or in the past.
+  virtual ContentTypes GetHostedContentTypes() const = 0;
 };
 
 // Pure virtual observer interface. Derive from this if you want to be forced to
@@ -117,11 +136,17 @@ class ProcessNode : public Node {
 class ProcessNodeObserver {
  public:
   ProcessNodeObserver();
+
+  ProcessNodeObserver(const ProcessNodeObserver&) = delete;
+  ProcessNodeObserver& operator=(const ProcessNodeObserver&) = delete;
+
   virtual ~ProcessNodeObserver();
 
   // Node lifetime notifications.
 
-  // Called when a |process_node| is added to the graph.
+  // Called when a |process_node| is added to the graph. Observers must not make
+  // any property changes or cause re-entrant notifications during the scope of
+  // this call.
   virtual void OnProcessNodeAdded(const ProcessNode* process_node) = 0;
 
   // The process associated with |process_node| has been started or has exited.
@@ -129,7 +154,9 @@ class ProcessNodeObserver {
   // exit status properties have changed.
   virtual void OnProcessLifetimeChange(const ProcessNode* process_node) = 0;
 
-  // Called before a |process_node| is removed from the graph.
+  // Called before a |process_node| is removed from the graph. Observers must
+  // not make any property changes or cause re-entrant notifications during the
+  // scope of this call.
   virtual void OnBeforeProcessNodeRemoved(const ProcessNode* process_node) = 0;
 
   // Notifications of property changes.
@@ -144,9 +171,6 @@ class ProcessNodeObserver {
 
   // Fired when all frames in a process have transitioned to being frozen.
   virtual void OnAllFramesInProcessFrozen(const ProcessNode* process_node) = 0;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(ProcessNodeObserver);
 };
 
 // Default implementation of observer that provides dummy versions of each
@@ -155,6 +179,10 @@ class ProcessNodeObserver {
 class ProcessNode::ObserverDefaultImpl : public ProcessNodeObserver {
  public:
   ObserverDefaultImpl();
+
+  ObserverDefaultImpl(const ObserverDefaultImpl&) = delete;
+  ObserverDefaultImpl& operator=(const ObserverDefaultImpl&) = delete;
+
   ~ObserverDefaultImpl() override;
 
   // ProcessNodeObserver implementation:
@@ -165,9 +193,6 @@ class ProcessNode::ObserverDefaultImpl : public ProcessNodeObserver {
   void OnPriorityChanged(const ProcessNode* process_node,
                          base::TaskPriority previous_value) override {}
   void OnAllFramesInProcessFrozen(const ProcessNode* process_node) override {}
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(ObserverDefaultImpl);
 };
 
 }  // namespace performance_manager

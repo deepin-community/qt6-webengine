@@ -5,10 +5,13 @@
 #ifndef COMPONENTS_INFOBARS_CORE_CONFIRM_INFOBAR_DELEGATE_H_
 #define COMPONENTS_INFOBARS_CORE_CONFIRM_INFOBAR_DELEGATE_H_
 
-#include "base/strings/string16.h"
+#include <string>
+
 #include "build/build_config.h"
 #include "components/infobars/core/infobar_delegate.h"
 #include "components/infobars/core/infobar_manager.h"
+#include "ui/base/models/image_model.h"
+#include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/text_constants.h"
 
 namespace infobars {
@@ -38,10 +41,10 @@ class ConfirmInfoBarDelegate : public infobars::InfoBarDelegate {
 
   // Returns the title string to be displayed for the InfoBar.
   // Defaults to having not title. Currently only used on iOS.
-  virtual base::string16 GetTitleText() const;
+  virtual std::u16string GetTitleText() const;
 
   // Returns the message string to be displayed for the InfoBar.
-  virtual base::string16 GetMessageText() const = 0;
+  virtual std::u16string GetMessageText() const = 0;
 
   // Returns the elide behavior for the message string.
   // Not supported on Android.
@@ -52,13 +55,25 @@ class ConfirmInfoBarDelegate : public infobars::InfoBarDelegate {
 
   // Returns the label for the specified button. The default implementation
   // returns "OK" for the OK button and "Cancel" for the Cancel button.
-  virtual base::string16 GetButtonLabel(InfoBarButton button) const;
+  virtual std::u16string GetButtonLabel(InfoBarButton button) const;
+
+  // Returns the label for the specified button. The default implementation
+  // returns an empty image.
+  virtual ui::ImageModel GetButtonImage(InfoBarButton button) const;
+
+  // Returns whether the specified button is enabled. The default implementation
+  // returns true.
+  virtual bool GetButtonEnabled(InfoBarButton button) const;
+
+  // Returns the tooltip for the specified button. The default implementation
+  // returns an empty tooltip.
+  virtual std::u16string GetButtonTooltip(InfoBarButton button) const;
 
   // Returns whether or not the OK button will trigger a UAC elevation prompt on
   // Windows.
   virtual bool OKButtonTriggersUACPrompt() const;
 
-#if defined(OS_IOS)
+#if BUILDFLAG(IS_IOS)
   // Returns whether or not a tint should be applied to the icon background.
   // Defaults to true.
   virtual bool UseIconBackgroundTint() const;

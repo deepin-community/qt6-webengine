@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-#include "base/strings/string16.h"
+#include "base/memory/raw_ptr.h"
 #include "pdf/page_orientation.h"
 #include "pdf/pdfium/pdfium_page.h"
 #include "ui/gfx/geometry/point.h"
@@ -16,13 +16,13 @@
 
 namespace chrome_pdf {
 
-constexpr base::char16 kZeroWidthSpace = 0x200B;
-constexpr base::char16 kPDFSoftHyphenMarker = 0xFFFE;
+constexpr char16_t kZeroWidthSpace = 0x200B;
+constexpr char16_t kPDFSoftHyphenMarker = 0xFFFE;
 
 // Helper for identifying characters that PDFium outputs, via FPDFText_GetText,
 // that have special meaning, but should not be included in things like copied
 // text or when running find.
-bool IsIgnorableCharacter(base::char16 c);
+bool IsIgnorableCharacter(char16_t c);
 
 // Describes location of a string of characters.
 class PDFiumRange {
@@ -46,10 +46,11 @@ class PDFiumRange {
       PageOrientation orientation) const;
 
   // Gets the string of characters in this range.
-  base::string16 GetText() const;
+  std::u16string GetText() const;
 
  private:
-  PDFiumPage* page_;
+  // The page containing the range. Must outlive `this`.
+  raw_ptr<PDFiumPage> page_;
   // Index of first character.
   int char_index_;
   // How many characters are part of this range (negative if backwards).

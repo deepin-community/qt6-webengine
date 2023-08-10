@@ -6,10 +6,15 @@
 
 #include "base/callback.h"
 #include "base/callback_helpers.h"
+#include "base/observer_list.h"
 #include "build/build_config.h"
 #include "ui/base/ime/input_method_delegate.h"
 #include "ui/base/ime/text_input_client.h"
 #include "ui/events/event.h"
+
+#if BUILDFLAG(IS_WIN)
+#include <windows.h>
+#endif
 
 namespace ui {
 
@@ -58,21 +63,29 @@ void MockInputMethod::OnFocus() {
     observer.OnFocus();
 }
 
+void MockInputMethod::OnTouch(ui::EventPointerType pointerType) {}
+
 void MockInputMethod::OnBlur() {
   for (InputMethodObserver& observer : observer_list_)
     observer.OnBlur();
 }
 
-#if defined(OS_WIN)
-bool MockInputMethod::OnUntranslatedIMEMessage(const MSG event,
+#if BUILDFLAG(IS_WIN)
+bool MockInputMethod::OnUntranslatedIMEMessage(const CHROME_MSG event,
                                                NativeEventResult* result) {
   if (result)
     *result = NativeEventResult();
   return false;
 }
+
+void MockInputMethod::OnInputLocaleChanged() {}
+
+bool MockInputMethod::IsInputLocaleCJK() const {
+  return false;
+}
 #endif
 
-void MockInputMethod::OnTextInputTypeChanged(const TextInputClient* client) {
+void MockInputMethod::OnTextInputTypeChanged(TextInputClient* client) {
   for (InputMethodObserver& observer : observer_list_)
     observer.OnTextInputStateChanged(client);
 }
@@ -85,40 +98,17 @@ void MockInputMethod::OnCaretBoundsChanged(const TextInputClient* client) {
 void MockInputMethod::CancelComposition(const TextInputClient* client) {
 }
 
-void MockInputMethod::OnInputLocaleChanged() {
-}
-
-bool MockInputMethod::IsInputLocaleCJK() const {
-  return false;
-}
-
 TextInputType MockInputMethod::GetTextInputType() const {
   return TEXT_INPUT_TYPE_NONE;
-}
-
-TextInputMode MockInputMethod::GetTextInputMode() const {
-  return TEXT_INPUT_MODE_DEFAULT;
-}
-
-int MockInputMethod::GetTextInputFlags() const {
-  return 0;
-}
-
-bool MockInputMethod::CanComposeInline() const {
-  return true;
 }
 
 bool MockInputMethod::IsCandidatePopupOpen() const {
   return false;
 }
 
-bool MockInputMethod::GetClientShouldDoLearning() {
-  return false;
-}
-
-void MockInputMethod::ShowVirtualKeyboardIfEnabled() {
+void MockInputMethod::SetVirtualKeyboardVisibilityIfEnabled(bool should_show) {
   for (InputMethodObserver& observer : observer_list_)
-    observer.OnShowVirtualKeyboardIfEnabled();
+    observer.OnVirtualKeyboardVisibilityChangedIfEnabled(should_show);
 }
 
 void MockInputMethod::AddObserver(InputMethodObserver* observer) {

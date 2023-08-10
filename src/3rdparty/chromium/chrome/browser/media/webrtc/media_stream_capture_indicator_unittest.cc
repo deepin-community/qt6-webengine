@@ -5,6 +5,7 @@
 #include "chrome/browser/media/webrtc/media_stream_capture_indicator.h"
 
 #include "base/bind.h"
+#include "base/callback.h"
 #include "chrome/browser/media/webrtc/media_capture_devices_dispatcher.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "content/public/test/web_contents_tester.h"
@@ -18,6 +19,10 @@ namespace {
 class LenientMockObserver : public MediaStreamCaptureIndicator::Observer {
  public:
   LenientMockObserver() = default;
+
+  LenientMockObserver(const LenientMockObserver&) = delete;
+  LenientMockObserver& operator=(const LenientMockObserver&) = delete;
+
   ~LenientMockObserver() override {}
 
   // Helper functions used to set the expectations of the mock methods. This
@@ -62,8 +67,6 @@ class LenientMockObserver : public MediaStreamCaptureIndicator::Observer {
                void(content::WebContents* contents, bool is_capturing_window));
   MOCK_METHOD2(OnIsCapturingDisplayChanged,
                void(content::WebContents* contents, bool is_capturing_display));
-
-  DISALLOW_COPY_AND_ASSIGN(LenientMockObserver);
 };
 using MockObserver = testing::StrictMock<LenientMockObserver>;
 
@@ -115,34 +118,51 @@ class MediaStreamCaptureIndicatorTest : public ChromeRenderViewHostTestHarness {
 };
 
 struct ObserverMethodTestParam {
+  ObserverMethodTestParam(
+      blink::mojom::MediaStreamType stream_type,
+      media::mojom::DisplayMediaInformationPtr display_media_info,
+      MockObserverSetExpectationsMethod observer_method,
+      AccessorMethod accessor_method)
+      : stream_type(stream_type),
+        display_media_info(display_media_info.Clone()),
+        observer_method(observer_method),
+        accessor_method(accessor_method) {}
+
+  ObserverMethodTestParam(const ObserverMethodTestParam& other)
+      : stream_type(other.stream_type),
+        display_media_info(other.display_media_info.Clone()),
+        observer_method(other.observer_method),
+        accessor_method(other.accessor_method) {}
+
   blink::mojom::MediaStreamType stream_type;
-  base::Optional<media::mojom::DisplayMediaInformation> display_media_info;
+  media::mojom::DisplayMediaInformationPtr display_media_info;
   MockObserverSetExpectationsMethod observer_method;
   AccessorMethod accessor_method;
 };
 
 ObserverMethodTestParam kObserverMethodTestParams[] = {
     {blink::mojom::MediaStreamType::DEVICE_VIDEO_CAPTURE,
-     /*display_media_info=*/base::nullopt,
+     /*display_media_info=*/nullptr,
      &MockObserver::SetOnIsCapturingVideoChangedExpectation,
      &MediaStreamCaptureIndicator::IsCapturingVideo},
     {blink::mojom::MediaStreamType::DEVICE_AUDIO_CAPTURE,
-     /*display_media_info=*/base::nullopt,
+     /*display_media_info=*/nullptr,
      &MockObserver::SetOnIsCapturingAudioChangedExpectation,
      &MediaStreamCaptureIndicator::IsCapturingAudio},
     {blink::mojom::MediaStreamType::GUM_TAB_VIDEO_CAPTURE,
-     /*display_media_info=*/base::nullopt,
+     /*display_media_info=*/nullptr,
      &MockObserver::SetOnIsBeingMirroredChangedExpectation,
      &MediaStreamCaptureIndicator::IsBeingMirrored},
     {blink::mojom::MediaStreamType::GUM_DESKTOP_VIDEO_CAPTURE,
-     /*display_media_info=*/base::nullopt,
+     /*display_media_info=*/nullptr,
      &MockObserver::SetOnIsCapturingWindowChangedExpectation,
      &MediaStreamCaptureIndicator::IsCapturingWindow},
     {blink::mojom::MediaStreamType::GUM_DESKTOP_VIDEO_CAPTURE,
-     media::mojom::DisplayMediaInformation(
+     media::mojom::DisplayMediaInformation::New(
          media::mojom::DisplayCaptureSurfaceType::MONITOR,
          /*logical_surface=*/true,
-         media::mojom::CursorCaptureType::NEVER),
+         media::mojom::CursorCaptureType::NEVER,
+         /*capture_handle=*/nullptr),
      &MockObserver::SetOnIsCapturingDisplayChangedExpectation,
      &MediaStreamCaptureIndicator::IsCapturingDisplay},
 };
@@ -177,7 +197,8 @@ TEST_P(MediaStreamCaptureIndicatorObserverMethodTest, AddAndRemoveDevice) {
   // Make sure that the observer gets called and that the corresponding accessor
   // gets called when |OnStarted| is called.
   (observer()->*(param.observer_method))(source, true);
-  ui->OnStarted(base::OnceClosure(), content::MediaStreamUI::SourceCallback(),
+  ui->OnStarted(base::RepeatingClosure(),
+                content::MediaStreamUI::SourceCallback(),
                 /*label=*/std::string(), /*screen_capture_ids=*/{},
                 content::MediaStreamUI::StateChangeCallback());
   EXPECT_TRUE((indicator()->*(param.accessor_method))(web_contents()));
@@ -200,7 +221,8 @@ TEST_P(MediaStreamCaptureIndicatorObserverMethodTest, CloseActiveWebContents) {
   std::unique_ptr<content::MediaStreamUI> ui =
       indicator()->RegisterMediaStream(source, {CreateFakeDevice(param)});
   (observer()->*(param.observer_method))(source, true);
-  ui->OnStarted(base::OnceClosure(), content::MediaStreamUI::SourceCallback(),
+  ui->OnStarted(base::RepeatingClosure(),
+                content::MediaStreamUI::SourceCallback(),
                 /*label=*/std::string(), /*screen_capture_ids=*/{},
                 content::MediaStreamUI::StateChangeCallback());
   ::testing::Mock::VerifyAndClear(observer());

@@ -5,10 +5,7 @@
 #ifndef SERVICES_NETWORK_PUBLIC_CPP_CROSS_THREAD_PENDING_SHARED_URL_LOADER_FACTORY_H_
 #define SERVICES_NETWORK_PUBLIC_CPP_CROSS_THREAD_PENDING_SHARED_URL_LOADER_FACTORY_H_
 
-#include <memory>
-
 #include "base/component_export.h"
-#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 

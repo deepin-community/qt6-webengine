@@ -13,9 +13,9 @@
 #include "base/unguessable_token.h"
 #include "build/build_config.h"
 #include "cc/test/fake_output_surface_client.h"
-#include "cc/test/geometry_test_utils.h"
 #include "cc/test/resource_provider_test_utils.h"
 #include "components/viz/client/client_resource_provider.h"
+#include "components/viz/common/frame_sinks/copy_output_request.h"
 #include "components/viz/common/quads/aggregated_render_pass.h"
 #include "components/viz/common/quads/aggregated_render_pass_draw_quad.h"
 #include "components/viz/common/quads/compositor_render_pass.h"
@@ -50,6 +50,7 @@ const gfx::Rect kOverlayRect(0, 0, 256, 256);
 const gfx::PointF kUVTopLeft(0.1f, 0.2f);
 const gfx::PointF kUVBottomRight(1.0f, 1.0f);
 const gfx::Rect kRenderPassOutputRect(0, 0, 256, 256);
+const gfx::Rect kOverlayDamageRect(0, 0, 100, 100);
 
 class OverlayOutputSurface : public OutputSurface {
  public:
@@ -92,8 +93,7 @@ class OverlayOutputSurface : public OutputSurface {
 
 class CATestOverlayProcessor : public OverlayProcessorMac {
  public:
-  CATestOverlayProcessor()
-      : OverlayProcessorMac(true /* enable_ca_overlay */) {}
+  CATestOverlayProcessor() : OverlayProcessorMac() {}
 };
 
 std::unique_ptr<AggregatedRenderPass> CreateRenderPass() {
@@ -115,11 +115,9 @@ static ResourceId CreateResourceInLayerTree(
   auto resource = TransferableResource::MakeGL(
       gpu::Mailbox::Generate(), GL_LINEAR, GL_TEXTURE_2D, gpu::SyncToken(),
       size, is_overlay_candidate);
-  auto release_callback = SingleReleaseCallback::Create(
-      base::BindRepeating([](const gpu::SyncToken&, bool) {}));
 
-  ResourceId resource_id = child_resource_provider->ImportResource(
-      resource, std::move(release_callback));
+  ResourceId resource_id =
+      child_resource_provider->ImportResource(resource, base::DoNothing());
 
   return resource_id;
 }
@@ -132,7 +130,8 @@ ResourceId CreateResource(DisplayResourceProvider* parent_resource_provider,
   ResourceId resource_id = CreateResourceInLayerTree(
       child_resource_provider, size, is_overlay_candidate);
 
-  int child_id = parent_resource_provider->CreateChild(base::DoNothing());
+  int child_id =
+      parent_resource_provider->CreateChild(base::DoNothing(), SurfaceId());
 
   // Transfer resource to the parent.
   std::vector<ResourceId> resource_ids_to_transfer;
@@ -205,8 +204,8 @@ TextureDrawQuad* CreateFullscreenCandidateQuad(
       shared_quad_state, render_pass, render_pass->output_rect);
 }
 
-SkMatrix44 GetIdentityColorMatrix() {
-  return SkMatrix44(SkMatrix44::kIdentity_Constructor);
+SkM44 GetIdentityColorMatrix() {
+  return SkM44();
 }
 
 class CALayerOverlayTest : public testing::Test {
@@ -244,7 +243,7 @@ class CALayerOverlayTest : public testing::Test {
   scoped_refptr<TestContextProvider> child_provider_;
   std::unique_ptr<ClientResourceProvider> child_resource_provider_;
   std::unique_ptr<CATestOverlayProcessor> overlay_processor_;
-  gfx::Rect damage_rect_;
+  gfx::Rect damage_rect_ = kOverlayDamageRect;
   std::vector<gfx::Rect> content_bounds_;
 };
 
@@ -256,7 +255,6 @@ TEST_F(CALayerOverlayTest, AllowNonAxisAlignedTransform) {
   pass->shared_quad_state_list.back()
       ->quad_to_target_transform.RotateAboutZAxis(45.f);
 
-  gfx::Rect damage_rect;
   CALayerOverlayList ca_layer_list;
   OverlayProcessorInterface::FilterOperationsMap render_pass_filters;
   OverlayProcessorInterface::FilterOperationsMap render_pass_backdrop_filters;
@@ -269,7 +267,7 @@ TEST_F(CALayerOverlayTest, AllowNonAxisAlignedTransform) {
       render_pass_filters, render_pass_backdrop_filters,
       std::move(surface_damage_rect_list), nullptr, &ca_layer_list,
       &damage_rect_, &content_bounds_);
-  EXPECT_EQ(gfx::Rect(), damage_rect);
+  EXPECT_EQ(gfx::Rect(), damage_rect_);
   EXPECT_EQ(1U, ca_layer_list.size());
   gfx::Rect overlay_damage = overlay_processor_->GetAndResetOverlayDamage();
   EXPECT_EQ(kRenderPassOutputRect, overlay_damage);
@@ -311,10 +309,8 @@ TEST_F(CALayerOverlayTest, AllowContainingClip) {
   CreateFullscreenCandidateQuad(
       resource_provider_.get(), child_resource_provider_.get(),
       child_provider_.get(), pass->shared_quad_state_list.back(), pass.get());
-  pass->shared_quad_state_list.back()->is_clipped = true;
   pass->shared_quad_state_list.back()->clip_rect = kOverlayRect;
 
-  gfx::Rect damage_rect;
   CALayerOverlayList ca_layer_list;
   OverlayProcessorInterface::FilterOperationsMap render_pass_filters;
   OverlayProcessorInterface::FilterOperationsMap render_pass_backdrop_filters;
@@ -327,7 +323,7 @@ TEST_F(CALayerOverlayTest, AllowContainingClip) {
       render_pass_filters, render_pass_backdrop_filters,
       std::move(surface_damage_rect_list), nullptr, &ca_layer_list,
       &damage_rect_, &content_bounds_);
-  EXPECT_EQ(gfx::Rect(), damage_rect);
+  EXPECT_EQ(gfx::Rect(), damage_rect_);
   EXPECT_EQ(1U, ca_layer_list.size());
   EXPECT_EQ(0U, output_surface_->bind_framebuffer_count());
 }
@@ -337,10 +333,8 @@ TEST_F(CALayerOverlayTest, NontrivialClip) {
   CreateFullscreenCandidateQuad(
       resource_provider_.get(), child_resource_provider_.get(),
       child_provider_.get(), pass->shared_quad_state_list.back(), pass.get());
-  pass->shared_quad_state_list.back()->is_clipped = true;
   pass->shared_quad_state_list.back()->clip_rect = gfx::Rect(64, 64, 128, 128);
 
-  gfx::Rect damage_rect;
   CALayerOverlayList ca_layer_list;
   OverlayProcessorInterface::FilterOperationsMap render_pass_filters;
   OverlayProcessorInterface::FilterOperationsMap render_pass_backdrop_filters;
@@ -353,9 +347,8 @@ TEST_F(CALayerOverlayTest, NontrivialClip) {
       render_pass_filters, render_pass_backdrop_filters,
       std::move(surface_damage_rect_list), nullptr, &ca_layer_list,
       &damage_rect_, &content_bounds_);
-  EXPECT_EQ(gfx::Rect(), damage_rect);
+  EXPECT_EQ(gfx::Rect(), damage_rect_);
   EXPECT_EQ(1U, ca_layer_list.size());
-  EXPECT_TRUE(ca_layer_list.back().shared_state->is_clipped);
   EXPECT_EQ(gfx::RectF(64, 64, 128, 128),
             ca_layer_list.back().shared_state->clip_rect);
   EXPECT_EQ(0U, output_surface_->bind_framebuffer_count());
@@ -368,7 +361,6 @@ TEST_F(CALayerOverlayTest, SkipTransparent) {
       child_provider_.get(), pass->shared_quad_state_list.back(), pass.get());
   pass->shared_quad_state_list.back()->opacity = 0;
 
-  gfx::Rect damage_rect;
   CALayerOverlayList ca_layer_list;
   OverlayProcessorInterface::FilterOperationsMap render_pass_filters;
   OverlayProcessorInterface::FilterOperationsMap render_pass_backdrop_filters;
@@ -381,7 +373,7 @@ TEST_F(CALayerOverlayTest, SkipTransparent) {
       render_pass_filters, render_pass_backdrop_filters,
       std::move(surface_damage_rect_list), nullptr, &ca_layer_list,
       &damage_rect_, &content_bounds_);
-  EXPECT_EQ(gfx::Rect(), damage_rect);
+  EXPECT_EQ(gfx::Rect(), damage_rect_);
   EXPECT_EQ(0U, ca_layer_list.size());
   EXPECT_EQ(0U, output_surface_->bind_framebuffer_count());
 }
@@ -393,7 +385,6 @@ TEST_F(CALayerOverlayTest, SkipNonVisible) {
       child_provider_.get(), pass->shared_quad_state_list.back(), pass.get());
   pass->quad_list.back()->visible_rect.set_size(gfx::Size());
 
-  gfx::Rect damage_rect;
   CALayerOverlayList ca_layer_list;
   OverlayProcessorInterface::FilterOperationsMap render_pass_filters;
   OverlayProcessorInterface::FilterOperationsMap render_pass_backdrop_filters;
@@ -406,9 +397,151 @@ TEST_F(CALayerOverlayTest, SkipNonVisible) {
       render_pass_filters, render_pass_backdrop_filters,
       std::move(surface_damage_rect_list), nullptr, &ca_layer_list,
       &damage_rect_, &content_bounds_);
-  EXPECT_EQ(gfx::Rect(), damage_rect);
+  EXPECT_EQ(gfx::Rect(), damage_rect_);
   EXPECT_EQ(0U, ca_layer_list.size());
   EXPECT_EQ(0U, output_surface_->bind_framebuffer_count());
+}
+
+TEST_F(CALayerOverlayTest, YUVDrawQuadOverlay) {
+  const gfx::Size y_size(640, 480);
+  const gfx::Size uv_size(320, 240);
+  bool is_overlay_candidate = true;
+  ResourceId y_resource_id =
+      CreateResource(resource_provider_.get(), child_resource_provider_.get(),
+                     child_provider_.get(), y_size, is_overlay_candidate);
+
+  ResourceId u_resource_id =
+      CreateResource(resource_provider_.get(), child_resource_provider_.get(),
+                     child_provider_.get(), uv_size, is_overlay_candidate);
+
+  ResourceId v_resource_id =
+      CreateResource(resource_provider_.get(), child_resource_provider_.get(),
+                     child_provider_.get(), uv_size, is_overlay_candidate);
+
+  ResourceId uv_resource_id =
+      CreateResource(resource_provider_.get(), child_resource_provider_.get(),
+                     child_provider_.get(), uv_size, is_overlay_candidate);
+
+  // NV12 frames should be promoted to overlays.
+  {
+    auto pass = CreateRenderPass();
+    auto* yuv_quad = pass->CreateAndAppendDrawQuad<YUVVideoDrawQuad>();
+    yuv_quad->SetNew(pass->shared_quad_state_list.back(), gfx::Rect(y_size),
+                     gfx::Rect(y_size),
+                     /*needs_blending=*/false,
+                     /*ya_texcoord_rect=*/gfx::RectF(0, 0, 640, 480),
+                     /*uv_texcoord_rect=*/gfx::RectF(0, 0, 320, 240), y_size,
+                     uv_size, y_resource_id, uv_resource_id, uv_resource_id,
+                     kInvalidResourceId, gfx::ColorSpace::CreateREC709(),
+                     /*offset=*/0.0f,
+                     /*multiplier=*/1.0f,
+                     /*bits_per_channel=*/8);
+
+    CALayerOverlayList ca_layer_list;
+    OverlayProcessorInterface::FilterOperationsMap render_pass_filters;
+    OverlayProcessorInterface::FilterOperationsMap render_pass_backdrop_filters;
+    AggregatedRenderPassList pass_list;
+    pass_list.push_back(std::move(pass));
+    SurfaceDamageRectList surface_damage_rect_list;
+
+    overlay_processor_->ProcessForOverlays(
+        resource_provider_.get(), &pass_list, GetIdentityColorMatrix(),
+        render_pass_filters, render_pass_backdrop_filters,
+        std::move(surface_damage_rect_list), nullptr, &ca_layer_list,
+        &damage_rect_, &content_bounds_);
+    EXPECT_EQ(gfx::Rect(), damage_rect_);
+    EXPECT_EQ(1U, ca_layer_list.size());
+  }
+
+  // If seprate Y, U, and V resources are specified, then we cannot represent
+  // them as overlays. Only Y and U==V resources are supported.
+  // https://crbug.com/1216345
+  {
+    auto pass = CreateRenderPass();
+    auto* yuv_quad = pass->CreateAndAppendDrawQuad<YUVVideoDrawQuad>();
+    yuv_quad->SetNew(pass->shared_quad_state_list.back(), gfx::Rect(y_size),
+                     gfx::Rect(y_size),
+                     /*needs_blending=*/false,
+                     /*ya_texcoord_rect=*/gfx::RectF(0, 0, 640, 480),
+                     /*uv_texcoord_rect=*/gfx::RectF(0, 0, 320, 240), y_size,
+                     uv_size, y_resource_id, u_resource_id, v_resource_id,
+                     kInvalidResourceId, gfx::ColorSpace::CreateREC709(),
+                     /*offset=*/0.0f,
+                     /*multiplier=*/1.0f,
+                     /*bits_per_channel=*/8);
+
+    CALayerOverlayList ca_layer_list;
+    OverlayProcessorInterface::FilterOperationsMap render_pass_filters;
+    OverlayProcessorInterface::FilterOperationsMap render_pass_backdrop_filters;
+    AggregatedRenderPassList pass_list;
+    pass_list.push_back(std::move(pass));
+    SurfaceDamageRectList surface_damage_rect_list;
+
+    overlay_processor_->ProcessForOverlays(
+        resource_provider_.get(), &pass_list, GetIdentityColorMatrix(),
+        render_pass_filters, render_pass_backdrop_filters,
+        std::move(surface_damage_rect_list), nullptr, &ca_layer_list,
+        &damage_rect_, &content_bounds_);
+    EXPECT_EQ(gfx::Rect(), damage_rect_);
+    EXPECT_EQ(0U, ca_layer_list.size());
+    EXPECT_EQ(0U, output_surface_->bind_framebuffer_count());
+  }
+}
+
+TEST_F(CALayerOverlayTest, OverlayErrorCode) {
+  // Frame #1
+  auto pass = CreateRenderPass();
+  CreateFullscreenCandidateQuad(
+      resource_provider_.get(), child_resource_provider_.get(),
+      child_provider_.get(), pass->shared_quad_state_list.back(), pass.get());
+
+  CALayerOverlayList ca_layer_list;
+  OverlayProcessorInterface::FilterOperationsMap render_pass_filters;
+  OverlayProcessorInterface::FilterOperationsMap render_pass_backdrop_filters;
+  AggregatedRenderPassList pass_list;
+  pass_list.push_back(std::move(pass));
+  SurfaceDamageRectList surface_damage_rect_list;
+
+  overlay_processor_->ProcessForOverlays(
+      resource_provider_.get(), &pass_list, GetIdentityColorMatrix(),
+      render_pass_filters, render_pass_backdrop_filters,
+      std::move(surface_damage_rect_list), nullptr, &ca_layer_list,
+      &damage_rect_, &content_bounds_);
+
+  // There should be no error.
+  gfx::CALayerResult error_code = overlay_processor_->GetCALayerErrorCode();
+  EXPECT_EQ(1U, ca_layer_list.size());
+  // kCALayerSuccess = 0,
+  EXPECT_EQ(0, error_code);
+
+  // Frame #2
+  {
+    auto pass = CreateRenderPass();
+    CreateFullscreenCandidateQuad(
+        resource_provider_.get(), child_resource_provider_.get(),
+        child_provider_.get(), pass->shared_quad_state_list.back(), pass.get());
+
+    // Add a copy request to the render pass
+    pass->copy_requests.push_back(CopyOutputRequest::CreateStubForTesting());
+
+    CALayerOverlayList ca_layer_list;
+    AggregatedRenderPassList pass_list;
+    pass_list.push_back(std::move(pass));
+    SurfaceDamageRectList surface_damage_rect_list;
+
+    overlay_processor_->ProcessForOverlays(
+        resource_provider_.get(), &pass_list, GetIdentityColorMatrix(),
+        render_pass_filters, render_pass_backdrop_filters,
+        std::move(surface_damage_rect_list), nullptr, &ca_layer_list,
+        &damage_rect_, &content_bounds_);
+
+    // Overlay should fail when there is a copy request.
+    EXPECT_EQ(0U, ca_layer_list.size());
+
+    // kCALayerFailedCopyRequests = 31,
+    gfx::CALayerResult error_code = overlay_processor_->GetCALayerErrorCode();
+    EXPECT_EQ(31, error_code);
+  }
 }
 
 class CALayerOverlayRPDQTest : public CALayerOverlayTest {

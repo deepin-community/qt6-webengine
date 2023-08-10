@@ -10,12 +10,10 @@
 #include <map>
 
 #include "base/atomic_sequence_num.h"
-#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/process/process.h"
 #include "base/synchronization/lock.h"
 #include "base/thread_annotations.h"
-#include "content/common/render_message_filter.mojom.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/global_request_id.h"
@@ -35,6 +33,9 @@ class RenderWidgetHelper
                                         BrowserThread::DeleteOnIOThread> {
  public:
   RenderWidgetHelper();
+
+  RenderWidgetHelper(const RenderWidgetHelper&) = delete;
+  RenderWidgetHelper& operator=(const RenderWidgetHelper&) = delete;
 
   void Init(int render_process_id);
 
@@ -95,8 +96,6 @@ class RenderWidgetHelper
 
   // The next routing id to use.
   base::AtomicSequenceNumber next_routing_id_;
-
-  DISALLOW_COPY_AND_ASSIGN(RenderWidgetHelper);
 };
 
 }  // namespace content

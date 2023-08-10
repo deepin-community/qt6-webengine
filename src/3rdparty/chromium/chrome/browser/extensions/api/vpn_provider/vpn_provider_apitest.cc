@@ -8,8 +8,6 @@
 #include "base/bind.h"
 #include "base/callback_helpers.h"
 #include "base/memory/ptr_util.h"
-#include "base/optional.h"
-#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
 #include "chrome/browser/extensions/extension_apitest.h"
@@ -30,6 +28,7 @@
 #include "extensions/common/extension.h"
 #include "extensions/test/result_catcher.h"
 #include "testing/gmock/include/gmock/gmock.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 
 using testing::_;
@@ -60,10 +59,8 @@ const char* kParameterKeys[] = {shill::kAddressParameterThirdPartyVpn,
                                 shill::kBroadcastAddressParameterThirdPartyVpn,
                                 shill::kDomainSearchParameterThirdPartyVpn};
 
-void DoNothingFailureCallback(
-    const std::string& error_name,
-    std::unique_ptr<base::DictionaryValue> error_data) {
-  EXPECT_EQ(true, false);
+void DoNothingFailureCallback(const std::string& error_name) {
+  FAIL();
 }
 
 void DoNothingSuccessCallback(const std::string& service_path,
@@ -132,7 +129,7 @@ class VpnProviderApiTest : public extensions::ExtensionApiTest {
   void AddNetworkProfileForUser() {
     ShillProfileClient::Get()->GetTestInterface()->AddProfile(
         kNetworkProfilePath,
-        chromeos::ProfileHelper::GetUserIdHashFromProfile(profile()));
+        ash::ProfileHelper::GetUserIdHashFromProfile(profile()));
     content::RunAllPendingInMessageLoop();
   }
 
@@ -143,9 +140,9 @@ class VpnProviderApiTest : public extensions::ExtensionApiTest {
     content::RunAllPendingInMessageLoop();
   }
 
-  bool RunExtensionTest(const std::string& test_name) {
+  bool RunTest(const std::string& test_name) {
     GURL url = extension_->GetResourceURL("basic.html?#" + test_name);
-    return RunExtensionSubtest("vpn_provider", url.spec());
+    return RunExtensionTest("vpn_provider", {.page_url = url.spec().c_str()});
   }
 
   std::string GetKey(const std::string& config_name) {
@@ -186,7 +183,7 @@ class VpnProviderApiTest : public extensions::ExtensionApiTest {
 
   void TriggerInternalRemove() {
     NetworkHandler::Get()->network_configuration_handler()->RemoveConfiguration(
-        GetSingleServicePath(), /*remove_confirmer=*/base::nullopt,
+        GetSingleServicePath(), /*remove_confirmer=*/absl::nullopt,
         base::DoNothing(), base::BindOnce(DoNothingFailureCallback));
   }
 
@@ -209,18 +206,18 @@ class VpnProviderApiTest : public extensions::ExtensionApiTest {
 IN_PROC_BROWSER_TEST_F(VpnProviderApiTest, ComboSuite) {
   LoadVpnExtension();
   AddNetworkProfileForUser();
-  EXPECT_TRUE(RunExtensionTest("comboSuite"));
+  EXPECT_TRUE(RunTest("comboSuite"));
 }
 
 IN_PROC_BROWSER_TEST_F(VpnProviderApiTest, CreateConfigWithoutNetworkProfile) {
   LoadVpnExtension();
-  EXPECT_TRUE(RunExtensionTest("createConfigWithoutNetworkProfile"));
+  EXPECT_TRUE(RunTest("createConfigWithoutNetworkProfile"));
 }
 
 IN_PROC_BROWSER_TEST_F(VpnProviderApiTest, CreateConfig) {
   LoadVpnExtension();
   AddNetworkProfileForUser();
-  EXPECT_TRUE(RunExtensionTest("createConfigSuccess"));
+  EXPECT_TRUE(RunTest("createConfigSuccess"));
   EXPECT_TRUE(DoesConfigExist(kTestConfig));
   EXPECT_TRUE(HasService(GetSingleServicePath()));
 }
@@ -233,7 +230,7 @@ IN_PROC_BROWSER_TEST_F(VpnProviderApiTest, DestroyConfig) {
   const std::string service_path = GetSingleServicePath();
   EXPECT_TRUE(HasService(service_path));
 
-  EXPECT_TRUE(RunExtensionTest("destroyConfigSuccess"));
+  EXPECT_TRUE(RunTest("destroyConfigSuccess"));
   EXPECT_FALSE(DoesConfigExist(kTestConfig));
   EXPECT_FALSE(HasService(service_path));
 }
@@ -253,7 +250,7 @@ IN_PROC_BROWSER_TEST_F(VpnProviderApiTest, DestroyConnectedConfig) {
                                   api_vpn::PLATFORM_MESSAGE_CONNECTED);
   EXPECT_TRUE(IsConfigConnected());
 
-  EXPECT_TRUE(RunExtensionTest("destroyConnectedConfigSetup"));
+  EXPECT_TRUE(RunTest("destroyConnectedConfigSetup"));
 
   extensions::ResultCatcher catcher;
 
@@ -267,7 +264,7 @@ IN_PROC_BROWSER_TEST_F(VpnProviderApiTest, DestroyConnectedConfig) {
 IN_PROC_BROWSER_TEST_F(VpnProviderApiTest, VpnSuccess) {
   LoadVpnExtension();
   AddNetworkProfileForUser();
-  EXPECT_TRUE(RunExtensionTest("createConfigConnectAndDisconnect"));
+  EXPECT_TRUE(RunTest("createConfigConnectAndDisconnect"));
   EXPECT_TRUE(DoesConfigExist(kTestConfig));
   EXPECT_TRUE(HasService(GetSingleServicePath()));
   EXPECT_FALSE(IsConfigConnected());
@@ -287,7 +284,7 @@ IN_PROC_BROWSER_TEST_F(VpnProviderApiTest, VpnSuccess) {
   EXPECT_EQ(1, test_client_->send_packet_counter_);
   EXPECT_EQ(api_vpn::VPN_CONNECTION_STATE_CONNECTED,
             test_client_->update_connection_state_counter_);
-  for (size_t i = 0; i < base::size(kParameterValues); ++i) {
+  for (size_t i = 0; i < std::size(kParameterValues); ++i) {
     const std::string* value =
         test_client_->parameters_.FindStringKey(kParameterKeys[i]);
     ASSERT_TRUE(value);
@@ -311,7 +308,7 @@ IN_PROC_BROWSER_TEST_F(VpnProviderApiTest, VpnSuccess) {
 IN_PROC_BROWSER_TEST_F(VpnProviderApiTest, ConfigInternalRemove) {
   LoadVpnExtension();
   AddNetworkProfileForUser();
-  EXPECT_TRUE(RunExtensionTest("configInternalRemove"));
+  EXPECT_TRUE(RunTest("configInternalRemove"));
   EXPECT_TRUE(DoesConfigExist(kTestConfig));
 
   extensions::ResultCatcher catcher;
@@ -323,7 +320,7 @@ IN_PROC_BROWSER_TEST_F(VpnProviderApiTest, ConfigInternalRemove) {
 IN_PROC_BROWSER_TEST_F(VpnProviderApiTest, CheckEvents) {
   LoadVpnExtension();
   AddNetworkProfileForUser();
-  EXPECT_TRUE(RunExtensionTest("expectEvents"));
+  EXPECT_TRUE(RunTest("expectEvents"));
   EXPECT_TRUE(DoesConfigExist(kTestConfig));
 
   extensions::ResultCatcher catcher;
@@ -359,7 +356,7 @@ IN_PROC_BROWSER_TEST_F(VpnProviderApiTest, ConfigPersistence) {
 IN_PROC_BROWSER_TEST_F(VpnProviderApiTest, CreateUninstall) {
   LoadVpnExtension();
   AddNetworkProfileForUser();
-  EXPECT_TRUE(RunExtensionTest("createConfigSuccess"));
+  EXPECT_TRUE(RunTest("createConfigSuccess"));
   EXPECT_TRUE(DoesConfigExist(kTestConfig));
 
   const std::string service_path = GetSingleServicePath();
@@ -374,7 +371,7 @@ IN_PROC_BROWSER_TEST_F(VpnProviderApiTest, CreateUninstall) {
 IN_PROC_BROWSER_TEST_F(VpnProviderApiTest, CreateDisable) {
   LoadVpnExtension();
   AddNetworkProfileForUser();
-  EXPECT_TRUE(RunExtensionTest("createConfigSuccess"));
+  EXPECT_TRUE(RunTest("createConfigSuccess"));
   EXPECT_TRUE(DoesConfigExist(kTestConfig));
 
   const std::string service_path = GetSingleServicePath();
@@ -392,7 +389,7 @@ IN_PROC_BROWSER_TEST_F(VpnProviderApiTest, CreateDisable) {
 IN_PROC_BROWSER_TEST_F(VpnProviderApiTest, CreateBlocklist) {
   LoadVpnExtension();
   AddNetworkProfileForUser();
-  EXPECT_TRUE(RunExtensionTest("createConfigSuccess"));
+  EXPECT_TRUE(RunTest("createConfigSuccess"));
   EXPECT_TRUE(DoesConfigExist(kTestConfig));
 
   const std::string service_path = GetSingleServicePath();

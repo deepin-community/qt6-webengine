@@ -26,6 +26,7 @@ extern "C" {
 typedef struct {
   /*!\cond */
   RATE_CONTROL rc;
+  PRIMARY_RATE_CONTROL p_rc;
   int framerate_factor;
   int64_t layer_target_bitrate;
   int scaling_factor_num;
@@ -47,11 +48,6 @@ typedef struct {
    * Segmentation map
    */
   int8_t *map;
-  /*!
-   * Segmentation map for last coded quantization paramters.
-   */
-  uint8_t *last_coded_q_map;
-
   /*!
    * Number of blocks on segment 1
    */
@@ -94,8 +90,11 @@ typedef struct SVC {
   int temporal_layer_id;
   int number_spatial_layers;
   int number_temporal_layers;
-  int external_ref_frame_config;
+  int set_ref_frame_config;
   int non_reference_frame;
+  int use_flexible_mode;
+  int ksvc_fixed_mode;
+  int ref_frame_comp[3];
   /*!\endcond */
 
   /*!
@@ -106,6 +105,7 @@ typedef struct SVC {
   /*!\cond */
   int ref_idx[INTER_REFS_PER_FRAME];
   int refresh[REF_FRAMES];
+  int gld_idx_1layer;
   double base_framerate;
   unsigned int current_superframe;
   unsigned int buffer_time_index[REF_FRAMES];
@@ -116,6 +116,7 @@ typedef struct SVC {
   int temporal_layer_fb[REF_FRAMES];
   int num_encoded_top_layer;
   int first_layer_denoise;
+  int high_source_sad_superframe;
   /*!\endcond */
 
   /*!
@@ -271,6 +272,11 @@ int av1_svc_primary_ref_frame(const struct AV1_COMP *const cpi);
 void av1_get_layer_resolution(const int width_org, const int height_org,
                               const int num, const int den, int *width_out,
                               int *height_out);
+
+void av1_set_svc_fixed_mode(struct AV1_COMP *const cpi);
+
+void av1_svc_check_reset_layer_rc_flag(struct AV1_COMP *const cpi);
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif

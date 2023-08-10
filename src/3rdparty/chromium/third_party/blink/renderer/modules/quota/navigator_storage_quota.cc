@@ -31,8 +31,10 @@
 #include "third_party/blink/renderer/modules/quota/navigator_storage_quota.h"
 
 #include "third_party/blink/public/common/browser_interface_broker_proxy.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/navigator.h"
+#include "third_party/blink/renderer/core/frame/web_feature.h"
 #include "third_party/blink/renderer/modules/quota/deprecated_storage_quota.h"
 #include "third_party/blink/renderer/modules/quota/storage_manager.h"
 
@@ -61,17 +63,35 @@ DeprecatedStorageQuota* NavigatorStorageQuota::webkitTemporaryStorage(
         MakeGarbageCollected<DeprecatedStorageQuota>(
             DeprecatedStorageQuota::kTemporary, navigator.DomWindow());
   }
+
+  // Record metrics for usage in third-party contexts.
+  if (navigator.DomWindow()) {
+    navigator.DomWindow()->CountUseOnlyInCrossSiteIframe(
+        WebFeature::kPrefixedStorageQuotaThirdPartyContext);
+  }
+
   return navigator_storage.temporary_storage_.Get();
 }
 
 DeprecatedStorageQuota* NavigatorStorageQuota::webkitPersistentStorage(
     Navigator& navigator) {
+  if (base::FeatureList::IsEnabled(
+          blink::features::kPersistentQuotaIsTemporaryQuota)) {
+    return webkitTemporaryStorage(navigator);
+  }
   NavigatorStorageQuota& navigator_storage = From(navigator);
   if (!navigator_storage.persistent_storage_) {
     navigator_storage.persistent_storage_ =
         MakeGarbageCollected<DeprecatedStorageQuota>(
             DeprecatedStorageQuota::kPersistent, navigator.DomWindow());
   }
+
+  // Record metrics for usage in third-party contexts.
+  if (navigator.DomWindow()) {
+    navigator.DomWindow()->CountUseOnlyInCrossSiteIframe(
+        WebFeature::kPrefixedStorageQuotaThirdPartyContext);
+  }
+
   return navigator_storage.persistent_storage_.Get();
 }
 

@@ -4,6 +4,7 @@
 
 #include "third_party/blink/renderer/core/html/parser/preload_request.h"
 
+#include "base/memory/ptr_util.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
@@ -103,24 +104,13 @@ Resource* PreloadRequest::Start(Document* document) {
   resource_request.SetRequestDestination(
       ResourceFetcher::DetermineRequestDestination(resource_type_));
 
-  resource_request.SetFetchImportanceMode(importance_);
-
-  if (resource_type_ == ResourceType::kImage && url.ProtocolIsInHTTPFamily() &&
-      base::FeatureList::IsEnabled(blink::features::kSubresourceRedirect) &&
-      blink::GetNetworkStateNotifier().SaveDataEnabled()) {
-    resource_request.SetPreviewsState(resource_request.GetPreviewsState() |
-                                      PreviewsTypes::kSubresourceRedirectOn);
-  }
+  resource_request.SetFetchPriorityHint(fetch_priority_hint_);
 
   ResourceLoaderOptions options(document->domWindow()->GetCurrentWorld());
   options.initiator_info = initiator_info;
   FetchParameters params(std::move(resource_request), options);
 
   auto* origin = document->domWindow()->GetSecurityOrigin();
-  if (resource_type_ == ResourceType::kImportResource) {
-    params.SetCrossOriginAccessControl(origin, kCrossOriginAttributeAnonymous);
-  }
-
   if (script_type_ == mojom::blink::ScriptType::kModule) {
     DCHECK_EQ(resource_type_, ResourceType::kScript);
     params.SetCrossOriginAccessControl(
@@ -144,8 +134,7 @@ Resource* PreloadRequest::Start(Document* document) {
     DCHECK_EQ(resource_type_, ResourceType::kScript);
     params.SetDecoderOptions(TextResourceDecoderOptions::CreateUTF8Decode());
   } else if (resource_type_ == ResourceType::kScript ||
-             resource_type_ == ResourceType::kCSSStyleSheet ||
-             resource_type_ == ResourceType::kImportResource) {
+             resource_type_ == ResourceType::kCSSStyleSheet) {
     params.SetCharset(charset_.IsEmpty() ? document->Encoding()
                                          : WTF::TextEncoding(charset_));
   }

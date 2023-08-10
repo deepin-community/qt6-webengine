@@ -2,14 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// clang-format off
+// #import {FAKE_CREDENTIAL} from './onc_mojo.m.js';
+// clang-format on
+
 /**
  * @fileoverview Polymer element for network password input fields.
  */
-
-// Used to indicate a saved but unknown credential value. Will appear as *'s in
-// the credential (passphrase, password, etc.) field by default.
-// See |kFakeCredential| in chromeos/network/policy_util.h.
-/** @type {string} */ const FAKE_CREDENTIAL = 'FAKE_CREDENTIAL_VPaJDV9x';
 
 Polymer({
   is: 'network-password-input',
@@ -36,11 +35,46 @@ Polymer({
       value: false,
     },
 
+    invalid: {
+      type: Boolean,
+      value: false,
+    },
+
+    /**
+     * Whether an errorMessage can be shown beneath the input.
+     */
+    allowErrorMessage: {
+      type: Boolean,
+      value: false,
+    },
+
+    /**
+     * Error message shown beneath input (only shown if allowErrorMessage is
+     * true).
+     */
+    errorMessage: {
+      type: String,
+      value: '',
+    },
+
+    /** @private */
+    tooltipPosition_: {
+      type: String,
+      value: '',
+    },
+
+    /** @private */
     showPolicyIndicator_: {
       type: Boolean,
       value: false,
       computed: 'getDisabled_(disabled, property)',
     },
+  },
+
+  /** @override */
+  attached() {
+    this.tooltipPosition_ =
+        window.getComputedStyle(this).direction === 'rtl' ? 'right' : 'left';
   },
 
   /** @private */
@@ -110,18 +144,13 @@ Polymer({
    * @param {!Event} event
    * @private
    */
-  onKeypress_(event) {
+  onKeydown_(event) {
     if (event.target.id === 'input' && event.key === 'Enter') {
       event.stopPropagation();
       this.fire('enter');
+      return;
     }
-  },
 
-  /**
-   * @param {!Event} event
-   * @private
-   */
-  onKeydown_(event) {
     if (!this.isShowingPlaceholder_()) {
       return;
     }

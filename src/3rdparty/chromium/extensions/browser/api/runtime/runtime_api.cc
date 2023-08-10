@@ -14,8 +14,8 @@
 #include "base/metrics/histogram.h"
 #include "base/notreached.h"
 #include "base/one_shot_event.h"
-#include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "base/version.h"
@@ -24,6 +24,7 @@
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/child_process_security_policy.h"
 #include "extensions/browser/api/runtime/runtime_api_delegate.h"
+#include "extensions/browser/blocklist_extension_prefs.h"
 #include "extensions/browser/event_router.h"
 #include "extensions/browser/events/lazy_event_dispatch_util.h"
 #include "extensions/browser/extension_host.h"
@@ -137,10 +138,9 @@ void DispatchOnStartupEventImpl(
     }
   }
 
-  std::unique_ptr<base::ListValue> event_args(new base::ListValue());
   std::unique_ptr<Event> event(new Event(events::RUNTIME_ON_STARTUP,
                                          runtime::OnStartup::kEventName,
-                                         std::move(event_args)));
+                                         std::vector<base::Value>()));
   EventRouter::Get(browser_context)
       ->DispatchEventToExtension(extension_id, std::move(event));
 }
@@ -182,8 +182,8 @@ void BrowserContextKeyedAPIFactory<RuntimeAPI>::DeclareFactoryDependencies() {
 
 RuntimeAPI::RuntimeAPI(content::BrowserContext* context)
     : browser_context_(context),
-      minimum_duration_between_restarts_(base::TimeDelta::FromHours(
-          kMinDurationBetweenSuccessiveRestartsHours)),
+      minimum_duration_between_restarts_(
+          base::Hours(kMinDurationBetweenSuccessiveRestartsHours)),
       dispatch_chrome_updated_event_(false),
       did_read_delayed_restart_preferences_(false),
       was_last_restart_due_to_delayed_restart_api_(false) {
@@ -194,8 +194,9 @@ RuntimeAPI::RuntimeAPI(content::BrowserContext* context)
   ExtensionSystem::Get(context)->ready().Post(
       FROM_HERE, base::BindOnce(&RuntimeAPI::OnExtensionsReady,
                                 weak_ptr_factory_.GetWeakPtr()));
-  extension_registry_observer_.Add(ExtensionRegistry::Get(browser_context_));
-  process_manager_observer_.Add(ProcessManager::Get(browser_context_));
+  extension_registry_observation_.Observe(
+      ExtensionRegistry::Get(browser_context_));
+  process_manager_observation_.Observe(ProcessManager::Get(browser_context_));
 
   delegate_ = ExtensionsBrowserClient::Get()->CreateRuntimeAPIDelegate(
       browser_context_);
@@ -360,8 +361,7 @@ void RuntimeAPI::OnExtensionsReady() {
 RuntimeAPI::RestartAfterDelayStatus RuntimeAPI::ScheduleDelayedRestart(
     const base::Time& now,
     int seconds_from_now) {
-  base::TimeDelta delay_till_restart =
-      base::TimeDelta::FromSeconds(seconds_from_now);
+  base::TimeDelta delay_till_restart = base::Seconds(seconds_from_now);
 
   // Throttle restart requests that are received too soon successively, only if
   // the previous restart was due to this API.
@@ -449,17 +449,17 @@ void RuntimeEventRouter::DispatchOnInstalledEvent(
     return;
   }
 
-  std::unique_ptr<base::ListValue> event_args(new base::ListValue());
-  std::unique_ptr<base::DictionaryValue> info(new base::DictionaryValue());
+  std::vector<base::Value> event_args;
+  base::Value info(base::Value::Type::DICTIONARY);
   if (old_version.IsValid()) {
-    info->SetString(kInstallReason, kInstallReasonUpdate);
-    info->SetString(kInstallPreviousVersion, old_version.GetString());
+    info.SetStringKey(kInstallReason, kInstallReasonUpdate);
+    info.SetStringKey(kInstallPreviousVersion, old_version.GetString());
   } else if (chrome_updated) {
-    info->SetString(kInstallReason, kInstallReasonChromeUpdate);
+    info.SetStringKey(kInstallReason, kInstallReasonChromeUpdate);
   } else {
-    info->SetString(kInstallReason, kInstallReasonInstall);
+    info.SetStringKey(kInstallReason, kInstallReasonInstall);
   }
-  event_args->Append(std::move(info));
+  event_args.push_back(std::move(info));
   EventRouter* event_router = EventRouter::Get(context);
   DCHECK(event_router);
   std::unique_ptr<Event> event(new Event(events::RUNTIME_ON_INSTALLED,
@@ -477,13 +477,12 @@ void RuntimeEventRouter::DispatchOnInstalledEvent(
       for (ExtensionSet::const_iterator i = dependents->begin();
            i != dependents->end();
            i++) {
-        std::unique_ptr<base::ListValue> sm_event_args(new base::ListValue());
-        std::unique_ptr<base::DictionaryValue> sm_info(
-            new base::DictionaryValue());
-        sm_info->SetString(kInstallReason, kInstallReasonSharedModuleUpdate);
-        sm_info->SetString(kInstallPreviousVersion, old_version.GetString());
-        sm_info->SetString(kInstallId, extension_id);
-        sm_event_args->Append(std::move(sm_info));
+        std::vector<base::Value> sm_event_args;
+        base::Value sm_info(base::Value::Type::DICTIONARY);
+        sm_info.SetStringKey(kInstallReason, kInstallReasonSharedModuleUpdate);
+        sm_info.SetStringKey(kInstallPreviousVersion, old_version.GetString());
+        sm_info.SetStringKey(kInstallId, extension_id);
+        sm_event_args.push_back(std::move(sm_info));
         std::unique_ptr<Event> sm_event(new Event(
             events::RUNTIME_ON_INSTALLED, runtime::OnInstalled::kEventName,
             std::move(sm_event_args)));
@@ -503,8 +502,8 @@ void RuntimeEventRouter::DispatchOnUpdateAvailableEvent(
   if (!system)
     return;
 
-  std::unique_ptr<base::ListValue> args(new base::ListValue);
-  args->Append(manifest->CreateDeepCopy());
+  std::vector<base::Value> args;
+  args.push_back(manifest->Clone());
   EventRouter* event_router = EventRouter::Get(context);
   DCHECK(event_router);
   std::unique_ptr<Event> event(new Event(events::RUNTIME_ON_UPDATE_AVAILABLE,
@@ -520,12 +519,12 @@ void RuntimeEventRouter::DispatchOnBrowserUpdateAvailableEvent(
   if (!system)
     return;
 
-  std::unique_ptr<base::ListValue> args(new base::ListValue);
   EventRouter* event_router = EventRouter::Get(context);
   DCHECK(event_router);
-  std::unique_ptr<Event> event(new Event(
-      events::RUNTIME_ON_BROWSER_UPDATE_AVAILABLE,
-      runtime::OnBrowserUpdateAvailable::kEventName, std::move(args)));
+  std::unique_ptr<Event> event(
+      new Event(events::RUNTIME_ON_BROWSER_UPDATE_AVAILABLE,
+                runtime::OnBrowserUpdateAvailable::kEventName,
+                std::vector<base::Value>()));
   event_router->BroadcastEvent(std::move(event));
 }
 
@@ -568,8 +567,8 @@ void RuntimeEventRouter::OnExtensionUninstalled(
   }
 
   // Blocklisted extensions should not open uninstall_url.
-  if (extensions::ExtensionPrefs::Get(context)->IsExtensionBlocklisted(
-          extension_id)) {
+  if (blocklist_prefs::IsExtensionBlocklisted(
+          extension_id, extensions::ExtensionPrefs::Get(context))) {
     return;
   }
 
@@ -622,7 +621,7 @@ ExtensionFunction::ResponseAction RuntimeOpenOptionsPageFunction::Run() {
 
 ExtensionFunction::ResponseAction RuntimeSetUninstallURLFunction::Run() {
   std::unique_ptr<api::runtime::SetUninstallURL::Params> params(
-      api::runtime::SetUninstallURL::Params::Create(*args_));
+      api::runtime::SetUninstallURL::Params::Create(args()));
   EXTENSION_FUNCTION_VALIDATE(params);
   if (!params->url.empty() && !GURL(params->url).SchemeIsHTTPOrHTTPS())
     return RespondNow(Error(kInvalidUrlError, params->url));
@@ -656,7 +655,7 @@ void RuntimeRequestUpdateCheckFunction::CheckComplete(
     const RuntimeAPIDelegate::UpdateCheckResult& result) {
   if (result.success) {
     std::unique_ptr<base::DictionaryValue> details(new base::DictionaryValue);
-    details->SetString("version", result.version);
+    details->SetStringKey("version", result.version);
     Respond(TwoArguments(base::Value(result.response),
                          base::Value::FromUniquePtrValue(std::move(details))));
   } else {
@@ -683,7 +682,7 @@ ExtensionFunction::ResponseAction RuntimeRestartAfterDelayFunction::Run() {
   }
 
   std::unique_ptr<api::runtime::RestartAfterDelay::Params> params(
-      api::runtime::RestartAfterDelay::Params::Create(*args_));
+      api::runtime::RestartAfterDelay::Params::Create(args()));
   EXTENSION_FUNCTION_VALIDATE(params.get());
   int seconds = params->seconds;
 
@@ -739,8 +738,8 @@ RuntimeGetPackageDirectoryEntryFunction::Run() {
       content::ChildProcessSecurityPolicy::GetInstance();
   policy->GrantReadFileSystem(source_process_id(), filesystem.id());
   std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
-  dict->SetString("fileSystemId", filesystem.id());
-  dict->SetString("baseName", relative_path);
+  dict->SetStringKey("fileSystemId", filesystem.id());
+  dict->SetStringKey("baseName", relative_path);
   return RespondNow(
       OneArgument(base::Value::FromUniquePtrValue(std::move(dict))));
 }

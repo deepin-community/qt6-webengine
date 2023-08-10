@@ -10,9 +10,10 @@
 #include <string>
 #include <utility>
 
+#include "base/callback.h"
 #include "base/command_line.h"
 #include "base/i18n/base_i18n_switches.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/icu_test_util.h"
 #include "build/build_config.h"
@@ -97,7 +98,7 @@ class StyledLabelInWidgetTest : public ViewsTestBase {
   }
 
  private:
-  StyledLabel* styled_;
+  raw_ptr<StyledLabel> styled_;
   std::unique_ptr<Widget> widget_;
 };
 
@@ -119,8 +120,7 @@ TEST_F(StyledLabelTest, TrailingWhitespaceiIgnored) {
   styled()->Layout();
 
   ASSERT_EQ(1u, styled()->children().size());
-  EXPECT_EQ(ASCIIToUTF16("This is a test block of text"),
-            LabelAt(styled(), 0)->GetText());
+  EXPECT_EQ(u"This is a test block of text", LabelAt(styled(), 0)->GetText());
 }
 
 TEST_F(StyledLabelTest, RespectLeadingWhitespace) {
@@ -131,7 +131,7 @@ TEST_F(StyledLabelTest, RespectLeadingWhitespace) {
   styled()->Layout();
 
   ASSERT_EQ(1u, styled()->children().size());
-  EXPECT_EQ(ASCIIToUTF16("   This is a test block of text"),
+  EXPECT_EQ(u"   This is a test block of text",
             LabelAt(styled(), 0)->GetText());
 }
 
@@ -173,7 +173,7 @@ TEST_F(StyledLabelTest, FirstLineNotEmptyWhenLeadingWhitespaceTooLong) {
   styled()->Layout();
 
   ASSERT_EQ(1u, styled()->children().size());
-  EXPECT_EQ(ASCIIToUTF16("a"), LabelAt(styled(), 0)->GetText());
+  EXPECT_EQ(u"a", LabelAt(styled(), 0)->GetText());
   EXPECT_EQ(label_preferred_size.height(),
             styled()->GetHeightForWidth(label_preferred_size.width() / 2));
 }
@@ -188,7 +188,7 @@ TEST_F(StyledLabelTest, BasicWrapping) {
       StyledLabelContentHeightForWidth(styled(), label_preferred_size.width()));
 
   // Also respect the border.
-  styled()->SetBorder(CreateEmptyBorder(3, 3, 3, 3));
+  styled()->SetBorder(CreateEmptyBorder(3));
   styled()->SetBounds(
       0, 0, styled()->GetInsets().width() + label_preferred_size.width(),
       styled()->GetInsets().height() + 2 * label_preferred_size.height());
@@ -323,7 +323,7 @@ TEST_F(StyledLabelTest, StyledRangeCustomFontUnderlined) {
   const std::string underlined_text("and this should be undelined");
   InitStyledLabel(text + underlined_text);
   StyledLabel::RangeStyleInfo style_info;
-  style_info.tooltip = ASCIIToUTF16("tooltip");
+  style_info.tooltip = u"tooltip";
   style_info.custom_font =
       styled()->GetFontList().DeriveWithStyle(gfx::Font::UNDERLINE);
   styled()->AddStyleRange(
@@ -459,7 +459,7 @@ TEST_F(StyledLabelTest, StyledRangeWithTooltip) {
 
   InitStyledLabel(text + tooltip_text + normal_text + link_text);
   StyledLabel::RangeStyleInfo tooltip_style;
-  tooltip_style.tooltip = ASCIIToUTF16("tooltip");
+  tooltip_style.tooltip = u"tooltip";
   styled()->AddStyleRange(
       gfx::Range(tooltip_start, tooltip_start + tooltip_text.size()),
       tooltip_style);
@@ -492,11 +492,11 @@ TEST_F(StyledLabelTest, StyledRangeWithTooltip) {
             styled()->children()[3]->x());
   EXPECT_EQ(0, styled()->children()[4]->x());
 
-  base::string16 tooltip =
+  std::u16string tooltip =
       styled()->children()[1]->GetTooltipText(gfx::Point(1, 1));
-  EXPECT_EQ(ASCIIToUTF16("tooltip"), tooltip);
+  EXPECT_EQ(u"tooltip", tooltip);
   tooltip = styled()->children()[2]->GetTooltipText(gfx::Point(1, 1));
-  EXPECT_EQ(ASCIIToUTF16("tooltip"), tooltip);
+  EXPECT_EQ(u"tooltip", tooltip);
 }
 
 TEST_F(StyledLabelTest, SetTextContextAndDefaultStyle) {
@@ -566,8 +566,8 @@ TEST_F(StyledLabelTest, CacheSize) {
   const int preferred_height = 50;
   const int preferred_width = 100;
   const std::string text("This is a test block of text.");
-  const base::string16 another_text(base::ASCIIToUTF16(
-      "This is a test block of text. This text is much longer than previous"));
+  const std::u16string another_text(
+      u"This is a test block of text. This text is much longer than previous");
 
   InitStyledLabel(text);
 
@@ -611,8 +611,7 @@ TEST_F(StyledLabelTest, Border) {
   InitStyledLabel(text);
   Label label(ASCIIToUTF16(text));
   gfx::Size label_preferred_size = label.GetPreferredSize();
-  styled()->SetBorder(
-      CreateEmptyBorder(5 /*top*/, 10 /*left*/, 6 /*bottom*/, 20 /*right*/));
+  styled()->SetBorder(CreateEmptyBorder(gfx::Insets::TLBR(5, 10, 6, 20)));
   styled()->SetBounds(0, 0, 1000, 0);
   styled()->Layout();
   EXPECT_EQ(

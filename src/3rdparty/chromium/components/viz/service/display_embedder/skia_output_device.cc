@@ -4,6 +4,7 @@
 
 #include "components/viz/service/display_embedder/skia_output_device.h"
 
+#include <algorithm>
 #include <utility>
 
 #include "base/bind.h"
@@ -121,6 +122,8 @@ SkiaOutputDevice::BeginScopedPaint() {
       std::move(end_semaphores), this, sk_surface);
 }
 
+void SkiaOutputDevice::SetViewportSize(const gfx::Size& viewport_size) {}
+
 void SkiaOutputDevice::Submit(bool sync_cpu, base::OnceClosure callback) {
   gr_context_->submit(sync_cpu);
   std::move(callback).Run();
@@ -135,6 +138,11 @@ void SkiaOutputDevice::PostSubBuffer(const gfx::Rect& rect,
                                      BufferPresentedCallback feedback,
                                      OutputSurfaceFrame frame) {
   NOTREACHED();
+}
+
+bool SkiaOutputDevice::EnsureMinNumberOfBuffers(size_t n) {
+  NOTREACHED();
+  return false;
 }
 
 bool SkiaOutputDevice::SetDrawRectangle(const gfx::Rect& draw_rectangle) {
@@ -155,7 +163,7 @@ bool SkiaOutputDevice::IsPrimaryPlaneOverlay() const {
 }
 
 void SkiaOutputDevice::SchedulePrimaryPlane(
-    const base::Optional<OverlayProcessorInterface::OutputSurfaceOverlayPlane>&
+    const absl::optional<OverlayProcessorInterface::OutputSurfaceOverlayPlane>&
         plane) {
   if (plane)
     NOTIMPLEMENTED();
@@ -175,31 +183,38 @@ void SkiaOutputDevice::SetDrawTimings(base::TimeTicks submitted,
   gpu_started_draw_ = started;
 }
 
+void SkiaOutputDevice::SetDependencyTimings(base::TimeTicks task_ready) {
+  gpu_task_ready_ = task_ready;
+}
+
 void SkiaOutputDevice::StartSwapBuffers(BufferPresentedCallback feedback) {
   DCHECK_LT(static_cast<int>(pending_swaps_.size()),
-            capabilities_.max_frames_pending);
+            capabilities_.pending_swap_params.GetMax());
 
   pending_swaps_.emplace(++swap_id_, std::move(feedback), viz_scheduled_draw_,
-                         gpu_started_draw_);
+                         gpu_started_draw_, gpu_task_ready_);
   viz_scheduled_draw_ = base::TimeTicks();
   gpu_started_draw_ = base::TimeTicks();
+  gpu_task_ready_ = base::TimeTicks();
 }
 
 void SkiaOutputDevice::FinishSwapBuffers(
     gfx::SwapCompletionResult result,
     const gfx::Size& size,
     OutputSurfaceFrame frame,
-    const base::Optional<gfx::Rect>& damage_area,
+    const absl::optional<gfx::Rect>& damage_area,
     std::vector<gpu::Mailbox> released_overlays,
     const gpu::Mailbox& primary_plane_mailbox) {
   DCHECK(!pending_swaps_.empty());
 
+  auto release_fence = std::move(result.release_fence);
   const gpu::SwapBuffersCompleteParams& params =
       pending_swaps_.front().Complete(std::move(result), damage_area,
                                       std::move(released_overlays),
                                       primary_plane_mailbox);
 
-  did_swap_buffer_complete_callback_.Run(params, size);
+  did_swap_buffer_complete_callback_.Run(params, size,
+                                         std::move(release_fence));
 
   pending_swaps_.front().CallFeedback();
 
@@ -220,27 +235,65 @@ void SkiaOutputDevice::FinishSwapBuffers(
   }
 
   pending_swaps_.pop();
+
+  // If there are skipped swaps at the front of the queue, they are now ready
+  // to be acknowledged without breaking ordering.
+  if (!pending_swaps_.empty()) {
+    auto iter = skipped_swap_info_.find(pending_swaps_.front().SwapId());
+    if (iter != skipped_swap_info_.end()) {
+      OutputSurfaceFrame output_frame = std::move(iter->second);
+      gfx::Size frame_size = output_frame.size;
+      skipped_swap_info_.erase(iter);
+      // Recursively call into FinishSwapBuffers until the head of the queue is
+      // no longer a skipped swap.
+      FinishSwapBuffers(
+          gfx::SwapCompletionResult(gfx::SwapResult::SWAP_SKIPPED), frame_size,
+          std::move(output_frame));
+    }
+  }
+}
+
+void SkiaOutputDevice::SwapBuffersSkipped(BufferPresentedCallback feedback,
+                                          OutputSurfaceFrame frame) {
+  StartSwapBuffers(std::move(feedback));
+  // If there are no other pending swaps, we can immediately close out the
+  // "skipped" swap that was just enqueued. If there are outstanding pending
+  // swaps, however, we need to wait for them to complete to avoid reordering
+  // complete/presentation callbacks.
+  if (pending_swaps_.size() == 1) {
+    gfx::Size frame_size = frame.size;
+    FinishSwapBuffers(gfx::SwapCompletionResult(gfx::SwapResult::SWAP_SKIPPED),
+                      frame_size, std::move(frame));
+  } else {
+    skipped_swap_info_[swap_id_] = std::move(frame);
+  }
 }
 
 SkiaOutputDevice::SwapInfo::SwapInfo(
     uint64_t swap_id,
     SkiaOutputDevice::BufferPresentedCallback feedback,
     base::TimeTicks viz_scheduled_draw,
-    base::TimeTicks gpu_started_draw)
+    base::TimeTicks gpu_started_draw,
+    base::TimeTicks gpu_task_ready)
     : feedback_(std::move(feedback)) {
   params_.swap_response.swap_id = swap_id;
   params_.swap_response.timings.swap_start = base::TimeTicks::Now();
   params_.swap_response.timings.viz_scheduled_draw = viz_scheduled_draw;
   params_.swap_response.timings.gpu_started_draw = gpu_started_draw;
+  params_.swap_response.timings.gpu_task_ready = gpu_task_ready;
 }
 
 SkiaOutputDevice::SwapInfo::SwapInfo(SwapInfo&& other) = default;
 
 SkiaOutputDevice::SwapInfo::~SwapInfo() = default;
 
+uint64_t SkiaOutputDevice::SwapInfo::SwapId() {
+  return params_.swap_response.swap_id;
+}
+
 const gpu::SwapBuffersCompleteParams& SkiaOutputDevice::SwapInfo::Complete(
     gfx::SwapCompletionResult result,
-    const base::Optional<gfx::Rect>& damage_rect,
+    const absl::optional<gfx::Rect>& damage_rect,
     std::vector<gpu::Mailbox> released_overlays,
     const gpu::Mailbox& primary_plane_mailbox) {
   params_.swap_response.result = result.swap_result;

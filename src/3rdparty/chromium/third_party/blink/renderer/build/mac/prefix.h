@@ -18,13 +18,16 @@
  *
  */
 
+// no-include-guard-because-pch-file
+// no-std-usage-because-pch-file
+
 /* This prefix file is for use on Mac OS X only. This prefix file should contain
  * only files to precompile for faster builds. The project should be able to
  * build without this header, although we rarely test that.
  */
 
 #ifdef THIRD_PARTY_BLINK_RENDERER_BUILD_MAC_PREFIX_H_
-#error You shouldn't include the precompiled header file more than once.
+#error "You shouldn't include the precompiled header file more than once."
 #endif
 
 #define THIRD_PARTY_BLINK_RENDERER_BUILD_MAC_PREFIX_H_

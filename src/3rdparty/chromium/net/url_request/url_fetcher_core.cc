@@ -5,15 +5,17 @@
 #include "net/url_request/url_fetcher_core.h"
 
 #include <stdint.h>
+#include <memory>
 #include <utility>
 
 #include "base/bind.h"
 #include "base/callback_helpers.h"
 #include "base/check_op.h"
+#include "base/containers/contains.h"
 #include "base/notreached.h"
-#include "base/sequenced_task_runner.h"
-#include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
+#include "base/task/sequenced_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "net/base/elements_upload_data_stream.h"
 #include "net/base/io_buffer.h"
@@ -23,7 +25,9 @@
 #include "net/base/upload_bytes_element_reader.h"
 #include "net/base/upload_data_stream.h"
 #include "net/base/upload_file_element_reader.h"
+#include "net/cert/x509_certificate.h"
 #include "net/http/http_response_headers.h"
+#include "net/ssl/ssl_private_key.h"
 #include "net/url_request/redirect_info.h"
 #include "net/url_request/url_fetcher_delegate.h"
 #include "net/url_request/url_fetcher_response_writer.h"
@@ -80,7 +84,7 @@ URLFetcherCore::URLFetcherCore(
       delegate_(d),
       delegate_task_runner_(base::SequencedTaskRunnerHandle::Get()),
       load_flags_(LOAD_NORMAL),
-      allow_credentials_(base::nullopt),
+      allow_credentials_(absl::nullopt),
       response_code_(URLFetcher::RESPONSE_CODE_INVALID),
       url_request_data_key_(nullptr),
       was_cached_(false),
@@ -216,7 +220,7 @@ void URLFetcherCore::SetLoadFlags(int load_flags) {
 }
 
 void URLFetcherCore::SetAllowCredentials(bool allow_credentials) {
-  allow_credentials_ = base::make_optional<bool>(allow_credentials);
+  allow_credentials_ = absl::make_optional<bool>(allow_credentials);
 }
 
 int URLFetcherCore::GetLoadFlags() const {
@@ -248,7 +252,7 @@ void URLFetcherCore::SetRequestContext(
 }
 
 void URLFetcherCore::SetInitiator(
-    const base::Optional<url::Origin>& initiator) {
+    const absl::optional<url::Origin>& initiator) {
   DCHECK(!initiator_.has_value());
   initiator_ = initiator;
 }
@@ -519,12 +523,12 @@ void URLFetcherCore::StartOnIOThread() {
   // appending data.  Have to do it here because StartURLRequest() may be called
   // asynchonously.
   if (is_chunked_upload_) {
-    chunked_stream_.reset(new ChunkedUploadDataStream(0));
+    chunked_stream_ = std::make_unique<ChunkedUploadDataStream>(0);
     chunked_stream_writer_ = chunked_stream_->CreateWriter();
   }
 
   if (!response_writer_)
-    response_writer_.reset(new URLFetcherStringWriter);
+    response_writer_ = std::make_unique<URLFetcherStringWriter>();
 
   const int result = response_writer_->Initialize(
       base::BindOnce(&URLFetcherCore::DidInitializeWriter, this));
@@ -615,11 +619,9 @@ void URLFetcherCore::StartURLRequest() {
       current_upload_bytes_ = -1;
       // TODO(kinaba): http://crbug.com/118103. Implement upload callback in the
       //  layer and avoid using timer here.
-      upload_progress_checker_timer_.reset(new base::RepeatingTimer());
+      upload_progress_checker_timer_ = std::make_unique<base::RepeatingTimer>();
       upload_progress_checker_timer_->Start(
-          FROM_HERE,
-          base::TimeDelta::FromMilliseconds(kUploadProgressTimerInterval),
-          this,
+          FROM_HERE, base::Milliseconds(kUploadProgressTimerInterval), this,
           &URLFetcherCore::InformDelegateUploadProgress);
       break;
     }
@@ -678,7 +680,7 @@ void URLFetcherCore::StartURLRequestWhenAppropriate() {
       if (delay != 0) {
         network_task_runner_->PostDelayedTask(
             FROM_HERE, base::BindOnce(&URLFetcherCore::StartURLRequest, this),
-            base::TimeDelta::FromMilliseconds(delay));
+            base::Milliseconds(delay));
         return;
       }
     }
@@ -766,7 +768,7 @@ void URLFetcherCore::RetryOrCompleteUrlFetch() {
     // have a throttler manager.
     base::TimeTicks backoff_release_time = GetBackoffReleaseTime();
     backoff_delay = backoff_release_time - base::TimeTicks::Now();
-    if (backoff_delay < base::TimeDelta())
+    if (backoff_delay.is_negative())
       backoff_delay = base::TimeDelta();
 
     if (automatically_retry_on_5xx_ &&

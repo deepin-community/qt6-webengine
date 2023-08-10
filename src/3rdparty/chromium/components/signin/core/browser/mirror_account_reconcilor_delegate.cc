@@ -4,10 +4,11 @@
 
 #include "components/signin/core/browser/mirror_account_reconcilor_delegate.h"
 
+#include "base/containers/contains.h"
 #include "base/logging.h"
 #include "build/build_config.h"
+#include "build/chromeos_buildflags.h"
 #include "components/signin/core/browser/account_reconcilor.h"
-#include "components/signin/public/base/account_consistency_method.h"
 
 namespace signin {
 
@@ -39,12 +40,16 @@ bool MirrorAccountReconcilorDelegate::ShouldAbortReconcileIfPrimaryHasError()
 
 ConsentLevel MirrorAccountReconcilorDelegate::GetConsentLevelForPrimaryAccount()
     const {
-#if defined(OS_ANDROID)
-  if (base::FeatureList::IsEnabled(kMobileIdentityConsistency)) {
-    return ConsentLevel::kNotRequired;
-  }
-#endif
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
+  return ConsentLevel::kSignin;
+#elif BUILDFLAG(IS_CHROMEOS_LACROS)
+  // Whenever Mirror is enabled on a Lacros Profile, the Primary Account may or
+  // may not have consented to Chrome Sync. But we want to enable
+  // `AccountReconcilor` regardless - for minting Gaia cookies.
+  return ConsentLevel::kSignin;
+#else
   return ConsentLevel::kSync;
+#endif
 }
 
 CoreAccountId MirrorAccountReconcilorDelegate::GetFirstGaiaAccountForReconcile(

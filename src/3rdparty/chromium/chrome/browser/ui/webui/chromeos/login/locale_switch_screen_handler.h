@@ -7,11 +7,12 @@
 
 #include "chrome/browser/ui/webui/chromeos/login/base_screen_handler.h"
 #include "chrome/browser/ui/webui/chromeos/login/core_oobe_handler.h"
-#include "chrome/browser/ui/webui/chromeos/login/js_calls_container.h"
+
+namespace ash {
+class LocaleSwitchScreen;
+}
 
 namespace chromeos {
-
-class LocaleSwitchScreen;
 
 class LocaleSwitchView {
  public:
@@ -23,7 +24,7 @@ class LocaleSwitchView {
   LocaleSwitchView(const LocaleSwitchView&) = delete;
   LocaleSwitchView& operator=(const LocaleSwitchView&) = delete;
 
-  virtual void Bind(LocaleSwitchScreen* screen) = 0;
+  virtual void Bind(ash::LocaleSwitchScreen* screen) = 0;
   virtual void Unbind() = 0;
   virtual void UpdateStrings() = 0;
 };
@@ -34,25 +35,31 @@ class LocaleSwitchScreenHandler : public BaseScreenHandler,
  public:
   using TView = LocaleSwitchView;
 
-  LocaleSwitchScreenHandler(JSCallsContainer* js_calls_container,
-                            CoreOobeView* core_oobe_view);
+  explicit LocaleSwitchScreenHandler(CoreOobeView* core_oobe_view);
   ~LocaleSwitchScreenHandler() override;
 
   // LocaleSwitchView:
-  void Bind(LocaleSwitchScreen* screen) override;
+  void Bind(ash::LocaleSwitchScreen* screen) override;
   void Unbind() override;
   void UpdateStrings() override;
 
   // BaseScreenHandler:
   void DeclareLocalizedValues(
       ::login::LocalizedValuesBuilder* builder) override;
-  void Initialize() override;
+  void InitializeDeprecated() override;
 
  private:
-  LocaleSwitchScreen* screen_ = nullptr;
+  ash::LocaleSwitchScreen* screen_ = nullptr;
   CoreOobeView* core_oobe_view_ = nullptr;
 };
 
 }  // namespace chromeos
+
+// TODO(https://crbug.com/1164001): remove after the //chrome/browser/chromeos
+// source migration is finished.
+namespace ash {
+using ::chromeos::LocaleSwitchScreenHandler;
+using ::chromeos::LocaleSwitchView;
+}
 
 #endif  // CHROME_BROWSER_UI_WEBUI_CHROMEOS_LOGIN_LOCALE_SWITCH_SCREEN_HANDLER_H_

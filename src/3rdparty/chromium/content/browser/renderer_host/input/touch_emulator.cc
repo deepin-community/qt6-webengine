@@ -4,6 +4,8 @@
 
 #include "content/browser/renderer_host/input/touch_emulator.h"
 
+#include <memory>
+
 #include "base/containers/queue.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
@@ -60,8 +62,7 @@ int ModifiersWithoutMouseButtons(const WebInputEvent& event) {
 
 // Time between two consecutive mouse moves, during which second mouse move
 // is not converted to touch.
-constexpr base::TimeDelta kMouseMoveDropInterval =
-    base::TimeDelta::FromMilliseconds(5);
+constexpr base::TimeDelta kMouseMoveDropInterval = base::Milliseconds(5);
 
 } // namespace
 
@@ -107,8 +108,8 @@ void TouchEmulator::Enable(Mode mode,
       mode_ != mode) {
     mode_ = mode;
     gesture_provider_config_type_ = config_type;
-    gesture_provider_.reset(new ui::FilteredGestureProvider(
-        GetEmulatorGestureProviderConfig(config_type, mode), this));
+    gesture_provider_ = std::make_unique<ui::FilteredGestureProvider>(
+        GetEmulatorGestureProviderConfig(config_type, mode), this);
     gesture_provider_->SetDoubleTapSupportForPageEnabled(double_tap_enabled_);
     // TODO(dgozman): Use synthetic secondary touch to support multi-touch.
     gesture_provider_->SetMultiTouchZoomSupportEnabled(

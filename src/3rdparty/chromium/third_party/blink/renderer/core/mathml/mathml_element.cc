@@ -38,6 +38,9 @@ static inline bool IsDisallowedMathSizeAttribute(const AtomicString& value) {
 }
 
 bool MathMLElement::IsPresentationAttribute(const QualifiedName& name) const {
+  if (!RuntimeEnabledFeatures::MathMLCoreEnabled())
+    return Element::IsPresentationAttribute(name);
+
   if (name == html_names::kDirAttr || name == mathml_names::kMathsizeAttr ||
       name == mathml_names::kMathcolorAttr ||
       name == mathml_names::kMathbackgroundAttr ||
@@ -76,6 +79,11 @@ void MathMLElement::CollectStyleForPresentationAttribute(
     const QualifiedName& name,
     const AtomicString& value,
     MutableCSSPropertyValueSet* style) {
+  if (!RuntimeEnabledFeatures::MathMLCoreEnabled()) {
+    Element::CollectStyleForPresentationAttribute(name, value, style);
+    return;
+  }
+
   if (name == html_names::kDirAttr) {
     if (IsValidDirAttribute(value)) {
       AddPropertyToPresentationAttributeStyle(style, CSSPropertyID::kDirection,
@@ -138,6 +146,11 @@ void MathMLElement::CollectStyleForPresentationAttribute(
 }
 
 void MathMLElement::ParseAttribute(const AttributeModificationParams& param) {
+  if (!RuntimeEnabledFeatures::MathMLCoreEnabled()) {
+    Element::ParseAttribute(param);
+    return;
+  }
+
   const AtomicString& event_name =
       HTMLElement::EventNameForAttributeName(param.name);
   if (!event_name.IsNull()) {
@@ -150,22 +163,22 @@ void MathMLElement::ParseAttribute(const AttributeModificationParams& param) {
   Element::ParseAttribute(param);
 }
 
-base::Optional<bool> MathMLElement::BooleanAttribute(
+absl::optional<bool> MathMLElement::BooleanAttribute(
     const QualifiedName& name) const {
   const AtomicString& value = FastGetAttribute(name);
   if (EqualIgnoringASCIICase(value, "true"))
     return true;
   if (EqualIgnoringASCIICase(value, "false"))
     return false;
-  return base::nullopt;
+  return absl::nullopt;
 }
 
-base::Optional<Length> MathMLElement::AddMathLengthToComputedStyle(
+absl::optional<Length> MathMLElement::AddMathLengthToComputedStyle(
     const CSSToLengthConversionData& conversion_data,
     const QualifiedName& attr_name,
     AllowPercentages allow_percentages) {
   if (!FastHasAttribute(attr_name))
-    return base::nullopt;
+    return absl::nullopt;
   auto value = FastGetAttribute(attr_name);
   const CSSPrimitiveValue* parsed_value = CSSParser::ParseLengthPercentage(
       value,
@@ -173,15 +186,8 @@ base::Optional<Length> MathMLElement::AddMathLengthToComputedStyle(
   if (!parsed_value || parsed_value->IsCalculated() ||
       (parsed_value->IsPercentage() &&
        (!value.EndsWith('%') || allow_percentages == AllowPercentages::kNo)))
-    return base::nullopt;
+    return absl::nullopt;
   return parsed_value->ConvertToLength(conversion_data);
-}
-
-bool MathMLElement::IsTokenElement() const {
-  return HasTagName(mathml_names::kMiTag) || HasTagName(mathml_names::kMoTag) ||
-         HasTagName(mathml_names::kMnTag) ||
-         HasTagName(mathml_names::kMtextTag) ||
-         HasTagName(mathml_names::kMsTag);
 }
 
 }  // namespace blink

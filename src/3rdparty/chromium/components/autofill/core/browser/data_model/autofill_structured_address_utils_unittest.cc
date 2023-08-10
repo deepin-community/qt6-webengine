@@ -36,59 +36,54 @@ TEST(AutofillStructuredAddressUtils, TestParseValueByRegularExpression) {
   std::string regex = kFirstMiddleLastRe;
   std::string value = "first middle1 middle2 middle3 last";
 
-  std::map<std::string, std::string> result_map;
+  absl::optional<base::flat_map<std::string, std::string>> result_map;
 
-  bool success = ParseValueByRegularExpression(value, regex, &result_map);
+  result_map = ParseValueByRegularExpression(value, regex);
 
-  EXPECT_TRUE(success);
-  EXPECT_EQ(result_map["NAME_FULL"], value);
-  EXPECT_EQ(result_map["NAME_FIRST"], "first");
-  EXPECT_EQ(result_map["NAME_MIDDLE"], "middle1 middle2 middle3");
-  EXPECT_EQ(result_map["NAME_LAST"], "last");
+  EXPECT_TRUE(result_map);
+  EXPECT_EQ((*result_map)["NAME_FULL"], value);
+  EXPECT_EQ((*result_map)["NAME_FIRST"], "first");
+  EXPECT_EQ((*result_map)["NAME_MIDDLE"], "middle1 middle2 middle3");
+  EXPECT_EQ((*result_map)["NAME_LAST"], "last");
 
   // Parse a name with only one middle name.
   value = "first middle1 last";
-  result_map.clear();
-  success = ParseValueByRegularExpression(value, regex, &result_map);
+  result_map = ParseValueByRegularExpression(value, regex);
 
-  EXPECT_TRUE(success);
-  EXPECT_EQ(result_map["NAME_FULL"], value);
-  EXPECT_EQ(result_map["NAME_FIRST"], "first");
-  EXPECT_EQ(result_map["NAME_MIDDLE"], "middle1");
-  EXPECT_EQ(result_map["NAME_LAST"], "last");
+  EXPECT_TRUE(result_map);
+  EXPECT_EQ((*result_map)["NAME_FULL"], value);
+  EXPECT_EQ((*result_map)["NAME_FIRST"], "first");
+  EXPECT_EQ((*result_map)["NAME_MIDDLE"], "middle1");
+  EXPECT_EQ((*result_map)["NAME_LAST"], "last");
 
   // Parse a name without a middle name.
   value = "first last";
-  result_map.clear();
-  success = ParseValueByRegularExpression(value, regex, &result_map);
+  result_map = ParseValueByRegularExpression(value, regex);
 
   // Verify the expectation.
-  EXPECT_TRUE(success);
-  EXPECT_EQ(result_map["NAME_FULL"], value);
-  EXPECT_EQ(result_map["NAME_FIRST"], "first");
-  EXPECT_EQ(result_map["NAME_MIDDLE"], "");
-  EXPECT_EQ(result_map["NAME_LAST"], "last");
+  EXPECT_TRUE(result_map);
+  EXPECT_EQ((*result_map)["NAME_FULL"], value);
+  EXPECT_EQ((*result_map)["NAME_FIRST"], "first");
+  EXPECT_EQ((*result_map)["NAME_MIDDLE"], "");
+  EXPECT_EQ((*result_map)["NAME_LAST"], "last");
 
   // Parse a name without only a last name.
   value = "last";
-  result_map.clear();
-  success = ParseValueByRegularExpression(value, regex, &result_map);
+  result_map = ParseValueByRegularExpression(value, regex);
 
   // Verify the expectations.
-  EXPECT_TRUE(success);
-  EXPECT_EQ(result_map["NAME_FULL"], value);
-  EXPECT_EQ(result_map["NAME_FIRST"], "");
-  EXPECT_EQ(result_map["NAME_MIDDLE"], "");
-  EXPECT_EQ(result_map["NAME_LAST"], "last");
+  EXPECT_TRUE(result_map);
+  EXPECT_EQ((*result_map)["NAME_FULL"], value);
+  EXPECT_EQ((*result_map)["NAME_FIRST"], "");
+  EXPECT_EQ((*result_map)["NAME_MIDDLE"], "");
+  EXPECT_EQ((*result_map)["NAME_LAST"], "last");
 
   // Parse an empty name that should not be successful.
   value = "";
-  result_map.clear();
-  success = ParseValueByRegularExpression(value, regex, &result_map);
+  result_map = ParseValueByRegularExpression(value, regex);
 
   // Verify the expectations.
-  EXPECT_FALSE(success);
-  EXPECT_EQ(result_map.size(), 0u);
+  EXPECT_FALSE(result_map);
 }
 
 TEST(AutofillStructuredAddressUtils,
@@ -96,9 +91,7 @@ TEST(AutofillStructuredAddressUtils,
   std::string regex = "(!<GROUP>this)";
   std::string value = "this is missing";
 
-  std::map<std::string, std::string> result_map;
-
-  EXPECT_FALSE(ParseValueByRegularExpression(value, regex, &result_map));
+  EXPECT_FALSE(ParseValueByRegularExpression(value, regex));
 }
 
 TEST(AutofillStructuredAddressUtils,
@@ -106,22 +99,9 @@ TEST(AutofillStructuredAddressUtils,
   std::string regex = "(!<INVALID";
   std::string value = "first middle1 middle2 middle3 last";
 
-  std::map<std::string, std::string> result_map;
-
-  EXPECT_FALSE(ParseValueByRegularExpression(value, regex, &result_map));
+  EXPECT_FALSE(ParseValueByRegularExpression(value, regex));
   auto expression = BuildRegExFromPattern(regex);
-  EXPECT_FALSE(
-      ParseValueByRegularExpression(value, expression.get(), &result_map));
-}
-
-TEST(AutofillStructuredAddressUtils,
-     TestParseValueByRegularExpression_UnintializedResultMap) {
-  std::string regex = "(exp)";
-  std::string value = "first middle1 middle2 middle3 last";
-
-  std::map<std::string, std::string>* result_map = nullptr;
-
-  ASSERT_DCHECK_DEATH(ParseValueByRegularExpression(value, regex, result_map));
+  EXPECT_FALSE(ParseValueByRegularExpression(value, expression.get()));
 }
 
 // Test the matching of a value against a regular expression.
@@ -230,35 +210,27 @@ TEST(AutofillStructuredAddressUtils, NoCaptureTypeWithPattern) {
 
 TEST(AutofillStructuredAddressUtils, TokenizeValue) {
   std::vector<AddressToken> expected_tokens = {
-      {base::ASCIIToUTF16("AnD"), base::ASCIIToUTF16("and"), 1},
-      {base::ASCIIToUTF16("anotherOne"), base::ASCIIToUTF16("anotherone"), 2},
-      {base::ASCIIToUTF16("valUe"), base::ASCIIToUTF16("value"), 0}};
+      {u"AnD", u"and", 1},
+      {u"anotherOne", u"anotherone", 2},
+      {u"valUe", u"value", 0}};
 
-  EXPECT_EQ(TokenizeValue(base::ASCIIToUTF16("  valUe AnD    anotherOne")),
-            expected_tokens);
+  EXPECT_EQ(TokenizeValue(u"  valUe AnD    anotherOne"), expected_tokens);
 
   std::vector<AddressToken> expected_cjk_tokens = {
-      {base::UTF8ToUTF16("영"), base::UTF8ToUTF16("영"), 1},
-      {base::UTF8ToUTF16("이"), base::UTF8ToUTF16("이"), 0},
-      {base::UTF8ToUTF16("호"), base::UTF8ToUTF16("호"), 2}};
+      {u"영", u"영", 1}, {u"이", u"이", 0}, {u"호", u"호", 2}};
 
-  EXPECT_EQ(TokenizeValue(base::UTF8ToUTF16("이영 호")), expected_cjk_tokens);
-  EXPECT_EQ(TokenizeValue(base::UTF8ToUTF16("이・영호")), expected_cjk_tokens);
-  EXPECT_EQ(TokenizeValue(base::UTF8ToUTF16("이영 호")), expected_cjk_tokens);
+  EXPECT_EQ(TokenizeValue(u"이영 호"), expected_cjk_tokens);
+  EXPECT_EQ(TokenizeValue(u"이・영호"), expected_cjk_tokens);
+  EXPECT_EQ(TokenizeValue(u"이영 호"), expected_cjk_tokens);
 }
 
 TEST(AutofillStructuredAddressUtils, NormalizeValue) {
-  EXPECT_EQ(NormalizeValue(base::UTF8ToUTF16(" MÜLLeR   Örber")),
-            base::UTF8ToUTF16("muller orber"));
+  EXPECT_EQ(NormalizeValue(u" MÜLLeR   Örber"), u"muller orber");
 }
 
 TEST(AutofillStructuredAddressUtils, TestGetRewriter) {
-  EXPECT_EQ(RewriterCache::Rewrite(base::UTF8ToUTF16("us"),
-                                   base::UTF8ToUTF16("unit #3")),
-            base::UTF8ToUTF16("unit 3"));
-  EXPECT_EQ(RewriterCache::Rewrite(base::UTF8ToUTF16("us"),
-                                   base::UTF8ToUTF16("california")),
-            base::UTF8ToUTF16("ca"));
+  EXPECT_EQ(RewriterCache::Rewrite(u"us", u"unit #3"), u"unit 3");
+  EXPECT_EQ(RewriterCache::Rewrite(u"us", u"california"), u"ca");
 }
 
 }  // namespace structured_address

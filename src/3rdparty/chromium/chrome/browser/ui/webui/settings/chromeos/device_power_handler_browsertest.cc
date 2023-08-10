@@ -6,9 +6,9 @@
 #include <set>
 #include <utility>
 
-#include "ash/public/cpp/ash_pref_names.h"
+#include "ash/constants/ash_pref_names.h"
+#include "base/containers/adapters.h"
 #include "base/json/json_writer.h"
-#include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/values.h"
 #include "chrome/browser/profiles/profile_manager.h"
@@ -75,17 +75,21 @@ class PowerHandlerTest : public InProcessBrowserTest {
         PowerPolicyController::ACTION_SUSPEND;
     bool lid_closed_controlled = false;
     bool has_lid = true;
+    bool adaptive_charging = false;
   };
 
   PowerHandlerTest() = default;
+
+  PowerHandlerTest(const PowerHandlerTest&) = delete;
+  PowerHandlerTest& operator=(const PowerHandlerTest&) = delete;
+
   ~PowerHandlerTest() override = default;
 
   // InProcessBrowserTest:
   void SetUpInProcessBrowserTestFixture() override {
     // Initialize user policy.
-    ON_CALL(provider_, IsInitializationComplete(_)).WillByDefault(Return(true));
-    ON_CALL(provider_, IsFirstPolicyLoadComplete(_))
-        .WillByDefault(Return(true));
+    provider_.SetDefaultReturns(/*is_initialization_complete_return=*/true,
+                                /*is_first_policy_load_complete_return=*/true);
     policy::BrowserPolicyConnector::SetPolicyProviderForTesting(&provider_);
   }
 
@@ -105,19 +109,17 @@ class PowerHandlerTest : public InProcessBrowserTest {
 
   // Returns a JSON representation of the contents of the last message sent to
   // WebUI about settings being changed.
-  std::string GetLastSettingsChangedMessage() WARN_UNUSED_RESULT {
-    for (auto it = web_ui_.call_data().rbegin();
-         it != web_ui_.call_data().rend(); ++it) {
-      const content::TestWebUI::CallData* data = it->get();
-      std::string name;
+  [[nodiscard]] std::string GetLastSettingsChangedMessage() {
+    for (const std::unique_ptr<content::TestWebUI::CallData>& data :
+         base::Reversed(web_ui_.call_data())) {
+      const std::string* name = data->arg1()->GetIfString();
       const base::DictionaryValue* dict = nullptr;
-      if (data->function_name() != "cr.webUIListenerCallback" ||
-          !data->arg1()->GetAsString(&name) ||
-          name != PowerHandler::kPowerManagementSettingsChangedName) {
+      if (data->function_name() != "cr.webUIListenerCallback" || !name ||
+          *name != PowerHandler::kPowerManagementSettingsChangedName) {
         continue;
       }
       if (!data->arg2()->GetAsDictionary(&dict)) {
-        ADD_FAILURE() << "Failed to get dict from " << name << " message";
+        ADD_FAILURE() << "Failed to get dict from " << *name << " message";
         continue;
       }
       std::string out;
@@ -144,18 +146,20 @@ class PowerHandlerTest : public InProcessBrowserTest {
     for (auto idle_behavior : settings.possible_battery_behaviors)
       list->Append(static_cast<int>(idle_behavior));
 
-    dict.SetInteger(PowerHandler::kCurrentAcIdleBehaviorKey,
-                    static_cast<int>(settings.current_ac_behavior));
-    dict.SetInteger(PowerHandler::kCurrentBatteryIdleBehaviorKey,
-                    static_cast<int>(settings.current_battery_behavior));
-    dict.SetBoolean(PowerHandler::kAcIdleManagedKey, settings.ac_idle_managed);
-    dict.SetBoolean(PowerHandler::kBatteryIdleManagedKey,
+    dict.SetIntKey(PowerHandler::kCurrentAcIdleBehaviorKey,
+                   static_cast<int>(settings.current_ac_behavior));
+    dict.SetIntKey(PowerHandler::kCurrentBatteryIdleBehaviorKey,
+                   static_cast<int>(settings.current_battery_behavior));
+    dict.SetBoolKey(PowerHandler::kAcIdleManagedKey, settings.ac_idle_managed);
+    dict.SetBoolKey(PowerHandler::kBatteryIdleManagedKey,
                     settings.battery_idle_managed);
-    dict.SetInteger(PowerHandler::kLidClosedBehaviorKey,
-                    settings.lid_closed_behavior);
-    dict.SetBoolean(PowerHandler::kLidClosedControlledKey,
+    dict.SetIntKey(PowerHandler::kLidClosedBehaviorKey,
+                   settings.lid_closed_behavior);
+    dict.SetBoolKey(PowerHandler::kLidClosedControlledKey,
                     settings.lid_closed_controlled);
-    dict.SetBoolean(PowerHandler::kHasLidKey, settings.has_lid);
+    dict.SetBoolKey(PowerHandler::kHasLidKey, settings.has_lid);
+    dict.SetBoolKey(PowerHandler::kAdaptiveChargingKey,
+                    settings.adaptive_charging);
     std::string out;
     EXPECT_TRUE(base::JSONWriter::Write(dict, &out));
     return out;
@@ -191,9 +195,6 @@ class PowerHandlerTest : public InProcessBrowserTest {
   content::TestWebUI web_ui_;
 
   testing::NiceMock<policy::MockConfigurationPolicyProvider> provider_;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(PowerHandlerTest);
 };
 
 // Verifies that settings are sent to WebUI when requested.
@@ -353,6 +354,17 @@ IN_PROC_BROWSER_TEST_F(PowerHandlerTest, SendLidSettingForPrefChanges) {
   EXPECT_EQ(ToString(settings), GetLastSettingsChangedMessage());
 }
 
+// Verifies that the adaptive charging pref's value is sent directly to WebUI.
+IN_PROC_BROWSER_TEST_F(PowerHandlerTest, SendAdaptiveCharging) {
+  GetPrefs()->Set(ash::prefs::kPowerAdaptiveChargingEnabled, base::Value(true));
+
+  // Current AC idle behavior should be DISPLAY_OFF.
+  DevicePowerSettings settings;
+  settings.adaptive_charging = true;
+
+  EXPECT_EQ(ToString(settings), GetLastSettingsChangedMessage());
+}
+
 // Verifies that requests from WebUI to update the idle behavior update prefs
 // appropriately.
 IN_PROC_BROWSER_TEST_F(PowerHandlerTest, SetIdleBehavior) {
@@ -413,6 +425,18 @@ IN_PROC_BROWSER_TEST_F(PowerHandlerTest, SetLidBehavior) {
   // Selecting the "suspend" setting should just clear the pref.
   test_api_->SetLidClosedBehavior(PowerPolicyController::ACTION_SUSPEND);
   EXPECT_EQ(-1, GetIntPref(ash::prefs::kPowerLidClosedAction));
+}
+
+// Verifies that requests from WebUI to enable / disable the adaptive charging
+// feature updates prefs appropriately.
+IN_PROC_BROWSER_TEST_F(PowerHandlerTest, SetAdaptiveCharging) {
+  const PrefService::Preference* pref =
+      GetPrefs()->FindPreference(ash::prefs::kPowerAdaptiveChargingEnabled);
+  ASSERT_NE(nullptr, pref);
+
+  EXPECT_EQ(false, pref->GetValue()->GetBool());
+  test_api_->SetAdaptiveCharging(true);
+  EXPECT_EQ(true, pref->GetValue()->GetBool());
 }
 
 }  // namespace settings

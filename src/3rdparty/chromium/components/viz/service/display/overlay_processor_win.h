@@ -8,8 +8,7 @@
 #include <memory>
 #include <vector>
 
-#include "base/containers/flat_map.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "build/build_config.h"
 #include "components/viz/common/quads/aggregated_render_pass.h"
 #include "components/viz/service/display/dc_layer_overlay.h"
@@ -32,6 +31,10 @@ class VIZ_SERVICE_EXPORT OverlayProcessorWin
   OverlayProcessorWin(
       OutputSurface* output_surface,
       std::unique_ptr<DCLayerOverlayProcessor> dc_layer_overlay_processor);
+
+  OverlayProcessorWin(const OverlayProcessorWin&) = delete;
+  OverlayProcessorWin& operator=(const OverlayProcessorWin&) = delete;
+
   ~OverlayProcessorWin() override;
 
   bool IsOverlaySupported() const override;
@@ -43,7 +46,10 @@ class VIZ_SERVICE_EXPORT OverlayProcessorWin
   // processor.
   bool NeedsSurfaceDamageRectList() const override;
 
-  void AdjustOutputSurfaceOverlay(base::Optional<OutputSurfaceOverlayPlane>*
+  // Set |is_video_capture_enabled_|.
+  void SetIsVideoCaptureEnabled(bool enabled) override;
+
+  void AdjustOutputSurfaceOverlay(absl::optional<OutputSurfaceOverlayPlane>*
                                       output_surface_plane) override {}
 
   // Attempt to replace quads from the specified root render pass with overlays
@@ -51,7 +57,7 @@ class VIZ_SERVICE_EXPORT OverlayProcessorWin
   void ProcessForOverlays(
       DisplayResourceProvider* resource_provider,
       AggregatedRenderPassList* render_passes,
-      const SkMatrix44& output_color_matrix,
+      const SkM44& output_color_matrix,
       const FilterOperationsMap& render_pass_filters,
       const FilterOperationsMap& render_pass_backdrop_filters,
       SurfaceDamageRectList surface_damage_rect_list,
@@ -69,7 +75,7 @@ class VIZ_SERVICE_EXPORT OverlayProcessorWin
   }
 
  private:
-  OutputSurface* const output_surface_;
+  const raw_ptr<OutputSurface> output_surface_;
   // Whether direct composition layers are being used with SetEnableDCLayers().
   bool using_dc_layers_ = false;
   // Number of frames since the last time direct composition layers were used.
@@ -78,7 +84,7 @@ class VIZ_SERVICE_EXPORT OverlayProcessorWin
   // TODO(weiliangc): Eventually fold DCLayerOverlayProcessor into this class.
   std::unique_ptr<DCLayerOverlayProcessor> dc_layer_overlay_processor_;
 
-  DISALLOW_COPY_AND_ASSIGN(OverlayProcessorWin);
+  bool is_video_capture_enabled_ = false;
 };
 
 }  // namespace viz

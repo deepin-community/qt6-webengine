@@ -8,7 +8,6 @@
 #include <string>
 
 #include "base/format_macros.h"
-#include "base/strings/stringprintf.h"
 #include "net/http/http_response_headers.h"
 
 namespace download {
@@ -24,6 +23,7 @@ DownloadCreateInfo::DownloadCreateInfo(
       offset(0),
       has_user_gesture(false),
       transient(false),
+      require_safety_checks(true),
       result(DOWNLOAD_INTERRUPT_REASON_NONE),
       save_info(std::move(save_info)),
       render_process_id(-1),
@@ -32,7 +32,9 @@ DownloadCreateInfo::DownloadCreateInfo(
       connection_info(net::HttpResponseInfo::CONNECTION_INFO_UNKNOWN),
       method("GET"),
       ukm_source_id(ukm::kInvalidSourceId),
-      is_content_initiated(false) {}
+      is_content_initiated(false),
+      credentials_mode(::network::mojom::CredentialsMode::kInclude),
+      isolation_info(absl::nullopt) {}
 
 DownloadCreateInfo::DownloadCreateInfo()
     : DownloadCreateInfo(base::Time(), std::make_unique<DownloadSaveInfo>()) {}

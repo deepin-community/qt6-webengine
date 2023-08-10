@@ -1,5 +1,4 @@
-from six import itervalues, iteritems
-from six.moves.collections_abc import MutableMapping
+from collections.abc import MutableMapping
 
 
 MYPY = False
@@ -22,8 +21,8 @@ if MYPY:
 
 
 if MYPY:
-    TypeDataType = MutableMapping[Tuple[Text, ...], Set[item.ManifestItem]]
-    PathHashType = MutableMapping[Tuple[Text, ...], Text]
+    TypeDataType = MutableMapping[Tuple[str, ...], Set[item.ManifestItem]]
+    PathHashType = MutableMapping[Tuple[str, ...], str]
 else:
     TypeDataType = MutableMapping
     PathHashType = MutableMapping
@@ -147,8 +146,8 @@ class TypeData(TypeDataType):
     def __iter__(self):
         # type: () -> Iterator[Tuple[Text, ...]]
         """Iterator over keys in the TypeData in codepoint order"""
-        data_node = self._data  # type: Optional[Dict[Text, Any]]
-        json_node = self._json_data  # type: Optional[Dict[Text, Any]]
+        data_node = self._data  # type: Optional[Union[Dict[Text, Any], Set[item.ManifestItem]]]
+        json_node = self._json_data  # type: Optional[Union[Dict[Text, Any], List[Any]]]
         path = tuple()  # type: Tuple[Text, ...]
         stack = [(data_node, json_node, path)]
         while stack:
@@ -175,21 +174,21 @@ class TypeData(TypeDataType):
         # type: () -> int
         count = 0
 
-        stack = [self._data]
+        stack = [self._data]  # type: List[Union[Dict[Text, Any], Set[item.ManifestItem]]]
         while stack:
             v = stack.pop()
             if isinstance(v, set):
                 count += 1
             else:
-                stack.extend(itervalues(v))
+                stack.extend(v.values())
 
-        stack = [self._json_data]
-        while stack:
-            v = stack.pop()
-            if isinstance(v, list):
+        json_stack = [self._json_data]  # type: List[Union[Dict[Text, Any], List[Any]]]
+        while json_stack:
+            json_v = json_stack.pop()
+            if isinstance(json_v, list):
                 count += 1
             else:
-                stack.extend(itervalues(v))
+                json_stack.extend(json_v.values())
 
         return count
 
@@ -257,11 +256,7 @@ class TypeData(TypeDataType):
 
         def safe_sorter(element):
             # type: (Tuple[str,str]) -> Tuple[str,str]
-            """ key function to sort lists with None values.
-
-            Python3 is more strict typewise. Comparing None and str for example is valid
-            in python2 but throws an exception in python3.
-            """
+            """key function to sort lists with None values."""
             if element and not element[0]:
                 return ("", element[1])
             else:
@@ -270,7 +265,7 @@ class TypeData(TypeDataType):
         stack = [(self._data, json_rv, tuple())]  # type: List[Tuple[Dict[Text, Any], Dict[Text, Any], Tuple[Text, ...]]]
         while stack:
             data_node, json_node, par_full_key = stack.pop()
-            for k, v in iteritems(data_node):
+            for k, v in data_node.items():
                 full_key = par_full_key + (k,)
                 if isinstance(v, set):
                     assert k not in json_node

@@ -9,7 +9,6 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
-#include "base/timer/elapsed_timer.h"
 #include "base/values.h"
 #include "crypto/sha2.h"
 #include "extensions/browser/computed_hashes.h"
@@ -27,8 +26,6 @@ ContentHashReader::~ContentHashReader() = default;
 std::unique_ptr<const ContentHashReader> ContentHashReader::Create(
     const base::FilePath& relative_path,
     const scoped_refptr<const ContentHash>& content_hash) {
-  base::ElapsedTimer timer;
-
   ComputedHashes::Status hashes_status = content_hash->computed_hashes_status();
   if (hashes_status == ComputedHashes::Status::UNKNOWN ||
       hashes_status == ComputedHashes::Status::READ_FAILED) {
@@ -42,7 +39,7 @@ std::unique_ptr<const ContentHashReader> ContentHashReader::Create(
   DCHECK_EQ(ComputedHashes::Status::SUCCESS, hashes_status);
 
   const ComputedHashes& computed_hashes = content_hash->computed_hashes();
-  base::Optional<std::string> root;
+  absl::optional<std::string> root;
 
   int block_size;
   std::vector<std::string> block_hashes;
@@ -86,9 +83,6 @@ std::unique_ptr<const ContentHashReader> ContentHashReader::Create(
       base::WrapUnique(new ContentHashReader(InitStatus::SUCCESS));
   hash_reader->block_size_ = block_size;
   hash_reader->hashes_ = std::move(block_hashes);
-
-  UMA_HISTOGRAM_TIMES("ExtensionContentHashReader.InitLatency",
-                      timer.Elapsed());
   return hash_reader;  // Success.
 }
 

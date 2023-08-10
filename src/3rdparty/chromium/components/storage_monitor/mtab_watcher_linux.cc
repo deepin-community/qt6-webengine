@@ -12,7 +12,6 @@
 
 #include "base/bind.h"
 #include "base/logging.h"
-#include "base/stl_util.h"
 #include "base/threading/scoped_blocking_call.h"
 
 namespace {
@@ -73,7 +72,7 @@ void MtabWatcherLinux::ReadMtab() const {
   // devices that have been mounted over.
   while (getmntent_r(fp, &entry, buf, sizeof(buf))) {
     // We only care about real file systems.
-    for (size_t i = 0; i < base::size(kKnownFileSystems); ++i) {
+    for (size_t i = 0; i < std::size(kKnownFileSystems); ++i) {
       if (strcmp(kKnownFileSystems[i], entry.mnt_type) == 0) {
         device_map[base::FilePath(entry.mnt_dir)] =
             base::FilePath(entry.mnt_fsname);

@@ -8,7 +8,6 @@
 #include <stdint.h>
 #include <string>
 
-#include "base/macros.h"
 #include "chrome/common/buildflags.h"
 #include "chrome/common/plugin.mojom.h"
 #include "components/no_state_prefetch/renderer/prerender_observer.h"
@@ -33,14 +32,17 @@ class ChromePluginPlaceholder final
       const blink::WebPluginParams& params,
       const content::WebPluginInfo& info,
       const std::string& identifier,
-      const base::string16& name,
+      const std::u16string& name,
       int resource_id,
-      const base::string16& message);
+      const std::u16string& message);
 
   // Creates a new WebViewPlugin with a MissingPlugin as a delegate.
   static ChromePluginPlaceholder* CreateLoadableMissingPlugin(
       content::RenderFrame* render_frame,
       const blink::WebPluginParams& params);
+
+  ChromePluginPlaceholder(const ChromePluginPlaceholder&) = delete;
+  ChromePluginPlaceholder& operator=(const ChromePluginPlaceholder&) = delete;
 
   // Runs |callback| over each plugin placeholder for the given RenderFrame.
   static void ForEach(
@@ -55,7 +57,7 @@ class ChromePluginPlaceholder final
   ChromePluginPlaceholder(content::RenderFrame* render_frame,
                           const blink::WebPluginParams& params,
                           const std::string& html_data,
-                          const base::string16& title);
+                          const std::u16string& title);
   ~ChromePluginPlaceholder() override;
 
   // content::LoadablePluginPlaceholder overrides.
@@ -74,9 +76,6 @@ class ChromePluginPlaceholder final
   // content::RenderThreadObserver methods:
   void PluginListChanged() override;
 
-  // Show the Plugins permission bubble.
-  void ShowPermissionBubbleCallback();
-
   // chrome::mojom::PluginRenderer methods.
   void FinishedDownloading() override;
   void UpdateDownloading() override;
@@ -92,16 +91,14 @@ class ChromePluginPlaceholder final
 
   chrome::mojom::PluginStatus status_;
 
-  base::string16 title_;
+  std::u16string title_;
 
-  base::string16 plugin_name_;
+  std::u16string plugin_name_;
 
   mojo::Receiver<chrome::mojom::PluginRenderer> plugin_renderer_receiver_{this};
 
   mojo::AssociatedReceiver<blink::mojom::ContextMenuClient>
       context_menu_client_receiver_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(ChromePluginPlaceholder);
 };
 
 #endif  // CHROME_RENDERER_PLUGINS_CHROME_PLUGIN_PLACEHOLDER_H_

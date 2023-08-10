@@ -2,6 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "build/build_config.h"
+
+#if BUILDFLAG(IS_APPLE)
+// This must be defined before including <netinet/in.h>
+// to use IPV6_DONTFRAG, one of the IPv6 Sockets option introduced by RFC 3542
+#define __APPLE_USE_RFC_3542
+#endif  // BUILDFLAG(IS_APPLE)
+
 #include "net/socket/udp_socket_posix.h"
 
 #include <errno.h>
@@ -12,23 +20,25 @@
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/callback_helpers.h"
 #include "base/containers/stack_container.h"
 #include "base/debug/alias.h"
+#include "base/feature_list.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/rand_util.h"
 #include "base/task/current_thread.h"
-#include "base/task/post_task.h"
+#include "base/task/task_runner_util.h"
 #include "base/task/thread_pool.h"
-#include "base/task_runner_util.h"
-#include "base/trace_event/trace_event.h"
-#include "build/build_config.h"
+#include "base/trace_event/typed_macros.h"
 #include "build/chromeos_buildflags.h"
+#include "net/base/features.h"
 #include "net/base/io_buffer.h"
 #include "net/base/ip_address.h"
 #include "net/base/ip_endpoint.h"
@@ -40,25 +50,30 @@
 #include "net/log/net_log_event_type.h"
 #include "net/log/net_log_source.h"
 #include "net/log/net_log_source_type.h"
+#include "net/socket/ios_cronet_buildflags.h"
 #include "net/socket/socket_descriptor.h"
 #include "net/socket/socket_options.h"
 #include "net/socket/socket_tag.h"
 #include "net/socket/udp_net_log_parameters.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
+#include "third_party/perfetto/include/perfetto/tracing/string_helpers.h"
 
-#if defined(OS_ANDROID)
-#include <dlfcn.h>
-#include "base/android/build_info.h"
+#if BUILDFLAG(IS_ANDROID)
 #include "base/native_library.h"
-#include "base/strings/utf_string_conversions.h"
-#endif  // defined(OS_ANDROID)
+#include "net/android/network_library.h"
+#include "net/android/radio_activity_tracker.h"
+#endif  // BUILDFLAG(IS_ANDROID)
 
-#if defined(OS_MAC)
+#if BUILDFLAG(IS_APPLE) && !BUILDFLAG(CRONET_BUILD)
 // This was needed to debug crbug.com/640281.
 // TODO(zhongyi): Remove once the bug is resolved.
 #include <dlfcn.h>
 #include <pthread.h>
-#endif  // defined(OS_MAC)
+#endif  // BUILDFLAG(IS_APPLE) && !BUILDFLAG(CRONET_BUILD)
+
+#if BUILDFLAG(IS_MAC)
+#include "base/mac/mac_util.h"
+#endif  // BUILDFLAG(IS_MAC)
 
 namespace net {
 
@@ -69,10 +84,9 @@ const int kPortStart = 1024;
 const int kPortEnd = 65535;
 const int kActivityMonitorBytesThreshold = 65535;
 const int kActivityMonitorMinimumSamplesForThroughputEstimate = 2;
-const base::TimeDelta kActivityMonitorMsThreshold =
-    base::TimeDelta::FromMilliseconds(100);
+const base::TimeDelta kActivityMonitorMsThreshold = base::Milliseconds(100);
 
-#if defined(OS_MAC)
+#if BUILDFLAG(IS_APPLE) && !BUILDFLAG(CRONET_BUILD)
 
 // On OSX the file descriptor is guarded to detect the cause of
 // crbug.com/640281. guarded API is supported only on newer versions of OSX,
@@ -138,7 +152,19 @@ const unsigned int GUARD_DUP = 1u << 1;
 
 const guardid_t kSocketFdGuard = 0xD712BC0BC9A4EAD4;
 
-#endif  // defined(OS_MAC)
+// Returns true if `socket` is connected to 0.0.0.0, false otherwise.
+// For detecting slow socket close due to a MacOS bug
+// (https://crbug.com/1194888).
+bool PeerIsZeroIPv4(const UDPSocketPosix& socket) {
+  IPEndPoint peer;
+  // Note this may call `getpeername` if the address is not cached, adding some
+  // overhead.
+  if (socket.GetPeerAddress(&peer) != OK)
+    return false;
+  return peer.address().IsIPv4() && peer.address().IsZero();
+}
+
+#endif  // BUILDFLAG(IS_APPLE) && !BUILDFLAG(CRONET_BUILD)
 
 int GetSocketFDHash(int fd) {
   return fd ^ 1595649551;
@@ -172,6 +198,8 @@ UDPSocketPosix::UDPSocketPosix(DatagramSocket::BindType bind_type,
       write_buf_len_(0),
       net_log_(NetLogWithSource::Make(net_log, NetLogSourceType::UDP_SOCKET)),
       bound_network_(NetworkChangeNotifier::kInvalidNetworkHandle),
+      always_update_bytes_received_(base::FeatureList::IsEnabled(
+          features::kUdpSocketPosixAlwaysUpdateBytesReceived)),
       experimental_recv_optimization_enabled_(false) {
   net_log_.BeginEventReferencingSource(NetLogEventType::SOCKET_ALIVE, source);
 }
@@ -194,10 +222,10 @@ int UDPSocketPosix::Open(AddressFamily address_family) {
   socket_ = CreatePlatformSocket(addr_family_, SOCK_DGRAM, 0);
   if (socket_ == kInvalidSocket)
     return MapSystemError(errno);
-#if defined(OS_MAC)
+#if BUILDFLAG(IS_APPLE) && !BUILDFLAG(CRONET_BUILD)
   PCHECK(change_fdguard_np(socket_, nullptr, 0, &kSocketFdGuard,
                            GUARD_CLOSE | GUARD_DUP, nullptr) == 0);
-#endif  // defined(OS_MAC)
+#endif  // BUILDFLAG(IS_APPLE) && !BUILDFLAG(CRONET_BUILD)
   socket_hash_ = GetSocketFDHash(socket_);
   if (!base::SetNonBlocking(socket_)) {
     const int err = MapSystemError(errno);
@@ -211,7 +239,7 @@ int UDPSocketPosix::Open(AddressFamily address_family) {
   return OK;
 }
 
-void UDPSocketPosix::ActivityMonitor::Increment(uint32_t bytes) {
+void UDPSocketPosix::ReceivedActivityMonitor::Increment(uint32_t bytes) {
   if (!bytes)
     return;
   bool timer_running = timer_.IsRunning();
@@ -228,23 +256,23 @@ void UDPSocketPosix::ActivityMonitor::Increment(uint32_t bytes) {
   }
   if (!timer_running) {
     timer_.Start(FROM_HERE, kActivityMonitorMsThreshold, this,
-                 &UDPSocketPosix::ActivityMonitor::OnTimerFired);
+                 &UDPSocketPosix::ReceivedActivityMonitor::OnTimerFired);
   }
 }
 
-void UDPSocketPosix::ActivityMonitor::Update() {
+void UDPSocketPosix::ReceivedActivityMonitor::Update() {
   if (!bytes_)
     return;
-  NetworkActivityMonitorIncrement(bytes_);
+  activity_monitor::IncrementBytesReceived(bytes_);
   bytes_ = 0;
 }
 
-void UDPSocketPosix::ActivityMonitor::OnClose() {
+void UDPSocketPosix::ReceivedActivityMonitor::OnClose() {
   timer_.Stop();
   Update();
 }
 
-void UDPSocketPosix::ActivityMonitor::OnTimerFired() {
+void UDPSocketPosix::ReceivedActivityMonitor::OnTimerFired() {
   increments_ = 0;
   if (!bytes_) {
     // Can happen if the socket has been idle and have had no
@@ -254,16 +282,6 @@ void UDPSocketPosix::ActivityMonitor::OnTimerFired() {
     return;
   }
   Update();
-}
-
-void UDPSocketPosix::SentActivityMonitor::NetworkActivityMonitorIncrement(
-    uint32_t bytes) {
-  NetworkActivityMonitor::GetInstance()->IncrementBytesSent(bytes);
-}
-
-void UDPSocketPosix::ReceivedActivityMonitor::NetworkActivityMonitorIncrement(
-    uint32_t bytes) {
-  NetworkActivityMonitor::GetInstance()->IncrementBytesReceived(bytes);
 }
 
 void UDPSocketPosix::Close() {
@@ -292,18 +310,33 @@ void UDPSocketPosix::Close() {
   // Verify that |socket_| hasn't been corrupted. Needed to debug
   // crbug.com/906005.
   CHECK_EQ(socket_hash_, GetSocketFDHash(socket_));
-#if defined(OS_MAC)
+#if BUILDFLAG(IS_APPLE) && !BUILDFLAG(CRONET_BUILD)
+  // A MacOS bug can cause sockets to 0.0.0.0 to take 1 second to close. Log a
+  // trace event for this case so that it can be correlated with jank in traces.
+  // Use the "base" category since "net" isn't enabled by default. See
+  // https://crbug.com/1194888.
+  TRACE_EVENT("base", PeerIsZeroIPv4(*this)
+                          ? perfetto::StaticString{"CloseSocketUDP.PeerIsZero"}
+                          : perfetto::StaticString{"CloseSocketUDP"});
+
   // Attempt to clear errors on the socket so that they are not returned by
   // close(). See https://crbug.com/1151048.
-  // TODO(ricea): Remove this if it doesn't work, or when the OS bug is fixed.
   int value = 0;
   socklen_t value_len = sizeof(value);
   HANDLE_EINTR(getsockopt(socket_, SOL_SOCKET, SO_ERROR, &value, &value_len));
 
-  PCHECK(IGNORE_EINTR(guarded_close_np(socket_, &kSocketFdGuard)) == 0);
+  if (IGNORE_EINTR(guarded_close_np(socket_, &kSocketFdGuard)) != 0) {
+    // There is a bug in the Mac OS kernel that it can return an
+    // ENOTCONN error. In this case we don't know whether the file
+    // descriptor is still allocated or not. We cannot safely close the
+    // file descriptor because it may have been reused by another
+    // thread in the meantime. We may leak file handles here and cause
+    // a crash indirectly later. See https://crbug.com/1151048.
+    PCHECK(errno == ENOTCONN);
+  }
 #else
   PCHECK(IGNORE_EINTR(close(socket_)) == 0);
-#endif  // defined(OS_MAC)
+#endif  // BUILDFLAG(IS_APPLE) && !BUILDFLAG(CRONET_BUILD)
 
   socket_ = kInvalidSocket;
   addr_family_ = 0;
@@ -311,7 +344,6 @@ void UDPSocketPosix::Close() {
   tag_ = SocketTag();
 
   write_async_timer_.Stop();
-  sent_activity_monitor_.OnClose();
   received_activity_monitor_.OnClose();
 }
 
@@ -400,6 +432,9 @@ int UDPSocketPosix::Write(
     int buf_len,
     CompletionOnceCallback callback,
     const NetworkTrafficAnnotationTag& traffic_annotation) {
+#if BUILDFLAG(IS_ANDROID)
+  android::MaybeRecordUDPWriteForWakeupTrigger(traffic_annotation);
+#endif  // BUILDFLAG(IS_ANDROID)
   return SendToOrWrite(buf, buf_len, nullptr, std::move(callback));
 }
 
@@ -437,7 +472,7 @@ int UDPSocketPosix::SendToOrWrite(IOBuffer* buf,
   write_buf_len_ = buf_len;
   DCHECK(!send_to_address_.get());
   if (address) {
-    send_to_address_.reset(new IPEndPoint(*address));
+    send_to_address_ = std::make_unique<IPEndPoint>(*address);
   }
   write_callback_ = std::move(callback);
   return ERR_IO_PENDING;
@@ -488,7 +523,7 @@ int UDPSocketPosix::InternalConnect(const IPEndPoint& address) {
   if (rv < 0)
     return MapSystemError(errno);
 
-  remote_address_.reset(new IPEndPoint(address));
+  remote_address_ = std::make_unique<IPEndPoint>(address);
   return rv;
 }
 
@@ -515,72 +550,11 @@ int UDPSocketPosix::BindToNetwork(
   DCHECK_NE(socket_, kInvalidSocket);
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DCHECK(!is_connected());
-  if (network == NetworkChangeNotifier::kInvalidNetworkHandle)
-    return ERR_INVALID_ARGUMENT;
-#if defined(OS_ANDROID)
-  // Android prior to Lollipop didn't have support for binding sockets to
-  // networks.
-  if (base::android::BuildInfo::GetInstance()->sdk_int() <
-      base::android::SDK_VERSION_LOLLIPOP) {
-    return ERR_NOT_IMPLEMENTED;
-  }
-  int rv;
-  // On Android M and newer releases use supported NDK API. On Android L use
-  // setNetworkForSocket from libnetd_client.so.
-  if (base::android::BuildInfo::GetInstance()->sdk_int() >=
-      base::android::SDK_VERSION_MARSHMALLOW) {
-    // See declaration of android_setsocknetwork() here:
-    // http://androidxref.com/6.0.0_r1/xref/development/ndk/platforms/android-M/include/android/multinetwork.h#65
-    // Function cannot be called directly as it will cause app to fail to load
-    // on pre-marshmallow devices.
-    typedef int (*MarshmallowSetNetworkForSocket)(int64_t netId, int socketFd);
-    static MarshmallowSetNetworkForSocket marshmallowSetNetworkForSocket;
-    // This is racy, but all racers should come out with the same answer so it
-    // shouldn't matter.
-    if (!marshmallowSetNetworkForSocket) {
-      base::FilePath file(base::GetNativeLibraryName("android"));
-      void* dl = dlopen(file.value().c_str(), RTLD_NOW);
-      marshmallowSetNetworkForSocket =
-          reinterpret_cast<MarshmallowSetNetworkForSocket>(
-              dlsym(dl, "android_setsocknetwork"));
-    }
-    if (!marshmallowSetNetworkForSocket)
-      return ERR_NOT_IMPLEMENTED;
-    rv = marshmallowSetNetworkForSocket(network, socket_);
-    if (rv)
-      rv = errno;
-  } else {
-    // NOTE(pauljensen): This does rely on Android implementation details, but
-    // they won't change because Lollipop is already released.
-    typedef int (*LollipopSetNetworkForSocket)(unsigned netId, int socketFd);
-    static LollipopSetNetworkForSocket lollipopSetNetworkForSocket;
-    // This is racy, but all racers should come out with the same answer so it
-    // shouldn't matter.
-    if (!lollipopSetNetworkForSocket) {
-      // Android's netd client library should always be loaded in our address
-      // space as it shims socket() which was used to create |socket_|.
-      base::FilePath file(base::GetNativeLibraryName("netd_client"));
-      // Use RTLD_NOW to match Android's prior loading of the library:
-      // http://androidxref.com/6.0.0_r5/xref/bionic/libc/bionic/NetdClient.cpp#37
-      // Use RTLD_NOLOAD to assert that the library is already loaded and
-      // avoid doing any disk IO.
-      void* dl = dlopen(file.value().c_str(), RTLD_NOW | RTLD_NOLOAD);
-      lollipopSetNetworkForSocket =
-          reinterpret_cast<LollipopSetNetworkForSocket>(
-              dlsym(dl, "setNetworkForSocket"));
-    }
-    if (!lollipopSetNetworkForSocket)
-      return ERR_NOT_IMPLEMENTED;
-    rv = -lollipopSetNetworkForSocket(network, socket_);
-  }
-  // If |network| has since disconnected, |rv| will be ENONET.  Surface this as
-  // ERR_NETWORK_CHANGED, rather than MapSystemError(ENONET) which gives back
-  // the less descriptive ERR_FAILED.
-  if (rv == ENONET)
-    return ERR_NETWORK_CHANGED;
-  if (rv == 0)
+#if BUILDFLAG(IS_ANDROID)
+  int rv = net::android::BindToNetwork(socket_, network);
+  if (rv == OK)
     bound_network_ = network;
-  return MapSystemError(rv);
+  return rv;
 #else
   NOTIMPLEMENTED();
   return ERR_NOT_IMPLEMENTED;
@@ -603,8 +577,24 @@ int UDPSocketPosix::SetDoNotFragment() {
   DCHECK_NE(socket_, kInvalidSocket);
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
-#if !defined(IP_PMTUDISC_DO)
+#if !defined(IP_PMTUDISC_DO) && !BUILDFLAG(IS_MAC)
   return ERR_NOT_IMPLEMENTED;
+
+// setsockopt(IP_DONTFRAG) is supported on macOS from Big Sur
+#elif BUILDFLAG(IS_MAC)
+  if (!base::mac::IsAtLeastOS11()) {
+    return ERR_NOT_IMPLEMENTED;
+  }
+  int val = 1;
+  if (addr_family_ == AF_INET6) {
+    int rv =
+        setsockopt(socket_, IPPROTO_IPV6, IPV6_DONTFRAG, &val, sizeof(val));
+    // IP_DONTFRAG is not supported on v4mapped addresses.
+    return rv == 0 ? OK : MapSystemError(errno);
+  }
+  int rv = setsockopt(socket_, IPPROTO_IP, IP_DONTFRAG, &val, sizeof(val));
+  return rv == 0 ? OK : MapSystemError(errno);
+
 #else
   if (addr_family_ == AF_INET6) {
     int val = IPV6_PMTUDISC_DO;
@@ -631,13 +621,13 @@ int UDPSocketPosix::SetDoNotFragment() {
 }
 
 void UDPSocketPosix::SetMsgConfirm(bool confirm) {
-#if !defined(OS_APPLE)
+#if !BUILDFLAG(IS_APPLE)
   if (confirm) {
     sendto_flags_ |= MSG_CONFIRM;
   } else {
     sendto_flags_ &= ~MSG_CONFIRM;
   }
-#endif  // !defined(OS_APPLE)
+#endif  // !BUILDFLAG(IS_APPLE)
 }
 
 int UDPSocketPosix::AllowAddressReuse() {
@@ -652,7 +642,7 @@ int UDPSocketPosix::SetBroadcast(bool broadcast) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   int value = broadcast ? 1 : 0;
   int rv;
-#if defined(OS_APPLE)
+#if BUILDFLAG(IS_APPLE)
   // SO_REUSEPORT on OSX permits multiple processes to each receive
   // UDP multicast or broadcast datagrams destined for the bound
   // port.
@@ -662,7 +652,7 @@ int UDPSocketPosix::SetBroadcast(bool broadcast) {
   rv = setsockopt(socket_, SOL_SOCKET, SO_REUSEPORT, &value, sizeof(value));
   if (rv != 0)
     return MapSystemError(errno);
-#endif  // defined(OS_APPLE)
+#endif  // BUILDFLAG(IS_APPLE)
   rv = setsockopt(socket_, SOL_SOCKET, SO_BROADCAST, &value, sizeof(value));
 
   return rv == 0 ? OK : MapSystemError(errno);
@@ -693,8 +683,8 @@ int UDPSocketPosix::AllowAddressSharingForMulticast() {
 }
 
 void UDPSocketPosix::ReadWatcher::OnFileCanReadWithoutBlocking(int) {
-  TRACE_EVENT0(NetTracingCategory(),
-               "UDPSocketPosix::ReadWatcher::OnFileCanReadWithoutBlocking");
+  TRACE_EVENT(NetTracingCategory(),
+              "UDPSocketPosix::ReadWatcher::OnFileCanReadWithoutBlocking");
   if (!socket_->read_callback_.is_null())
     socket_->DidCompleteRead();
 }
@@ -755,7 +745,10 @@ void UDPSocketPosix::LogRead(int result,
                           bytes, is_address_valid ? &address : nullptr);
   }
 
-  received_activity_monitor_.Increment(result);
+  if (always_update_bytes_received_)
+    activity_monitor::IncrementBytesReceived(result);
+  else
+    received_activity_monitor_.Increment(result);
 }
 
 void UDPSocketPosix::DidCompleteWrite() {
@@ -783,8 +776,6 @@ void UDPSocketPosix::LogWrite(int result,
     NetLogUDPDataTransfer(net_log_, NetLogEventType::UDP_BYTES_SENT, result,
                           bytes, address);
   }
-
-  sent_activity_monitor_.Increment(result);
 }
 
 int UDPSocketPosix::InternalRecvFrom(IOBuffer* buf,
@@ -804,63 +795,68 @@ int UDPSocketPosix::InternalRecvFromConnectedSocket(IOBuffer* buf,
                                                     IPEndPoint* address) {
   DCHECK(is_connected_);
   DCHECK(remote_address_);
-  int bytes_transferred;
-  bytes_transferred = HANDLE_EINTR(read(socket_, buf->data(), buf_len));
   int result;
-
+  int bytes_transferred = HANDLE_EINTR(read(socket_, buf->data(), buf_len));
   if (bytes_transferred < 0) {
     result = MapSystemError(errno);
+    if (result == ERR_IO_PENDING) {
+      return result;
+    }
   } else if (bytes_transferred == buf_len) {
+    // NB: recv(..., MSG_TRUNC) would be a more reliable way to do this on
+    // Linux, but isn't supported by POSIX.
     result = ERR_MSG_TOO_BIG;
   } else {
     result = bytes_transferred;
-    if (address)
+    if (address) {
       *address = *remote_address_.get();
+    }
   }
 
-  if (result != ERR_IO_PENDING) {
-    SockaddrStorage sock_addr;
-    bool success =
+  SockaddrStorage sock_addr;
+  bool success =
         remote_address_->ToSockAddr(sock_addr.addr, &sock_addr.addr_len);
     DCHECK(success);
     LogRead(result, buf->data(), sock_addr.addr_len, sock_addr.addr);
-  }
   return result;
 }
 
 int UDPSocketPosix::InternalRecvFromNonConnectedSocket(IOBuffer* buf,
                                                        int buf_len,
                                                        IPEndPoint* address) {
-  int bytes_transferred;
-
-  struct iovec iov = {};
-  iov.iov_base = buf->data();
-  iov.iov_len = buf_len;
-
-  struct msghdr msg = {};
-  msg.msg_iov = &iov;
-  msg.msg_iovlen = 1;
-
   SockaddrStorage storage;
-  msg.msg_name = storage.addr;
-  msg.msg_namelen = storage.addr_len;
-
-  bytes_transferred = HANDLE_EINTR(recvmsg(socket_, &msg, 0));
-  storage.addr_len = msg.msg_namelen;
+  struct iovec iov = {
+      .iov_base = buf->data(),
+      .iov_len = static_cast<size_t>(buf_len),
+  };
+  struct msghdr msg = {
+      .msg_name = storage.addr,
+      .msg_namelen = storage.addr_len,
+      .msg_iov = &iov,
+      .msg_iovlen = 1,
+  };
   int result;
-  if (bytes_transferred >= 0) {
-    if (msg.msg_flags & MSG_TRUNC) {
-      result = ERR_MSG_TOO_BIG;
-    } else {
-      result = bytes_transferred;
-      if (address && !address->FromSockAddr(storage.addr, storage.addr_len))
-        result = ERR_ADDRESS_INVALID;
+  int bytes_transferred = HANDLE_EINTR(recvmsg(socket_, &msg, 0));
+  if (bytes_transferred < 0) {
+    result = MapSystemError(errno);
+    if (result == ERR_IO_PENDING) {
+      return result;
     }
   } else {
-    result = MapSystemError(errno);
+    storage.addr_len = msg.msg_namelen;
+    if (msg.msg_flags & MSG_TRUNC) {
+      // NB: recvfrom(..., MSG_TRUNC, ...) would be a simpler way to do this on
+      // Linux, but isn't supported by POSIX.
+      result = ERR_MSG_TOO_BIG;
+    } else if (address &&
+               !address->FromSockAddr(storage.addr, storage.addr_len)) {
+      result = ERR_ADDRESS_INVALID;
+    } else {
+      result = bytes_transferred;
+    }
   }
-  if (result != ERR_IO_PENDING)
-    LogRead(result, buf->data(), storage.addr_len, storage.addr);
+
+  LogRead(result, buf->data(), storage.addr_len, storage.addr);
   return result;
 }
 
@@ -959,7 +955,7 @@ int UDPSocketPosix::DoBind(const IPEndPoint& address) {
 #if BUILDFLAG(IS_CHROMEOS_ASH)
   if (last_error == EINVAL)
     return ERR_ADDRESS_IN_USE;
-#elif defined(OS_APPLE)
+#elif BUILDFLAG(IS_APPLE)
   if (last_error == EADDRNOTAVAIL)
     return ERR_ADDRESS_IN_USE;
 #endif
@@ -1042,11 +1038,11 @@ int UDPSocketPosix::LeaveGroup(const IPAddress& group_address) const {
       if (addr_family_ != AF_INET6)
         return ERR_ADDRESS_INVALID;
       ipv6_mreq mreq;
-#if defined(OS_FUCHSIA)
+#if BUILDFLAG(IS_FUCHSIA)
       mreq.ipv6mr_interface = multicast_interface_;
-#else   // defined(OS_FUCHSIA)
+#else   // BUILDFLAG(IS_FUCHSIA)
       mreq.ipv6mr_interface = 0;  // 0 indicates default multicast interface.
-#endif  // !defined(OS_FUCHSIA)
+#endif  // !BUILDFLAG(IS_FUCHSIA)
       memcpy(&mreq.ipv6mr_multiaddr, group_address.bytes().data(),
              IPAddress::kIPv6AddressSize);
       int rv = setsockopt(socket_, IPPROTO_IPV6, IPV6_LEAVE_GROUP,
@@ -1463,12 +1459,12 @@ int UDPSocketPosix::SetIOSNetworkServiceType(int ios_network_service_type) {
   if (ios_network_service_type == 0) {
     return OK;
   }
-#if defined(OS_IOS)
+#if BUILDFLAG(IS_IOS)
   if (setsockopt(socket_, SOL_SOCKET, SO_NET_SERVICE_TYPE,
                  &ios_network_service_type, sizeof(ios_network_service_type))) {
     return MapSystemError(errno);
   }
-#endif  // defined(OS_IOS)
+#endif  // BUILDFLAG(IS_IOS)
   return OK;
 }
 

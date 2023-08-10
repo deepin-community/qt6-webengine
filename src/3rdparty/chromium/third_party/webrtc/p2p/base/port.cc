@@ -19,6 +19,7 @@
 
 #include "absl/algorithm/container.h"
 #include "absl/strings/match.h"
+#include "absl/strings/string_view.h"
 #include "p2p/base/connection.h"
 #include "p2p/base/port_allocator.h"
 #include "rtc_base/checks.h"
@@ -33,7 +34,7 @@
 #include "rtc_base/string_utils.h"
 #include "rtc_base/strings/string_builder.h"
 #include "rtc_base/third_party/base64/base64.h"
-#include "system_wrappers/include/field_trial.h"
+#include "rtc_base/trace_event.h"
 
 namespace {
 
@@ -99,27 +100,20 @@ std::string Port::ComputeFoundation(const std::string& type,
                                     const std::string& protocol,
                                     const std::string& relay_protocol,
                                     const rtc::SocketAddress& base_address) {
+  // TODO(bugs.webrtc.org/14605): ensure IceTiebreaker() is set.
   rtc::StringBuilder sb;
-  sb << type << base_address.ipaddr().ToString() << protocol << relay_protocol;
+  sb << type << base_address.ipaddr().ToString() << protocol << relay_protocol
+     << rtc::ToString(IceTiebreaker());
   return rtc::ToString(rtc::ComputeCrc32(sb.Release()));
 }
-
-CandidateStats::CandidateStats() = default;
-
-CandidateStats::CandidateStats(const CandidateStats&) = default;
-
-CandidateStats::CandidateStats(Candidate candidate) {
-  this->candidate = candidate;
-}
-
-CandidateStats::~CandidateStats() = default;
 
 Port::Port(rtc::Thread* thread,
            const std::string& type,
            rtc::PacketSocketFactory* factory,
-           rtc::Network* network,
+           const rtc::Network* network,
            const std::string& username_fragment,
-           const std::string& password)
+           const std::string& password,
+           const webrtc::FieldTrialsView* field_trials)
     : thread_(thread),
       factory_(factory),
       type_(type),
@@ -136,18 +130,21 @@ Port::Port(rtc::Thread* thread,
       ice_role_(ICEROLE_UNKNOWN),
       tiebreaker_(0),
       shared_socket_(true),
-      weak_factory_(this) {
+      weak_factory_(this),
+      field_trials_(field_trials) {
+  RTC_DCHECK(factory_ != NULL);
   Construct();
 }
 
 Port::Port(rtc::Thread* thread,
            const std::string& type,
            rtc::PacketSocketFactory* factory,
-           rtc::Network* network,
+           const rtc::Network* network,
            uint16_t min_port,
            uint16_t max_port,
            const std::string& username_fragment,
-           const std::string& password)
+           const std::string& password,
+           const webrtc::FieldTrialsView* field_trials)
     : thread_(thread),
       factory_(factory),
       type_(type),
@@ -164,7 +161,8 @@ Port::Port(rtc::Thread* thread,
       ice_role_(ICEROLE_UNKNOWN),
       tiebreaker_(0),
       shared_socket_(false),
-      weak_factory_(this) {
+      weak_factory_(this),
+      field_trials_(field_trials) {
   RTC_DCHECK(factory_ != NULL);
   Construct();
 }
@@ -179,7 +177,7 @@ void Port::Construct() {
     password_ = rtc::CreateRandomString(ICE_PWD_LENGTH);
   }
   network_->SignalTypeChanged.connect(this, &Port::OnNetworkTypeChanged);
-  network_cost_ = network_->GetCost();
+  network_cost_ = network_->GetCost(*field_trials_);
 
   thread_->PostDelayed(RTC_FROM_HERE, timeout_delay_, this,
                        MSG_DESTROY_IF_DEAD);
@@ -202,14 +200,16 @@ Port::~Port() {
     ++iter;
   }
 
-  for (uint32_t i = 0; i < list.size(); i++)
+  for (uint32_t i = 0; i < list.size(); i++) {
+    list[i]->SignalDestroyed.disconnect(this);
     delete list[i];
+  }
 }
 
 const std::string& Port::Type() const {
   return type_;
 }
-rtc::Network* Port::Network() const {
+const rtc::Network* Port::Network() const {
   return network_;
 }
 
@@ -282,6 +282,7 @@ void Port::AddAddress(const rtc::SocketAddress& address,
   c.set_tcptype(tcptype);
   c.set_network_name(network_->name());
   c.set_network_type(network_->type());
+  c.set_underlying_type_for_vpn(network_->underlying_type_for_vpn());
   c.set_url(url);
   c.set_related_address(related_address);
 
@@ -307,7 +308,7 @@ bool Port::MaybeObfuscateAddress(Candidate* c,
   auto copy = *c;
   auto weak_ptr = weak_factory_.GetWeakPtr();
   auto callback = [weak_ptr, copy, is_final](const rtc::IPAddress& addr,
-                                             const std::string& name) mutable {
+                                             absl::string_view name) mutable {
     RTC_DCHECK(copy.address().ipaddr() == addr);
     rtc::SocketAddress hostname_address(name, copy.address().port());
     // In Port and Connection, we need the IP address information to
@@ -358,7 +359,6 @@ void Port::AddOrReplaceConnection(Connection* conn) {
     ret.first->second = conn;
   }
   conn->SignalDestroyed.connect(this, &Port::OnConnectionDestroyed);
-  SignalConnectionCreated(this, conn);
 }
 
 void Port::OnReadPacket(const char* data,
@@ -493,7 +493,8 @@ bool Port::GetStunMessage(const char* data,
     }
 
     // If ICE, and the MESSAGE-INTEGRITY is bad, fail with a 401 Unauthorized
-    if (!stun_msg->ValidateMessageIntegrity(data, size, password_)) {
+    if (stun_msg->ValidateMessageIntegrity(password_) !=
+        StunMessage::IntegrityStatus::kIntegrityOk) {
       RTC_LOG(LS_ERROR) << ToString() << ": Received "
                         << StunMethodToString(stun_msg->type())
                         << " with bad M-I from " << addr.ToSensitiveString()
@@ -559,7 +560,8 @@ bool Port::GetStunMessage(const char* data,
     // No stun attributes will be verified, if it's stun indication message.
     // Returning from end of the this method.
   } else if (stun_msg->type() == GOOG_PING_REQUEST) {
-    if (!stun_msg->ValidateMessageIntegrity32(data, size, password_)) {
+    if (stun_msg->ValidateMessageIntegrity(password_) !=
+        StunMessage::IntegrityStatus::kIntegrityOk) {
       RTC_LOG(LS_ERROR) << ToString() << ": Received "
                         << StunMethodToString(stun_msg->type())
                         << " with bad M-I from " << addr.ToSensitiveString()
@@ -612,6 +614,15 @@ rtc::DiffServCodePoint Port::StunDscpValue() const {
   return rtc::DSCP_NO_CHANGE;
 }
 
+void Port::DestroyAllConnections() {
+  RTC_DCHECK_RUN_ON(thread_);
+  for (auto kv : connections_) {
+    kv.second->SignalDestroyed.disconnect(this);
+    kv.second->Destroy();
+  }
+  connections_.clear();
+}
+
 void Port::set_timeout_delay(int delay) {
   RTC_DCHECK_RUN_ON(thread_);
   // Although this method is meant to only be used by tests, some downstream
@@ -661,7 +672,7 @@ bool Port::MaybeIceRoleConflict(const rtc::SocketAddress& addr,
     remote_tiebreaker = stun_attr->value();
   }
 
-  // If |remote_ufrag| is same as port local username fragment and
+  // If `remote_ufrag` is same as port local username fragment and
   // tie breaker value received in the ping message matches port
   // tiebreaker value this must be a loopback call.
   // We will treat this as valid scenario.
@@ -703,7 +714,7 @@ bool Port::MaybeIceRoleConflict(const rtc::SocketAddress& addr,
       }
       break;
     default:
-      RTC_NOTREACHED();
+      RTC_DCHECK_NOTREACHED();
   }
   return ret;
 }
@@ -721,7 +732,7 @@ bool Port::HandleIncomingPacket(rtc::AsyncPacketSocket* socket,
                                 size_t size,
                                 const rtc::SocketAddress& remote_addr,
                                 int64_t packet_time_us) {
-  RTC_NOTREACHED();
+  RTC_DCHECK_NOTREACHED();
   return false;
 }
 
@@ -729,21 +740,21 @@ bool Port::CanHandleIncomingPacketsFrom(const rtc::SocketAddress&) const {
   return false;
 }
 
-void Port::SendBindingErrorResponse(StunMessage* request,
+void Port::SendBindingErrorResponse(StunMessage* message,
                                     const rtc::SocketAddress& addr,
                                     int error_code,
                                     const std::string& reason) {
-  RTC_DCHECK(request->type() == STUN_BINDING_REQUEST ||
-             request->type() == GOOG_PING_REQUEST);
+  RTC_DCHECK(message->type() == STUN_BINDING_REQUEST ||
+             message->type() == GOOG_PING_REQUEST);
 
   // Fill in the response message.
   StunMessage response;
-  if (request->type() == STUN_BINDING_REQUEST) {
+  if (message->type() == STUN_BINDING_REQUEST) {
     response.SetType(STUN_BINDING_ERROR_RESPONSE);
   } else {
     response.SetType(GOOG_PING_ERROR_RESPONSE);
   }
-  response.SetTransactionID(request->transaction_id());
+  response.SetTransactionID(message->transaction_id());
 
   // When doing GICE, we need to write out the error code incorrectly to
   // maintain backwards compatiblility.
@@ -756,15 +767,15 @@ void Port::SendBindingErrorResponse(StunMessage* request,
   // because we don't have enough information to determine the shared secret.
   if (error_code != STUN_ERROR_BAD_REQUEST &&
       error_code != STUN_ERROR_UNAUTHORIZED &&
-      request->type() != GOOG_PING_REQUEST) {
-    if (request->type() == STUN_BINDING_REQUEST) {
+      message->type() != GOOG_PING_REQUEST) {
+    if (message->type() == STUN_BINDING_REQUEST) {
       response.AddMessageIntegrity(password_);
     } else {
       response.AddMessageIntegrity32(password_);
     }
   }
 
-  if (request->type() == STUN_BINDING_REQUEST) {
+  if (message->type() == STUN_BINDING_REQUEST) {
     response.AddFingerprint();
   }
 
@@ -782,15 +793,15 @@ void Port::SendBindingErrorResponse(StunMessage* request,
 }
 
 void Port::SendUnknownAttributesErrorResponse(
-    StunMessage* request,
+    StunMessage* message,
     const rtc::SocketAddress& addr,
     const std::vector<uint16_t>& unknown_types) {
-  RTC_DCHECK(request->type() == STUN_BINDING_REQUEST);
+  RTC_DCHECK(message->type() == STUN_BINDING_REQUEST);
 
   // Fill in the response message.
   StunMessage response;
   response.SetType(STUN_BINDING_ERROR_RESPONSE);
-  response.SetTransactionID(request->transaction_id());
+  response.SetTransactionID(message->transaction_id());
 
   auto error_attr = StunAttribute::CreateErrorCode();
   error_attr->SetCode(STUN_ERROR_UNKNOWN_ATTRIBUTE);
@@ -833,6 +844,7 @@ void Port::Prune() {
 
 // Call to stop any currently pending operations from running.
 void Port::CancelPendingTasks() {
+  TRACE_EVENT0("webrtc", "Port::CancelPendingTasks");
   RTC_DCHECK_RUN_ON(thread_);
   thread_->Clear(this);
 }
@@ -873,7 +885,7 @@ std::string Port::ToString() const {
 
 // TODO(honghaiz): Make the network cost configurable from user setting.
 void Port::UpdateNetworkCost() {
-  uint16_t new_cost = network_->GetCost();
+  uint16_t new_cost = network_->GetCost(*field_trials_);
   if (network_cost_ == new_cost) {
     return;
   }

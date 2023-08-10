@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef UI_EVENTS_OZONE_KEYBOARD_EVENT_AUTO_REPEAT_HANDLER_H
-#define UI_EVENTS_OZONE_KEYBOARD_EVENT_AUTO_REPEAT_HANDLER_H
+#ifndef UI_EVENTS_OZONE_KEYBOARD_EVENT_AUTO_REPEAT_HANDLER_H_
+#define UI_EVENTS_OZONE_KEYBOARD_EVENT_AUTO_REPEAT_HANDLER_H_
 
 #include "base/callback.h"
 #include "base/component_export.h"
@@ -30,6 +30,10 @@ class COMPONENT_EXPORT(EVENTS_OZONE) EventAutoRepeatHandler {
   };
 
   explicit EventAutoRepeatHandler(Delegate* delegate);
+
+  EventAutoRepeatHandler(const EventAutoRepeatHandler&) = delete;
+  EventAutoRepeatHandler& operator=(const EventAutoRepeatHandler&) = delete;
+
   ~EventAutoRepeatHandler();
 
   void UpdateKeyRepeat(unsigned int key,
@@ -66,10 +70,8 @@ class COMPONENT_EXPORT(EVENTS_OZONE) EventAutoRepeatHandler {
   Delegate* delegate_ = nullptr;
 
   base::WeakPtrFactory<EventAutoRepeatHandler> weak_ptr_factory_{this};
-
-  DISALLOW_COPY_AND_ASSIGN(EventAutoRepeatHandler);
 };
 
 }  // namespace ui
 
-#endif  // UI_EVENTS_OZONE_KEYBOARD_EVENT_AUTO_REPEAT_HANDLER_H
+#endif  // UI_EVENTS_OZONE_KEYBOARD_EVENT_AUTO_REPEAT_HANDLER_H_

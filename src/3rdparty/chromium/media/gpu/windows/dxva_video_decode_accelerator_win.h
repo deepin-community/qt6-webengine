@@ -19,13 +19,12 @@
 #include <vector>
 
 #include "base/compiler_specific.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/thread.h"
 #include "gpu/config/gpu_preferences.h"
 #include "media/base/video_color_space.h"
-#include "media/base/win/mf_initializer.h"
 #include "media/gpu/gpu_video_decode_accelerator_helpers.h"
 #include "media/gpu/media_gpu_export.h"
 #include "media/gpu/windows/d3d11_com_defs.h"
@@ -39,6 +38,7 @@ interface IDirect3DSurface9;
 
 namespace gl {
 class GLContext;
+class GLImageDXGI;
 }
 
 namespace gpu {
@@ -66,6 +66,7 @@ class ConfigChangeDetector {
   virtual VideoColorSpace current_color_space(
       const VideoColorSpace& container_color_space) const = 0;
   virtual bool IsYUV420() const;
+  virtual bool is_vp9_resilient_mode() const;
   bool config_changed() const { return config_changed_; }
 
  protected:
@@ -96,6 +97,11 @@ class MEDIA_GPU_EXPORT DXVAVideoDecodeAccelerator
       const gpu::GpuDriverBugWorkarounds& workarounds,
       const gpu::GpuPreferences& gpu_preferences,
       MediaLog* media_log);
+
+  DXVAVideoDecodeAccelerator(const DXVAVideoDecodeAccelerator&) = delete;
+  DXVAVideoDecodeAccelerator& operator=(const DXVAVideoDecodeAccelerator&) =
+      delete;
+
   ~DXVAVideoDecodeAccelerator() override;
 
   // VideoDecodeAccelerator implementation.
@@ -410,6 +416,13 @@ class MEDIA_GPU_EXPORT DXVAVideoDecodeAccelerator
   // |num_picture_buffers_requested_|.
   void DisableSharedTextureSupport();
 
+  // Creates ScopedSharedImages for the provided PictureBuffer. If the buffer
+  // has a GLImageDXGI this function will create SharedImageBackingD3D using the
+  // DX11 texture. Otherwise it will create thin SharedImageBackingGLImage
+  // wrappers around the existing textures in |picture_buffer|.
+  std::vector<scoped_refptr<Picture::ScopedSharedImage>>
+  GetSharedImagesFromPictureBuffer(DXVAPictureBuffer* picture_buffer);
+
   uint32_t GetTextureTarget() const;
 
   PictureBufferMechanism GetPictureBufferMechanism() const;
@@ -417,10 +430,7 @@ class MEDIA_GPU_EXPORT DXVAVideoDecodeAccelerator
   ID3D11Device* D3D11Device() const;
 
   // To expose client callbacks from VideoDecodeAccelerator.
-  VideoDecodeAccelerator::Client* client_;
-
-  // MediaFoundation session, calls MFShutdown on deletion.
-  MFSessionLifetime session_;
+  raw_ptr<VideoDecodeAccelerator::Client> client_;
 
   Microsoft::WRL::ComPtr<IMFTransform> decoder_;
 
@@ -536,7 +546,7 @@ class MEDIA_GPU_EXPORT DXVAVideoDecodeAccelerator
   BindGLImageCallback bind_image_cb_;
 
   // This may be null, e.g. when not using MojoVideoDecoder.
-  MediaLog* const media_log_;
+  const raw_ptr<MediaLog> media_log_;
 
   // Which codec we are decoding with hardware acceleration.
   VideoCodec codec_;
@@ -616,6 +626,8 @@ class MEDIA_GPU_EXPORT DXVAVideoDecodeAccelerator
   const bool enable_accelerated_vp8_decode_;
   const bool enable_accelerated_vp9_decode_;
 
+  const bool disallow_vp9_resilient_dxva_decoding_;
+
   // The media foundation H.264 decoder has problems handling changes like
   // resolution change, bitrate change etc. If we reinitialize the decoder
   // when these changes occur then, the decoder works fine. The
@@ -634,7 +646,7 @@ class MEDIA_GPU_EXPORT DXVAVideoDecodeAccelerator
   gfx::Rect current_visible_rect_;
   VideoColorSpace current_color_space_;
 
-  base::Optional<gl::HDRMetadataHelperWin> hdr_metadata_helper_;
+  absl::optional<gl::HDRMetadataHelperWin> hdr_metadata_helper_;
   bool use_empty_video_hdr_metadata_ = false;
 
   // Have we delivered any decoded frames since the last call to Initialize()?
@@ -645,8 +657,6 @@ class MEDIA_GPU_EXPORT DXVAVideoDecodeAccelerator
 
   // Function pointer for the MFCreateDXGIDeviceManager API.
   static CreateDXGIDeviceManager create_dxgi_device_manager_;
-
-  DISALLOW_COPY_AND_ASSIGN(DXVAVideoDecodeAccelerator);
 };
 
 }  // namespace media

@@ -14,20 +14,28 @@
 #include "core/fxcrt/fx_safe_types.h"
 #include "third_party/base/allocator/partition_allocator/partition_alloc.h"
 #include "third_party/base/debug/alias.h"
+#include "third_party/base/no_destructor.h"
+
+#if BUILDFLAG(IS_WIN)
+#include <windows.h>
+#endif
 
 pdfium::base::PartitionAllocatorGeneric& GetArrayBufferPartitionAllocator() {
-  static pdfium::base::PartitionAllocatorGeneric s_array_buffer_allocator;
-  return s_array_buffer_allocator;
+  static pdfium::base::NoDestructor<pdfium::base::PartitionAllocatorGeneric>
+      s_array_buffer_allocator;
+  return *s_array_buffer_allocator;
 }
 
 pdfium::base::PartitionAllocatorGeneric& GetGeneralPartitionAllocator() {
-  static pdfium::base::PartitionAllocatorGeneric s_general_allocator;
-  return s_general_allocator;
+  static pdfium::base::NoDestructor<pdfium::base::PartitionAllocatorGeneric>
+      s_general_allocator;
+  return *s_general_allocator;
 }
 
 pdfium::base::PartitionAllocatorGeneric& GetStringPartitionAllocator() {
-  static pdfium::base::PartitionAllocatorGeneric s_string_allocator;
-  return s_string_allocator;
+  static pdfium::base::NoDestructor<pdfium::base::PartitionAllocatorGeneric>
+      s_string_allocator;
+  return *s_string_allocator;
 }
 
 void FXMEM_InitializePartitionAlloc() {
@@ -68,7 +76,15 @@ NOINLINE void FX_OutOfMemoryTerminate(size_t size) {
   static int make_this_function_aliased = 0xbd;
   pdfium::base::debug::Alias(&make_this_function_aliased);
 
-  // Termimate cleanly.
+#if BUILDFLAG(IS_WIN)
+  // The same custom Windows exception code used in Chromium and Breakpad.
+  constexpr DWORD kOomExceptionCode = 0xe0000008;
+  ULONG_PTR exception_args[] = {size};
+  ::RaiseException(kOomExceptionCode, EXCEPTION_NONCONTINUABLE,
+                   pdfium::size(exception_args), exception_args);
+#endif
+
+  // Terminate cleanly.
   abort();
 }
 
@@ -148,6 +164,26 @@ void* ReallocOrDie(void* ptr, size_t num_members, size_t member_size) {
     FX_OutOfMemoryTerminate(0);  // Never returns.
 
   return result;
+}
+
+void* StringAllocOrDie(size_t num_members, size_t member_size) {
+  void* result = StringAlloc(num_members, member_size);
+  if (!result)
+    FX_OutOfMemoryTerminate(0);  // Never returns.
+
+  return result;
+}
+
+void* StringAlloc(size_t num_members, size_t member_size) {
+  FX_SAFE_SIZE_T total = member_size;
+  total *= num_members;
+  if (!total.IsValid())
+    return nullptr;
+
+  constexpr int kFlags = pdfium::base::PartitionAllocReturnNull;
+  return pdfium::base::PartitionAllocGenericFlags(
+      GetStringPartitionAllocator().root(), kFlags, total.ValueOrDie(),
+      "StringPartition");
 }
 
 }  // namespace internal

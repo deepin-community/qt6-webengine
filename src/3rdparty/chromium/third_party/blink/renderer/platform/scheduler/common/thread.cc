@@ -5,8 +5,8 @@
 #include "third_party/blink/renderer/platform/scheduler/public/thread.h"
 
 #include "base/feature_list.h"
-#include "base/single_thread_task_runner.h"
 #include "base/synchronization/waitable_event.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/threading/platform_thread.h"
 #include "build/build_config.h"
 #include "third_party/blink/public/common/features.h"
@@ -15,14 +15,14 @@
 #include "third_party/blink/renderer/platform/scheduler/worker/compositor_thread.h"
 #include "third_party/blink/renderer/platform/scheduler/worker/compositor_thread_scheduler.h"
 #include "third_party/blink/renderer/platform/scheduler/worker/worker_thread.h"
-#include "third_party/blink/renderer/platform/wtf/assertions.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
 #include "third_party/blink/renderer/platform/wtf/thread_specific.h"
+#include "third_party/blink/renderer/platform/wtf/threading.h"
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 #include <windows.h>
-#elif defined(OS_POSIX) || defined(OS_FUCHSIA)
+#elif BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
 #include <unistd.h>
 #endif
 
@@ -79,6 +79,9 @@ ThreadCreationParams& ThreadCreationParams::SetSupportsGC(bool gc_enabled) {
 
 std::unique_ptr<Thread> Thread::CreateThread(
     const ThreadCreationParams& params) {
+#if DCHECK_IS_ON()
+  WTF::WillCreateThread();
+#endif
   auto thread = std::make_unique<scheduler::WorkerThread>(params);
   thread->Init();
   return std::move(thread);
@@ -96,7 +99,7 @@ void Thread::CreateAndSetCompositorThread() {
       std::make_unique<scheduler::CompositorThread>(params);
   compositor_thread->Init();
 
-#if defined(OS_LINUX) || defined(OS_CHROMEOS)
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
   if (base::FeatureList::IsEnabled(
           features::kBlinkCompositorUseDisplayThreadPriority)) {
     compositor_thread->GetTaskRunner()->PostTaskAndReplyWithResult(
@@ -150,10 +153,10 @@ void Thread::RemoveTaskObserver(TaskObserver* task_observer) {
   Scheduler()->RemoveTaskObserver(task_observer);
 }
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
 static_assert(sizeof(blink::PlatformThreadId) >= sizeof(DWORD),
               "size of platform thread id is too small");
-#elif defined(OS_POSIX) || defined(OS_FUCHSIA)
+#elif BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
 static_assert(sizeof(blink::PlatformThreadId) >= sizeof(pid_t),
               "size of platform thread id is too small");
 #else

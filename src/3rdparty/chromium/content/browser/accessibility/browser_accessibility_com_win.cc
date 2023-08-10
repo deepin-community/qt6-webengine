@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <iterator>
 #include <map>
+#include <memory>
 #include <string>
 #include <utility>
 
@@ -28,7 +29,6 @@
 #include "ui/accessibility/ax_mode.h"
 #include "ui/accessibility/ax_role_properties.h"
 #include "ui/base/win/accessibility_ids_win.h"
-#include "ui/base/win/accessibility_misc_utils.h"
 #include "ui/base/win/atl_module.h"
 
 // There is no easy way to decouple |kScreenReader| and |kHTML| accessibility
@@ -62,7 +62,7 @@ BrowserAccessibilityComWin::BrowserAccessibilityComWin()
       previous_scroll_x_(0),
       previous_scroll_y_(0) {}
 
-BrowserAccessibilityComWin::~BrowserAccessibilityComWin() {}
+BrowserAccessibilityComWin::~BrowserAccessibilityComWin() = default;
 
 //
 // IAccessible2 overrides:
@@ -230,7 +230,7 @@ IFACEMETHODIMP BrowserAccessibilityComWin::get_characterExtents(
   if (!out_x || !out_y || !out_width || !out_height)
     return E_INVALIDARG;
 
-  const base::string16& text_str = GetHypertext();
+  const std::u16string& text_str = GetHypertext();
   HandleSpecialTextOffset(&offset);
   if (offset < 0 || offset > static_cast<LONG>(text_str.size()))
     return E_INVALIDARG;
@@ -282,7 +282,7 @@ IFACEMETHODIMP BrowserAccessibilityComWin::get_text(LONG start_offset,
   if (!text)
     return E_INVALIDARG;
 
-  const base::string16& text_str = GetHypertext();
+  const std::u16string& text_str = GetHypertext();
   HandleSpecialTextOffset(&start_offset);
   HandleSpecialTextOffset(&end_offset);
 
@@ -296,7 +296,7 @@ IFACEMETHODIMP BrowserAccessibilityComWin::get_text(LONG start_offset,
   if (end_offset < 0 || end_offset > len)
     return E_INVALIDARG;
 
-  base::string16 substr =
+  std::u16string substr =
       text_str.substr(start_offset, end_offset - start_offset);
   if (substr.empty())
     return S_FALSE;
@@ -324,7 +324,7 @@ IFACEMETHODIMP BrowserAccessibilityComWin::get_newText(
   if (new_len == 0)
     return E_FAIL;
 
-  base::string16 substr = GetHypertext().substr(start, new_len);
+  std::u16string substr = GetHypertext().substr(start, new_len);
   new_text->text = SysAllocString(base::as_wcstr(substr));
   new_text->start = static_cast<LONG>(start);
   new_text->end = static_cast<LONG>(start + new_len);
@@ -349,8 +349,8 @@ IFACEMETHODIMP BrowserAccessibilityComWin::get_oldText(
   if (old_len == 0)
     return E_FAIL;
 
-  base::string16 old_hypertext = old_hypertext_.hypertext;
-  base::string16 substr = old_hypertext.substr(start, old_len);
+  std::u16string old_hypertext = old_hypertext_.hypertext;
+  std::u16string substr = old_hypertext.substr(start, old_len);
   old_text->text = SysAllocString(base::as_wcstr(substr));
   old_text->start = static_cast<LONG>(start);
   old_text->end = static_cast<LONG>(start + old_len);
@@ -434,7 +434,7 @@ IFACEMETHODIMP BrowserAccessibilityComWin::get_attributes(
   if (!owner())
     return E_FAIL;
 
-  const base::string16 text = GetHypertext();
+  const std::u16string text = GetHypertext();
   HandleSpecialTextOffset(&offset);
   if (offset < 0 || offset > static_cast<LONG>(text.size()))
     return E_INVALIDARG;
@@ -919,7 +919,7 @@ IFACEMETHODIMP BrowserAccessibilityComWin::get_nodeInfo(
     return E_INVALIDARG;
   }
 
-  base::string16 tag;
+  std::u16string tag;
   if (owner()->GetString16Attribute(ax::mojom::StringAttribute::kHtmlTag, &tag))
     *node_name = SysAllocString(base::as_wcstr(tag));
   else
@@ -930,7 +930,7 @@ IFACEMETHODIMP BrowserAccessibilityComWin::get_nodeInfo(
   *num_children = owner()->PlatformChildCount();
   *unique_id = -AXPlatformNodeWin::GetUniqueId();
 
-  if (owner()->IsPlatformDocument()) {
+  if (ui::IsPlatformDocument(owner()->GetRole())) {
     *node_type = NODETYPE_DOCUMENT;
   } else if (owner()->IsText()) {
     *node_type = NODETYPE_TEXT;
@@ -1027,7 +1027,7 @@ IFACEMETHODIMP BrowserAccessibilityComWin::get_computedStyle(
 
   // We only cache a single style property for now: DISPLAY
 
-  base::string16 display;
+  std::u16string display;
   if (max_style_properties == 0 ||
       !owner()->GetString16Attribute(ax::mojom::StringAttribute::kDisplay,
                                      &display)) {
@@ -1058,10 +1058,10 @@ IFACEMETHODIMP BrowserAccessibilityComWin::get_computedStyleForProperties(
   // We only cache a single style property for now: DISPLAY
 
   for (USHORT i = 0; i < num_style_properties; ++i) {
-    base::string16 name =
+    std::u16string name =
         base::ToLowerASCII(base::as_u16cstr(style_properties[i]));
-    if (name == STRING16_LITERAL("display")) {
-      base::string16 display =
+    if (name == u"display") {
+      std::u16string display =
           owner()->GetString16Attribute(ax::mojom::StringAttribute::kDisplay);
       style_values[i] = SysAllocString(base::as_wcstr(display));
     } else {
@@ -1199,10 +1199,11 @@ IFACEMETHODIMP BrowserAccessibilityComWin::get_innerHTML(BSTR* innerHTML) {
   AddAccessibilityModeFlags(kScreenReaderAndHTMLAccessibilityModes);
   if (!owner())
     return E_FAIL;
-  if (owner()->GetRole() != ax::mojom::Role::kMath)
+  if (owner()->GetRole() != ax::mojom::Role::kMath &&
+      owner()->GetRole() != ax::mojom::Role::kMathMLMath)
     return E_NOTIMPL;
 
-  base::string16 inner_html =
+  std::u16string inner_html =
       owner()->GetString16Attribute(ax::mojom::StringAttribute::kInnerHtml);
   *innerHTML = SysAllocString(base::as_wcstr(inner_html));
   DCHECK(*innerHTML);
@@ -1335,7 +1336,7 @@ IFACEMETHODIMP BrowserAccessibilityComWin::get_fontFamily(BSTR* font_family) {
   if (!owner())
     return E_FAIL;
 
-  base::string16 family = owner()->GetInheritedString16Attribute(
+  std::u16string family = owner()->GetInheritedString16Attribute(
       ax::mojom::StringAttribute::kFontFamily);
   if (family.empty())
     return S_FALSE;
@@ -1413,7 +1414,7 @@ STDMETHODIMP BrowserAccessibilityComWin::InternalQueryInterface(
       return E_NOINTERFACE;
     }
   } else if (iid == IID_ISimpleDOMDocument) {
-    if (!accessibility->IsPlatformDocument()) {
+    if (!ui::IsPlatformDocument(accessibility->GetRole())) {
       *object = nullptr;
       return E_NOINTERFACE;
     }
@@ -1450,9 +1451,9 @@ void BrowserAccessibilityComWin::UpdateStep1ComputeWinAttributes() {
   old_win_attributes_.swap(win_attributes_);
 
   old_hypertext_ = hypertext_;
-  hypertext_ = ui::AXHypertext();
+  hypertext_ = ui::AXLegacyHypertext();
 
-  win_attributes_.reset(new WinAttributes());
+  win_attributes_ = std::make_unique<WinAttributes>();
 
   win_attributes_->ia_role = MSAARole();
   win_attributes_->ia_state = MSAAState();
@@ -1479,9 +1480,12 @@ void BrowserAccessibilityComWin::UpdateStep3FireEvents() {
   const bool ignored = owner()->IsIgnored();
 
   // Suppress all of these events when the node is ignored, or when the ignored
-  // state has changed.
-  if (ignored || (old_win_attributes_->ignored != ignored))
+  // state has changed on a node that isn't part of an active live region.
+  if (ignored || (old_win_attributes_->ignored != ignored &&
+                  !owner()->GetData().IsContainedInActiveLiveRegion() &&
+                  !owner()->GetData().IsActiveLiveRegionRoot())) {
     return;
+  }
 
   // The rest of the events only fire on changes, not on new objects.
 
@@ -1506,7 +1510,7 @@ void BrowserAccessibilityComWin::UpdateStep3FireEvents() {
     // AXEventGenerator, as they are providing redundant information and will
     // lead to duplicate announcements.
     if (name() == old_win_attributes_->name ||
-        GetData().GetNameFrom() == ax::mojom::NameFrom::kContents) {
+        GetNameFrom() == ax::mojom::NameFrom::kContents) {
       size_t start, old_len, new_len;
       ComputeHypertextRemovedAndInserted(&start, &old_len, &new_len);
       if (old_len > 0) {
@@ -1523,7 +1527,7 @@ void BrowserAccessibilityComWin::UpdateStep3FireEvents() {
   }
 
   old_win_attributes_.reset(nullptr);
-  old_hypertext_ = ui::AXHypertext();
+  old_hypertext_ = ui::AXLegacyHypertext();
 }
 
 BrowserAccessibilityManager* BrowserAccessibilityComWin::Manager() const {
@@ -1584,7 +1588,7 @@ HRESULT BrowserAccessibilityComWin::GetStringAttributeAsBstr(
   if (!owner())
     return E_FAIL;
 
-  base::string16 str;
+  std::u16string str;
   if (!owner()->GetString16Attribute(attribute, &str))
     return S_FALSE;
 
@@ -1598,7 +1602,7 @@ HRESULT BrowserAccessibilityComWin::GetNameAsBstr(BSTR* value_bstr) {
   if (!owner())
     return E_FAIL;
 
-  base::string16 str;
+  std::u16string str;
   str = owner()->GetNameAsString16();
   *value_bstr = SysAllocString(base::as_wcstr(str));
   DCHECK(*value_bstr);

@@ -11,7 +11,6 @@
 #include "sql/statement.h"
 
 using base::Time;
-using base::TimeDelta;
 
 namespace history {
 
@@ -109,7 +108,7 @@ bool AndroidCacheDatabase::SetFaviconID(URLID url_id,
 }
 
 SearchTermID AndroidCacheDatabase::AddSearchTerm(
-    const base::string16& term,
+    const std::u16string& term,
     const base::Time& last_visit_time) {
   sql::Statement statement(GetDB().GetCachedStatement(SQL_FROM_HERE,
       "INSERT INTO android_cache_db.search_terms (search, "
@@ -140,7 +139,7 @@ bool AndroidCacheDatabase::UpdateSearchTerm(SearchTermID id,
   return statement.Run();
 }
 
-SearchTermID AndroidCacheDatabase::GetSearchTerm(const base::string16& term,
+SearchTermID AndroidCacheDatabase::GetSearchTerm(const std::u16string& term,
                                                  SearchTermRow* row) {
   sql::Statement statement(GetDB().GetCachedStatement(SQL_FROM_HERE,
       "SELECT _id, search, date "

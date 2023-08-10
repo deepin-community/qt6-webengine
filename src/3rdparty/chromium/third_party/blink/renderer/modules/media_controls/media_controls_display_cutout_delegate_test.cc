@@ -51,11 +51,7 @@ class MediaControlsDisplayCutoutDelegateTest
         ScopedMediaControlsExpandGestureForTest(true) {}
   void SetUp() override {
     chrome_client_ = MakeGarbageCollected<DisplayCutoutMockChromeClient>();
-
-    Page::PageClients clients;
-    FillWithEmptyClients(clients);
-    clients.chrome_client = chrome_client_.Get();
-    SetupPageWithClients(&clients,
+    SetupPageWithClients(chrome_client_,
                          MakeGarbageCollected<EmptyLocalFrameClient>());
     GetDocument().write("<body><video id=video></body>");
   }
@@ -158,8 +154,8 @@ class MediaControlsDisplayCutoutDelegateTest
 
   Touch* CreateTouchAtPoint(int x, int y) {
     return Touch::Create(GetDocument().GetFrame(), &GetVideoElement(),
-                         1 /* identifier */, FloatPoint(x, y), FloatPoint(x, y),
-                         FloatSize(1, 1), 90, 0, "test");
+                         1 /* identifier */, gfx::PointF(x, y),
+                         gfx::PointF(x, y), gfx::SizeF(1, 1), 90, 0);
   }
 
   mojom::ViewportFit CurrentViewportFit() const {

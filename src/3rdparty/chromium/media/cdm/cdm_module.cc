@@ -68,7 +68,7 @@ void ReportLoadResult(LoadResult load_result) {
 void ReportLoadErrorCode(const base::NativeLibraryLoadError* error) {
 // Only report load error code on Windows because that's the only platform that
 // has a numerical error value.
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   base::UmaHistogramSparse("Media.EME.CdmLoadErrorCode", error->code);
 #endif
 }
@@ -109,8 +109,8 @@ CdmModule::~CdmModule() {
 }
 
 CdmModule::CreateCdmFunc CdmModule::GetCreateCdmFunc() {
-  if (!was_initialize_called_) {
-    NOTREACHED() << __func__ << " called before CdmModule is initialized.";
+  if (!initialized_) {
+    DLOG(ERROR) << __func__ << " called before CdmModule is initialized.";
     return nullptr;
   }
 
@@ -125,10 +125,9 @@ bool CdmModule::Initialize(const base::FilePath& cdm_path,
 bool CdmModule::Initialize(const base::FilePath& cdm_path) {
 #endif  // BUILDFLAG(ENABLE_CDM_HOST_VERIFICATION)
   DVLOG(1) << __func__ << ": cdm_path = " << cdm_path.value();
+  CHECK(!initialized_) << "CdmModule can only be initialized once!";
 
-  DCHECK(!was_initialize_called_);
-  was_initialize_called_ = true;
-
+  initialized_ = true;
   cdm_path_ = cdm_path;
 
   // Load the CDM.
@@ -177,11 +176,11 @@ bool CdmModule::Initialize(const base::FilePath& cdm_path) {
   static crash_reporter::CrashKeyString<32> cdm_version_key("cdm-version");
   cdm_version_key.Set(cdm_version);
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
   // Load DXVA before sandbox lockdown to give CDM access to Output Protection
   // Manager (OPM).
   LoadLibraryA("dxva2.dll");
-#endif  // defined(OS_WIN)
+#endif  // BUILDFLAG(IS_WIN)
 
 #if BUILDFLAG(ENABLE_CDM_HOST_VERIFICATION)
   if (base::FeatureList::IsEnabled(media::kCdmHostVerification))
@@ -193,14 +192,9 @@ bool CdmModule::Initialize(const base::FilePath& cdm_path) {
 }
 
 void CdmModule::InitializeCdmModule() {
-  DCHECK(was_initialize_called_);
+  DCHECK(initialized_);
   DCHECK(initialize_cdm_module_func_);
   initialize_cdm_module_func_();
-}
-
-base::FilePath CdmModule::GetCdmPath() const {
-  DCHECK(was_initialize_called_);
-  return cdm_path_;
 }
 
 }  // namespace media

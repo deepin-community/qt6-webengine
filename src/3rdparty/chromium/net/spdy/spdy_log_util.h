@@ -5,15 +5,12 @@
 #ifndef NET_SPDY_SPDY_LOG_UTIL_H_
 #define NET_SPDY_SPDY_LOG_UTIL_H_
 
-#include <memory>
-#include <string>
-
 #include "base/strings/string_piece.h"
 #include "net/base/net_export.h"
 #include "net/http/http_log_util.h"
 #include "net/log/net_log.h"
 #include "net/log/net_log_capture_mode.h"
-#include "net/third_party/quiche/src/spdy/core/spdy_header_block.h"
+#include "net/third_party/quiche/src/quiche/spdy/core/spdy_header_block.h"
 
 namespace base {
 class ListValue;

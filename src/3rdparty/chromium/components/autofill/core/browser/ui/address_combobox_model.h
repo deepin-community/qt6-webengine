@@ -10,9 +10,7 @@
 #include <utility>
 #include <vector>
 
-#include "base/macros.h"
 #include "base/observer_list.h"
-#include "base/strings/string16.h"
 #include "ui/base/models/combobox_model.h"
 
 namespace autofill {
@@ -31,15 +29,17 @@ class AddressComboboxModel : public ui::ComboboxModel {
   AddressComboboxModel(const PersonalDataManager& personal_data_manager,
                        const std::string& app_locale,
                        const std::string& default_selected_guid);
+
+  AddressComboboxModel(const AddressComboboxModel&) = delete;
+  AddressComboboxModel& operator=(const AddressComboboxModel&) = delete;
+
   ~AddressComboboxModel() override;
 
   // ui::ComboboxModel implementation:
   int GetItemCount() const override;
-  base::string16 GetItemAt(int index) const override;
+  std::u16string GetItemAt(int index) const override;
   bool IsItemSeparatorAt(int index) const override;
   int GetDefaultIndex() const override;
-  void AddObserver(ui::ComboboxModelObserver* observer) override;
-  void RemoveObserver(ui::ComboboxModelObserver* observer) override;
 
   // Adds |profile| to model and return its combobox index. The lifespan of
   // |profile| beyond this call is undefined so a copy must be made.
@@ -59,7 +59,7 @@ class AddressComboboxModel : public ui::ComboboxModel {
 
   // List of <id, user visible string> pairs for the addresses extracted from
   // the |personal_data_manager| passed in the constructor.
-  std::vector<std::pair<std::string, base::string16>> addresses_;
+  std::vector<std::pair<std::string, std::u16string>> addresses_;
 
   // A cached copy of all profiles to allow rebuilding the differentiating
   // labels when new profiles are added.
@@ -70,11 +70,6 @@ class AddressComboboxModel : public ui::ComboboxModel {
 
   // If non empty, the guid of the address that should be selected by default.
   std::string default_selected_guid_;
-
-  // To be called when the data for the given country code was loaded.
-  base::ObserverList<ui::ComboboxModelObserver> observers_;
-
-  DISALLOW_COPY_AND_ASSIGN(AddressComboboxModel);
 };
 
 }  // namespace autofill

@@ -6,6 +6,7 @@
 
 #include <memory>
 #include <utility>
+
 #include "base/bind.h"
 #include "base/run_loop.h"
 #include "base/test/task_environment.h"
@@ -13,6 +14,7 @@
 #include "mojo/public/cpp/bindings/remote.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/mojom/blob/blob.mojom-blink.h"
 #include "third_party/blink/public/mojom/blob/blob_registry.mojom-blink.h"
 #include "third_party/blink/public/platform/file_path_conversion.h"
 #include "third_party/blink/renderer/platform/blob/blob_bytes_provider.h"
@@ -47,7 +49,7 @@ struct ExpectedElement {
   static ExpectedElement LargeBytes(Vector<uint8_t> data) {
     uint64_t size = data.size();
     return ExpectedElement{DataElement::NewBytes(DataElementBytes::New(
-                               size, base::nullopt, mojo::NullRemote())),
+                               size, absl::nullopt, mojo::NullRemote())),
                            String(), std::move(data)};
   }
 
@@ -97,11 +99,11 @@ class BlobDataHandleTest : public testing::Test {
     small_test_data_.resize(1024);
     medium_test_data_.resize(1024 * 32);
     large_test_data_.resize(1024 * 512);
-    for (size_t i = 0; i < small_test_data_.size(); ++i)
+    for (wtf_size_t i = 0; i < small_test_data_.size(); ++i)
       small_test_data_[i] = i;
-    for (size_t i = 0; i < medium_test_data_.size(); ++i)
+    for (wtf_size_t i = 0; i < medium_test_data_.size(); ++i)
       medium_test_data_[i] = i % 191;
-    for (size_t i = 0; i < large_test_data_.size(); ++i)
+    for (wtf_size_t i = 0; i < large_test_data_.size(); ++i)
       large_test_data_[i] = i % 251;
 
     ASSERT_LT(small_test_data_.size(),
@@ -152,7 +154,7 @@ class BlobDataHandleTest : public testing::Test {
     EXPECT_EQ(type.IsNull() ? "" : type, reg.content_type);
     EXPECT_EQ("", reg.content_disposition);
     ASSERT_EQ(expected_elements.size(), reg.elements.size());
-    for (size_t i = 0; i < expected_elements.size(); ++i) {
+    for (wtf_size_t i = 0; i < expected_elements.size(); ++i) {
       const auto& expected = expected_elements[i].element;
       auto& actual = reg.elements[i];
       if (expected->is_bytes()) {
@@ -313,7 +315,7 @@ TEST_F(BlobDataHandleTest, CreateFromMergedBytes) {
   auto data = std::make_unique<BlobData>();
   data->AppendBytes(medium_test_data_.data(), medium_test_data_.size());
   data->AppendBytes(small_test_data_.data(), small_test_data_.size());
-  EXPECT_EQ(1u, data->Elements().size());
+  EXPECT_EQ(1u, data->ElementsForTesting().size());
 
   Vector<uint8_t> expected_data = medium_test_data_;
   expected_data.AppendVector(small_test_data_);
@@ -329,7 +331,7 @@ TEST_F(BlobDataHandleTest, CreateFromMergedLargeAndSmallBytes) {
   auto data = std::make_unique<BlobData>();
   data->AppendBytes(large_test_data_.data(), large_test_data_.size());
   data->AppendBytes(small_test_data_.data(), small_test_data_.size());
-  EXPECT_EQ(1u, data->Elements().size());
+  EXPECT_EQ(1u, data->ElementsForTesting().size());
 
   Vector<uint8_t> expected_data = large_test_data_;
   expected_data.AppendVector(small_test_data_);
@@ -345,7 +347,7 @@ TEST_F(BlobDataHandleTest, CreateFromMergedSmallAndLargeBytes) {
   auto data = std::make_unique<BlobData>();
   data->AppendBytes(small_test_data_.data(), small_test_data_.size());
   data->AppendBytes(large_test_data_.data(), large_test_data_.size());
-  EXPECT_EQ(1u, data->Elements().size());
+  EXPECT_EQ(1u, data->ElementsForTesting().size());
 
   Vector<uint8_t> expected_data = small_test_data_;
   expected_data.AppendVector(large_test_data_);
@@ -359,7 +361,7 @@ TEST_F(BlobDataHandleTest, CreateFromMergedSmallAndLargeBytes) {
 
 TEST_F(BlobDataHandleTest, CreateFromFileAndFileSystemURL) {
   base::Time timestamp1 = base::Time::Now();
-  base::Time timestamp2 = timestamp1 + base::TimeDelta::FromSeconds(1);
+  base::Time timestamp2 = timestamp1 + base::Seconds(1);
   KURL url(NullURL(), "http://example.com/");
   auto data = std::make_unique<BlobData>();
   data->AppendFile("path", 4, 32, timestamp1);

@@ -8,7 +8,6 @@
 #include "chrome/browser/net/trial_comparison_cert_verifier_controller.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/common/chrome_features.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/metrics/content/subprocess_metrics_provider.h"
@@ -31,8 +30,8 @@ class TrialComparisonCertVerifierTest : public InProcessBrowserTest {
 IN_PROC_BROWSER_TEST_F(TrialComparisonCertVerifierTest, TrialDisabled) {
   ASSERT_TRUE(https_test_server_.Start());
   base::HistogramTester histograms;
-  ui_test_utils::NavigateToURL(browser(),
-                               https_test_server_.GetURL("/title1.html"));
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(
+      browser(), https_test_server_.GetURL("/title1.html")));
   metrics::SubprocessMetricsProvider::MergeHistogramDeltasForTesting();
   histograms.ExpectTotalCount("Net.CertVerifier_Job_Latency", 1);
   histograms.ExpectTotalCount("Net.CertVerifier_Job_Latency_TrialPrimary", 0);
@@ -47,7 +46,8 @@ class TrialComparisonCertVerifierFeatureEnabledTest
     // None of these tests should generate a report, but set the trial to
     // uma_only mode anyway just to be safe.
     scoped_feature_->InitAndEnableFeatureWithParameters(
-        features::kCertDualVerificationTrialFeature, {{"uma_only", "true"}});
+        net::features::kCertDualVerificationTrialFeature,
+        {{"uma_only", "true"}});
   }
 
   ~TrialComparisonCertVerifierFeatureEnabledTest() override {
@@ -63,8 +63,8 @@ IN_PROC_BROWSER_TEST_F(TrialComparisonCertVerifierFeatureEnabledTest,
                        TrialEnabledPrefDisabled) {
   ASSERT_TRUE(https_test_server_.Start());
   base::HistogramTester histograms;
-  ui_test_utils::NavigateToURL(browser(),
-                               https_test_server_.GetURL("/title1.html"));
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(
+      browser(), https_test_server_.GetURL("/title1.html")));
   metrics::SubprocessMetricsProvider::MergeHistogramDeltasForTesting();
   histograms.ExpectTotalCount("Net.CertVerifier_Job_Latency", 1);
   histograms.ExpectTotalCount("Net.CertVerifier_Job_Latency_TrialPrimary", 0);
@@ -77,8 +77,8 @@ IN_PROC_BROWSER_TEST_F(TrialComparisonCertVerifierFeatureEnabledTest,
 
   ASSERT_TRUE(https_test_server_.Start());
   base::HistogramTester histograms;
-  ui_test_utils::NavigateToURL(browser(),
-                               https_test_server_.GetURL("/title1.html"));
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(
+      browser(), https_test_server_.GetURL("/title1.html")));
   metrics::SubprocessMetricsProvider::MergeHistogramDeltasForTesting();
   histograms.ExpectTotalCount("Net.CertVerifier_Job_Latency", 1);
 #if BUILDFLAG(BUILTIN_CERT_VERIFIER_FEATURE_SUPPORTED)
@@ -103,7 +103,8 @@ class TrialComparisonCertVerifierFeatureOverridenByBuiltinVerifierTest
     scoped_feature_->InitWithFeaturesAndParameters(
         // None of these tests should generate a report, but set the trial to
         // uma_only mode anyway just to be safe.
-        {{features::kCertDualVerificationTrialFeature, {{"uma_only", "true"}}},
+        {{net::features::kCertDualVerificationTrialFeature,
+          {{"uma_only", "true"}}},
          // Enable the builtin verifier.
          {net::features::kCertVerifierBuiltinFeature, {}}},
         {});
@@ -126,8 +127,8 @@ IN_PROC_BROWSER_TEST_F(
 
   ASSERT_TRUE(https_test_server_.Start());
   base::HistogramTester histograms;
-  ui_test_utils::NavigateToURL(browser(),
-                               https_test_server_.GetURL("/title1.html"));
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(
+      browser(), https_test_server_.GetURL("/title1.html")));
   metrics::SubprocessMetricsProvider::MergeHistogramDeltasForTesting();
   histograms.ExpectTotalCount("Net.CertVerifier_Job_Latency", 1);
   // If both the dual cert verifier trial feature and the builtin verifier

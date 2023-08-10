@@ -9,6 +9,7 @@
 #include "base/test/task_environment.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "base/time/time.h"
 #include "media/base/audio_renderer_sink.h"
 #include "media/base/audio_timestamp_helper.h"
 #include "media/fuchsia/audio/fake_audio_consumer.h"
@@ -20,7 +21,7 @@ constexpr int kSampleRate = 44100;
 constexpr ChannelLayout kChannelLayout = CHANNEL_LAYOUT_STEREO;
 constexpr int kNumChannels = 2;
 constexpr uint64_t kTestSessionId = 42;
-constexpr base::TimeDelta kPeriod = base::TimeDelta::FromMilliseconds(10);
+constexpr base::TimeDelta kPeriod = base::Milliseconds(10);
 constexpr int kFramesPerPeriod = 441;
 
 class TestRenderer : public AudioRendererSink::RenderCallback {
@@ -98,8 +99,8 @@ class FuchsiaAudioOutputDeviceTest : public testing::Test {
   }
 
   void CallPumpSamples() {
-    output_device_->PumpSamples(
-        base::TimeTicks::Now() + base::TimeDelta::FromMilliseconds(200), 0);
+    output_device_->PumpSamples(base::TimeTicks::Now() +
+                                base::Milliseconds(200));
   }
 
   void ValidatePresentationTime() {
@@ -110,8 +111,8 @@ class FuchsiaAudioOutputDeviceTest : public testing::Test {
     auto lead_time =
         renderer_.last_presentation_time() - base::TimeTicks::Now();
     EXPECT_GT(lead_time, FakeAudioConsumer::kMinLeadTime);
-    EXPECT_LT(lead_time, FakeAudioConsumer::kMinLeadTime +
-                             base::TimeDelta::FromMilliseconds(30));
+    EXPECT_LT(lead_time,
+              FakeAudioConsumer::kMinLeadTime + base::Milliseconds(30));
   }
 
   base::test::SingleThreadTaskEnvironment task_environment_{
@@ -127,7 +128,7 @@ TEST_F(FuchsiaAudioOutputDeviceTest, Start) {
   Initialize();
 
   // Verify that playback doesn't start before Start().
-  task_environment_.FastForwardBy(base::TimeDelta::FromSeconds(2));
+  task_environment_.FastForwardBy(base::Seconds(2));
   EXPECT_EQ(renderer_.frames_rendered(), 0);
 
   // Rendering should start after Start().
@@ -167,7 +168,7 @@ TEST_F(FuchsiaAudioOutputDeviceTest, Pause) {
 
   // Render() should not be called while paused.
   output_device_->Pause();
-  task_environment_.FastForwardBy(base::TimeDelta::FromSeconds(10));
+  task_environment_.FastForwardBy(base::Seconds(10));
   EXPECT_EQ(renderer_.frames_rendered(), 0);
 
   // Unpause the stream and verify that Render() is being called now.
@@ -194,8 +195,8 @@ TEST_F(FuchsiaAudioOutputDeviceTest, Underflow) {
   // Advance time by 100ms, causing some frames to be skipped.
   task_environment_.AdvanceClock(kPeriod * 10);
   task_environment_.RunUntilIdle();
-  EXPECT_EQ(renderer_.frames_rendered(), kFramesPerPeriod);
-  EXPECT_EQ(renderer_.frames_skipped(), kFramesPerPeriod * 9);
+  EXPECT_EQ(renderer_.frames_rendered(), kFramesPerPeriod * 3);
+  EXPECT_EQ(renderer_.frames_skipped(), kFramesPerPeriod * 7);
   renderer_.reset_frames_rendered();
 
   ValidatePresentationTime();

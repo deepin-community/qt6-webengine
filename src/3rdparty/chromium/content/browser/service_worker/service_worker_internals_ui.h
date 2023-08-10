@@ -50,11 +50,11 @@ class ServiceWorkerInternalsHandler : public WebUIMessageHandler {
                     base::Value details);
   void OnRegistrationEvent(const std::string& event_name, const GURL& scope);
   void OnDidGetRegistrations(
+      int partition_id,
+      const base::FilePath& context_path,
       const std::vector<ServiceWorkerRegistrationInfo>& live_registrations,
       const std::vector<ServiceWorkerVersionInfo>& live_versions,
-      const std::vector<ServiceWorkerRegistrationInfo>& stored_registrations,
-      int partition_id,
-      const base::FilePath& context_path);
+      const std::vector<ServiceWorkerRegistrationInfo>& stored_registrations);
   void OnOperationComplete(int status, const std::string& callback_id);
 
   // WebUIMessageHandler implementation.
@@ -80,10 +80,10 @@ class ServiceWorkerInternalsHandler : public WebUIMessageHandler {
 
   bool GetServiceWorkerContext(
       int partition_id,
-      scoped_refptr<ServiceWorkerContextWrapper>* context) const;
-  void FindContext(int partition_id,
-                   StoragePartition** result_partition,
-                   StoragePartition* storage_partition) const;
+      scoped_refptr<ServiceWorkerContextWrapper>* context);
+  void FindStoragePartitionById(int partition_id,
+                                StoragePartition** result_partition,
+                                StoragePartition* storage_partition) const;
 
   void StopWorkerWithId(scoped_refptr<ServiceWorkerContextWrapper> context,
                         int64_t version_id,

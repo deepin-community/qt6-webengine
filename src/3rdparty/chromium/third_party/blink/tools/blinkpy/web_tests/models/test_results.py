@@ -26,7 +26,7 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import cPickle
+from six.moves import cPickle
 
 from blinkpy.web_tests.models import test_failures, test_expectations
 from blinkpy.web_tests.models.typ_types import ResultType, Artifacts
@@ -98,9 +98,11 @@ class TestResult(object):
             'single_test_runner.py incorrectly reported results %s for test %s'
             % (', '.join(results), test_name))
         if len(results) == 2:
-            assert ((ResultType.Timeout in results and ResultType.Failure in results) or
-                    (ResultType.Crash in results and ResultType.Failure in results)), (
-                'Allowed combination of 2 results are 1. TIMEOUT and FAIL 2. CRASH and FAIL'
+            assert results.issubset({ResultType.Timeout,
+                                     ResultType.Failure,
+                                     ResultType.Crash}), (
+                'Allowed combination of 2 results are 1. TIMEOUT and FAIL '
+                '2. CRASH and FAIL 3. CRASH and TIMEOUT '
                 'Test %s reported the following results %s' %
                 (test_name, ', '.join(results)))
             if ResultType.Timeout in results:
@@ -110,6 +112,17 @@ class TestResult(object):
         else:
             # FIXME: Setting this in the constructor makes this class hard to mutate.
             self.type = results.pop()
+
+        self.failure_reason = None
+        for failure in self.failures:
+            # Take the failure reason from any failure that has one.
+            # At time of writing, only one type of failure defines failure
+            # reasons, if this changes, we may want to change this to be
+            # more deterministic.
+            failure_reason = failure.failure_reason()
+            if failure_reason:
+                self.failure_reason = failure_reason
+                break
 
         # These are set by the worker, not by the driver, so they are not passed to the constructor.
         self.worker_name = ''

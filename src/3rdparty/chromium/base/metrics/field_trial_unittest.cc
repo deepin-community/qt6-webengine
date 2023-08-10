@@ -9,12 +9,12 @@
 
 #include "base/base_switches.h"
 #include "base/build_time.h"
+#include "base/command_line.h"
 #include "base/feature_list.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial_param_associator.h"
 #include "base/rand_util.h"
 #include "base/run_loop.h"
-#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/gtest_util.h"
@@ -29,11 +29,15 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/multiprocess_func_list.h"
 
-#if defined(OS_ANDROID)
+#if !BUILDFLAG(IS_IOS)
+#include "base/process/launch.h"
+#endif
+
+#if BUILDFLAG(IS_ANDROID)
 #include "base/posix/global_descriptors.h"
 #endif
 
-#if defined(OS_MAC)
+#if BUILDFLAG(IS_MAC)
 #include "base/mac/mach_port_rendezvous.h"
 #endif
 
@@ -55,29 +59,15 @@ scoped_refptr<FieldTrial> CreateFieldTrial(
       FieldTrial::SESSION_RANDOMIZED, default_group_number);
 }
 
-// FieldTrialList::Observer implementation for testing.
+// A FieldTrialList::Observer implementation which stores the trial name and
+// group name received via OnFieldTrialGroupFinalized() for later inspection.
 class TestFieldTrialObserver : public FieldTrialList::Observer {
  public:
-  enum Type {
-    ASYNCHRONOUS,
-    SYNCHRONOUS,
-  };
-
-  explicit TestFieldTrialObserver(Type type) : type_(type) {
-    if (type == SYNCHRONOUS)
-      FieldTrialList::SetSynchronousObserver(this);
-    else
-      FieldTrialList::AddObserver(this);
-  }
+  TestFieldTrialObserver() { FieldTrialList::AddObserver(this); }
   TestFieldTrialObserver(const TestFieldTrialObserver&) = delete;
   TestFieldTrialObserver& operator=(const TestFieldTrialObserver&) = delete;
 
-  ~TestFieldTrialObserver() override {
-    if (type_ == SYNCHRONOUS)
-      FieldTrialList::RemoveSynchronousObserver(this);
-    else
-      FieldTrialList::RemoveObserver(this);
-  }
+  ~TestFieldTrialObserver() override { FieldTrialList::RemoveObserver(this); }
 
   void OnFieldTrialGroupFinalized(const std::string& trial,
                                   const std::string& group) override {
@@ -89,9 +79,37 @@ class TestFieldTrialObserver : public FieldTrialList::Observer {
   const std::string& group_name() const { return group_name_; }
 
  private:
-  const Type type_;
   std::string trial_name_;
   std::string group_name_;
+};
+
+// A FieldTrialList::Observer implementation which accesses the group of a
+// FieldTrial from OnFieldTrialGroupFinalized(). Used to test reentrancy.
+class FieldTrialObserverAccessingGroup : public FieldTrialList::Observer {
+ public:
+  // |trial_to_access| is the FieldTrial on which to invoke group() when
+  // receiving an OnFieldTrialGroupFinalized() notification.
+  explicit FieldTrialObserverAccessingGroup(
+      scoped_refptr<FieldTrial> trial_to_access)
+      : trial_to_access_(trial_to_access) {
+    FieldTrialList::AddObserver(this);
+  }
+  FieldTrialObserverAccessingGroup(const FieldTrialObserverAccessingGroup&) =
+      delete;
+  FieldTrialObserverAccessingGroup& operator=(
+      const FieldTrialObserverAccessingGroup&) = delete;
+
+  ~FieldTrialObserverAccessingGroup() override {
+    FieldTrialList::RemoveObserver(this);
+  }
+
+  void OnFieldTrialGroupFinalized(const std::string& trial,
+                                  const std::string& group) override {
+    trial_to_access_->group();
+  }
+
+ private:
+  scoped_refptr<FieldTrial> trial_to_access_;
 };
 
 std::string MockEscapeQueryParamValue(const std::string& input) {
@@ -614,7 +632,7 @@ TEST_F(FieldTrialTest, CreateTrialsFromStringForceActivation) {
 TEST_F(FieldTrialTest, CreateTrialsFromStringNotActiveObserver) {
   ASSERT_FALSE(FieldTrialList::TrialExists("Abc"));
 
-  TestFieldTrialObserver observer(TestFieldTrialObserver::ASYNCHRONOUS);
+  TestFieldTrialObserver observer;
   ASSERT_TRUE(FieldTrialList::CreateTrialsFromString("Abc/def/"));
   RunLoop().RunUntilIdle();
   // Observer shouldn't be notified.
@@ -623,7 +641,6 @@ TEST_F(FieldTrialTest, CreateTrialsFromStringNotActiveObserver) {
   // Check that the values still get returned and querying them activates them.
   EXPECT_EQ("def", FieldTrialList::FindFullName("Abc"));
 
-  RunLoop().RunUntilIdle();
   EXPECT_EQ("Abc", observer.trial_name());
   EXPECT_EQ("def", observer.group_name());
 }
@@ -888,26 +905,7 @@ TEST_F(FieldTrialTest, Observe) {
   const char kTrialName[] = "TrialToObserve1";
   const char kSecondaryGroupName[] = "SecondaryGroup";
 
-  TestFieldTrialObserver observer(TestFieldTrialObserver::ASYNCHRONOUS);
-  int default_group = -1;
-  scoped_refptr<FieldTrial> trial =
-      CreateFieldTrial(kTrialName, 100, kDefaultGroupName, &default_group);
-  const int secondary_group = trial->AppendGroup(kSecondaryGroupName, 50);
-  const int chosen_group = trial->group();
-  EXPECT_TRUE(chosen_group == default_group || chosen_group == secondary_group);
-
-  EXPECT_EQ(kTrialName, observer.trial_name());
-  if (chosen_group == default_group)
-    EXPECT_EQ(kDefaultGroupName, observer.group_name());
-  else
-    EXPECT_EQ(kSecondaryGroupName, observer.group_name());
-}
-
-TEST_F(FieldTrialTest, SynchronousObserver) {
-  const char kTrialName[] = "TrialToObserve1";
-  const char kSecondaryGroupName[] = "SecondaryGroup";
-
-  TestFieldTrialObserver observer(TestFieldTrialObserver::SYNCHRONOUS);
+  TestFieldTrialObserver observer;
   int default_group = -1;
   scoped_refptr<FieldTrial> trial =
       CreateFieldTrial(kTrialName, 100, kDefaultGroupName, &default_group);
@@ -923,10 +921,39 @@ TEST_F(FieldTrialTest, SynchronousObserver) {
     EXPECT_EQ(kSecondaryGroupName, observer.group_name());
 }
 
+// Verify that no hang occurs when a FieldTrial group is selected from a
+// FieldTrialList::Observer::OnFieldTrialGroupFinalized() notification. If the
+// FieldTrialList's lock is held when observers are notified, this test will
+// hang due to reentrant lock acquisition when selecting the FieldTrial group.
+TEST_F(FieldTrialTest, ObserveReentrancy) {
+  const char kTrialName1[] = "TrialToObserve1";
+  const char kTrialName2[] = "TrialToObserve2";
+
+  int default_group_1 = -1;
+  scoped_refptr<FieldTrial> trial_1 =
+      CreateFieldTrial(kTrialName1, 100, kDefaultGroupName, &default_group_1);
+
+  FieldTrialObserverAccessingGroup observer(trial_1);
+
+  int default_group_2 = -1;
+  scoped_refptr<FieldTrial> trial_2 =
+      CreateFieldTrial(kTrialName2, 100, kDefaultGroupName, &default_group_2);
+
+  // No group should be selected for |trial_1| yet.
+  EXPECT_EQ(FieldTrial::kNotFinalized, trial_1->group_);
+
+  // Force selection of a group for |trial_2|. This will notify |observer| which
+  // will force the selection of a group for |trial_1|. This should not hang.
+  trial_2->group();
+
+  // The above call should have selected a group for |trial_1|.
+  EXPECT_NE(FieldTrial::kNotFinalized, trial_1->group_);
+}
+
 TEST_F(FieldTrialTest, ObserveDisabled) {
   const char kTrialName[] = "TrialToObserve2";
 
-  TestFieldTrialObserver observer(TestFieldTrialObserver::ASYNCHRONOUS);
+  TestFieldTrialObserver observer;
   int default_group = -1;
   scoped_refptr<FieldTrial> trial =
       CreateFieldTrial(kTrialName, 100, kDefaultGroupName, &default_group);
@@ -950,7 +977,7 @@ TEST_F(FieldTrialTest, ObserveDisabled) {
 TEST_F(FieldTrialTest, ObserveForcedDisabled) {
   const char kTrialName[] = "TrialToObserve3";
 
-  TestFieldTrialObserver observer(TestFieldTrialObserver::ASYNCHRONOUS);
+  TestFieldTrialObserver observer;
   int default_group = -1;
   scoped_refptr<FieldTrial> trial =
       CreateFieldTrial(kTrialName, 100, kDefaultGroupName, &default_group);
@@ -1046,14 +1073,13 @@ TEST_F(FieldTrialTest, CreateSimulatedFieldTrial) {
     { 0.95, kDefaultGroupName },
   };
 
-  for (size_t i = 0; i < base::size(test_cases); ++i) {
-    TestFieldTrialObserver observer(TestFieldTrialObserver::ASYNCHRONOUS);
-    scoped_refptr<FieldTrial> trial(
-       FieldTrial::CreateSimulatedFieldTrial(kTrialName, 100, kDefaultGroupName,
-                                             test_cases[i].entropy_value));
+  for (auto& test_case : test_cases) {
+    TestFieldTrialObserver observer;
+    scoped_refptr<FieldTrial> trial(FieldTrial::CreateSimulatedFieldTrial(
+        kTrialName, 100, kDefaultGroupName, test_case.entropy_value));
     trial->AppendGroup("A", 80);
     trial->AppendGroup("B", 10);
-    EXPECT_EQ(test_cases[i].expected_group, trial->group_name());
+    EXPECT_EQ(test_case.expected_group, trial->group_name());
 
     // Field trial shouldn't have been registered with the list.
     EXPECT_FALSE(FieldTrialList::TrialExists(kTrialName));
@@ -1135,18 +1161,9 @@ class FieldTrialListTest : public ::testing::Test {
   test::ScopedFieldTrialListResetter trial_list_resetter_;
 };
 
-#if defined(OS_FUCHSIA)
-// TODO(crbug.com/752368): This is flaky on Fuchsia.
-#define MAYBE_TestCopyFieldTrialStateToFlags \
-  DISABLED_TestCopyFieldTrialStateToFlags
-#else
-#define MAYBE_TestCopyFieldTrialStateToFlags TestCopyFieldTrialStateToFlags
-#endif
-TEST_F(FieldTrialListTest, MAYBE_TestCopyFieldTrialStateToFlags) {
-  constexpr char kFieldTrialHandleSwitch[] = "test-field-trial-handle";
-  constexpr char kEnableFeaturesSwitch[] = "test-enable-features";
-  constexpr char kDisableFeaturesSwitch[] = "test-disable-features";
-
+#if !BUILDFLAG(IS_IOS)
+// LaunchOptions is not available on iOS.
+TEST_F(FieldTrialListTest, TestCopyFieldTrialStateToFlags) {
   FieldTrialList field_trial_list(std::make_unique<MockEntropyProvider>());
 
   std::unique_ptr<FeatureList> feature_list(new FeatureList);
@@ -1161,16 +1178,17 @@ TEST_F(FieldTrialListTest, MAYBE_TestCopyFieldTrialStateToFlags) {
 
   FilePath test_file_path = FilePath(FILE_PATH_LITERAL("Program"));
   CommandLine command_line = CommandLine(test_file_path);
+  LaunchOptions launch_options;
 
-  FieldTrialList::CopyFieldTrialStateToFlags(
-      kFieldTrialHandleSwitch, kEnableFeaturesSwitch, kDisableFeaturesSwitch,
-      &command_line);
-  EXPECT_TRUE(command_line.HasSwitch(kFieldTrialHandleSwitch));
+  FieldTrialList::PopulateLaunchOptionsWithFieldTrialState(&command_line,
+                                                           &launch_options);
+  EXPECT_TRUE(command_line.HasSwitch(switches::kFieldTrialHandle));
 
-  // Explictly specified enabled/disabled features should be specified.
-  EXPECT_EQ("A,B", command_line.GetSwitchValueASCII(kEnableFeaturesSwitch));
-  EXPECT_EQ("C", command_line.GetSwitchValueASCII(kDisableFeaturesSwitch));
+  // Explicitly specified enabled/disabled features should be specified.
+  EXPECT_EQ("A,B", command_line.GetSwitchValueASCII(switches::kEnableFeatures));
+  EXPECT_EQ("C", command_line.GetSwitchValueASCII(switches::kDisableFeatures));
 }
+#endif  // !BUILDFLAG(IS_IOS)
 
 TEST_F(FieldTrialListTest, InstantiateAllocator) {
   FieldTrialList field_trial_list(nullptr);
@@ -1281,13 +1299,7 @@ TEST_F(FieldTrialListTest, AssociateFieldTrialParams) {
   EXPECT_EQ(2U, new_params.size());
 }
 
-#if defined(OS_FUCHSIA)
-// TODO(crbug.com/752368): This is flaky on Fuchsia.
-#define MAYBE_ClearParamsFromSharedMemory DISABLED_ClearParamsFromSharedMemory
-#else
-#define MAYBE_ClearParamsFromSharedMemory ClearParamsFromSharedMemory
-#endif
-TEST_F(FieldTrialListTest, MAYBE_ClearParamsFromSharedMemory) {
+TEST_F(FieldTrialListTest, ClearParamsFromSharedMemory) {
   std::string trial_name("Trial1");
   std::string group_name("Group1");
 
@@ -1379,31 +1391,21 @@ TEST_F(FieldTrialListTest, DumpAndFetchFromSharedMemory) {
   EXPECT_EQ("value2", shm_params["key2"]);
 }
 
-// Shared-memory distribution of FieldTrial to child process is not implemented
-// on Fuchsia: http://crbug.com/752368.
-#if !defined(OS_NACL) && !defined(OS_IOS) && !defined(OS_FUCHSIA)
+#if !BUILDFLAG(IS_NACL) && !BUILDFLAG(IS_IOS)
 MULTIPROCESS_TEST_MAIN(SerializeSharedMemoryRegionMetadata) {
   std::string serialized =
       CommandLine::ForCurrentProcess()->GetSwitchValueASCII("field_trials");
   std::string guid_string =
       CommandLine::ForCurrentProcess()->GetSwitchValueASCII("guid");
 
-#if defined(OS_WIN) || defined(OS_MAC)
-  base::ReadOnlySharedMemoryRegion deserialized =
-      FieldTrialList::DeserializeSharedMemoryRegionMetadata(serialized);
-#elif defined(OS_ANDROID)
-  // Use the arbitrary fd value selected in the main process.
-  // File descriptors are not remapped on Android. They have to be looked up in
-  // the GlobalDescriptors table instead.
-  int fd = base::GlobalDescriptors::GetInstance()->MaybeGet(42);
+  int fd = 42;
+#if BUILDFLAG(IS_ANDROID)
+  fd = base::GlobalDescriptors::GetInstance()->MaybeGet(42);
   CHECK_NE(fd, -1);
+#endif
+
   base::ReadOnlySharedMemoryRegion deserialized =
-      FieldTrialList::DeserializeSharedMemoryRegionMetadata(fd, serialized);
-#else
-  // Use the arbitrary fd value selected in the main process.
-  base::ReadOnlySharedMemoryRegion deserialized =
-      FieldTrialList::DeserializeSharedMemoryRegionMetadata(42, serialized);
-#endif  // defined(OS_WIN) || defined(OS_MAC)
+      FieldTrialList::DeserializeSharedMemoryRegionMetadata(serialized, fd);
   CHECK(deserialized.IsValid());
   CHECK_EQ(deserialized.GetGUID().ToString(), guid_string);
   CHECK(!deserialized.GetGUID().is_empty());
@@ -1416,28 +1418,20 @@ TEST_F(FieldTrialListTest, SerializeSharedMemoryRegionMetadata) {
       base::ReadOnlySharedMemoryRegion::Create(4 << 10);
   ASSERT_TRUE(shm.IsValid());
 
-  std::string serialized =
-      FieldTrialList::SerializeSharedMemoryRegionMetadata(shm.region);
-
   LaunchOptions options;
+  std::string serialized =
+      FieldTrialList::SerializeSharedMemoryRegionMetadata(shm.region, &options);
 
-#if defined(OS_WIN)
-  options.handles_to_inherit.push_back(shm.region.GetPlatformHandle());
-#elif defined(OS_MAC)
-  options.mach_ports_for_rendezvous.insert(
-      std::make_pair('fldt', MachRendezvousPort{shm.region.GetPlatformHandle(),
-                                                MACH_MSG_TYPE_COPY_SEND}));
-#elif defined(OS_POSIX)
-
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_ANDROID)
   int shm_fd = shm.region.GetPlatformHandle();
 #else
   int shm_fd = shm.region.GetPlatformHandle().fd;
-#endif  // defined(OS_ANDROID)
-
+#endif  // BUILDFLAG(IS_ANDROID)
   // Pick an arbitrary FD number to use for the shmem FD in the child.
   options.fds_to_remap.emplace_back(std::make_pair(shm_fd, 42));
-#endif  // defined(OS_POSIX)
+#endif  // BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_MAC)
+
   CommandLine cmd_line = GetMultiProcessTestChildBaseCommandLine();
   cmd_line.AppendSwitchASCII("field_trials", serialized);
   cmd_line.AppendSwitchASCII("guid", shm.region.GetGUID().ToString());
@@ -1450,13 +1444,12 @@ TEST_F(FieldTrialListTest, SerializeSharedMemoryRegionMetadata) {
       process, TestTimeouts::action_timeout(), &exit_code));
   EXPECT_EQ(0, exit_code);
 }
-#endif  // !defined(OS_NACL) && !defined(OS_IOS) && !defined(OS_FUCHSIA)
+#endif  // !BUILDFLAG(IS_NACL) && !BUILDFLAG(IS_IOS)
 
 // Verify that the field trial shared memory handle is really read-only, and
 // does not allow writable mappings. Test disabled on NaCl, Fuchsia, and Mac,
-// which don't support/implement shared memory configuration. For Fuchsia, see
-// crbug.com/752368
-#if !defined(OS_NACL) && !defined(OS_FUCHSIA) && !defined(OS_MAC)
+// which don't support/implement shared memory configuration.
+#if !BUILDFLAG(IS_NACL) && !BUILDFLAG(IS_MAC)
 TEST_F(FieldTrialListTest, CheckReadOnlySharedMemoryRegion) {
   FieldTrialList field_trial_list(nullptr);
   FieldTrialList::CreateFieldTrial("Trial1", "Group1");
@@ -1471,7 +1464,7 @@ TEST_F(FieldTrialListTest, CheckReadOnlySharedMemoryRegion) {
       base::ReadOnlySharedMemoryRegion::TakeHandleForSerialization(
           std::move(region))));
 }
-#endif  // !OS_NACL && !OS_FUCHSIA && !OS_MAC
+#endif  // !BUILDFLAG(IS_NACL) && !BUILDFLAG(IS_MAC)
 
 TEST_F(FieldTrialTest, TestAllParamsToString) {
   std::string exptected_output = "t1.g1:p1/v1/p2/v2";

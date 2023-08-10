@@ -5,10 +5,11 @@
 #include "cc/layers/surface_layer_impl.h"
 
 #include <stdint.h>
+
 #include <algorithm>
 #include <utility>
 
-#include "base/stl_util.h"
+#include "base/memory/ptr_util.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/trace_event/traced_value.h"
 #include "cc/debug/debug_colors.h"
@@ -54,13 +55,13 @@ SurfaceLayerImpl::~SurfaceLayerImpl() {
 }
 
 std::unique_ptr<LayerImpl> SurfaceLayerImpl::CreateLayerImpl(
-    LayerTreeImpl* tree_impl) {
+    LayerTreeImpl* tree_impl) const {
   return SurfaceLayerImpl::Create(tree_impl, id(),
                                   std::move(update_submission_state_callback_));
 }
 
 void SurfaceLayerImpl::SetRange(const viz::SurfaceRange& surface_range,
-                                base::Optional<uint32_t> deadline_in_frames) {
+                                absl::optional<uint32_t> deadline_in_frames) {
   if (surface_range_ == surface_range &&
       deadline_in_frames_ == deadline_in_frames) {
     return;
@@ -211,8 +212,8 @@ bool SurfaceLayerImpl::is_surface_layer() const {
   return true;
 }
 
-gfx::Rect SurfaceLayerImpl::GetEnclosingRectInTargetSpace() const {
-  return GetScaledEnclosingRectInTargetSpace(
+gfx::Rect SurfaceLayerImpl::GetEnclosingVisibleRectInTargetSpace() const {
+  return GetScaledEnclosingVisibleRectInTargetSpace(
       layer_tree_impl()->device_scale_factor());
 }
 
@@ -244,7 +245,7 @@ void SurfaceLayerImpl::AppendRainbowDebugBorder(
       0x800000ff,  // Blue.
       0x80ee82ee,  // Violet.
   };
-  const int kNumColors = base::size(colors);
+  const int kNumColors = std::size(colors);
 
   const int kStripeWidth = 300;
   const int kStripeHeight = 300;

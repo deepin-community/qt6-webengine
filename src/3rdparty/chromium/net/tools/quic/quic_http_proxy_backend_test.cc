@@ -7,9 +7,9 @@
 #include "base/test/task_environment.h"
 #include "base/test/test_simple_task_runner.h"
 #include "net/base/url_util.h"
-#include "net/third_party/quiche/src/quic/core/quic_connection_id.h"
-#include "net/third_party/quiche/src/quic/platform/api/quic_test.h"
-#include "net/third_party/quiche/src/quic/test_tools/quic_test_utils.h"
+#include "net/third_party/quiche/src/quiche/quic/core/quic_connection_id.h"
+#include "net/third_party/quiche/src/quiche/quic/platform/api/quic_test.h"
+#include "net/third_party/quiche/src/quiche/quic/test_tools/quic_test_utils.h"
 
 #include "net/tools/quic/quic_http_proxy_backend.h"
 #include "net/tools/quic/quic_http_proxy_backend_stream.h"
@@ -31,8 +31,7 @@ class TestQuicServerStream
   std::string peer_host() const override { return "127.0.0.1"; }
 
   void OnResponseBackendComplete(
-      const quic::QuicBackendResponse* response,
-      std::list<quic::QuicBackendResponse::ServerPushInfo> resources) override {
+      const quic::QuicBackendResponse* response) override {
     EXPECT_FALSE(did_complete_);
     did_complete_ = true;
     task_runner_->PostTask(FROM_HERE, run_loop_.QuitClosure());

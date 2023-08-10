@@ -31,16 +31,8 @@ bool VulkanImplementationAndroid::InitializeVulkanInstance(bool using_surface) {
       VK_KHR_EXTERNAL_MEMORY_CAPABILITIES_EXTENSION_NAME,
       VK_KHR_EXTERNAL_SEMAPHORE_CAPABILITIES_EXTENSION_NAME};
 
-  VulkanFunctionPointers* vulkan_function_pointers =
-      gpu::GetVulkanFunctionPointers();
-
-  base::NativeLibraryLoadError native_library_load_error;
-  vulkan_function_pointers->vulkan_loader_library = base::LoadNativeLibrary(
-      base::FilePath("libvulkan.so"), &native_library_load_error);
-  if (!vulkan_function_pointers->vulkan_loader_library)
-    return false;
-
-  return vulkan_instance_.Initialize(required_extensions, {});
+  return vulkan_instance_.Initialize(base::FilePath("libvulkan.so"),
+                                     required_extensions, {});
 }
 
 VulkanInstance* VulkanImplementationAndroid::GetVulkanInstance() {
@@ -61,8 +53,7 @@ std::unique_ptr<VulkanSurface> VulkanImplementationAndroid::CreateViewSurface(
   }
 
   return std::make_unique<VulkanSurface>(vulkan_instance_.vk_instance(), window,
-                                         surface,
-                                         false /* use_protected_memory */);
+                                         surface);
 }
 
 bool VulkanImplementationAndroid::GetPhysicalDevicePresentationSupport(
@@ -94,6 +85,7 @@ VulkanImplementationAndroid::GetOptionalDeviceExtensions() {
       VK_KHR_SAMPLER_YCBCR_CONVERSION_EXTENSION_NAME,
       VK_KHR_SWAPCHAIN_EXTENSION_NAME,
       VK_ANDROID_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER_EXTENSION_NAME,
+      VK_EXT_QUEUE_FAMILY_FOREIGN_EXTENSION_NAME,
   };
 }
 

@@ -10,6 +10,7 @@
 #include <sstream>
 #include <thread>
 
+#include "cast/standalone_sender/ffmpeg_glue.h"
 #include "cast/streaming/environment.h"
 #include "util/osp_logging.h"
 
@@ -85,6 +86,14 @@ SimulatedCapturer::SimulatedCapturer(Environment* environment,
 
 SimulatedCapturer::~SimulatedCapturer() = default;
 
+void SimulatedCapturer::SetPlaybackRate(double rate) {
+  playback_rate_is_non_zero_ = rate > 0;
+  if (playback_rate_is_non_zero_) {
+    // Restart playback now that playback rate is nonzero.
+    StartDecodingNextFrame();
+  }
+}
+
 void SimulatedCapturer::SetAdditionalDecoderParameters(
     AVCodecContext* decoder_context) {}
 
@@ -97,7 +106,7 @@ void SimulatedCapturer::OnError(const char* function_name, int av_errnum) {
   // Make a human-readable string from the libavcodec error.
   std::ostringstream error;
   error << "For " << av_get_media_type_string(media_type_) << ", "
-        << function_name << " returned error: " << av_err2str(av_errnum);
+        << function_name << " returned error: " << AvErrorToString(av_errnum);
 
   // Deliver the error notification in a separate task since this method might
   // have been called from the constructor.
@@ -119,6 +128,9 @@ Clock::duration SimulatedCapturer::ToApproximateClockDuration(
 }
 
 void SimulatedCapturer::StartDecodingNextFrame() {
+  if (!playback_rate_is_non_zero_) {
+    return;
+  }
   const int read_frame_result =
       av_read_frame(format_context_.get(), packet_.get());
   if (read_frame_result < 0) {

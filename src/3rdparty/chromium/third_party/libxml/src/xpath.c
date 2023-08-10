@@ -25,22 +25,9 @@
 #include <limits.h>
 #include <string.h>
 #include <stddef.h>
-
-#ifdef HAVE_SYS_TYPES_H
-#include <sys/types.h>
-#endif
-#ifdef HAVE_MATH_H
 #include <math.h>
-#endif
-#ifdef HAVE_FLOAT_H
 #include <float.h>
-#endif
-#ifdef HAVE_CTYPE_H
 #include <ctype.h>
-#endif
-#ifdef HAVE_SIGNAL_H
-#include <signal.h>
-#endif
 
 #include <libxml/xmlmemory.h>
 #include <libxml/tree.h>
@@ -488,28 +475,26 @@ int wrap_cmp( xmlNodePtr x, xmlNodePtr y );
  *									*
  ************************************************************************/
 
-#ifndef INFINITY
-#define INFINITY (DBL_MAX * DBL_MAX)
-#endif
-
-#ifndef NAN
-#define NAN (INFINITY / INFINITY)
-#endif
-
-double xmlXPathNAN;
-double xmlXPathPINF;
-double xmlXPathNINF;
+double xmlXPathNAN = 0.0;
+double xmlXPathPINF = 0.0;
+double xmlXPathNINF = 0.0;
 
 /**
  * xmlXPathInit:
  *
+ * DEPRECATED: This function will be made private. Call xmlInitParser to
+ * initialize the library.
+ *
  * Initialize the XPath environment
  */
+ATTRIBUTE_NO_SANITIZE("float-divide-by-zero")
 void
 xmlXPathInit(void) {
-    xmlXPathNAN = NAN;
-    xmlXPathPINF = INFINITY;
-    xmlXPathNINF = -INFINITY;
+    /* MSVC doesn't allow division by zero in constant expressions. */
+    double zero = 0.0;
+    xmlXPathNAN = 0.0 / zero;
+    xmlXPathPINF = 1.0 / zero;
+    xmlXPathNINF = -xmlXPathPINF;
 }
 
 /**
@@ -538,9 +523,9 @@ xmlXPathIsInf(double val) {
 #ifdef isinf
     return isinf(val) ? (val > 0 ? 1 : -1) : 0;
 #else
-    if (val >= INFINITY)
+    if (val >= xmlXPathPINF)
         return 1;
-    if (val <= -INFINITY)
+    if (val <= -xmlXPathPINF)
         return -1;
     return 0;
 #endif
@@ -5873,10 +5858,10 @@ xmlXPathCastNodeToNumber (xmlNodePtr node) {
     double ret;
 
     if (node == NULL)
-	return(NAN);
+	return(xmlXPathNAN);
     strval = xmlXPathCastNodeToString(node);
     if (strval == NULL)
-	return(NAN);
+	return(xmlXPathNAN);
     ret = xmlXPathCastStringToNumber(strval);
     xmlFree(strval);
 
@@ -5897,7 +5882,7 @@ xmlXPathCastNodeSetToNumber (xmlNodeSetPtr ns) {
     double ret;
 
     if (ns == NULL)
-	return(NAN);
+	return(xmlXPathNAN);
     str = xmlXPathCastNodeSetToString(ns);
     ret = xmlXPathCastStringToNumber(str);
     xmlFree(str);
@@ -5917,13 +5902,13 @@ xmlXPathCastToNumber(xmlXPathObjectPtr val) {
     double ret = 0.0;
 
     if (val == NULL)
-	return(NAN);
+	return(xmlXPathNAN);
     switch (val->type) {
     case XPATH_UNDEFINED:
 #ifdef DEBUG_EXPR
 	xmlGenericError(xmlGenericErrorContext, "NUMBER: undefined\n");
 #endif
-	ret = NAN;
+	ret = xmlXPathNAN;
 	break;
     case XPATH_NODESET:
     case XPATH_XSLT_TREE:
@@ -5943,7 +5928,7 @@ xmlXPathCastToNumber(xmlXPathObjectPtr val) {
     case XPATH_RANGE:
     case XPATH_LOCATIONSET:
 	TODO;
-	ret = NAN;
+	ret = xmlXPathNAN;
 	break;
     }
     return(ret);
@@ -7570,7 +7555,7 @@ xmlXPathModValues(xmlXPathParserContextPtr ctxt) {
     CHECK_TYPE(XPATH_NUMBER);
     arg1 = ctxt->value->floatval;
     if (arg2 == 0)
-	ctxt->value->floatval = NAN;
+	ctxt->value->floatval = xmlXPathNAN;
     else {
 	ctxt->value->floatval = fmod(arg1, arg2);
     }
@@ -7656,9 +7641,6 @@ xmlXPathNextChild(xmlXPathParserContextPtr ctxt, xmlNodePtr cur) {
             case XML_DOCUMENT_TYPE_NODE:
             case XML_DOCUMENT_FRAG_NODE:
             case XML_HTML_DOCUMENT_NODE:
-#ifdef LIBXML_DOCB_ENABLED
-	    case XML_DOCB_DOCUMENT_NODE:
-#endif
 		return(((xmlDocPtr) ctxt->context->node)->children);
 	    case XML_ELEMENT_DECL:
 	    case XML_ATTRIBUTE_DECL:
@@ -7714,9 +7696,6 @@ xmlXPathNextChildElement(xmlXPathParserContextPtr ctxt, xmlNodePtr cur) {
 		return(NULL);
             case XML_DOCUMENT_NODE:
             case XML_HTML_DOCUMENT_NODE:
-#ifdef LIBXML_DOCB_ENABLED
-	    case XML_DOCB_DOCUMENT_NODE:
-#endif
 		return(xmlDocGetRootElement((xmlDocPtr) cur));
 	    default:
 		return(NULL);
@@ -7777,9 +7756,6 @@ xmlXPathNextDescendantOrSelfElemParent(xmlNodePtr cur,
 	    case XML_XINCLUDE_START:
 	    case XML_DOCUMENT_FRAG_NODE:
 	    case XML_DOCUMENT_NODE:
-#ifdef LIBXML_DOCB_ENABLED
-	    case XML_DOCB_DOCUMENT_NODE:
-#endif
 	    case XML_HTML_DOCUMENT_NODE:
 		return(contextNode);
 	    default:
@@ -7804,9 +7780,6 @@ xmlXPathNextDescendantOrSelfElemParent(xmlNodePtr cur,
 		    break;
 		/* Not sure if we need those here. */
 		case XML_DOCUMENT_NODE:
-#ifdef LIBXML_DOCB_ENABLED
-		case XML_DOCB_DOCUMENT_NODE:
-#endif
 		case XML_HTML_DOCUMENT_NODE:
 		    if (cur != start)
 			return(cur);
@@ -7973,9 +7946,6 @@ xmlXPathNextParent(xmlXPathParserContextPtr ctxt, xmlNodePtr cur) {
             case XML_DOCUMENT_TYPE_NODE:
             case XML_DOCUMENT_FRAG_NODE:
             case XML_HTML_DOCUMENT_NODE:
-#ifdef LIBXML_DOCB_ENABLED
-	    case XML_DOCB_DOCUMENT_NODE:
-#endif
                 return(NULL);
 	    case XML_NAMESPACE_DECL: {
 		xmlNsPtr ns = (xmlNsPtr) ctxt->context->node;
@@ -8046,9 +8016,6 @@ xmlXPathNextAncestor(xmlXPathParserContextPtr ctxt, xmlNodePtr cur) {
             case XML_DOCUMENT_TYPE_NODE:
             case XML_DOCUMENT_FRAG_NODE:
             case XML_HTML_DOCUMENT_NODE:
-#ifdef LIBXML_DOCB_ENABLED
-	    case XML_DOCB_DOCUMENT_NODE:
-#endif
                 return(NULL);
 	    case XML_NAMESPACE_DECL: {
 		xmlNsPtr ns = (xmlNsPtr) ctxt->context->node;
@@ -8107,9 +8074,6 @@ xmlXPathNextAncestor(xmlXPathParserContextPtr ctxt, xmlNodePtr cur) {
 	case XML_DOCUMENT_TYPE_NODE:
 	case XML_DOCUMENT_FRAG_NODE:
 	case XML_HTML_DOCUMENT_NODE:
-#ifdef LIBXML_DOCB_ENABLED
-	case XML_DOCB_DOCUMENT_NODE:
-#endif
 	    return(NULL);
     }
     return(NULL);
@@ -9265,52 +9229,45 @@ xmlXPathSubstringAfterFunction(xmlXPathParserContextPtr ctxt, int nargs) {
  */
 void
 xmlXPathNormalizeFunction(xmlXPathParserContextPtr ctxt, int nargs) {
-  xmlXPathObjectPtr obj = NULL;
-  xmlChar *source = NULL;
-  xmlBufPtr target;
-  xmlChar blank;
+    xmlChar *source, *target;
+    int blank;
 
-  if (ctxt == NULL) return;
-  if (nargs == 0) {
-    /* Use current context node */
-      valuePush(ctxt,
-	  xmlXPathCacheWrapString(ctxt->context,
-	    xmlXPathCastNodeToString(ctxt->context->node)));
-    nargs = 1;
-  }
+    if (ctxt == NULL) return;
+    if (nargs == 0) {
+        /* Use current context node */
+        valuePush(ctxt,
+            xmlXPathCacheWrapString(ctxt->context,
+                xmlXPathCastNodeToString(ctxt->context->node)));
+        nargs = 1;
+    }
 
-  CHECK_ARITY(1);
-  CAST_TO_STRING;
-  CHECK_TYPE(XPATH_STRING);
-  obj = valuePop(ctxt);
-  source = obj->stringval;
-
-  target = xmlBufCreate();
-  if (target && source) {
+    CHECK_ARITY(1);
+    CAST_TO_STRING;
+    CHECK_TYPE(XPATH_STRING);
+    source = ctxt->value->stringval;
+    if (source == NULL)
+        return;
+    target = source;
 
     /* Skip leading whitespaces */
     while (IS_BLANK_CH(*source))
-      source++;
+        source++;
 
     /* Collapse intermediate whitespaces, and skip trailing whitespaces */
     blank = 0;
     while (*source) {
-      if (IS_BLANK_CH(*source)) {
-	blank = 0x20;
-      } else {
-	if (blank) {
-	  xmlBufAdd(target, &blank, 1);
-	  blank = 0;
-	}
-	xmlBufAdd(target, source, 1);
-      }
-      source++;
+        if (IS_BLANK_CH(*source)) {
+	    blank = 1;
+        } else {
+            if (blank) {
+                *target++ = 0x20;
+                blank = 0;
+            }
+            *target++ = *source;
+        }
+        source++;
     }
-    valuePush(ctxt, xmlXPathCacheNewString(ctxt->context,
-	xmlBufContent(target)));
-    xmlBufFree(target);
-  }
-  xmlXPathReleaseObject(ctxt->context, obj);
+    *target = 0;
 }
 
 /**
@@ -10000,7 +9957,7 @@ xmlXPathStringEvalNumber(const xmlChar *str) {
     if (cur == NULL) return(0);
     while (IS_BLANK_CH(*cur)) cur++;
     if ((*cur != '.') && ((*cur < '0') || (*cur > '9')) && (*cur != '-')) {
-        return(NAN);
+        return(xmlXPathNAN);
     }
     if (*cur == '-') {
 	isneg = 1;
@@ -10036,7 +9993,7 @@ xmlXPathStringEvalNumber(const xmlChar *str) {
 
         cur++;
 	if (((*cur < '0') || (*cur > '9')) && (!ok)) {
-	    return(NAN);
+	    return(xmlXPathNAN);
 	}
         while (*cur == '0') {
 	    frac = frac + 1;
@@ -10069,7 +10026,7 @@ xmlXPathStringEvalNumber(const xmlChar *str) {
       }
     }
     while (IS_BLANK_CH(*cur)) cur++;
-    if (*cur != 0) return(NAN);
+    if (*cur != 0) return(xmlXPathNAN);
     if (isneg) ret = -ret;
     if (is_exponent_negative) exponent = -exponent;
     ret *= pow(10.0, (double)exponent);
@@ -10988,7 +10945,7 @@ xmlXPathCompileExpr(xmlXPathParserContextPtr ctxt, int sort) {
     }
 
     if (xpctxt != NULL)
-        xpctxt->depth -= 1;
+        xpctxt->depth -= 10;
 }
 
 /**
@@ -11125,7 +11082,9 @@ xmlXPathCompNodeTest(xmlXPathParserContextPtr ctxt, xmlXPathTestVal *test,
 	    name = NULL;
 	    if (CUR != ')') {
 		name = xmlXPathParseLiteral(ctxt);
-		CHECK_ERROR NULL;
+                if (name == NULL) {
+	            XP_ERRORNULL(XPATH_EXPR_ERROR);
+                }
 		*test = NODE_TEST_PI;
 		SKIP_BLANKS;
 	    }
@@ -12278,9 +12237,6 @@ xmlXPathNodeCollectAndTest(xmlXPathParserContextPtr ctxt,
 			switch (cur->type) {
 			    case XML_DOCUMENT_NODE:
 			    case XML_HTML_DOCUMENT_NODE:
-#ifdef LIBXML_DOCB_ENABLED
-			    case XML_DOCB_DOCUMENT_NODE:
-#endif
 			    case XML_ELEMENT_NODE:
 			    case XML_ATTRIBUTE_NODE:
 			    case XML_PI_NODE:
@@ -13710,9 +13666,6 @@ xmlXPathRunStreamEval(xmlXPathContextPtr ctxt, xmlPatternPtr comp,
             case XML_DOCUMENT_NODE:
             case XML_DOCUMENT_FRAG_NODE:
             case XML_HTML_DOCUMENT_NODE:
-#ifdef LIBXML_DOCB_ENABLED
-            case XML_DOCB_DOCUMENT_NODE:
-#endif
 	        cur = ctxt->node;
 		break;
             case XML_ATTRIBUTE_NODE:
@@ -13905,7 +13858,7 @@ xmlXPathRunEval(xmlXPathParserContextPtr ctxt, int toBool)
 			 xmlMalloc(10 * sizeof(xmlXPathObjectPtr));
 	if (ctxt->valueTab == NULL) {
 	    xmlXPathPErrMemory(ctxt, "creating evaluation context\n");
-	    xmlFree(ctxt);
+	    return(-1);
 	}
 	ctxt->valueNr = 0;
 	ctxt->valueMax = 10;
@@ -14735,5 +14688,3 @@ xmlXPathRegisterAllFunctions(xmlXPathContextPtr ctxt)
 }
 
 #endif /* LIBXML_XPATH_ENABLED */
-#define bottom_xpath
-#include "elfgcchack.h"

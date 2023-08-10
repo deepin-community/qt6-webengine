@@ -32,19 +32,20 @@
 
 #include <memory>
 #include "base/callback.h"
-#include "base/macros.h"
 #include "base/memory/scoped_refptr.h"
 #include "third_party/blink/renderer/bindings/core/v8/source_location.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/dom/events/event_listener_map.h"
 #include "third_party/blink/renderer/core/inspector/inspector_base_agent.h"
-#include "third_party/blink/renderer/core/inspector/protocol/DOM.h"
+#include "third_party/blink/renderer/core/inspector/protocol/dom.h"
 #include "third_party/blink/renderer/core/style/computed_style_constants.h"
-#include "third_party/blink/renderer/platform/geometry/float_quad.h"
+#include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_map.h"
+#include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_set.h"
 #include "third_party/blink/renderer/platform/wtf/hash_map.h"
 #include "third_party/blink/renderer/platform/wtf/hash_set.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
+#include "ui/gfx/geometry/quad_f.h"
 #include "v8/include/v8-inspector.h"
 
 namespace blink {
@@ -56,7 +57,6 @@ class Document;
 class DocumentLoader;
 class Element;
 class ExceptionState;
-class FloatQuad;
 class HTMLFrameOwnerElement;
 class HTMLPortalElement;
 class HTMLSlotElement;
@@ -78,6 +78,8 @@ class CORE_EXPORT InspectorDOMAgent final
     virtual void DidModifyDOMAttr(Element*) = 0;
   };
 
+  enum class IncludeWhitespaceEnum : int32_t { NONE = 0, ALL = 2 };
+
   class CORE_EXPORT InspectorSourceLocation final
       : public GarbageCollected<InspectorSourceLocation> {
    public:
@@ -94,12 +96,16 @@ class CORE_EXPORT InspectorDOMAgent final
   static protocol::Response ToResponse(ExceptionState&);
   static protocol::DOM::PseudoType ProtocolPseudoElementType(PseudoId);
   static protocol::DOM::ShadowRootType GetShadowRootType(ShadowRoot*);
+  static protocol::DOM::CompatibilityMode GetDocumentCompatibilityMode(
+      Document*);
   static ShadowRoot* UserAgentShadowRoot(Node*);
   static Color ParseColor(protocol::DOM::RGBA*);
 
   InspectorDOMAgent(v8::Isolate*,
                     InspectedFrames*,
                     v8_inspector::V8InspectorSession*);
+  InspectorDOMAgent(const InspectorDOMAgent&) = delete;
+  InspectorDOMAgent& operator=(const InspectorDOMAgent&) = delete;
   ~InspectorDOMAgent() override;
   void Trace(Visitor*) const override;
 
@@ -109,7 +115,7 @@ class CORE_EXPORT InspectorDOMAgent final
   void Reset();
 
   // Methods called from the frontend for DOM nodes inspection.
-  protocol::Response enable() override;
+  protocol::Response enable(protocol::Maybe<String> includeWhitespace) override;
   protocol::Response disable() override;
   protocol::Response getDocument(
       protocol::Maybe<int> depth,
@@ -251,12 +257,24 @@ class CORE_EXPORT InspectorDOMAgent final
   protocol::Response getFileInfo(const String& object_id,
                                  String* path) override;
 
+  protocol::Response getContainerForNode(
+      int node_id,
+      protocol::Maybe<String> container_name,
+      protocol::Maybe<int>* container_node_id) override;
+  protocol::Response getQueryingDescendantsForContainer(
+      int node_id,
+      std::unique_ptr<protocol::Array<int>>* node_ids) override;
+  static const HeapVector<Member<Element>> GetContainerQueryingDescendants(
+      Element* container);
+
   bool Enabled() const;
+  IncludeWhitespaceEnum IncludeWhitespace() const;
   void ReleaseDanglingNodes();
 
   // Methods called from the InspectorInstrumentation.
   void DomContentLoadedEventFired(LocalFrame*);
   void DidCommitLoad(LocalFrame*, DocumentLoader*);
+  void DidRestoreFromBackForwardCache(LocalFrame*);
   void DidInsertDOMNode(Node*);
   void WillRemoveDOMNode(Node*);
   void WillModifyDOMAttr(Element*,
@@ -279,8 +297,8 @@ class CORE_EXPORT InspectorDOMAgent final
   void NodeCreated(Node* node);
   void PortalRemoteFrameCreated(HTMLPortalElement*);
 
-  Node* NodeForId(int node_id);
-  int BoundNodeId(Node*);
+  Node* NodeForId(int node_id) const;
+  int BoundNodeId(Node*) const;
   void AddDOMListener(DOMListener*);
   void RemoveDOMListener(DOMListener*);
   int PushNodePathToFrontend(Node*);
@@ -295,15 +313,19 @@ class CORE_EXPORT InspectorDOMAgent final
   // We represent embedded doms as a part of the same hierarchy. Hence we treat
   // children of frame owners differently.  We also skip whitespace text nodes
   // conditionally. Following methods encapsulate these specifics.
-  static Node* InnerFirstChild(Node*);
-  static Node* InnerNextSibling(Node*);
-  static Node* InnerPreviousSibling(Node*);
-  static unsigned InnerChildNodeCount(Node*);
+  static Node* InnerFirstChild(Node*, IncludeWhitespaceEnum include_whitespace);
+  static Node* InnerNextSibling(Node*,
+                                IncludeWhitespaceEnum include_whitespace);
+  static Node* InnerPreviousSibling(Node*,
+                                    IncludeWhitespaceEnum include_whitespace);
+  static unsigned InnerChildNodeCount(Node*,
+                                      IncludeWhitespaceEnum include_whitespace);
   static Node* InnerParentNode(Node*);
-  static bool IsWhitespace(Node*);
+  static bool ShouldSkipNode(Node*, IncludeWhitespaceEnum include_whitespace);
   static void CollectNodes(Node* root,
                            int depth,
                            bool pierce,
+                           IncludeWhitespaceEnum include_whitespace,
                            base::RepeatingCallback<bool(Node*)>,
                            HeapVector<Member<Node>>* result);
 
@@ -364,6 +386,8 @@ class CORE_EXPORT InspectorDOMAgent final
   std::unique_ptr<protocol::Array<protocol::DOM::BackendNode>>
   BuildDistributedNodesForSlot(HTMLSlotElement*);
 
+  static bool ContainerQueriedByElement(Element* container, Element* element);
+
   Node* NodeForPath(const String& path);
 
   void DiscardFrontendBindings();
@@ -393,8 +417,8 @@ class CORE_EXPORT InspectorDOMAgent final
   Member<DOMEditor> dom_editor_;
   bool suppress_attribute_modified_event_;
   InspectorAgentState::Boolean enabled_;
+  InspectorAgentState::Integer include_whitespace_;
   InspectorAgentState::Boolean capture_node_stack_traces_;
-  DISALLOW_COPY_AND_ASSIGN(InspectorDOMAgent);
 };
 
 }  // namespace blink

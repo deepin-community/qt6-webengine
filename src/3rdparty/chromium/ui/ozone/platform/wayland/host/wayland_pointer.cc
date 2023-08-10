@@ -10,6 +10,7 @@
 #include "ui/events/types/event_type.h"
 #include "ui/ozone/platform/wayland/common/wayland_util.h"
 #include "ui/ozone/platform/wayland/host/wayland_connection.h"
+#include "ui/ozone/platform/wayland/host/wayland_serial_tracker.h"
 #include "ui/ozone/platform/wayland/host/wayland_window.h"
 
 // TODO(forney): Handle version 5 of wl_pointer.
@@ -20,12 +21,9 @@ WaylandPointer::WaylandPointer(wl_pointer* pointer,
                                WaylandConnection* connection,
                                Delegate* delegate)
     : obj_(pointer), connection_(connection), delegate_(delegate) {
-  static const wl_pointer_listener listener = {
-      &WaylandPointer::Enter,       &WaylandPointer::Leave,
-      &WaylandPointer::Motion,      &WaylandPointer::Button,
-      &WaylandPointer::Axis,        &WaylandPointer::Frame,
-      &WaylandPointer::AxisSource,  &WaylandPointer::AxisStop,
-      &WaylandPointer::AxisDiscrete};
+  static constexpr wl_pointer_listener listener = {
+      &Enter, &Leave,      &Motion,   &Button,      &Axis,
+      &Frame, &AxisSource, &AxisStop, &AxisDiscrete};
 
   wl_pointer_add_listener(obj_.get(), &listener, this);
 }
@@ -47,9 +45,12 @@ void WaylandPointer::Enter(void* data,
                            wl_fixed_t surface_y) {
   DCHECK(data);
   WaylandPointer* pointer = static_cast<WaylandPointer*>(data);
+  pointer->connection_->serial_tracker().UpdateSerial(
+      wl::SerialType::kMouseEnter, serial);
+
   WaylandWindow* window = wl::RootWindowFromWlSurface(surface);
-  gfx::PointF location{wl_fixed_to_double(surface_x),
-                       wl_fixed_to_double(surface_y)};
+  gfx::PointF location{static_cast<float>(wl_fixed_to_double(surface_x)),
+                       static_cast<float>(wl_fixed_to_double(surface_y))};
   pointer->delegate_->OnPointerFocusChanged(window, location);
 }
 
@@ -60,7 +61,11 @@ void WaylandPointer::Leave(void* data,
                            wl_surface* surface) {
   DCHECK(data);
   WaylandPointer* pointer = static_cast<WaylandPointer*>(data);
-  pointer->delegate_->OnPointerFocusChanged(nullptr, {});
+  pointer->connection_->serial_tracker().ResetSerial(
+      wl::SerialType::kMouseEnter);
+
+  pointer->delegate_->OnPointerFocusChanged(
+      nullptr, pointer->delegate_->GetPointerLocation());
 }
 
 // static
@@ -108,8 +113,10 @@ void WaylandPointer::Button(void* data,
 
   EventType type = state == WL_POINTER_BUTTON_STATE_PRESSED ? ET_MOUSE_PRESSED
                                                             : ET_MOUSE_RELEASED;
-  if (type == ET_MOUSE_PRESSED)
-    pointer->connection_->set_serial(serial, type);
+  if (type == ET_MOUSE_PRESSED) {
+    pointer->connection_->serial_tracker().UpdateSerial(
+        wl::SerialType::kMousePress, serial);
+  }
   pointer->delegate_->OnPointerButtonEvent(type, changed_button);
 }
 
@@ -121,7 +128,7 @@ void WaylandPointer::Axis(void* data,
                           wl_fixed_t value) {
   static const double kAxisValueScale = 10.0;
   WaylandPointer* pointer = static_cast<WaylandPointer*>(data);
-  gfx::Vector2d offset;
+  gfx::Vector2dF offset;
   // Wayland compositors send axis events with values in the surface coordinate
   // space. They send a value of 10 per mouse wheel click by convention, so
   // clients (e.g. GTK+) typically scale down by this amount to convert to
@@ -136,12 +143,22 @@ void WaylandPointer::Axis(void* data,
   } else {
     return;
   }
+  // If we did not receive the axis event source explicitly, set it to the mouse
+  // wheel so far.  Should this be a part of some complex event coming from the
+  // different source, the compositor will let us know sooner or later.
+  if (!pointer->axis_source_received_)
+    pointer->delegate_->OnPointerAxisSourceEvent(WL_POINTER_AXIS_SOURCE_WHEEL);
   pointer->delegate_->OnPointerAxisEvent(offset);
 }
+
+// ---- Version 5 ----
 
 // static
 void WaylandPointer::Frame(void* data, wl_pointer* obj) {
   WaylandPointer* pointer = static_cast<WaylandPointer*>(data);
+  // The frame event ends the sequence of pointer events.  Clear the flag.  The
+  // next frame will set it when necessary.
+  pointer->axis_source_received_ = false;
   pointer->delegate_->OnPointerFrameEvent();
 }
 
@@ -150,6 +167,7 @@ void WaylandPointer::AxisSource(void* data,
                                 wl_pointer* obj,
                                 uint32_t axis_source) {
   WaylandPointer* pointer = static_cast<WaylandPointer*>(data);
+  pointer->axis_source_received_ = true;
   pointer->delegate_->OnPointerAxisSourceEvent(axis_source);
 }
 

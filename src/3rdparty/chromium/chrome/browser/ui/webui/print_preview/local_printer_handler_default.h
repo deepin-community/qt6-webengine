@@ -9,9 +9,8 @@
 #include <string>
 
 #include "base/callback_forward.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
-#include "base/strings/string16.h"
 #include "base/values.h"
 #include "chrome/browser/ui/webui/print_preview/printer_handler.h"
 #include "printing/backend/print_backend.h"
@@ -30,6 +29,11 @@ class LocalPrinterHandlerDefault : public PrinterHandler {
  public:
   explicit LocalPrinterHandlerDefault(
       content::WebContents* preview_web_contents);
+
+  LocalPrinterHandlerDefault(const LocalPrinterHandlerDefault&) = delete;
+  LocalPrinterHandlerDefault& operator=(const LocalPrinterHandlerDefault&) =
+      delete;
+
   ~LocalPrinterHandlerDefault() override;
 
   // PrinterHandler implementation.
@@ -39,8 +43,8 @@ class LocalPrinterHandlerDefault : public PrinterHandler {
                         GetPrintersDoneCallback done_callback) override;
   void StartGetCapability(const std::string& destination_id,
                           GetCapabilityCallback callback) override;
-  void StartPrint(const base::string16& job_title,
-                  base::Value settings,
+  void StartPrint(const std::u16string& job_title,
+                  base::Value::Dict settings,
                   scoped_refptr<base::RefCountedMemory> print_data,
                   PrintCallback callback) override;
 
@@ -50,12 +54,10 @@ class LocalPrinterHandlerDefault : public PrinterHandler {
                                             const std::string& locale);
   static std::string GetDefaultPrinterAsync(const std::string& locale);
 
-  content::WebContents* const preview_web_contents_;
+  const raw_ptr<content::WebContents> preview_web_contents_;
 
   // TaskRunner for blocking tasks. Threading behavior is platform-specific.
   scoped_refptr<base::TaskRunner> const task_runner_;
-
-  DISALLOW_COPY_AND_ASSIGN(LocalPrinterHandlerDefault);
 };
 
 }  // namespace printing

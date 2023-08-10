@@ -5,10 +5,10 @@
 #include "extensions/browser/requirements_checker.h"
 
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "base/memory/ref_counted.h"
-#include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "content/public/browser/gpu_data_manager.h"
@@ -54,14 +54,14 @@ class RequirementsCheckerTest : public ExtensionsTest {
   ~RequirementsCheckerTest() override {}
 
   void CreateExtension() {
-    manifest_dict_->SetString("name", "dummy name");
-    manifest_dict_->SetString("version", "1");
-    manifest_dict_->SetInteger("manifest_version", 2);
+    manifest_dict_->SetStringKey("name", "dummy name");
+    manifest_dict_->SetStringKey("version", "1");
+    manifest_dict_->SetIntKey("manifest_version", 2);
 
     std::string error;
     extension_ =
-        Extension::Create(base::FilePath(), Manifest::UNPACKED, *manifest_dict_,
-                          Extension::NO_FLAGS, &error);
+        Extension::Create(base::FilePath(), mojom::ManifestLocation::kUnpacked,
+                          *manifest_dict_, Extension::NO_FLAGS, &error);
     ASSERT_TRUE(extension_.get()) << error;
   }
 
@@ -74,15 +74,15 @@ class RequirementsCheckerTest : public ExtensionsTest {
   }
 
   void RequireWindowShape() {
-    manifest_dict_->SetBoolean("requirements.window.shape", true);
+    manifest_dict_->SetBoolPath("requirements.window.shape", true);
   }
 
   void RequireFeature(const char feature[]) {
-    if (!manifest_dict_->HasKey(kFeaturesKey))
+    if (!manifest_dict_->FindKey(kFeaturesKey))
       manifest_dict_->Set(kFeaturesKey, std::make_unique<base::ListValue>());
     base::ListValue* features_list = nullptr;
     ASSERT_TRUE(manifest_dict_->GetList(kFeaturesKey, &features_list));
-    features_list->AppendString(feature);
+    features_list->Append(feature);
   }
 
   std::unique_ptr<RequirementsChecker> checker_;
@@ -148,7 +148,7 @@ TEST_F(RequirementsCheckerTest, RequirementsFailWebGL) {
   // waiting for the GPU check to succeed: crbug.com/706204.
   if (runner_.errors().size()) {
     EXPECT_THAT(runner_.errors(), testing::UnorderedElementsAre(
-                                      PreloadCheck::WEBGL_NOT_SUPPORTED));
+                                      PreloadCheck::Error::kWebglNotSupported));
     EXPECT_FALSE(checker_->GetErrorMessage().empty());
   }
 }

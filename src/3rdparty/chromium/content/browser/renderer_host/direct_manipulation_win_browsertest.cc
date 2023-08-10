@@ -18,6 +18,7 @@
 #include "ui/aura/window_tree_host.h"
 #include "ui/base/ui_base_features.h"
 #include "ui/base/win/window_event_target.h"
+#include "ui/compositor/compositor.h"
 #include "ui/events/event_rewriter.h"
 #include "ui/events/event_source.h"
 #include "url/gurl.h"
@@ -27,6 +28,11 @@ namespace content {
 class DirectManipulationBrowserTestBase : public ContentBrowserTest {
  public:
   DirectManipulationBrowserTestBase() {}
+
+  DirectManipulationBrowserTestBase(const DirectManipulationBrowserTestBase&) =
+      delete;
+  DirectManipulationBrowserTestBase& operator=(
+      const DirectManipulationBrowserTestBase&) = delete;
 
   LegacyRenderWidgetHostHWND* GetLegacyRenderWidgetHostHWND() {
     RenderWidgetHostViewAura* rwhva = static_cast<RenderWidgetHostViewAura*>(
@@ -66,17 +72,15 @@ class DirectManipulationBrowserTestBase : public ContentBrowserTest {
     lrwhh->direct_manipulation_helper_->event_handler_->OnContentUpdated(
         lrwhh->direct_manipulation_helper_->viewport_.Get(), content);
   }
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(DirectManipulationBrowserTestBase);
 };
 
 class DirectManipulationBrowserTest : public DirectManipulationBrowserTestBase {
  public:
   DirectManipulationBrowserTest() {}
 
- private:
-  DISALLOW_COPY_AND_ASSIGN(DirectManipulationBrowserTest);
+  DirectManipulationBrowserTest(const DirectManipulationBrowserTest&) = delete;
+  DirectManipulationBrowserTest& operator=(
+      const DirectManipulationBrowserTest&) = delete;
 };
 
 // Ensure the AnimationObserver is only created after direct manipulation
@@ -112,6 +116,10 @@ IN_PROC_BROWSER_TEST_F(DirectManipulationBrowserTest,
 class EventLogger : public ui::EventRewriter {
  public:
   EventLogger() {}
+
+  EventLogger(const EventLogger&) = delete;
+  EventLogger& operator=(const EventLogger&) = delete;
+
   ~EventLogger() override {}
 
   std::unique_ptr<ui::Event> ReleaseLastEvent() {
@@ -128,9 +136,7 @@ class EventLogger : public ui::EventRewriter {
     return SendEvent(continuation, &event);
   }
 
-  std::unique_ptr<ui::Event> last_event_ = nullptr;
-
-  DISALLOW_COPY_AND_ASSIGN(EventLogger);
+  std::unique_ptr<ui::Event> last_event_;
 };
 
 // Check DirectManipulation events convert to ui::event correctly.
@@ -273,6 +279,10 @@ class PrecisionTouchpadBrowserTest : public DirectManipulationBrowserTestBase {
     content_ = Microsoft::WRL::Make<MockDirectManipulationContent>();
   }
 
+  PrecisionTouchpadBrowserTest(const PrecisionTouchpadBrowserTest&) = delete;
+  PrecisionTouchpadBrowserTest& operator=(const PrecisionTouchpadBrowserTest&) =
+      delete;
+
   void UpdateContents(float scale, float scroll_x, float scroll_y) {
     content_->SetContentTransform(scale, scroll_x, scroll_y);
     DirectManipulationBrowserTestBase::UpdateContents(content_.Get());
@@ -285,8 +295,6 @@ class PrecisionTouchpadBrowserTest : public DirectManipulationBrowserTestBase {
 
  private:
   Microsoft::WRL::ComPtr<MockDirectManipulationContent> content_;
-
-  DISALLOW_COPY_AND_ASSIGN(PrecisionTouchpadBrowserTest);
 };
 
 // Confirm that preventDefault correctly prevents pinch zoom on precision

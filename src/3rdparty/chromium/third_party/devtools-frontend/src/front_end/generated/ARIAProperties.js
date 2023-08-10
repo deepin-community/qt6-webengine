@@ -1,4 +1,4 @@
-// Copyright 2021 The Chromium Authors. All rights reserved.
+// Copyright 2022 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -79,7 +79,8 @@ export const config = {
     {'type': 'decimal', 'name': 'aria-valuemax'},
     {'type': 'decimal', 'name': 'aria-valuemin'},
     {'type': 'decimal', 'name': 'aria-valuenow'},
-    {'type': 'string', 'name': 'aria-valuetext'}
+    {'type': 'string', 'name': 'aria-valuetext'},
+    {'type': 'string', 'name': 'aria-virtualcontent'}
   ],
   'roles': [
     {

@@ -5,11 +5,11 @@
 #ifndef CHROME_BROWSER_UI_WEBUI_WEB_UI_TEST_HANDLER_H_
 #define CHROME_BROWSER_UI_WEBUI_WEB_UI_TEST_HANDLER_H_
 
-#include "base/compiler_specific.h"
-#include "base/macros.h"
-#include "base/strings/string16.h"
+#include <string>
+
 #include "chrome/test/data/webui/web_ui_test.mojom-forward.h"
 #include "content/public/browser/web_ui_message_handler.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace base {
 class Value;
@@ -23,26 +23,32 @@ class RenderFrameHost;
 class WebUITestHandler {
  public:
   WebUITestHandler();
+
+  WebUITestHandler(const WebUITestHandler&) = delete;
+  WebUITestHandler& operator=(const WebUITestHandler&) = delete;
+
   virtual ~WebUITestHandler();
 
   // Sends a message through |preload_frame| with the |js_text| to preload at
   // the appropriate time before the onload call is made.
-  void PreloadJavaScript(const base::string16& js_text,
+  void PreloadJavaScript(const std::u16string& js_text,
                          content::RenderFrameHost* preload_frame);
 
   // Runs |js_text| in this object's WebUI frame. Does not wait for any result.
-  void RunJavaScript(const base::string16& js_text);
+  void RunJavaScript(const std::u16string& js_text);
 
   // Runs |js_text| in this object's WebUI frame. Waits for result, logging an
   // error message on failure. Returns test pass/fail.
-  bool RunJavaScriptTestWithResult(const base::string16& js_text);
+  bool RunJavaScriptTestWithResult(const std::u16string& js_text);
+
+  content::RenderFrameHost* GetRenderFrameHostForTest();
 
  protected:
   virtual content::WebUI* GetWebUI() = 0;
 
   // Handles the result of a test. If |error_message| has no value, the test has
   // succeeded.
-  void TestComplete(const base::Optional<std::string>& error_message);
+  void TestComplete(const absl::optional<std::string>& error_message);
 
   // Quits the currently running RunLoop.
   void RunQuitClosure();
@@ -72,8 +78,6 @@ class WebUITestHandler {
 
   // Quits the currently running RunLoop.
   base::RepeatingClosure quit_closure_;
-
-  DISALLOW_COPY_AND_ASSIGN(WebUITestHandler);
 };
 
 #endif  // CHROME_BROWSER_UI_WEBUI_WEB_UI_TEST_HANDLER_H_

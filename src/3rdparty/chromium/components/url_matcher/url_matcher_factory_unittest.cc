@@ -10,7 +10,6 @@
 #include <utility>
 
 #include "base/format_macros.h"
-#include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
 #include "components/url_matcher/url_matcher_constants.h"
@@ -29,20 +28,20 @@ TEST(URLMatcherFactoryTest, CreateFromURLFilterDictionary) {
 
   // Invalid key: {"invalid": "foobar"}
   base::DictionaryValue invalid_condition;
-  invalid_condition.SetString("invalid", "foobar");
+  invalid_condition.SetStringKey("invalid", "foobar");
 
   // Invalid value type: {"hostSuffix": []}
   base::DictionaryValue invalid_condition2;
-  invalid_condition2.Set(keys::kHostSuffixKey,
-                         std::make_unique<base::ListValue>());
+  invalid_condition2.SetKey(keys::kHostSuffixKey,
+                            base::Value(base::Value::Type::LIST));
 
   // Invalid regex value: {"urlMatches": "*"}
   base::DictionaryValue invalid_condition3;
-  invalid_condition3.SetString(keys::kURLMatchesKey, "*");
+  invalid_condition3.SetStringKey(keys::kURLMatchesKey, "*");
 
   // Invalid regex value: {"originAndPathMatches": "*"}
   base::DictionaryValue invalid_condition4;
-  invalid_condition4.SetString(keys::kOriginAndPathMatchesKey, "*");
+  invalid_condition4.SetStringKey(keys::kOriginAndPathMatchesKey, "*");
 
   // Valid values:
   // {
@@ -53,21 +52,21 @@ TEST(URLMatcherFactoryTest, CreateFromURLFilterDictionary) {
   // }
 
   // Port range: Allow 80;1000-1010.
-  auto port_range = std::make_unique<base::ListValue>();
-  port_range->AppendInteger(1000);
-  port_range->AppendInteger(1010);
-  auto port_ranges = std::make_unique<base::ListValue>();
-  port_ranges->AppendInteger(80);
-  port_ranges->Append(std::move(port_range));
+  base::Value port_range(base::Value::Type::LIST);
+  port_range.Append(1000);
+  port_range.Append(1010);
+  base::Value port_ranges(base::Value::Type::LIST);
+  port_ranges.Append(80);
+  port_ranges.Append(std::move(port_range));
 
-  auto scheme_list = std::make_unique<base::ListValue>();
-  scheme_list->AppendString("http");
+  base::Value scheme_list(base::Value::Type::LIST);
+  scheme_list.Append("http");
 
   base::DictionaryValue valid_condition;
-  valid_condition.SetString(keys::kHostSuffixKey, "example.com");
-  valid_condition.SetString(keys::kHostPrefixKey, "www");
-  valid_condition.Set(keys::kPortsKey, std::move(port_ranges));
-  valid_condition.Set(keys::kSchemesKey, std::move(scheme_list));
+  valid_condition.SetStringKey(keys::kHostSuffixKey, "example.com");
+  valid_condition.SetStringKey(keys::kHostPrefixKey, "www");
+  valid_condition.SetKey(keys::kPortsKey, std::move(port_ranges));
+  valid_condition.SetKey(keys::kSchemesKey, std::move(scheme_list));
 
   // Test wrong condition name passed.
   error.clear();
@@ -143,7 +142,7 @@ TEST(URLMatcherFactoryTest, UpperCase) {
 
   // {"scheme": ["HTTP"]}
   auto scheme_list = std::make_unique<base::ListValue>();
-  scheme_list->AppendString("HTTP");
+  scheme_list->Append("HTTP");
   base::DictionaryValue invalid_condition5;
   invalid_condition5.Set(keys::kSchemesKey, std::move(scheme_list));
 
@@ -155,7 +154,7 @@ TEST(URLMatcherFactoryTest, UpperCase) {
     &invalid_condition5
   };
 
-  for (size_t i = 0; i < base::size(invalid_conditions); ++i) {
+  for (size_t i = 0; i < std::size(invalid_conditions); ++i) {
     error.clear();
     result = URLMatcherFactory::CreateFromURLFilterDictionary(
         matcher.condition_factory(), invalid_conditions[i], 1, &error);
@@ -236,8 +235,9 @@ void UrlConditionCaseTest::CheckCondition(
   base::DictionaryValue condition;
   if (use_list_of_strings_) {
     auto list = std::make_unique<base::ListValue>();
-    list->AppendString(value);
-    condition.SetWithoutPathExpansion(condition_key_, std::move(list));
+    list->Append(value);
+    condition.SetKey(condition_key_,
+                     base::Value::FromUniquePtrValue(std::move(list)));
   } else {
     condition.SetKey(condition_key_, base::Value(value));
   }
@@ -336,7 +336,7 @@ TEST(URLMatcherFactoryTest, CaseSensitivity) {
                          kIsUrlCaseSensitive, kIsUrlLowerCaseEnforced, url),
   };
 
-  for (size_t i = 0; i < base::size(case_tests); ++i) {
+  for (size_t i = 0; i < std::size(case_tests); ++i) {
     SCOPED_TRACE(base::StringPrintf("Iteration: %" PRIuS, i));
     case_tests[i].Test();
   }

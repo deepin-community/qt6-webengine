@@ -7,10 +7,10 @@
 #include <ostream>
 
 #include "base/format_macros.h"
-#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
+#include "url/scheme_host_port.h"
 #include "url/url_util.h"
 
 using base::ASCIIToUTF16;
@@ -247,16 +247,22 @@ TEST(UrlUtilTest, GetHostAndOptionalPort) {
     GURL url;
     const char* const expected_host_and_port;
   } tests[] = {
-    { GURL("http://www.foo.com/x"), "www.foo.com"},
-    { GURL("http://www.foo.com:21/x"), "www.foo.com:21"},
+      {GURL("http://www.foo.com/x"), "www.foo.com"},
+      {GURL("http://www.foo.com:21/x"), "www.foo.com:21"},
+      {GURL("http://www.foo.com:443/x"), "www.foo.com:443"},
 
-    // For IPv6 literals should always include the brackets.
-    { GURL("http://[1::2]/x"), "[1::2]"},
-    { GURL("http://[::a]:33/x"), "[::a]:33"},
+      {GURL("https://www.foo.com/x"), "www.foo.com"},
+      {GURL("https://www.foo.com:80/x"), "www.foo.com:80"},
+
+      // For IPv6 literals should always include the brackets.
+      {GURL("http://[1::2]/x"), "[1::2]"},
+      {GURL("http://[::a]:33/x"), "[::a]:33"},
   };
   for (const auto& test : tests) {
-    std::string host_and_port = GetHostAndOptionalPort(test.url);
-    EXPECT_EQ(std::string(test.expected_host_and_port), host_and_port);
+    EXPECT_EQ(test.expected_host_and_port, GetHostAndOptionalPort(test.url));
+    // Also test the SchemeHostPort variant.
+    EXPECT_EQ(test.expected_host_and_port,
+              GetHostAndOptionalPort(url::SchemeHostPort(test.url)));
   }
 }
 
@@ -667,7 +673,7 @@ TEST(UrlUtilTest, GetIdentityFromURL) {
     SCOPED_TRACE(test.input_url);
     GURL url(test.input_url);
 
-    base::string16 username, password;
+    std::u16string username, password;
     GetIdentityFromURL(url, &username, &password);
 
     EXPECT_EQ(base::UTF8ToUTF16(test.expected_username), username);
@@ -677,18 +683,18 @@ TEST(UrlUtilTest, GetIdentityFromURL) {
 
 // Try extracting a username which was encoded with UTF8.
 TEST(UrlUtilTest, GetIdentityFromURL_UTF8) {
-  GURL url(WideToUTF16(L"http://foo:\x4f60\x597d@blah.com"));
+  GURL url(u"http://foo:\x4f60\x597d@blah.com");
 
   EXPECT_EQ("foo", url.username());
   EXPECT_EQ("%E4%BD%A0%E5%A5%BD", url.password());
 
   // Extract the unescaped identity.
-  base::string16 username, password;
+  std::u16string username, password;
   GetIdentityFromURL(url, &username, &password);
 
   // Verify that it was decoded as UTF8.
-  EXPECT_EQ(ASCIIToUTF16("foo"), username);
-  EXPECT_EQ(WideToUTF16(L"\x4f60\x597d"), password);
+  EXPECT_EQ(u"foo", username);
+  EXPECT_EQ(u"\x4f60\x597d", password);
 }
 
 TEST(UrlUtilTest, GoogleHost) {

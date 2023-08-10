@@ -11,9 +11,7 @@
 #include "base/bind.h"
 #include "base/callback_helpers.h"
 #include "base/command_line.h"
-#include "base/macros.h"
 #include "base/run_loop.h"
-#include "base/stl_util.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "content/browser/service_worker/embedded_worker_status.h"
@@ -33,20 +31,23 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/common/features.h"
+#include "third_party/blink/public/common/storage_key/storage_key.h"
 #include "third_party/blink/public/mojom/service_worker/embedded_worker.mojom.h"
 #include "third_party/blink/public/mojom/service_worker/service_worker.mojom.h"
 #include "third_party/blink/public/mojom/service_worker/service_worker_event_status.mojom.h"
 #include "third_party/blink/public/mojom/service_worker/service_worker_registration.mojom.h"
+#include "third_party/blink/public/mojom/service_worker/service_worker_registration_options.mojom.h"
+#include "url/origin.h"
 
 namespace content {
 
 namespace {
 
 EmbeddedWorkerInstance::StatusCallback ReceiveStatus(
-    base::Optional<blink::ServiceWorkerStatusCode>* out_status,
+    absl::optional<blink::ServiceWorkerStatusCode>* out_status,
     base::OnceClosure quit) {
   return base::BindOnce(
-      [](base::Optional<blink::ServiceWorkerStatusCode>* out_status,
+      [](absl::optional<blink::ServiceWorkerStatusCode>* out_status,
          base::OnceClosure quit, blink::ServiceWorkerStatusCode status) {
         *out_status = status;
         std::move(quit).Run();
@@ -54,12 +55,15 @@ EmbeddedWorkerInstance::StatusCallback ReceiveStatus(
       out_status, std::move(quit));
 }
 
-const char kHistogramServiceWorkerRuntime[] = "ServiceWorker.Runtime";
-
 }  // namespace
 
 class EmbeddedWorkerInstanceTest : public testing::Test,
                                    public EmbeddedWorkerInstance::Listener {
+ public:
+  EmbeddedWorkerInstanceTest(const EmbeddedWorkerInstanceTest&) = delete;
+  EmbeddedWorkerInstanceTest& operator=(const EmbeddedWorkerInstanceTest&) =
+      delete;
+
  protected:
   EmbeddedWorkerInstanceTest()
       : task_environment_(BrowserTaskEnvironment::IO_MAINLOOP) {}
@@ -74,14 +78,14 @@ class EmbeddedWorkerInstanceTest : public testing::Test,
 
   struct EventLog {
     EventType type;
-    base::Optional<EmbeddedWorkerStatus> status;
-    base::Optional<blink::mojom::ServiceWorkerStartStatus> start_status;
+    absl::optional<EmbeddedWorkerStatus> status;
+    absl::optional<blink::mojom::ServiceWorkerStartStatus> start_status;
   };
 
   void RecordEvent(EventType type,
-                   base::Optional<EmbeddedWorkerStatus> status = base::nullopt,
-                   base::Optional<blink::mojom::ServiceWorkerStartStatus>
-                       start_status = base::nullopt) {
+                   absl::optional<EmbeddedWorkerStatus> status = absl::nullopt,
+                   absl::optional<blink::mojom::ServiceWorkerStartStatus>
+                       start_status = absl::nullopt) {
     EventLog log = {type, status, start_status};
     events_.push_back(log);
   }
@@ -93,7 +97,7 @@ class EmbeddedWorkerInstanceTest : public testing::Test,
   void OnStarted(blink::mojom::ServiceWorkerStartStatus status,
                  bool has_fetch_handler) override {
     has_fetch_handler_ = has_fetch_handler;
-    RecordEvent(STARTED, base::nullopt, status);
+    RecordEvent(STARTED, absl::nullopt, status);
   }
   void OnStopped(EmbeddedWorkerStatus old_status) override {
     RecordEvent(STOPPED, old_status);
@@ -118,8 +122,9 @@ class EmbeddedWorkerInstanceTest : public testing::Test,
     RegistrationAndVersionPair pair;
     blink::mojom::ServiceWorkerRegistrationOptions options;
     options.scope = scope;
-    pair.first =
-        CreateNewServiceWorkerRegistration(context()->registry(), options);
+    pair.first = CreateNewServiceWorkerRegistration(
+        context()->registry(), options,
+        blink::StorageKey(url::Origin::Create(scope)));
     pair.second = CreateNewServiceWorkerVersion(
         context()->registry(), pair.first, script_url,
         blink::mojom::ScriptType::kClassic);
@@ -132,7 +137,7 @@ class EmbeddedWorkerInstanceTest : public testing::Test,
   void StartWorkerUntilStartSent(
       EmbeddedWorkerInstance* worker,
       blink::mojom::EmbeddedWorkerStartParamsPtr params) {
-    base::Optional<blink::ServiceWorkerStatusCode> status;
+    absl::optional<blink::ServiceWorkerStatusCode> status;
     base::RunLoop loop;
     worker->Start(std::move(params),
                   ReceiveStatus(&status, loop.QuitClosure()));
@@ -160,7 +165,7 @@ class EmbeddedWorkerInstanceTest : public testing::Test,
     params->script_url = version->script_url();
     params->is_installed = false;
 
-    params->service_worker_receiver = CreateServiceWorker();
+    params->service_worker_receiver = CreateServiceWorker(version);
     params->controller_receiver = CreateController();
     params->installed_scripts_info = GetInstalledScriptsInfoPtr();
     params->provider_info = CreateProviderInfo(std::move(version));
@@ -177,9 +182,10 @@ class EmbeddedWorkerInstanceTest : public testing::Test,
     return provider_info;
   }
 
-  mojo::PendingReceiver<blink::mojom::ServiceWorker> CreateServiceWorker() {
-    service_workers_.emplace_back();
-    return service_workers_.back().BindNewPipeAndPassReceiver();
+  mojo::PendingReceiver<blink::mojom::ServiceWorker> CreateServiceWorker(
+      scoped_refptr<ServiceWorkerVersion> version) {
+    version->service_worker_remote_.reset();
+    return version->service_worker_remote_.BindNewPipeAndPassReceiver();
   }
 
   mojo::PendingReceiver<blink::mojom::ControllerServiceWorker>
@@ -207,7 +213,6 @@ class EmbeddedWorkerInstanceTest : public testing::Test,
   ServiceWorkerContextCore* context() { return helper_->context(); }
 
   // Mojo endpoints.
-  std::vector<mojo::Remote<blink::mojom::ServiceWorker>> service_workers_;
   std::vector<mojo::Remote<blink::mojom::ControllerServiceWorker>> controllers_;
   std::vector<mojo::Remote<blink::mojom::ServiceWorkerInstalledScriptsManager>>
       installed_scripts_managers_;
@@ -220,9 +225,6 @@ class EmbeddedWorkerInstanceTest : public testing::Test,
   std::vector<EventLog> events_;
   base::test::ScopedFeatureList scoped_feature_list_;
   bool has_fetch_handler_;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(EmbeddedWorkerInstanceTest);
 };
 
 TEST_F(EmbeddedWorkerInstanceTest, StartAndStop) {
@@ -437,7 +439,7 @@ TEST_F(EmbeddedWorkerInstanceTest, FailToSendStartIPC) {
 
   // Attempt to start the worker. From the browser process's point of view, the
   // start IPC was sent.
-  base::Optional<blink::ServiceWorkerStatusCode> status;
+  absl::optional<blink::ServiceWorkerStatusCode> status;
   base::RunLoop loop;
   worker->Start(CreateStartParams(pair.second),
                 ReceiveStatus(&status, loop.QuitClosure()));
@@ -465,7 +467,7 @@ TEST_F(EmbeddedWorkerInstanceTest, RemoveRemoteInterface) {
   worker->AddObserver(this);
 
   // Attempt to start the worker.
-  base::Optional<blink::ServiceWorkerStatusCode> status;
+  absl::optional<blink::ServiceWorkerStatusCode> status;
   base::RunLoop loop;
   auto* client = helper_->AddNewPendingInstanceClient<
       DelayedFakeEmbeddedWorkerInstanceClient>(helper_.get());
@@ -653,89 +655,6 @@ TEST_F(EmbeddedWorkerInstanceTest, HasFetchHandler) {
 
   EXPECT_FALSE(has_fetch_handler_);
   worker2->Stop();
-}
-
-// Tests recording the lifetime UMA.
-TEST_F(EmbeddedWorkerInstanceTest, Lifetime) {
-  const GURL scope("http://example.com/");
-  const GURL url("http://example.com/worker.js");
-
-  RegistrationAndVersionPair pair = PrepareRegistrationAndVersion(scope, url);
-  auto worker = std::make_unique<EmbeddedWorkerInstance>(pair.second.get());
-
-  base::HistogramTester metrics;
-
-  // Start the worker.
-  StartWorker(worker.get(), CreateStartParams(pair.second));
-  metrics.ExpectTotalCount(kHistogramServiceWorkerRuntime, 0);
-
-  // Stop the worker.
-  worker->Stop();
-  base::RunLoop().RunUntilIdle();
-  EXPECT_EQ(EmbeddedWorkerStatus::STOPPED, worker->status());
-
-  // The runtime metric should have been recorded.
-  metrics.ExpectTotalCount(kHistogramServiceWorkerRuntime, 1);
-}
-
-// Tests that the lifetime UMA isn't recorded if DevTools was attached
-// while the worker was running.
-TEST_F(EmbeddedWorkerInstanceTest, Lifetime_DevToolsAttachedAfterStart) {
-  const GURL scope("http://example.com/");
-  const GURL url("http://example.com/worker.js");
-
-  RegistrationAndVersionPair pair = PrepareRegistrationAndVersion(scope, url);
-  auto worker = std::make_unique<EmbeddedWorkerInstance>(pair.second.get());
-
-  base::HistogramTester metrics;
-
-  // Start the worker.
-  StartWorker(worker.get(), CreateStartParams(pair.second));
-
-  // Attach DevTools.
-  worker->SetDevToolsAttached(true);
-
-  // To make things tricky, detach DevTools.
-  worker->SetDevToolsAttached(false);
-
-  // Stop the worker.
-  worker->Stop();
-  base::RunLoop().RunUntilIdle();
-  EXPECT_EQ(EmbeddedWorkerStatus::STOPPED, worker->status());
-
-  // The runtime metric should not have ben recorded since DevTools
-  // was attached at some point during the worker's life.
-  metrics.ExpectTotalCount(kHistogramServiceWorkerRuntime, 0);
-}
-
-// Tests that the lifetime UMA isn't recorded if DevTools was attached
-// before the worker finished starting.
-TEST_F(EmbeddedWorkerInstanceTest, Lifetime_DevToolsAttachedDuringStart) {
-  const GURL scope("http://example.com/");
-  const GURL url("http://example.com/worker.js");
-
-  RegistrationAndVersionPair pair = PrepareRegistrationAndVersion(scope, url);
-  auto worker = std::make_unique<EmbeddedWorkerInstance>(pair.second.get());
-
-  base::HistogramTester metrics;
-
-  // Attach DevTools while the worker is starting.
-  worker->Start(CreateStartParams(pair.second), base::DoNothing());
-  worker->SetDevToolsAttached(true);
-  base::RunLoop().RunUntilIdle();
-  EXPECT_EQ(EmbeddedWorkerStatus::RUNNING, worker->status());
-
-  // To make things tricky, detach DevTools.
-  worker->SetDevToolsAttached(false);
-
-  // Stop the worker.
-  worker->Stop();
-  base::RunLoop().RunUntilIdle();
-  EXPECT_EQ(EmbeddedWorkerStatus::STOPPED, worker->status());
-
-  // The runtime metric should not have ben recorded since DevTools
-  // was attached at some point during the worker's life.
-  metrics.ExpectTotalCount(kHistogramServiceWorkerRuntime, 0);
 }
 
 }  // namespace content

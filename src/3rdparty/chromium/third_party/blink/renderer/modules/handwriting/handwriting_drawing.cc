@@ -4,7 +4,6 @@
 
 #include "third_party/blink/renderer/modules/handwriting/handwriting_drawing.h"
 
-#include "base/macros.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_handwriting_drawing_segment.h"
@@ -23,7 +22,7 @@ namespace {
 void OnRecognitionResult(
     ScriptPromiseResolver* resolver,
     ScriptState* script_state,
-    base::Optional<Vector<handwriting::mojom::blink::HandwritingPredictionPtr>>
+    absl::optional<Vector<handwriting::mojom::blink::HandwritingPredictionPtr>>
         predictions) {
   // If `predictions` does not have value, it means the some error happened in
   // recognition. Otherwise, if it has value but the vector is empty, it means
@@ -45,8 +44,7 @@ void OnRecognitionResult(
 HandwritingDrawing::HandwritingDrawing(ExecutionContext* context,
                                        HandwritingRecognizer* recognizer,
                                        const HandwritingHints* hints)
-    : hints_(MakeGarbageCollected<HandwritingHints>(*hints)),
-      recognizer_(recognizer) {}
+    : hints_(hints), recognizer_(recognizer) {}
 
 HandwritingDrawing::~HandwritingDrawing() = default;
 

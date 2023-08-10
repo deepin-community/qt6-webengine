@@ -7,7 +7,6 @@
 
 #include <string>
 
-#include "base/macros.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/tts_controller.h"
 #include "content/public/browser/tts_utterance.h"
@@ -66,6 +65,15 @@ class CONTENT_EXPORT TtsPlatform {
   // to |out_voices|.
   virtual void GetVoices(std::vector<VoiceData>* out_voices) = 0;
 
+  // Returns a list of all available voices for |browser_context|, including
+  // the native voice, if supported, and all voices registered by engines.
+  // |source_url| will be used for policy decisions by engines to determine
+  // which voices to return.
+  virtual void GetVoicesForBrowserContext(
+      BrowserContext* browser_context,
+      const GURL& source_url,
+      std::vector<VoiceData>* out_voices) = 0;
+
   // Pause the current utterance, if any, until a call to Resume,
   // Speak, or StopSpeaking.
   virtual void Pause() = 0;
@@ -85,6 +93,10 @@ class CONTENT_EXPORT TtsPlatform {
   // If supported, the platform shutdown its internal state. After that call,
   // other methods may no-op.
   virtual void Shutdown() = 0;
+
+  // Returns whether TtsController should prefer voices from TtsEngineDelegate
+  // over those from this platform. Defaults to false.
+  virtual bool PreferEngineDelegateVoices() = 0;
 };
 
 }  // namespace content

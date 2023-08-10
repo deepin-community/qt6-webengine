@@ -6,7 +6,6 @@
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/location.h"
-#include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -44,24 +43,22 @@
 #include "url/gurl.h"
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "chrome/browser/chromeos/net/dhcp_wpad_url_client.h"
+#include "chrome/browser/ash/net/dhcp_wpad_url_client.h"
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
 namespace {
 
 // Verify kPACScript is installed as the PAC script.
 void VerifyProxyScript(Browser* browser) {
-  ui_test_utils::NavigateToURL(browser, GURL("http://google.com"));
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser, GURL("http://google.com")));
 
   // Verify we get the ERR_PROXY_CONNECTION_FAILED screen.
-  bool result = false;
-  EXPECT_TRUE(content::ExecuteScriptAndExtractBool(
-      browser->tab_strip_model()->GetActiveWebContents(),
-      "var textContent = document.body.textContent;"
-      "var hasError = textContent.indexOf('ERR_PROXY_CONNECTION_FAILED') >= 0;"
-      "domAutomationController.send(hasError);",
-      &result));
-  EXPECT_TRUE(result);
+  EXPECT_EQ(true, content::EvalJs(
+                      browser->tab_strip_model()->GetActiveWebContents(),
+                      "var textContent = document.body.textContent;"
+                      "var hasError = "
+                      "textContent.indexOf('ERR_PROXY_CONNECTION_FAILED') >= 0;"
+                      "hasError;"));
 }
 
 // This class observes chrome::NOTIFICATION_AUTH_NEEDED and supplies
@@ -71,6 +68,9 @@ class LoginPromptObserver : public content::NotificationObserver {
  public:
   LoginPromptObserver() : auth_handled_(false) {}
 
+  LoginPromptObserver(const LoginPromptObserver&) = delete;
+  LoginPromptObserver& operator=(const LoginPromptObserver&) = delete;
+
   void Observe(int type,
                const content::NotificationSource& source,
                const content::NotificationDetails& details) override {
@@ -79,8 +79,7 @@ class LoginPromptObserver : public content::NotificationObserver {
           content::Details<LoginNotificationDetails>(details).ptr();
       // |login_details->handler()| is the associated LoginHandler object.
       // SetAuth() will close the login dialog.
-      login_details->handler()->SetAuth(base::ASCIIToUTF16("foo"),
-                                        base::ASCIIToUTF16("bar"));
+      login_details->handler()->SetAuth(u"foo", u"bar");
       auth_handled_ = true;
     }
   }
@@ -89,8 +88,6 @@ class LoginPromptObserver : public content::NotificationObserver {
 
  private:
   bool auth_handled_;
-
-  DISALLOW_COPY_AND_ASSIGN(LoginPromptObserver);
 };
 
 // Test that the browser can establish a WebSocket connection via a proxy
@@ -112,18 +109,18 @@ IN_PROC_BROWSER_TEST_F(ProxyBrowserTest, BasicAuthWSConnect) {
   registrar.Add(&observer, chrome::NOTIFICATION_AUTH_NEEDED,
                 content::Source<content::NavigationController>(controller));
 
-  content::TitleWatcher watcher(tab, base::ASCIIToUTF16("PASS"));
-  watcher.AlsoWaitForTitle(base::ASCIIToUTF16("FAIL"));
+  content::TitleWatcher watcher(tab, u"PASS");
+  watcher.AlsoWaitForTitle(u"FAIL");
 
   // Visit a page that tries to establish WebSocket connection. The title
   // of the page will be 'PASS' on success.
   GURL::Replacements replacements;
   replacements.SetSchemeStr("http");
-  ui_test_utils::NavigateToURL(browser(),
-                               ws_server.GetURL("proxied_request_check.html")
-                                   .ReplaceComponents(replacements));
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(
+      browser(), ws_server.GetURL("proxied_request_check.html")
+                     .ReplaceComponents(replacements)));
 
-  const base::string16 result = watcher.WaitAndGetTitle();
+  const std::u16string result = watcher.WaitAndGetTitle();
   EXPECT_TRUE(base::EqualsASCII(result, "PASS"));
   EXPECT_TRUE(observer.auth_handled());
 }
@@ -136,6 +133,12 @@ class BaseHttpProxyScriptBrowserTest : public InProcessBrowserTest {
   BaseHttpProxyScriptBrowserTest() {
     http_server_.ServeFilesFromSourceDirectory(GetChromeTestDataDir());
   }
+
+  BaseHttpProxyScriptBrowserTest(const BaseHttpProxyScriptBrowserTest&) =
+      delete;
+  BaseHttpProxyScriptBrowserTest& operator=(
+      const BaseHttpProxyScriptBrowserTest&) = delete;
+
   ~BaseHttpProxyScriptBrowserTest() override {}
 
   void SetUp() override {
@@ -152,24 +155,23 @@ class BaseHttpProxyScriptBrowserTest : public InProcessBrowserTest {
  protected:
   virtual std::string GetPacFilename() = 0;
   net::EmbeddedTestServer http_server_;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(BaseHttpProxyScriptBrowserTest);
 };
 
 // Tests the use of a PAC script that rejects requests to http://www.google.com/
 class HttpProxyScriptBrowserTest : public BaseHttpProxyScriptBrowserTest {
  public:
   HttpProxyScriptBrowserTest() = default;
+
+  HttpProxyScriptBrowserTest(const HttpProxyScriptBrowserTest&) = delete;
+  HttpProxyScriptBrowserTest& operator=(const HttpProxyScriptBrowserTest&) =
+      delete;
+
   ~HttpProxyScriptBrowserTest() override {}
 
   std::string GetPacFilename() override {
     // PAC script that sends all requests to an invalid proxy server.
     return "bad_server.pac";
   }
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(HttpProxyScriptBrowserTest);
 };
 
 IN_PROC_BROWSER_TEST_F(HttpProxyScriptBrowserTest, Verify) {
@@ -183,17 +185,23 @@ IN_PROC_BROWSER_TEST_F(HttpProxyScriptBrowserTest, Verify) {
 class WPADHttpProxyScriptBrowserTest : public HttpProxyScriptBrowserTest {
  public:
   WPADHttpProxyScriptBrowserTest() = default;
+
+  WPADHttpProxyScriptBrowserTest(const WPADHttpProxyScriptBrowserTest&) =
+      delete;
+  WPADHttpProxyScriptBrowserTest& operator=(
+      const WPADHttpProxyScriptBrowserTest&) = delete;
+
   ~WPADHttpProxyScriptBrowserTest() override {}
 
   void SetUp() override {
     ASSERT_TRUE(http_server_.Start());
     pac_url_ = http_server_.GetURL("/" + GetPacFilename());
-    chromeos::DhcpWpadUrlClient::SetPacUrlForTesting(pac_url_);
+    ash::DhcpWpadUrlClient::SetPacUrlForTesting(pac_url_);
     InProcessBrowserTest::SetUp();
   }
 
   void TearDown() override {
-    chromeos::DhcpWpadUrlClient::ClearPacUrlForTesting();
+    ash::DhcpWpadUrlClient::ClearPacUrlForTesting();
     InProcessBrowserTest::TearDown();
   }
 
@@ -203,7 +211,6 @@ class WPADHttpProxyScriptBrowserTest : public HttpProxyScriptBrowserTest {
 
  private:
   GURL pac_url_;
-  DISALLOW_COPY_AND_ASSIGN(WPADHttpProxyScriptBrowserTest);
 };
 
 IN_PROC_BROWSER_TEST_F(WPADHttpProxyScriptBrowserTest, Verify) {
@@ -217,6 +224,12 @@ class MyIpAddressProxyScriptBrowserTest
     : public BaseHttpProxyScriptBrowserTest {
  public:
   MyIpAddressProxyScriptBrowserTest() = default;
+
+  MyIpAddressProxyScriptBrowserTest(const MyIpAddressProxyScriptBrowserTest&) =
+      delete;
+  MyIpAddressProxyScriptBrowserTest& operator=(
+      const MyIpAddressProxyScriptBrowserTest&) = delete;
+
   ~MyIpAddressProxyScriptBrowserTest() override {}
 
   std::string GetPacFilename() override {
@@ -224,9 +237,6 @@ class MyIpAddressProxyScriptBrowserTest
     // myIpAddress() and myIpAddressEx() are not loopback addresses.
     return "my_ip_address.pac";
   }
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(MyIpAddressProxyScriptBrowserTest);
 };
 
 IN_PROC_BROWSER_TEST_F(MyIpAddressProxyScriptBrowserTest, Verify) {
@@ -237,6 +247,12 @@ IN_PROC_BROWSER_TEST_F(MyIpAddressProxyScriptBrowserTest, Verify) {
 class HangingPacRequestProxyScriptBrowserTest : public InProcessBrowserTest {
  public:
   HangingPacRequestProxyScriptBrowserTest() {}
+
+  HangingPacRequestProxyScriptBrowserTest(
+      const HangingPacRequestProxyScriptBrowserTest&) = delete;
+  HangingPacRequestProxyScriptBrowserTest& operator=(
+      const HangingPacRequestProxyScriptBrowserTest&) = delete;
+
   ~HangingPacRequestProxyScriptBrowserTest() override {}
 
   void SetUp() override {
@@ -271,9 +287,6 @@ class HangingPacRequestProxyScriptBrowserTest : public InProcessBrowserTest {
  protected:
   std::unique_ptr<net::test_server::SimpleConnectionListener>
       connection_listener_;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(HangingPacRequestProxyScriptBrowserTest);
 };
 
 // Check that the URLRequest for a PAC that is still alive during shutdown is
@@ -288,8 +301,7 @@ IN_PROC_BROWSER_TEST_F(HangingPacRequestProxyScriptBrowserTest, Shutdown) {
   auto simple_loader = network::SimpleURLLoader::Create(
       std::move(resource_request), TRAFFIC_ANNOTATION_FOR_TESTS);
 
-  auto* storage_partition =
-      content::BrowserContext::GetDefaultStoragePartition(browser()->profile());
+  auto* storage_partition = browser()->profile()->GetDefaultStoragePartition();
   auto url_loader_factory =
       storage_partition->GetURLLoaderFactoryForBrowserProcess();
   simple_loader->DownloadToStringOfUnboundedSizeUntilCrashAndDie(

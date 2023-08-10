@@ -14,13 +14,13 @@
 #include "base/containers/stack.h"
 #include "base/files/file.h"
 #include "base/files/file_path.h"
-#include "base/optional.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 
-#if defined(OS_WIN)
-#include <windows.h>
-#elif defined(OS_POSIX) || defined(OS_FUCHSIA)
+#if BUILDFLAG(IS_WIN)
+#include "base/win/windows_types.h"
+#elif BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
+#include <sys/stat.h>
 #include <unistd.h>
 #include <unordered_set>
 #endif
@@ -58,21 +58,23 @@ class BASE_EXPORT FileEnumerator {
     // On POSIX systems, this is rounded down to the second.
     Time GetLastModifiedTime() const;
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
     // Note that the cAlternateFileName (used to hold the "short" 8.3 name)
     // of the WIN32_FIND_DATA will be empty. Since we don't use short file
     // names, we tell Windows to omit it which speeds up the query slightly.
-    const WIN32_FIND_DATA& find_data() const { return find_data_; }
-#elif defined(OS_POSIX) || defined(OS_FUCHSIA)
+    const WIN32_FIND_DATA& find_data() const {
+      return *ChromeToWindowsType(&find_data_);
+    }
+#elif BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
     const stat_wrapper_t& stat() const { return stat_; }
 #endif
 
    private:
     friend class FileEnumerator;
 
-#if defined(OS_WIN)
-    WIN32_FIND_DATA find_data_;
-#elif defined(OS_POSIX) || defined(OS_FUCHSIA)
+#if BUILDFLAG(IS_WIN)
+    CHROME_WIN32_FIND_DATA find_data_;
+#elif BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
     stat_wrapper_t stat_;
     FilePath filename_;
 #endif
@@ -82,7 +84,7 @@ class BASE_EXPORT FileEnumerator {
     FILES = 1 << 0,
     DIRECTORIES = 1 << 1,
     INCLUDE_DOT_DOT = 1 << 2,
-#if defined(OS_POSIX) || defined(OS_FUCHSIA)
+#if BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
     SHOW_SYM_LINKS = 1 << 4,
 #endif
   };
@@ -177,12 +179,16 @@ class BASE_EXPORT FileEnumerator {
 
   bool IsPatternMatched(const FilePath& src) const;
 
-#if defined(OS_WIN)
+#if BUILDFLAG(IS_WIN)
+  const WIN32_FIND_DATA& find_data() const {
+    return *ChromeToWindowsType(&find_data_);
+  }
+
   // True when find_data_ is valid.
   bool has_find_data_ = false;
-  WIN32_FIND_DATA find_data_;
+  CHROME_WIN32_FIND_DATA find_data_;
   HANDLE find_handle_ = INVALID_HANDLE_VALUE;
-#elif defined(OS_POSIX) || defined(OS_FUCHSIA)
+#elif BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
   // The files in the current directory
   std::vector<FileInfo> directory_entries_;
 

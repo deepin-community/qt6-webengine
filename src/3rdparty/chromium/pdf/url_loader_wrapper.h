@@ -9,7 +9,7 @@
 
 #include <string>
 
-#include "pdf/ppapi_migration/callback.h"
+#include "base/callback_forward.h"
 
 namespace chrome_pdf {
 
@@ -38,8 +38,8 @@ class URLLoaderWrapper {
   // Returns if the response contains multi parts.
   virtual bool IsMultipart() const = 0;
 
-  // If true, |start| contains the start of the byte range.
-  // If false, response contains full document and |start| will be undefined.
+  // If true, `start` contains the start of the byte range.
+  // If false, response contains full document and `start` will be undefined.
   virtual bool GetByteRangeStart(int* start) const = 0;
 
   // Close connection.
@@ -50,14 +50,14 @@ class URLLoaderWrapper {
                          const std::string& referrer_url,
                          uint32_t position,
                          uint32_t size,
-                         ResultCallback callback) = 0;
+                         base::OnceCallback<void(int)> callback) = 0;
 
   // Read the response body. The size of the buffer must be large enough to
   // hold the specified number of bytes to read.
   // This function might perform a partial read.
   virtual void ReadResponseBody(char* buffer,
                                 int buffer_size,
-                                ResultCallback callback) = 0;
+                                base::OnceCallback<void(int)> callback) = 0;
 };
 
 }  // namespace chrome_pdf

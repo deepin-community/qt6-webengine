@@ -6,9 +6,11 @@
 
 #include <memory>
 
-#include "base/optional.h"
 #include "base/time/default_tick_clock.h"
+#include "base/time/time.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/common/browser_interface_broker_proxy.h"
+#include "third_party/blink/public/mojom/frame/user_activation_notification_type.mojom-blink.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_media_position_state.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_media_session_action_details.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_media_session_action_handler.h"
@@ -44,6 +46,11 @@ const AtomicString& MojomActionToActionName(MediaSessionAction action) {
   DEFINE_STATIC_LOCAL(const AtomicString, skip_ad_action_name, ("skipad"));
   DEFINE_STATIC_LOCAL(const AtomicString, stop_action_name, ("stop"));
   DEFINE_STATIC_LOCAL(const AtomicString, seek_to_action_name, ("seekto"));
+  DEFINE_STATIC_LOCAL(const AtomicString, toggle_microphone_action_name,
+                      ("togglemicrophone"));
+  DEFINE_STATIC_LOCAL(const AtomicString, toggle_camera_action_name,
+                      ("togglecamera"));
+  DEFINE_STATIC_LOCAL(const AtomicString, hang_up_action_name, ("hangup"));
 
   switch (action) {
     case MediaSessionAction::kPlay:
@@ -64,13 +71,19 @@ const AtomicString& MojomActionToActionName(MediaSessionAction action) {
       return stop_action_name;
     case MediaSessionAction::kSeekTo:
       return seek_to_action_name;
+    case MediaSessionAction::kToggleMicrophone:
+      return toggle_microphone_action_name;
+    case MediaSessionAction::kToggleCamera:
+      return toggle_camera_action_name;
+    case MediaSessionAction::kHangUp:
+      return hang_up_action_name;
     default:
       NOTREACHED();
   }
   return WTF::g_empty_atom;
 }
 
-base::Optional<MediaSessionAction> ActionNameToMojomAction(
+absl::optional<MediaSessionAction> ActionNameToMojomAction(
     const String& action_name) {
   if ("play" == action_name)
     return MediaSessionAction::kPlay;
@@ -90,9 +103,15 @@ base::Optional<MediaSessionAction> ActionNameToMojomAction(
     return MediaSessionAction::kStop;
   if ("seekto" == action_name)
     return MediaSessionAction::kSeekTo;
+  if ("togglemicrophone" == action_name)
+    return MediaSessionAction::kToggleMicrophone;
+  if ("togglecamera" == action_name)
+    return MediaSessionAction::kToggleCamera;
+  if ("hangup" == action_name)
+    return MediaSessionAction::kHangUp;
 
   NOTREACHED();
-  return base::nullopt;
+  return absl::nullopt;
 }
 
 const AtomicString& MediaSessionPlaybackStateToString(
@@ -177,8 +196,14 @@ void MediaSession::OnMetadataChanged() {
   if (!service)
     return;
 
-  service->SetMetadata(MediaMetadataSanitizer::SanitizeAndConvertToMojo(
-      metadata_, GetSupplementable()->DomWindow()));
+  // OnMetadataChanged() is called from a timer. The Window/ExecutionContext
+  // might detaches in the meantime. See https://crbug.com/1269522
+  ExecutionContext* context = GetSupplementable()->DomWindow();
+  if (!context)
+    return;
+
+  service->SetMetadata(
+      MediaMetadataSanitizer::SanitizeAndConvertToMojo(metadata_, context));
 }
 
 void MediaSession::setActionHandler(const String& action,
@@ -194,6 +219,16 @@ void MediaSession::setActionHandler(const String& action,
     }
 
     UseCounter::Count(window, WebFeature::kMediaSessionSkipAd);
+  }
+
+  if (!RuntimeEnabledFeatures::MediaSessionWebRTCEnabled()) {
+    if ("togglemicrophone" == action || "togglecamera" == action ||
+        "hangup" == action) {
+      exception_state.ThrowTypeError("The provided value '" + action +
+                                     "' is not a valid enum "
+                                     "value of type MediaSessionAction.");
+      return;
+    }
   }
 
   if (handler) {
@@ -272,6 +307,31 @@ void MediaSession::setPositionState(MediaPositionState* position_state,
   RecalculatePositionState(/*was_set=*/true);
 }
 
+void MediaSession::setMicrophoneActive(bool active) {
+  auto* service = GetService();
+  if (!service)
+    return;
+
+  if (active) {
+    service->SetMicrophoneState(
+        media_session::mojom::MicrophoneState::kUnmuted);
+  } else {
+    service->SetMicrophoneState(media_session::mojom::MicrophoneState::kMuted);
+  }
+}
+
+void MediaSession::setCameraActive(bool active) {
+  auto* service = GetService();
+  if (!service)
+    return;
+
+  if (active) {
+    service->SetCameraState(media_session::mojom::CameraState::kTurnedOn);
+  } else {
+    service->SetCameraState(media_session::mojom::CameraState::kTurnedOff);
+  }
+}
+
 void MediaSession::NotifyActionChange(const String& action,
                                       ActionChangeType type) {
   mojom::blink::MediaSessionService* service = GetService();
@@ -299,7 +359,7 @@ base::TimeDelta MediaSession::GetPositionNow() const {
       (now - position_state_->last_updated_time);
   const base::TimeDelta updated_position =
       position_state_->position + elapsed_time;
-  const base::TimeDelta start = base::TimeDelta::FromSeconds(0);
+  const base::TimeDelta start = base::Seconds(0);
 
   if (updated_position <= start)
     return start;

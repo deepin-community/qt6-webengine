@@ -19,9 +19,16 @@
 
 #include "perfetto/protozero/message_handle.h"
 #include "perfetto/tracing/internal/track_event_internal.h"
+#include "perfetto/tracing/traced_proto.h"
 #include "protos/perfetto/trace/trace_packet.pbzero.h"
 
 namespace perfetto {
+namespace protos {
+namespace pbzero {
+class DebugAnnotation;
+}  // namespace pbzero
+}  // namespace protos
+
 namespace internal {
 class TrackEventInternal;
 }
@@ -30,9 +37,10 @@ class TrackEventInternal;
 //
 //   TRACE_EVENT_BEGIN("category", "Title",
 //                     [](perfetto::EventContext ctx) {
-//                       auto* dbg = ctx.event()->add_debug_annotations();
-//                       dbg->set_name("name");
-//                       dbg->set_int_value(1234);
+//                       auto* log = ctx.event()->set_log_message();
+//                       log->set_body_iid(1234);
+//
+//                       ctx.AddDebugAnnotation("name", 1234);
 //                     });
 //
 class PERFETTO_EXPORT EventContext {
@@ -47,6 +55,10 @@ class PERFETTO_EXPORT EventContext {
       : event_(event), incremental_state_(incremental_state) {}
 
   ~EventContext();
+
+  internal::TrackEventIncrementalState* GetIncrementalState() const {
+    return incremental_state_;
+  }
 
   // Get a TrackEvent message to write typed arguments to.
   //
@@ -64,6 +76,30 @@ class PERFETTO_EXPORT EventContext {
     return static_cast<EventType*>(event_);
   }
 
+  // Convert a raw pointer to protozero message to TracedProto which captures
+  // the reference to this EventContext.
+  template <typename MessageType>
+  TracedProto<MessageType> Wrap(MessageType* message) {
+    static_assert(std::is_base_of<protozero::Message, MessageType>::value,
+                  "TracedProto can be used only with protozero messages");
+
+    return TracedProto<MessageType>(message, this);
+  }
+
+  // Add a new `debug_annotation` proto message and populate it from |value|
+  // using perfetto::TracedValue API. Users should generally prefer passing
+  // values directly to TRACE_EVENT (i.e. TRACE_EVENT(..., "arg", value, ...);)
+  // but in rare cases (e.g. when an argument should be written conditionally)
+  // EventContext::AddDebugAnnotation provides an explicit equivalent.
+  template <typename T>
+  void AddDebugAnnotation(const char* name, T&& value) {
+    if (tls_state_ && tls_state_->filter_debug_annotations)
+      return;
+    auto annotation = AddDebugAnnotation(name);
+    WriteIntoTracedValue(internal::CreateTracedValueFromProto(annotation, this),
+                         std::forward<T>(value));
+  }
+
  private:
   template <typename, size_t, typename, typename>
   friend class TrackEventInternedDataIndex;
@@ -72,12 +108,20 @@ class PERFETTO_EXPORT EventContext {
   using TracePacketHandle =
       ::protozero::MessageHandle<protos::pbzero::TracePacket>;
 
-  EventContext(TracePacketHandle, internal::TrackEventIncrementalState*);
+  EventContext(TracePacketHandle,
+               internal::TrackEventIncrementalState*,
+               const internal::TrackEventTlsState*);
   EventContext(const EventContext&) = delete;
+
+  protos::pbzero::DebugAnnotation* AddDebugAnnotation(const char* name);
 
   TracePacketHandle trace_packet_;
   protos::pbzero::TrackEvent* event_;
   internal::TrackEventIncrementalState* incremental_state_;
+  // TODO(mohitms): Make it const-reference instead of pointer, once we
+  // are certain that it cannot be nullptr. Once we switch to client library in
+  // chrome, we can make that happen.
+  const internal::TrackEventTlsState* tls_state_ = nullptr;
 };
 
 }  // namespace perfetto

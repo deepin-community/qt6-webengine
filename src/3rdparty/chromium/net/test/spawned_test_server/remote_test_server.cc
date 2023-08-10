@@ -36,11 +36,6 @@ namespace {
 // Please keep in sync with dictionary SERVER_TYPES in testserver.py
 std::string GetServerTypeString(BaseTestServer::Type type) {
   switch (type) {
-    case BaseTestServer::TYPE_FTP:
-      return "ftp";
-    case BaseTestServer::TYPE_HTTP:
-    case BaseTestServer::TYPE_HTTPS:
-      return "http";
     case BaseTestServer::TYPE_WS:
     case BaseTestServer::TYPE_WSS:
       return "ws";
@@ -53,7 +48,7 @@ std::string GetServerTypeString(BaseTestServer::Type type) {
 // Returns platform-specific path to the config file for the test server.
 base::FilePath GetTestServerConfigFilePath() {
   base::FilePath dir;
-#if defined(OS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   base::PathService::Get(base::DIR_ANDROID_EXTERNAL_STORAGE, &dir);
 #else
   base::PathService::Get(base::DIR_TEMP, &dir);
@@ -75,7 +70,7 @@ std::string ReadSpawnerUrlFromConfig() {
   if (!ReadFileToString(config_path, &config_json))
     LOG(FATAL) << "Failed to read " << config_path.value();
 
-  base::Optional<base::Value> config = base::JSONReader::Read(config_json);
+  absl::optional<base::Value> config = base::JSONReader::Read(config_json);
   if (!config)
     LOG(FATAL) << "Failed to parse " << config_path.value();
 
@@ -116,7 +111,7 @@ bool RemoteTestServer::StartInBackground() {
   if (!GenerateArguments(&arguments_dict))
     return false;
 
-  arguments_dict.Set("on-remote-server", std::make_unique<base::Value>());
+  arguments_dict.SetKey("on-remote-server", base::Value());
 
   // Append the 'server-type' argument which is used by spawner server to
   // pass right server type to Python test server.

@@ -11,22 +11,27 @@
 #include <tuple>
 #include <vector>
 
-#include "base/optional.h"
 #include "base/strings/string_piece.h"
 #include "net/base/net_export.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace net {
 namespace structured_headers {
 
 // This file implements parsing of HTTP structured headers, as defined in
-// https://httpwg.org/http-extensions/draft-ietf-httpbis-header-structure.html.
+// RFC8941 (https://www.rfc-editor.org/rfc/rfc8941.html). For compatibility with
+// the shipped implementation of Web Packaging, this file also supports a
+// previous revision of the standard, referred to here as "Draft 9".
+// (https://datatracker.ietf.org/doc/draft-ietf-httpbis-header-structure/09/)
 //
-// Both drafts 9 and 15 are currently supported. The major difference
-// between the two drafts is in the various list formats: Draft 9 describes
-// Parameterised lists and lists-of-lists, while draft 15 uses a single List
-// syntax, whose members may be inner lists. There should be no ambiguity,
-// however, as the code which calls this parser should be expecting only a
-// single type for a given header.
+// The major difference between the two revisions is in the various list
+// formats: Draft 9 describes "parameterised lists" and "lists-of-lists", while
+// the final RFC uses a single "list" syntax, whose members may be inner lists.
+// There should be no ambiguity, however, as the code which calls this parser
+// should be expecting only a single type for a given header.
+//
+// References within the code are tagged with either [SH09] or [RFC8941],
+// depending on which revision they refer to.
 //
 // Currently supported data types are:
 //  Item:
@@ -249,12 +254,12 @@ using List = std::vector<ParameterizedMember>;
 // Returns the result of parsing the header value as an Item, if it can be
 // parsed as one, or nullopt if it cannot. Note that this uses the Draft 15
 // parsing rules, and so applies tighter range limits to integers.
-NET_EXPORT base::Optional<ParameterizedItem> ParseItem(base::StringPiece str);
+NET_EXPORT absl::optional<ParameterizedItem> ParseItem(base::StringPiece str);
 
 // Returns the result of parsing the header value as an Item with no parameters,
 // or nullopt if it cannot. Note that this uses the Draft 15 parsing rules, and
 // so applies tighter range limits to integers.
-NET_EXPORT base::Optional<Item> ParseBareItem(base::StringPiece str);
+NET_EXPORT absl::optional<Item> ParseBareItem(base::StringPiece str);
 
 // Returns the result of parsing the header value as a Parameterised List, if it
 // can be parsed as one, or nullopt if it cannot. Note that parameter keys will
@@ -262,7 +267,7 @@ NET_EXPORT base::Optional<Item> ParseBareItem(base::StringPiece str);
 // as well as parameter values, will be returned as Items. This method uses the
 // Draft 09 parsing rules for Items, so integers have the 64-bit int range.
 // Structured-Headers Draft 09 only.
-NET_EXPORT base::Optional<ParameterisedList> ParseParameterisedList(
+NET_EXPORT absl::optional<ParameterisedList> ParseParameterisedList(
     base::StringPiece str);
 
 // Returns the result of parsing the header value as a List of Lists, if it can
@@ -270,25 +275,25 @@ NET_EXPORT base::Optional<ParameterisedList> ParseParameterisedList(
 // as Items. This method uses the Draft 09 parsing rules for Items, so integers
 // have the 64-bit int range.
 // Structured-Headers Draft 09 only.
-NET_EXPORT base::Optional<ListOfLists> ParseListOfLists(base::StringPiece str);
+NET_EXPORT absl::optional<ListOfLists> ParseListOfLists(base::StringPiece str);
 
 // Returns the result of parsing the header value as a general List, if it can
 // be parsed as one, or nullopt if it cannot.
 // Structured-Headers Draft 15 only.
-NET_EXPORT base::Optional<List> ParseList(base::StringPiece str);
+NET_EXPORT absl::optional<List> ParseList(base::StringPiece str);
 
 // Returns the result of parsing the header value as a general Dictionary, if it
 // can be parsed as one, or nullopt if it cannot. Structured-Headers Draft 15
 // only.
-NET_EXPORT base::Optional<Dictionary> ParseDictionary(
+NET_EXPORT absl::optional<Dictionary> ParseDictionary(
     const base::StringPiece& str);
 
 // Serialization is implemented for Structured-Headers Draft 15 only.
-NET_EXPORT base::Optional<std::string> SerializeItem(const Item& value);
-NET_EXPORT base::Optional<std::string> SerializeItem(
+NET_EXPORT absl::optional<std::string> SerializeItem(const Item& value);
+NET_EXPORT absl::optional<std::string> SerializeItem(
     const ParameterizedItem& value);
-NET_EXPORT base::Optional<std::string> SerializeList(const List& value);
-NET_EXPORT base::Optional<std::string> SerializeDictionary(
+NET_EXPORT absl::optional<std::string> SerializeList(const List& value);
+NET_EXPORT absl::optional<std::string> SerializeDictionary(
     const Dictionary& value);
 
 }  // namespace structured_headers

@@ -18,6 +18,9 @@
 #include "include/effects/SkImageFilters.h"
 #include "include/effects/SkRuntimeEffect.h"
 #include "include/utils/SkRandom.h"
+#include "src/core/SkRuntimeEffectPriv.h"
+#include "src/gpu/ganesh/GrCaps.h"
+#include "src/gpu/ganesh/GrRecordingContextPriv.h"
 #include "tools/Resources.h"
 #include "tools/ToolUtils.h"
 
@@ -55,25 +58,28 @@ static void draw_label(SkCanvas* canvas, const char* label) {
     canvas->translate(0, kLabelHeight);
 }
 
-static SkBitmap draw_shader(SkCanvas* canvas, sk_sp<SkShader> shader) {
+static SkBitmap draw_shader(SkCanvas* canvas, sk_sp<SkShader> shader,
+                            bool allowRasterFallback = true) {
     SkPaint paint;
     paint.setShader(std::move(shader));
 
+    SkBitmap bitmap;
     SkImageInfo info = SkImageInfo::MakeN32Premul({kBoxSize, kBoxSize});
     auto surface = canvas->makeSurface(info);
-    if (!surface) {
+    if (allowRasterFallback && !surface) {
         surface = SkSurface::MakeRaster(info);
     }
 
-    surface->getCanvas()->clear(SK_ColorWHITE);
-    surface->getCanvas()->scale(kBoxSize, kBoxSize);
-    surface->getCanvas()->drawRect({0, 0, 1, 1}, paint);
+    if (surface) {
+        surface->getCanvas()->clear(SK_ColorWHITE);
+        surface->getCanvas()->scale(kBoxSize, kBoxSize);
+        surface->getCanvas()->drawRect({0, 0, 1, 1}, paint);
 
-    SkBitmap bitmap;
-    bitmap.allocPixels(info);
-    surface->readPixels(bitmap, 0, 0);
+        bitmap.allocPixels(info);
+        surface->readPixels(bitmap, 0, 0);
 
-    canvas->drawImage(bitmap.asImage(), 0, 0);
+        canvas->drawImage(bitmap.asImage(), 0, 0);
+    }
     return bitmap;
 }
 
@@ -82,7 +88,9 @@ static SkBitmap draw_shader(SkCanvas* canvas, sk_sp<SkShader> shader) {
   produce a single float. It can reference:
 
     'x'  : float  in [xMin, xMax]
+    'xi' : int    in [xMin, xMax]
     'p'  : float2 in [xMin, xMax]  Lerps from (xMax, xMin) to (xMin, xMax)
+    'pi' : int2   in [xMin, xMax]  Lerps from (xMax, xMin) to (xMin, xMax)
                                    (helpful for intrinsics with a mix of scalar/vector params)
     'v1' : float2(1)
     'v2' : float2(2)
@@ -92,11 +100,13 @@ static SkString make_unary_sksl_1d(const char* fn) {
             "uniform float xScale; uniform float xBias;"
             "uniform float yScale; uniform float yBias;"
             "half4 main(float2 p) {"
-            "    float2 v1 = float2(1);"
-            "    float2 v2 = float2(2);"
+            "    const float2 v1 = float2(1);"
+            "    const float2 v2 = float2(2);"
             "    p = float2(p.x, 1 - p.x) * xScale + xBias;"
             "    float x = p.x;"
-            "    float y = %s  * yScale + yBias;"
+            "    int2  pi = int2(floor(p));"
+            "    int   xi = pi.x;"
+            "    float y = float(%s) * yScale + yBias;"
             "    return y.xxx1;"
             "}",
             fn);
@@ -109,12 +119,15 @@ static void plot(SkCanvas* canvas,
                  float xMax,
                  float yMin,
                  float yMax,
-                 const char* label = nullptr) {
+                 const char* label = nullptr,
+                 bool requireES3 = false) {
     canvas->save();
 
     draw_label(canvas, label ? label : fn);
 
-    auto [effect, error] = SkRuntimeEffect::Make(make_unary_sksl_1d(fn));
+    auto [effect, error] = SkRuntimeEffect::MakeForShader(
+            make_unary_sksl_1d(fn),
+            requireES3 ? SkRuntimeEffectPriv::ES3Options() : SkRuntimeEffect::Options{});
     if (!effect) {
         SkDebugf("Error: %s\n", error.c_str());
         return;
@@ -127,20 +140,32 @@ static void plot(SkCanvas* canvas,
     builder.uniform("yBias")  = -yMin / (yMax - yMin);
 
     SkBitmap bitmap =
-            draw_shader(canvas, builder.makeShader(/*localMatrix=*/nullptr, /*isOpaque=*/false));
-
-    // Plot...
-    SkPaint plotPaint({ 0.0f, 0.5f, 0.0f, 1.0f });
-    SkPoint pts[kBoxSize];
-    for (int x = 0; x < kBoxSize; ++x) {
-        SkColor c = bitmap.getColor(x, 0);
-        SkScalar y = (1 - (SkColorGetR(c) / 255.0f)) * kBoxSize;
-        pts[x].set(x + 0.5f, y);
+            draw_shader(canvas, builder.makeShader(), /*allowRasterFallback=*/!requireES3);
+    if (!bitmap.empty()) {
+        // Plot.
+        SkPaint plotPaint({ 0.0f, 0.5f, 0.0f, 1.0f });
+        SkPoint pts[kBoxSize];
+        for (int x = 0; x < kBoxSize; ++x) {
+            SkColor c = bitmap.getColor(x, 0);
+            SkScalar y = (1 - (SkColorGetR(c) / 255.0f)) * kBoxSize;
+            pts[x].set(x + 0.5f, y);
+        }
+        plotPaint.setAntiAlias(true);
+        canvas->drawPoints(SkCanvas::kPolygon_PointMode, kBoxSize, pts, plotPaint);
     }
-    canvas->drawPoints(SkCanvas::kPoints_PointMode, kBoxSize, pts, plotPaint);
 
     canvas->restore();
     next_column(canvas);
+}
+
+static void plot_es3(SkCanvas* canvas,
+                     const char* fn,
+                     float xMin,
+                     float xMax,
+                     float yMin,
+                     float yMax,
+                     const char* label = nullptr) {
+    plot(canvas, fn, xMin, xMax, yMin, yMax, label, /*requireES3=*/true);
 }
 
 // The OpenGL ES Shading Language, Version 1.00, Section 8.1
@@ -174,6 +199,34 @@ DEF_SIMPLE_GM(runtime_intrinsics_trig,
     plot(canvas, "atan(x,  0.1)", -1.0f, 1.0f, -kPIOverTwo, kPIOverTwo);
     plot(canvas, "atan(x, -0.1)", -1.0f, 1.0f,        -kPI,        kPI);
     next_row(canvas);
+}
+
+// The OpenGL ES Shading Language, Version 3.00, Section 8.1
+DEF_SIMPLE_GPU_GM_CAN_FAIL(runtime_intrinsics_trig_es3,
+                           ctx, canvas, errorMsg,
+                           columns_to_width(3),
+                           rows_to_height(2)) {
+    if (!ctx->priv().caps()->shaderCaps()->supportsSkSLES3()) {
+        *errorMsg = "SkSL ES3 is not supported.";
+        return skiagm::DrawResult::kSkip;
+    }
+
+    canvas->translate(kPadding, kPadding);
+    canvas->save();
+
+    plot_es3(canvas, "sinh(x)", -2.0f,  2.0f, -4.0f, 4.0f);
+    plot_es3(canvas, "cosh(x)", -2.0f,  2.0f,  0.0f, 4.0f);
+    plot_es3(canvas, "tanh(x)", -2.0f,  2.0f, -1.0f, 1.0f);
+    next_row(canvas);
+
+    if (ctx->priv().caps()->shaderCaps()->inverseHyperbolicSupport()) {
+        plot_es3(canvas, "asinh(x)", -2.0f, 2.0f, -2.0f, 2.0f);
+        plot_es3(canvas, "acosh(x)",  0.0f, 5.0f,  0.0f, 3.0f);
+        plot_es3(canvas, "atanh(x)", -1.0f, 1.0f, -4.0f, 4.0f);
+    }
+    next_row(canvas);
+
+    return skiagm::DrawResult::kOk;
 }
 
 // The OpenGL ES Shading Language, Version 1.00, Section 8.2
@@ -259,6 +312,66 @@ DEF_SIMPLE_GM(runtime_intrinsics_common,
     next_row(canvas);
 }
 
+// The OpenGL ES Shading Language, Version 3.00, Section 8.1
+DEF_SIMPLE_GPU_GM_CAN_FAIL(runtime_intrinsics_common_es3,
+                           ctx, canvas, errorMsg,
+                           columns_to_width(6),
+                           rows_to_height(5)) {
+    if (!ctx->priv().caps()->shaderCaps()->supportsSkSLES3()) {
+        *errorMsg = "SkSL ES3 is not supported.";
+        return skiagm::DrawResult::kSkip;
+    }
+
+    canvas->translate(kPadding, kPadding);
+    canvas->save();
+
+    plot_es3(canvas, "floatBitsToInt(x)",    -2, 2, -2'000'000'000, 2'000'000'000,
+                                             "floatBitsToInt(s)");
+    plot_es3(canvas, "floatBitsToInt(p).x",  -2, 2, -2'000'000'000, 2'000'000'000,
+                                             "floatBitsToInt(v)");
+    plot_es3(canvas, "floatBitsToUint(x)",   -2, 2, 0, 4'000'000'000,
+                                             "floatBitsToUint(s)");
+    plot_es3(canvas, "floatBitsToUint(p).x", -2, 2, 0, 4'000'000'000,
+                                             "floatBitsToUint(v)");
+    next_row(canvas);
+
+    plot_es3(canvas, "intBitsToFloat(xi)",           -2'000'000'000, 2'000'000'000, -2, 2,
+                                                     "intBitsToFloat(s)");
+    plot_es3(canvas, "intBitsToFloat(pi).x",         -2'000'000'000, 2'000'000'000, -2, 2,
+                                                     "intBitsToFloat(v)");
+    plot_es3(canvas, "uintBitsToFloat(uint(xi))",    0, 4'000'000'000, -2, 2,
+                                                     "uintBitsToFloat(s)");
+    plot_es3(canvas, "uintBitsToFloat(uint2(pi)).x", 0, 4'000'000'000, -2, 2,
+                                                     "uintBitsToFloat(v)");
+    next_row(canvas);
+
+    plot_es3(canvas, "trunc(x)",           -2, 2, -3, 3);
+    plot_es3(canvas, "trunc(p).x",         -2, 2, -3, 3);
+    plot_es3(canvas, "round(x)",           -2, 2, -3, 3);
+    plot_es3(canvas, "round(p).x",         -2, 2, -3, 3);
+    plot_es3(canvas, "roundEven(x)",       -2, 2, -3, 3);
+    plot_es3(canvas, "roundEven(p).x",     -2, 2, -3, 3);
+    next_row(canvas);
+
+    plot_es3(canvas, "min(xi, 1)",         -2, 5, -3, 5, "min(int-scalar)");
+    plot_es3(canvas, "min(pi, 1).x",       -2, 5, -3, 5, "min(int-mixed)" );
+    plot_es3(canvas, "min(pi, int2(1)).x", -2, 5, -3, 5, "min(int-vector)");
+    plot_es3(canvas, "max(xi, 1)",         -2, 5, -3, 5, "max(int-scalar)");
+    plot_es3(canvas, "max(pi, 1).x",       -2, 5, -3, 5, "max(int-mixed)" );
+    plot_es3(canvas, "max(pi, int2(1)).x", -2, 5, -3, 5, "max(int-vector)");
+    next_row(canvas);
+
+    plot_es3(canvas, "clamp(xi, 1, 3)",               -1, 5, -1, 5, "clamp(int-scalar)");
+    plot_es3(canvas, "clamp(pi, 1, 3).x",             -1, 5, -1, 5, "clamp(int-mixed)" );
+    plot_es3(canvas, "clamp(pi, int2(1), int2(3)).x", -1, 5, -1, 5, "clamp(int-vector)");
+    plot_es3(canvas, "mix(p.x,  p.y, (x>0)   )",      -1, 2, 0, 3,  "mix(scalar, bool)");
+    plot_es3(canvas, "mix(p.yx, p,   (x>0).xx).x",    -1, 2, 0, 3,  "mix(vector, bool)");
+    next_row(canvas);
+
+    return skiagm::DrawResult::kOk;
+}
+
+
 // The OpenGL ES Shading Language, Version 1.00, Section 8.4
 DEF_SIMPLE_GM(runtime_intrinsics_geometric,
               canvas,
@@ -339,7 +452,7 @@ static void plot_matrix_comp_mult(SkCanvas* canvas,
 
     draw_label(canvas, label);
 
-    auto [effect, error] = SkRuntimeEffect::Make(make_matrix_comp_mult_sksl(N));
+    auto [effect, error] = SkRuntimeEffect::MakeForShader(make_matrix_comp_mult_sksl(N));
     if (!effect) {
         SkDebugf("Error: %s\n", error.c_str());
         return;
@@ -349,7 +462,7 @@ static void plot_matrix_comp_mult(SkCanvas* canvas,
     builder.uniform("m1") = mtx1;
     builder.uniform("m2") = mtx2;
 
-    draw_shader(canvas, builder.makeShader(/*localMatrix=*/nullptr, /*isOpaque=*/false));
+    draw_shader(canvas, builder.makeShader());
 
     canvas->restore();
     next_column(canvas);
@@ -376,7 +489,7 @@ static void plot_matrix_inverse(SkCanvas* canvas, std::array<float, N*N> mtx, co
 
     draw_label(canvas, label);
 
-    auto [effect, error] = SkRuntimeEffect::Make(make_matrix_inverse_sksl(N));
+    auto [effect, error] = SkRuntimeEffect::MakeForShader(make_matrix_inverse_sksl(N));
     if (!effect) {
         SkDebugf("Error: %s\n", error.c_str());
         return;
@@ -387,7 +500,7 @@ static void plot_matrix_inverse(SkCanvas* canvas, std::array<float, N*N> mtx, co
     builder.uniform("bias")  = 0.5f;
     builder.uniform("m")     = mtx;
 
-    draw_shader(canvas, builder.makeShader(/*localMatrix=*/nullptr, /*isOpaque=*/false));
+    draw_shader(canvas, builder.makeShader());
 
     canvas->restore();
     next_column(canvas);
@@ -444,34 +557,37 @@ DEF_SIMPLE_GM(runtime_intrinsics_matrix,
 /*
   Specialized shader for testing relational operators.
 */
-static SkString make_bvec_sksl(const char* fn) {
+static SkString make_bvec_sksl(const char* type, const char* fn) {
     // We use negative floats, to ensure that the integer variants are working with the correct
     // interpretation of the data.
     return SkStringPrintf(
+            "uniform %s2 v1;"
             "half4 main(float2 p) {"
-            "    float2 v1 = float2(-2.0);"
             "    p.x = p.x < 0.33 ? -3.0 : (p.x < 0.66 ? -2.0 : -1.0);"
             "    p.y = p.y < 0.33 ? -3.0 : (p.y < 0.66 ? -2.0 : -1.0);"
             "    bool2 cmp = %s;"
             "    return half4(cmp.x ? 1.0 : 0.0, cmp.y ? 1.0 : 0.0, 0, 1);"
             "}",
-            fn);
+            type, fn);
 }
 
+template <typename T = float>
 static void plot_bvec(SkCanvas* canvas, const char* fn, const char* label) {
     canvas->save();
 
     draw_label(canvas, label);
 
-    auto [effect, error] = SkRuntimeEffect::Make(make_bvec_sksl(fn));
+    const char* type = std::is_integral<T>::value ? "int" : "float";
+    auto [effect, error] = SkRuntimeEffect::MakeForShader(make_bvec_sksl(type, fn));
     if (!effect) {
         SkDebugf("Error: %s\n", error.c_str());
         return;
     }
 
-    draw_shader(canvas,
-                effect->makeShader(/*uniforms=*/nullptr, /*children=*/nullptr, /*childCount=*/0,
-                                   /*localMatrix=*/nullptr, /*isOpaque=*/false));
+    T uniformData[2] = { -2, -2 };
+    sk_sp<SkData> uniforms = SkData::MakeWithCopy(uniformData, sizeof(uniformData));
+
+    draw_shader(canvas, effect->makeShader(uniforms, /*children=*/{}));
 
     canvas->restore();
     next_column(canvas);
@@ -485,22 +601,22 @@ DEF_SIMPLE_GM(runtime_intrinsics_relational,
     canvas->translate(kPadding, kPadding);
     canvas->save();
 
-    plot_bvec(canvas, "lessThan(p, v1)",                  "lessThan");
-    plot_bvec(canvas, "lessThan(int2(p), int2(v1))",      "lessThan(int)");
-    plot_bvec(canvas, "lessThanEqual(p, v1)",             "lessThanEqual");
-    plot_bvec(canvas, "lessThanEqual(int2(p), int2(v1))", "lessThanEqual(int)");
+    plot_bvec<float>(canvas, "lessThan(p, v1)",            "lessThan");
+    plot_bvec<int>  (canvas, "lessThan(int2(p), v1)",      "lessThan(int)");
+    plot_bvec<float>(canvas, "lessThanEqual(p, v1)",       "lessThanEqual");
+    plot_bvec<int>  (canvas, "lessThanEqual(int2(p), v1)", "lessThanEqual(int)");
     next_row(canvas);
 
-    plot_bvec(canvas, "greaterThan(p, v1)",                  "greaterThan");
-    plot_bvec(canvas, "greaterThan(int2(p), int2(v1))",      "greaterThan(int)");
-    plot_bvec(canvas, "greaterThanEqual(p, v1)",             "greaterThanEqual");
-    plot_bvec(canvas, "greaterThanEqual(int2(p), int2(v1))", "greaterThanEqual(int)");
+    plot_bvec<float>(canvas, "greaterThan(p, v1)",            "greaterThan");
+    plot_bvec<int>  (canvas, "greaterThan(int2(p), v1)",      "greaterThan(int)");
+    plot_bvec<float>(canvas, "greaterThanEqual(p, v1)",       "greaterThanEqual");
+    plot_bvec<int>  (canvas, "greaterThanEqual(int2(p), v1)", "greaterThanEqual(int)");
     next_row(canvas);
 
-    plot_bvec(canvas, "equal(p, v1)",                "equal");
-    plot_bvec(canvas, "equal(int2(p), int2(v1))",    "equal(int)");
-    plot_bvec(canvas, "notEqual(p, v1)",             "notEqual");
-    plot_bvec(canvas, "notEqual(int2(p), int2(v1))", "notEqual(int)");
+    plot_bvec<float>(canvas, "equal(p, v1)",          "equal");
+    plot_bvec<int>  (canvas, "equal(int2(p), v1)",    "equal(int)");
+    plot_bvec<float>(canvas, "notEqual(p, v1)",       "notEqual");
+    plot_bvec<int>  (canvas, "notEqual(int2(p), v1)", "notEqual(int)");
     next_row(canvas);
 
     plot_bvec(canvas, "equal(   lessThanEqual(p, v1), greaterThanEqual(p, v1))", "equal(bvec)");

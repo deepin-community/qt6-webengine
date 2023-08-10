@@ -33,11 +33,12 @@
 
 #include <memory>
 
-#include "base/optional.h"
 #include "base/time/time.h"
+#include "base/unguessable_token.h"
 #include "net/base/ip_endpoint.h"
 #include "net/cert/ct_policy_status.h"
 #include "net/http/http_response_info.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/common/security/security_style.h"
 #include "third_party/blink/public/platform/web_common.h"
 #include "third_party/blink/public/platform/web_string.h"
@@ -49,14 +50,17 @@ enum class FetchResponseSource;
 enum class FetchResponseType : int32_t;
 enum class IPAddressSpace : int32_t;
 class LoadTimingInfo;
-}
+}  // namespace mojom
 }  // namespace network
+
+namespace net {
+class SSLInfo;
+}
 
 namespace blink {
 
 class ResourceResponse;
 class WebHTTPHeaderVisitor;
-class WebHTTPLoadInfo;
 class WebURL;
 
 class WebURLResponse {
@@ -67,83 +71,6 @@ class WebURLResponse {
     kHTTPVersion_1_0,
     kHTTPVersion_1_1,
     kHTTPVersion_2_0
-  };
-
-  struct SignedCertificateTimestamp {
-    SignedCertificateTimestamp() = default;
-    SignedCertificateTimestamp(WebString status,
-                               WebString origin,
-                               WebString log_description,
-                               WebString log_id,
-                               int64_t timestamp,
-                               WebString hash_algorithm,
-                               WebString signature_algorithm,
-                               WebString signature_data)
-        : status(status),
-          origin(origin),
-          log_description(log_description),
-          log_id(log_id),
-          timestamp(timestamp),
-          hash_algorithm(hash_algorithm),
-          signature_algorithm(signature_algorithm),
-          signature_data(signature_data) {}
-    WebString status;
-    WebString origin;
-    WebString log_description;
-    WebString log_id;
-    int64_t timestamp;
-    WebString hash_algorithm;
-    WebString signature_algorithm;
-    WebString signature_data;
-  };
-
-  using SignedCertificateTimestampList = WebVector<SignedCertificateTimestamp>;
-
-  struct WebSecurityDetails {
-    WebSecurityDetails(const WebString& protocol,
-                       const WebString& key_exchange,
-                       const WebString& key_exchange_group,
-                       const WebString& cipher,
-                       const WebString& mac,
-                       const WebString& subject_name,
-                       const WebVector<WebString>& san_list,
-                       const WebString& issuer,
-                       double valid_from,
-                       double valid_to,
-                       const WebVector<WebString>& certificate,
-                       const SignedCertificateTimestampList& sct_list)
-        : protocol(protocol),
-          key_exchange(key_exchange),
-          key_exchange_group(key_exchange_group),
-          cipher(cipher),
-          mac(mac),
-          subject_name(subject_name),
-          san_list(san_list),
-          issuer(issuer),
-          valid_from(valid_from),
-          valid_to(valid_to),
-          certificate(certificate),
-          sct_list(sct_list) {}
-    // All strings are human-readable values.
-    WebString protocol;
-    // keyExchange is the empty string if not applicable for the connection's
-    // protocol.
-    WebString key_exchange;
-    // keyExchangeGroup is the empty string if not applicable for the
-    // connection's key exchange.
-    WebString key_exchange_group;
-    WebString cipher;
-    // mac is the empty string when the connection cipher suite does not
-    // have a separate MAC value (i.e. if the cipher suite is AEAD).
-    WebString mac;
-    WebString subject_name;
-    WebVector<WebString> san_list;
-    WebString issuer;
-    double valid_from;
-    double valid_to;
-    // DER-encoded X509Certificate certificate chain.
-    WebVector<WebString> certificate;
-    SignedCertificateTimestampList sct_list;
   };
 
   BLINK_PLATFORM_EXPORT ~WebURLResponse();
@@ -179,8 +106,6 @@ class WebURLResponse {
   BLINK_PLATFORM_EXPORT void SetLoadTiming(
       const network::mojom::LoadTimingInfo&);
 
-  BLINK_PLATFORM_EXPORT void SetHTTPLoadInfo(const WebHTTPLoadInfo&);
-
   BLINK_PLATFORM_EXPORT base::Time ResponseTime() const;
   BLINK_PLATFORM_EXPORT void SetResponseTime(base::Time);
 
@@ -204,6 +129,9 @@ class WebURLResponse {
   BLINK_PLATFORM_EXPORT WebString HttpStatusText() const;
   BLINK_PLATFORM_EXPORT void SetHttpStatusText(const WebString&);
 
+  BLINK_PLATFORM_EXPORT bool EmittedExtraInfo() const;
+  BLINK_PLATFORM_EXPORT void SetEmittedExtraInfo(bool);
+
   BLINK_PLATFORM_EXPORT WebString HttpHeaderField(const WebString& name) const;
   BLINK_PLATFORM_EXPORT void SetHttpHeaderField(const WebString& name,
                                                 const WebString& value);
@@ -212,23 +140,14 @@ class WebURLResponse {
   BLINK_PLATFORM_EXPORT void ClearHttpHeaderField(const WebString& name);
   BLINK_PLATFORM_EXPORT void VisitHttpHeaderFields(WebHTTPHeaderVisitor*) const;
 
-  BLINK_PLATFORM_EXPORT int64_t AppCacheID() const;
-  BLINK_PLATFORM_EXPORT void SetAppCacheID(int64_t);
-
-  BLINK_PLATFORM_EXPORT WebURL AppCacheManifestURL() const;
-  BLINK_PLATFORM_EXPORT void SetAppCacheManifestURL(const WebURL&);
-
   BLINK_PLATFORM_EXPORT void SetHasMajorCertificateErrors(bool);
-  BLINK_PLATFORM_EXPORT void SetCTPolicyCompliance(net::ct::CTPolicyCompliance);
   BLINK_PLATFORM_EXPORT void SetIsLegacyTLSVersion(bool);
   BLINK_PLATFORM_EXPORT void SetHasRangeRequested(bool);
   BLINK_PLATFORM_EXPORT void SetTimingAllowPassed(bool);
 
   BLINK_PLATFORM_EXPORT void SetSecurityStyle(SecurityStyle);
 
-  BLINK_PLATFORM_EXPORT void SetSecurityDetails(const WebSecurityDetails&);
-  BLINK_PLATFORM_EXPORT base::Optional<WebSecurityDetails>
-  SecurityDetailsForTesting();
+  BLINK_PLATFORM_EXPORT void SetSSLInfo(const net::SSLInfo&);
 
   BLINK_PLATFORM_EXPORT void SetAsyncRevalidationRequested(bool);
   BLINK_PLATFORM_EXPORT void SetNetworkAccessed(bool);
@@ -245,20 +164,17 @@ class WebURLResponse {
   BLINK_PLATFORM_EXPORT bool WasFetchedViaSPDY() const;
   BLINK_PLATFORM_EXPORT void SetWasFetchedViaSPDY(bool);
 
-  // Flag whether this request was loaded via a ServiceWorker. See
-  // network::ResourceResponseInfo::was_fetched_via_service_worker for details.
+  // Flag whether this request was loaded via a ServiceWorker.
+  // See network.mojom.URLResponseHead.was_fetched_via_service_worker.
   BLINK_PLATFORM_EXPORT bool WasFetchedViaServiceWorker() const;
   BLINK_PLATFORM_EXPORT void SetWasFetchedViaServiceWorker(bool);
 
-  // Set when this request was loaded via a ServiceWorker. See
-  // network::ResourceResponseInfo::service_worker_response_source for details.
+  // Set when this request was loaded via a ServiceWorker.
+  // See network.mojom.URLResponseHead.service_worker_response_source.
   BLINK_PLATFORM_EXPORT network::mojom::FetchResponseSource
   GetServiceWorkerResponseSource() const;
   BLINK_PLATFORM_EXPORT void SetServiceWorkerResponseSource(
       network::mojom::FetchResponseSource);
-
-  // See network::ResourceResponseInfo::was_fallback_required_by_service_worker.
-  BLINK_PLATFORM_EXPORT void SetWasFallbackRequiredByServiceWorker(bool);
 
   // https://fetch.spec.whatwg.org/#concept-response-type
   BLINK_PLATFORM_EXPORT void SetType(network::mojom::FetchResponseType);
@@ -271,8 +187,8 @@ class WebURLResponse {
   BLINK_PLATFORM_EXPORT int64_t GetPadding() const;
 
   // The URL list of the Response object the ServiceWorker passed to
-  // respondWith(). See
-  // network::ResourceResponseInfo::url_list_via_service_worker for details.
+  // respondWith().
+  // See network.mojom.URLResponseHead.url_list_via_service_worker.
   BLINK_PLATFORM_EXPORT void SetUrlListViaServiceWorker(
       const WebVector<WebURL>&);
   // Returns true if the URL list is not empty.
@@ -290,7 +206,7 @@ class WebURLResponse {
       const WebVector<WebString>&);
 
   // Whether service worker navigation preload occurred.
-  // See network::ResourceResponseInfo::did_navigation_preload for details.
+  // See network.mojom.URLResponseHead.did_navigation_preload.
   BLINK_PLATFORM_EXPORT void SetDidServiceWorkerNavigationPreload(bool);
 
   // Remote IP endpoint of the socket which fetched this resource.
@@ -301,11 +217,21 @@ class WebURLResponse {
   BLINK_PLATFORM_EXPORT network::mojom::IPAddressSpace AddressSpace() const;
   BLINK_PLATFORM_EXPORT void SetAddressSpace(network::mojom::IPAddressSpace);
 
+  BLINK_PLATFORM_EXPORT network::mojom::IPAddressSpace ClientAddressSpace()
+      const;
+  BLINK_PLATFORM_EXPORT void SetClientAddressSpace(
+      network::mojom::IPAddressSpace);
+
   // ALPN negotiated protocol of the socket which fetched this resource.
   BLINK_PLATFORM_EXPORT bool WasAlpnNegotiated() const;
   BLINK_PLATFORM_EXPORT void SetWasAlpnNegotiated(bool);
   BLINK_PLATFORM_EXPORT WebString AlpnNegotiatedProtocol() const;
   BLINK_PLATFORM_EXPORT void SetAlpnNegotiatedProtocol(const WebString&);
+
+  BLINK_PLATFORM_EXPORT bool HasAuthorizationCoveredByWildcardOnPreflight()
+      const;
+  BLINK_PLATFORM_EXPORT void SetHasAuthorizationCoveredByWildcardOnPreflight(
+      bool);
 
   // Whether the response could use alternate protocol.
   BLINK_PLATFORM_EXPORT bool WasAlternateProtocolAvailable() const;
@@ -331,7 +257,7 @@ class WebURLResponse {
   BLINK_PLATFORM_EXPORT void SetWasInPrefetchCache(bool);
   BLINK_PLATFORM_EXPORT void SetWasCookieInRequest(bool);
   BLINK_PLATFORM_EXPORT void SetRecursivePrefetchToken(
-      const base::Optional<base::UnguessableToken>&);
+      const absl::optional<base::UnguessableToken>&);
 
   // Whether this resource is from a MHTML archive.
   BLINK_PLATFORM_EXPORT bool FromArchive() const;
@@ -345,9 +271,17 @@ class WebURLResponse {
   BLINK_PLATFORM_EXPORT void SetWebBundleURL(const WebURL&);
 
   BLINK_PLATFORM_EXPORT void SetAuthChallengeInfo(
-      const base::Optional<net::AuthChallengeInfo>&);
-  BLINK_PLATFORM_EXPORT const base::Optional<net::AuthChallengeInfo>&
+      const absl::optional<net::AuthChallengeInfo>&);
+  BLINK_PLATFORM_EXPORT const absl::optional<net::AuthChallengeInfo>&
   AuthChallengeInfo() const;
+
+  // The request's |includeCredentials| value from the "HTTP-network fetch"
+  // algorithm.
+  // See: https://fetch.spec.whatwg.org/#concept-http-network-fetch
+  BLINK_PLATFORM_EXPORT void SetRequestIncludeCredentials(bool);
+  BLINK_PLATFORM_EXPORT bool RequestIncludeCredentials() const;
+
+  BLINK_PLATFORM_EXPORT void SetWasFetchedViaCache(bool);
 
 #if INSIDE_BLINK
  protected:
@@ -368,4 +302,4 @@ class WebURLResponse {
 
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_PUBLIC_PLATFORM_WEB_URL_RESPONSE_H_

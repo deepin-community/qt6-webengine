@@ -78,8 +78,8 @@ class WebHistoryItem {
 
   BLINK_EXPORT WebString GetReferrer() const;
   BLINK_EXPORT network::mojom::ReferrerPolicy GetReferrerPolicy() const;
-  BLINK_EXPORT void SetReferrer(const WebString&,
-                                network::mojom::ReferrerPolicy);
+  BLINK_EXPORT void SetReferrer(const WebString&);
+  BLINK_EXPORT void SetReferrerPolicy(network::mojom::ReferrerPolicy);
 
   BLINK_EXPORT const WebString& Target() const;
   BLINK_EXPORT void SetTarget(const WebString&);
@@ -121,6 +121,15 @@ class WebHistoryItem {
   BLINK_EXPORT ScrollAnchorData GetScrollAnchorData() const;
   BLINK_EXPORT void SetScrollAnchorData(const ScrollAnchorData&);
 
+  BLINK_EXPORT WebString GetNavigationApiKey() const;
+  BLINK_EXPORT void SetNavigationApiKey(const WebString&);
+
+  BLINK_EXPORT WebString GetNavigationApiId() const;
+  BLINK_EXPORT void SetNavigationApiId(const WebString&);
+
+  BLINK_EXPORT WebSerializedScriptValue GetNavigationApiState() const;
+  BLINK_EXPORT void SetNavigationApiState(const WebSerializedScriptValue&);
+
 #if INSIDE_BLINK
   BLINK_EXPORT WebHistoryItem(HistoryItem*);
   BLINK_EXPORT WebHistoryItem& operator=(HistoryItem*);
@@ -135,4 +144,4 @@ class WebHistoryItem {
 
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_PUBLIC_WEB_WEB_HISTORY_ITEM_H_

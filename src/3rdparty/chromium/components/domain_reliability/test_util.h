@@ -8,6 +8,9 @@
 #include <memory>
 
 #include "base/callback_forward.h"
+#include "base/memory/raw_ptr.h"
+#include "base/time/tick_clock.h"
+#include "base/time/time.h"
 #include "components/domain_reliability/config.h"
 #include "components/domain_reliability/scheduler.h"
 #include "components/domain_reliability/uploader.h"
@@ -70,6 +73,19 @@ class MockUploader : public DomainReliabilityUploader {
   bool discard_uploads_;
 };
 
+class MockTime;
+
+class MockTickClock : public base::TickClock {
+ public:
+  explicit MockTickClock(MockTime* mock_time) : mock_time_(mock_time) {}
+  ~MockTickClock() override = default;
+  // base::TickClock implementation
+  base::TimeTicks NowTicks() const override;
+
+ private:
+  raw_ptr<MockTime> mock_time_;
+};
+
 class MockTime : public MockableTime {
  public:
   MockTime();
@@ -83,6 +99,7 @@ class MockTime : public MockableTime {
   base::Time Now() const override;
   base::TimeTicks NowTicks() const override;
   std::unique_ptr<MockableTime::Timer> CreateTimer() override;
+  const base::TickClock* AsTickClock() const override;
 
   // Pretends that |delta| has passed, and runs tasks that would've happened
   // during that interval (with |Now()| returning proper values while they
@@ -125,6 +142,7 @@ class MockTime : public MockableTime {
   base::TimeTicks epoch_ticks_;
   int task_sequence_number_;
   TaskMap tasks_;
+  MockTickClock tick_clock_;
 };
 
 std::unique_ptr<DomainReliabilityConfig> MakeTestConfig();

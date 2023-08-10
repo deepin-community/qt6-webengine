@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "base/check.h"
+#include "base/feature_list.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/threading/platform_thread.h"
@@ -18,96 +19,147 @@
 namespace base {
 namespace internal {
 
-// BaseTimerTaskInternal is a simple delegate for scheduling a callback to Timer
-// on the current sequence. It also handles the following edge cases:
-// - deleted by the task runner.
-// - abandoned (orphaned) by Timer.
-class BaseTimerTaskInternal {
+namespace {
+
+// This feature controls whether or not the scheduled task is always abandoned
+// when the timer is stopped or reset. The re-use of the scheduled task is an
+// optimization that ensures a timer can not leave multiple canceled tasks in
+// the task queue.
+constexpr Feature kAlwaysAbandonScheduledTask{"AlwaysAbandonScheduledTask",
+                                              FEATURE_DISABLED_BY_DEFAULT};
+
+// Cache of the state of the kAlwaysAbandonScheduledTask feature. This avoids
+// the need to constantly query its enabled state through
+// FeatureList::IsEnabled().
+bool g_is_always_abandon_scheduled_task_enabled =
+    kAlwaysAbandonScheduledTask.default_state == FEATURE_ENABLED_BY_DEFAULT;
+
+}  // namespace
+
+// TaskDestructionDetector's role is to detect when the scheduled task is
+// deleted without being executed. It can be disabled when the timer no longer
+// wants to be notified.
+class TaskDestructionDetector {
  public:
-  explicit BaseTimerTaskInternal(TimerBase* timer) : timer_(timer) {}
+  explicit TaskDestructionDetector(TimerBase* timer) : timer_(timer) {}
 
-  ~BaseTimerTaskInternal() {
-    // This task may be getting cleared because the task runner has been
-    // destructed.  If so, don't leave Timer with a dangling pointer
-    // to this.
+  TaskDestructionDetector(const TaskDestructionDetector&) = delete;
+  TaskDestructionDetector& operator=(const TaskDestructionDetector&) = delete;
+
+  ~TaskDestructionDetector() {
+    // If this instance is getting destroyed before it was disabled, notify the
+    // timer.
     if (timer_)
-      timer_->AbandonAndStop();
+      timer_->OnTaskDestroyed();
   }
 
-  void Run() {
-    // |timer_| is nullptr if we were abandoned.
-    if (!timer_)
-      return;
-
-    // |this| will be deleted by the task runner, so Timer needs to forget us:
-    timer_->scheduled_task_ = nullptr;
-
-    // Although Timer should not call back into |this|, let's clear |timer_|
-    // first to be pedantic.
-    TimerBase* timer = timer_;
-    timer_ = nullptr;
-    timer->RunScheduledTask();
-  }
-
-  // The task remains in the queue, but nothing will happen when it runs.
-  void Abandon() { timer_ = nullptr; }
+  // Disables this instance so that the timer is no longer notified in the
+  // destructor.
+  void Disable() { timer_ = nullptr; }
 
  private:
+  // `timer_` is not a raw_ptr<...> for performance reasons (based on analysis
+  // of sampling profiler data and tab_search:top100:2020).
   TimerBase* timer_;
-
-  DISALLOW_COPY_AND_ASSIGN(BaseTimerTaskInternal);
 };
 
-TimerBase::TimerBase() : TimerBase(nullptr) {}
+// static
+void TimerBase::InitializeFeatures() {
+  g_is_always_abandon_scheduled_task_enabled =
+      FeatureList::IsEnabled(kAlwaysAbandonScheduledTask);
+}
 
-TimerBase::TimerBase(const TickClock* tick_clock)
-    : scheduled_task_(nullptr), tick_clock_(tick_clock), is_running_(false) {
+TimerBase::TimerBase(const Location& posted_from)
+    : posted_from_(posted_from), task_destruction_detector_(nullptr) {
   // It is safe for the timer to be created on a different thread/sequence than
   // the one from which the timer APIs are called. The first call to the
   // checker's CalledOnValidSequence() method will re-bind the checker, and
   // later calls will verify that the same task runner is used.
-  origin_sequence_checker_.DetachFromSequence();
-}
-
-TimerBase::TimerBase(const Location& posted_from, TimeDelta delay)
-    : TimerBase(posted_from, delay, nullptr) {}
-
-TimerBase::TimerBase(const Location& posted_from,
-                     TimeDelta delay,
-                     const TickClock* tick_clock)
-    : scheduled_task_(nullptr),
-      posted_from_(posted_from),
-      delay_(delay),
-      tick_clock_(tick_clock),
-      is_running_(false) {
-  // See comment in other constructor.
-  origin_sequence_checker_.DetachFromSequence();
+  DETACH_FROM_SEQUENCE(sequence_checker_);
 }
 
 TimerBase::~TimerBase() {
-  DCHECK(origin_sequence_checker_.CalledOnValidSequence());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   AbandonScheduledTask();
 }
 
 bool TimerBase::IsRunning() const {
-  DCHECK(origin_sequence_checker_.CalledOnValidSequence());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   return is_running_;
 }
 
-TimeDelta TimerBase::GetCurrentDelay() const {
-  DCHECK(origin_sequence_checker_.CalledOnValidSequence());
-  return delay_;
-}
-
 void TimerBase::SetTaskRunner(scoped_refptr<SequencedTaskRunner> task_runner) {
-  DCHECK(origin_sequence_checker_.CalledOnValidSequence());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(task_runner->RunsTasksInCurrentSequence());
   DCHECK(!IsRunning());
   task_runner_.swap(task_runner);
 }
 
-void TimerBase::StartInternal(const Location& posted_from, TimeDelta delay) {
-  DCHECK(origin_sequence_checker_.CalledOnValidSequence());
+scoped_refptr<SequencedTaskRunner> TimerBase::GetTaskRunner() {
+  return task_runner_ ? task_runner_ : SequencedTaskRunnerHandle::Get();
+}
+
+void TimerBase::OnTaskDestroyed() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  DCHECK(task_destruction_detector_);
+  task_destruction_detector_ = nullptr;
+
+  delayed_task_handle_.CancelTask();
+  is_running_ = false;
+
+  // It's safe to destroy or restart Timer on another sequence after it has been
+  // stopped.
+  DETACH_FROM_SEQUENCE(sequence_checker_);
+
+  OnStop();
+  // No more member accesses here: |this| could be deleted after OnStop() call.
+}
+
+void TimerBase::Stop() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  is_running_ = false;
+  AbandonScheduledTask();
+
+  OnStop();
+  // No more member accesses here: |this| could be deleted after Stop() call.
+}
+
+void TimerBase::AbandonScheduledTask() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  if (task_destruction_detector_) {
+    task_destruction_detector_->Disable();
+    task_destruction_detector_ = nullptr;
+
+    DCHECK(delayed_task_handle_.IsValid());
+    delayed_task_handle_.CancelTask();
+  }
+
+  // It's safe to destroy or restart Timer on another sequence after the task is
+  // abandoned.
+  DETACH_FROM_SEQUENCE(sequence_checker_);
+}
+
+DelayTimerBase::DelayTimerBase(const TickClock* tick_clock)
+    : tick_clock_(tick_clock) {}
+
+DelayTimerBase::DelayTimerBase(const Location& posted_from,
+                               TimeDelta delay,
+                               const TickClock* tick_clock)
+    : TimerBase(posted_from), delay_(delay), tick_clock_(tick_clock) {}
+
+DelayTimerBase::~DelayTimerBase() = default;
+
+TimeDelta DelayTimerBase::GetCurrentDelay() const {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  return delay_;
+}
+
+void DelayTimerBase::StartInternal(const Location& posted_from,
+                                   TimeDelta delay) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   posted_from_ = posted_from;
   delay_ = delay;
@@ -115,96 +167,102 @@ void TimerBase::StartInternal(const Location& posted_from, TimeDelta delay) {
   Reset();
 }
 
-void TimerBase::Stop() {
-  // TODO(gab): Enable this when it's no longer called racily from
-  // RunScheduledTask(): https://crbug.com/587199.
-  // DCHECK(origin_sequence_checker_.CalledOnValidSequence());
+void DelayTimerBase::AbandonAndStop() {
+  // Note: Stop() is more or less re-implemented here because it cannot be
+  // called without rebinding the |sequence_checker_| to the current sequence
+  // after the call to AbandonScheduledTask().
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   is_running_ = false;
 
-  // It's safe to destroy or restart Timer on another sequence after Stop().
-  origin_sequence_checker_.DetachFromSequence();
+  AbandonScheduledTask();
+
+  OnStop();
+  // No more member accesses here: |this| could be deleted at this point.
+}
+
+void DelayTimerBase::Reset() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  EnsureNonNullUserTask();
+
+  if (!g_is_always_abandon_scheduled_task_enabled) {
+    // If there's no pending task, start one up and return.
+    if (!task_destruction_detector_) {
+      ScheduleNewTask(delay_);
+      return;
+    }
+
+    // Set the new |desired_run_time_|.
+    if (delay_ > Microseconds(0))
+      desired_run_time_ = Now() + delay_;
+    else
+      desired_run_time_ = TimeTicks();
+
+    // We can use the existing scheduled task if it arrives before the new
+    // |desired_run_time_|.
+    if (desired_run_time_ >= scheduled_run_time_) {
+      is_running_ = true;
+      return;
+    }
+  }
+
+  // We can't reuse the |scheduled_task_|, so abandon it and post a new one.
+  AbandonScheduledTask();
+  ScheduleNewTask(delay_);
+}
+
+// TODO(1262205): Merge with TimerBase::Stop() once the "always abandon
+// scheduled task" feature is launched.
+void DelayTimerBase::Stop() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  is_running_ = false;
+  if (g_is_always_abandon_scheduled_task_enabled)
+    AbandonScheduledTask();
 
   OnStop();
   // No more member accesses here: |this| could be deleted after Stop() call.
 }
 
-void TimerBase::Reset() {
-  DCHECK(origin_sequence_checker_.CalledOnValidSequence());
+void DelayTimerBase::ScheduleNewTask(TimeDelta delay) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  DCHECK(!task_destruction_detector_);
+  is_running_ = true;
+  auto task_destruction_detector =
+      std::make_unique<TaskDestructionDetector>(this);
+  task_destruction_detector_ = task_destruction_detector.get();
 
-  // If there's no pending task, start one up and return.
-  if (!scheduled_task_) {
-    PostNewScheduledTask(delay_);
-    return;
-  }
+  // Ignore negative deltas.
+  // TODO(pmonette): Fix callers providing negative deltas and ban passing them.
+  if (delay < TimeDelta())
+    delay = TimeDelta();
 
-  // Set the new |desired_run_time_|.
-  if (delay_ > TimeDelta::FromMicroseconds(0))
-    desired_run_time_ = Now() + delay_;
-  else
-    desired_run_time_ = TimeTicks();
-
-  // We can use the existing scheduled task if it arrives before the new
-  // |desired_run_time_|.
-  if (desired_run_time_ >= scheduled_run_time_) {
-    is_running_ = true;
-    return;
-  }
-
-  // We can't reuse the |scheduled_task_|, so abandon it and post a new one.
-  AbandonScheduledTask();
-  PostNewScheduledTask(delay_);
+  delayed_task_handle_ = GetTaskRunner()->PostCancelableDelayedTask(
+      base::subtle::PostDelayedTaskPassKey(), posted_from_,
+      BindOnce(&DelayTimerBase::OnScheduledTaskInvoked, Unretained(this),
+               std::move(task_destruction_detector)),
+      delay);
+  scheduled_run_time_ = desired_run_time_ = Now() + delay;
 }
 
-TimeTicks TimerBase::Now() const {
-  // TODO(gab): Enable this when it's no longer called racily from
-  // RunScheduledTask(): https://crbug.com/587199.
-  // DCHECK(origin_sequence_checker_.CalledOnValidSequence());
+TimeTicks DelayTimerBase::Now() const {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   return tick_clock_ ? tick_clock_->NowTicks() : TimeTicks::Now();
 }
 
-void TimerBase::PostNewScheduledTask(TimeDelta delay) {
-  // TODO(gab): Enable this when it's no longer called racily from
-  // RunScheduledTask(): https://crbug.com/587199.
-  // DCHECK(origin_sequence_checker_.CalledOnValidSequence());
-  DCHECK(!scheduled_task_);
-  is_running_ = true;
-  scheduled_task_ = new BaseTimerTaskInternal(this);
-  if (delay > TimeDelta::FromMicroseconds(0)) {
-    // TODO(gab): Posting BaseTimerTaskInternal::Run to another sequence makes
-    // this code racy. https://crbug.com/587199
-    GetTaskRunner()->PostDelayedTask(
-        posted_from_,
-        BindOnce(&BaseTimerTaskInternal::Run, Owned(scheduled_task_)), delay);
-    scheduled_run_time_ = desired_run_time_ = Now() + delay;
-  } else {
-    GetTaskRunner()->PostTask(
-        posted_from_,
-        BindOnce(&BaseTimerTaskInternal::Run, Owned(scheduled_task_)));
-    scheduled_run_time_ = desired_run_time_ = TimeTicks();
-  }
-}
+void DelayTimerBase::OnScheduledTaskInvoked(
+    std::unique_ptr<TaskDestructionDetector> task_destruction_detector) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  DCHECK(!delayed_task_handle_.IsValid());
 
-scoped_refptr<SequencedTaskRunner> TimerBase::GetTaskRunner() {
-  return task_runner_.get() ? task_runner_ : SequencedTaskRunnerHandle::Get();
-}
+  // The scheduled task is currently running so its destruction detector is no
+  // longer needed.
+  task_destruction_detector->Disable();
+  task_destruction_detector_ = nullptr;
+  task_destruction_detector.reset();
 
-void TimerBase::AbandonScheduledTask() {
-  // TODO(gab): Enable this when it's no longer called racily from
-  // RunScheduledTask() -> Stop(): https://crbug.com/587199.
-  // DCHECK(origin_sequence_checker_.CalledOnValidSequence());
-  if (scheduled_task_) {
-    scheduled_task_->Abandon();
-    scheduled_task_ = nullptr;
-  }
-}
-
-void TimerBase::RunScheduledTask() {
-  // TODO(gab): Enable this when it's no longer called racily:
-  // https://crbug.com/587199.
-  // DCHECK(origin_sequence_checker_.CalledOnValidSequence());
-
-  // Task may have been disabled.
+  // The timer may have been stopped.
   if (!is_running_)
     return;
 
@@ -217,7 +275,7 @@ void TimerBase::RunScheduledTask() {
     // task if the |desired_run_time_| is in the future.
     if (desired_run_time_ > now) {
       // Post a new task to span the remaining time.
-      PostNewScheduledTask(desired_run_time_ - now);
+      ScheduleNewTask(desired_run_time_ - now);
       return;
     }
   }
@@ -230,7 +288,7 @@ void TimerBase::RunScheduledTask() {
 
 OneShotTimer::OneShotTimer() = default;
 OneShotTimer::OneShotTimer(const TickClock* tick_clock)
-    : internal::TimerBase(tick_clock) {}
+    : internal::DelayTimerBase(tick_clock) {}
 OneShotTimer::~OneShotTimer() = default;
 
 void OneShotTimer::Start(const Location& posted_from,
@@ -241,7 +299,7 @@ void OneShotTimer::Start(const Location& posted_from,
 }
 
 void OneShotTimer::FireNow() {
-  DCHECK(origin_sequence_checker_.CalledOnValidSequence());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(!task_runner_) << "FireNow() is incompatible with SetTaskRunner()";
   DCHECK(IsRunning());
 
@@ -264,21 +322,25 @@ void OneShotTimer::RunUserTask() {
   // No more member accesses here: |this| could be deleted at this point.
 }
 
+void OneShotTimer::EnsureNonNullUserTask() {
+  DCHECK(user_task_);
+}
+
 RepeatingTimer::RepeatingTimer() = default;
 RepeatingTimer::RepeatingTimer(const TickClock* tick_clock)
-    : internal::TimerBase(tick_clock) {}
+    : internal::DelayTimerBase(tick_clock) {}
 RepeatingTimer::~RepeatingTimer() = default;
 
 RepeatingTimer::RepeatingTimer(const Location& posted_from,
                                TimeDelta delay,
                                RepeatingClosure user_task)
-    : internal::TimerBase(posted_from, delay),
+    : internal::DelayTimerBase(posted_from, delay),
       user_task_(std::move(user_task)) {}
 RepeatingTimer::RepeatingTimer(const Location& posted_from,
                                TimeDelta delay,
                                RepeatingClosure user_task,
                                const TickClock* tick_clock)
-    : internal::TimerBase(posted_from, delay, tick_clock),
+    : internal::DelayTimerBase(posted_from, delay, tick_clock),
       user_task_(std::move(user_task)) {}
 
 void RepeatingTimer::Start(const Location& posted_from,
@@ -293,26 +355,30 @@ void RepeatingTimer::RunUserTask() {
   // Make a local copy of the task to run in case the task destroy the timer
   // instance.
   RepeatingClosure task = user_task_;
-  PostNewScheduledTask(GetCurrentDelay());
+  ScheduleNewTask(GetCurrentDelay());
   task.Run();
   // No more member accesses here: |this| could be deleted at this point.
 }
 
+void RepeatingTimer::EnsureNonNullUserTask() {
+  DCHECK(user_task_);
+}
+
 RetainingOneShotTimer::RetainingOneShotTimer() = default;
 RetainingOneShotTimer::RetainingOneShotTimer(const TickClock* tick_clock)
-    : internal::TimerBase(tick_clock) {}
+    : internal::DelayTimerBase(tick_clock) {}
 RetainingOneShotTimer::~RetainingOneShotTimer() = default;
 
 RetainingOneShotTimer::RetainingOneShotTimer(const Location& posted_from,
                                              TimeDelta delay,
                                              RepeatingClosure user_task)
-    : internal::TimerBase(posted_from, delay),
+    : internal::DelayTimerBase(posted_from, delay),
       user_task_(std::move(user_task)) {}
 RetainingOneShotTimer::RetainingOneShotTimer(const Location& posted_from,
                                              TimeDelta delay,
                                              RepeatingClosure user_task,
                                              const TickClock* tick_clock)
-    : internal::TimerBase(posted_from, delay, tick_clock),
+    : internal::DelayTimerBase(posted_from, delay, tick_clock),
       user_task_(std::move(user_task)) {}
 
 void RetainingOneShotTimer::Start(const Location& posted_from,
@@ -329,6 +395,74 @@ void RetainingOneShotTimer::RunUserTask() {
   RepeatingClosure task = user_task_;
   Stop();
   task.Run();
+  // No more member accesses here: |this| could be deleted at this point.
+}
+
+void RetainingOneShotTimer::EnsureNonNullUserTask() {
+  DCHECK(user_task_);
+}
+
+DeadlineTimer::DeadlineTimer() = default;
+DeadlineTimer::~DeadlineTimer() = default;
+
+void DeadlineTimer::Start(const Location& posted_from,
+                          TimeTicks deadline,
+                          OnceClosure user_task,
+                          ExactDeadline exact) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  user_task_ = std::move(user_task);
+  posted_from_ = posted_from;
+  subtle::DelayPolicy delay_policy =
+      exact ? subtle::DelayPolicy::kPrecise
+            : subtle::DelayPolicy::kFlexiblePreferEarly;
+
+  ScheduleNewTask(deadline, delay_policy);
+}
+
+void DeadlineTimer::OnStop() {
+  user_task_.Reset();
+  // No more member accesses here: |this| could be deleted after freeing
+  // |user_task_|.
+}
+
+void DeadlineTimer::RunUserTask() {
+  // Make a local copy of the task to run. The Stop method will reset the
+  // |user_task_| member.
+  OnceClosure task = std::move(user_task_);
+  Stop();
+  std::move(task).Run();
+  // No more member accesses here: |this| could be deleted at this point.
+}
+
+void DeadlineTimer::ScheduleNewTask(TimeTicks deadline,
+                                    subtle::DelayPolicy delay_policy) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  DCHECK(!task_destruction_detector_);
+  is_running_ = true;
+  auto task_destruction_detector =
+      std::make_unique<internal::TaskDestructionDetector>(this);
+  task_destruction_detector_ = task_destruction_detector.get();
+
+  delayed_task_handle_ = GetTaskRunner()->PostCancelableDelayedTaskAt(
+      base::subtle::PostDelayedTaskPassKey(), posted_from_,
+      BindOnce(&DeadlineTimer::OnScheduledTaskInvoked, Unretained(this),
+               std::move(task_destruction_detector)),
+      deadline, delay_policy);
+}
+
+void DeadlineTimer::OnScheduledTaskInvoked(
+    std::unique_ptr<internal::TaskDestructionDetector>
+        task_destruction_detector) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  DCHECK(!delayed_task_handle_.IsValid());
+
+  // The scheduled task is currently running so its destruction detector is no
+  // longer needed.
+  task_destruction_detector->Disable();
+  task_destruction_detector_ = nullptr;
+  task_destruction_detector.reset();
+
+  RunUserTask();
   // No more member accesses here: |this| could be deleted at this point.
 }
 

@@ -13,7 +13,7 @@
 
 #include "base/callback.h"
 #include "base/gtest_prod_util.h"
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "cc/input/touch_action.h"
@@ -32,8 +32,13 @@
 #include "third_party/blink/public/mojom/frame/intrinsic_sizing_info.mojom-forward.h"
 #include "third_party/blink/public/mojom/frame/viewport_intersection_state.mojom-forward.h"
 #include "third_party/blink/public/mojom/input/input_event_result.mojom-shared.h"
+#include "third_party/blink/public/mojom/widget/record_content_to_visible_time_request.mojom-forward.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/native_widget_types.h"
+
+#if BUILDFLAG(IS_MAC)
+#include "third_party/blink/public/mojom/webshare/webshare.mojom.h"
+#endif  // BUILDFLAG(IS_MAC)
 
 namespace content {
 class CrossProcessFrameConnector;
@@ -55,9 +60,15 @@ class CONTENT_EXPORT RenderWidgetHostViewChildFrame
       public RenderFrameMetadataProvider::Observer,
       public viz::HostFrameSinkClient {
  public:
+  // TODO(crbug.com/1182855): Pass multi-screen info from the parent.
   static RenderWidgetHostViewChildFrame* Create(
       RenderWidgetHost* widget,
-      const blink::ScreenInfo& screen_info);
+      const display::ScreenInfos& parent_screen_infos);
+
+  RenderWidgetHostViewChildFrame(const RenderWidgetHostViewChildFrame&) =
+      delete;
+  RenderWidgetHostViewChildFrame& operator=(
+      const RenderWidgetHostViewChildFrame&) = delete;
 
   void SetFrameConnector(CrossProcessFrameConnector* frame_connector);
 
@@ -77,7 +88,6 @@ class CONTENT_EXPORT RenderWidgetHostViewChildFrame
       const gfx::Size& output_size,
       base::OnceCallback<void(const SkBitmap&)> callback) override;
   void EnsureSurfaceSynchronizedForWebTest() override;
-  void Show() override;
   void Hide() override;
   bool IsShowing() override;
   void WasUnOccluded() override;
@@ -95,13 +105,19 @@ class CONTENT_EXPORT RenderWidgetHostViewChildFrame
   uint32_t GetCaptureSequenceNumber() const override;
   gfx::Size GetCompositorViewportPixelSize() override;
   void InitAsPopup(RenderWidgetHostView* parent_host_view,
-                   const gfx::Rect& bounds) override;
+                   const gfx::Rect& bounds,
+                   const gfx::Rect& anchor_rect) override;
   void UpdateCursor(const WebCursor& cursor) override;
+  void UpdateScreenInfo() override;
   void SendInitialPropertiesIfNeeded() override;
   void SetIsLoading(bool is_loading) override;
   void RenderProcessGone() override;
+  void ShowWithVisibility(PageVisibilityState page_visibility) override;
   void Destroy() override;
-  void SetTooltipText(const base::string16& tooltip_text) override;
+  void UpdateTooltipUnderCursor(const std::u16string& tooltip_text) override;
+  void UpdateTooltipFromKeyboard(const std::u16string& tooltip_text,
+                                 const gfx::Rect& bounds) override;
+  void ClearKeyboardTriggeredTooltip() override;
   void GestureEventAck(const blink::WebGestureEvent& event,
                        blink::mojom::InputEventResultState ack_result) override;
   // Since the URL of content rendered by this class is not displayed in
@@ -141,17 +157,22 @@ class CONTENT_EXPORT RenderWidgetHostViewChildFrame
       override;
   bool IsRenderWidgetHostViewChildFrame() override;
 
-#if defined(OS_MAC)
+#if BUILDFLAG(IS_MAC)
   // RenderWidgetHostView implementation.
   void SetActive(bool active) override;
   void ShowDefinitionForSelection() override;
   void SpeakSelection() override;
   void SetWindowFrameInScreen(const gfx::Rect& rect) override;
-#endif  // defined(OS_MAC)
+  void ShowSharePicker(
+      const std::string& title,
+      const std::string& text,
+      const std::string& url,
+      const std::vector<std::string>& file_paths,
+      blink::mojom::ShareService::ShareCallback callback) override;
+#endif  // BUILDFLAG(IS_MAC)
 
   blink::mojom::InputEventResultState FilterInputEvent(
       const blink::WebInputEvent& input_event) override;
-  void GetScreenInfo(blink::ScreenInfo* screen_info) override;
   void EnableAutoResize(const gfx::Size& min_size,
                         const gfx::Size& max_size) override;
   void DisableAutoResize(const gfx::Size& new_size) override;
@@ -186,7 +207,7 @@ class CONTENT_EXPORT RenderWidgetHostViewChildFrame
 
   void UpdateViewportIntersection(
       const blink::mojom::ViewportIntersectionState& intersection_state,
-      const base::Optional<blink::VisualProperties>& visual_properties);
+      const absl::optional<blink::VisualProperties>& visual_properties);
 
   // TODO(sunxd): Rename SetIsInert to UpdateIsInert.
   void SetIsInert();
@@ -204,8 +225,9 @@ class CONTENT_EXPORT RenderWidgetHostViewChildFrame
   FRIEND_TEST_ALL_PREFIXES(RenderWidgetHostViewChildFrameTest,
                            ForwardsBeginFrameAcks);
 
-  explicit RenderWidgetHostViewChildFrame(RenderWidgetHost* widget,
-                                          const blink::ScreenInfo& screen_info);
+  RenderWidgetHostViewChildFrame(
+      RenderWidgetHost* widget,
+      const display::ScreenInfos& parent_screen_infos);
   void Init();
 
   // Sets |parent_frame_sink_id_| and registers frame sink hierarchy. If the
@@ -219,9 +241,14 @@ class CONTENT_EXPORT RenderWidgetHostViewChildFrame
 
   // RenderWidgetHostViewBase:
   void UpdateBackgroundColor() override;
-  base::Optional<DisplayFeature> GetDisplayFeature() override;
+  absl::optional<DisplayFeature> GetDisplayFeature() override;
   void SetDisplayFeatureForTesting(
       const DisplayFeature* display_feature) override;
+  void NotifyHostAndDelegateOnWasShown(
+      blink::mojom::RecordContentToVisibleTimeRequestPtr) final;
+  void RequestPresentationTimeFromHostOrDelegate(
+      blink::mojom::RecordContentToVisibleTimeRequestPtr) final;
+  void CancelPresentationTimeRequestForHostAndDelegate() final;
 
   void StopFlingingIfNecessary(
       const blink::WebGestureEvent& event,
@@ -236,11 +263,13 @@ class CONTENT_EXPORT RenderWidgetHostViewChildFrame
 
   // frame_connector_ provides a platform abstraction. Messages
   // sent through it are routed to the embedding renderer process.
-  CrossProcessFrameConnector* frame_connector_;
+  raw_ptr<CrossProcessFrameConnector> frame_connector_;
 
   base::WeakPtr<RenderWidgetHostViewChildFrame> AsWeakPtr() {
     return weak_factory_.GetWeakPtr();
   }
+
+  ui::Compositor* GetCompositor() override;
 
  protected:
   ~RenderWidgetHostViewChildFrame() override;
@@ -294,14 +323,7 @@ class CONTENT_EXPORT RenderWidgetHostViewChildFrame
   // properties.
   bool initial_properties_sent_ = false;
 
-  // The ScreenInfo information from the parent at the time this class is
-  // created, to be used before this view is connected to its FrameDelegate.
-  // This is kept up to date anytime GetScreenInfo() is called and we have
-  // a FrameDelegate.
-  blink::ScreenInfo screen_info_;
-
   base::WeakPtrFactory<RenderWidgetHostViewChildFrame> weak_factory_{this};
-  DISALLOW_COPY_AND_ASSIGN(RenderWidgetHostViewChildFrame);
 };
 
 }  // namespace content

@@ -10,15 +10,11 @@
 #include <memory>
 #include <vector>
 
-#include "base/location.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/time/time.h"
 #include "pdf/paint_aggregator.h"
-#include "pdf/ppapi_migration/callback.h"
 #include "ui/gfx/geometry/size.h"
-
-namespace base {
-class TimeDelta;
-}  // namespace base
 
 namespace gfx {
 class Point;
@@ -42,7 +38,7 @@ class PaintManager {
   class Client {
    public:
     // Creates a new, unbound `Graphics` for the paint manager, with the given
-    // |size| and always-opaque rendering.
+    // `size` and always-opaque rendering.
     virtual std::unique_ptr<Graphics> CreatePaintGraphics(
         const gfx::Size& size) = 0;
 
@@ -72,18 +68,6 @@ class PaintManager {
                          std::vector<PaintReadyRect>& ready,
                          std::vector<gfx::Rect>& pending) = 0;
 
-    // Schedules work to be executed on a main thread after a specific delay.
-    // The `result` parameter will be passed as the argument to the `callback`.
-    // `result` is needed sometimes to emulate calls of some callbacks, but it's
-    // not always needed. `delay` should be no longer than `INT32_MAX`
-    // milliseconds for the Pepper plugin implementation to prevent integer
-    // overflow.
-    virtual void ScheduleTaskOnMainThread(
-        base::TimeDelta delay,
-        ResultCallback callback,
-        int32_t result,
-        const base::Location& from_here = base::Location::Current()) = 0;
-
    protected:
     // You shouldn't be doing deleting through this interface.
     ~Client() = default;
@@ -92,8 +76,9 @@ class PaintManager {
   // The Client is a non-owning pointer and must remain valid (normally the
   // object implementing the Client interface will own the paint manager).
   //
-  // You will need to call SetSize before this class will do anything. Normally
-  // you do this from the ViewChanged method of your plugin instance.
+  // You will need to call SetSize() before this class will do anything.
+  // Normally you do this from UpdateGeometryOnViewChanged() of your plugin
+  // instance.
   explicit PaintManager(Client* client);
   PaintManager(const PaintManager&) = delete;
   PaintManager& operator=(const PaintManager&) = delete;
@@ -134,8 +119,8 @@ class PaintManager {
   float GetEffectiveDeviceScale() const;
 
   // Set the transform for the graphics layer.
-  // If |schedule_flush| is true, it ensures a flush will be scheduled for
-  // this change. If |schedule_flush| is false, then the change will not take
+  // If `schedule_flush` is true, it ensures a flush will be scheduled for
+  // this change. If `schedule_flush` is false, then the change will not take
   // effect until another change causes a flush.
   void SetTransform(float scale,
                     const gfx::Point& origin,
@@ -159,14 +144,14 @@ class PaintManager {
   void Flush();
 
   // Callback for asynchronous completion of Flush.
-  void OnFlushComplete(int32_t);
+  void OnFlushComplete();
 
   // Callback for manual scheduling of paints when there is no flush callback
   // pending.
-  void OnManualCallbackComplete(int32_t);
+  void OnManualCallbackComplete();
 
   // Non-owning pointer. See the constructor.
-  Client* const client_;
+  const raw_ptr<Client> client_;
 
   // This graphics device will be null if no graphics has been set yet.
   std::unique_ptr<Graphics> graphics_;

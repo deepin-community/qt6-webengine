@@ -12,9 +12,8 @@ Are you a Google employee? See
 
 ## System requirements
 
-* A 64-bit Mac running 10.12.6 or later.
-* [Xcode](https://developer.apple.com/xcode) 12.0 or higher.
-* The current version of the JDK (required for the Closure compiler).
+* A 64-bit Mac running 11.3 or later.
+* [Xcode](https://developer.apple.com/xcode) 13.1 or higher.
 
 ## Install `depot_tools`
 
@@ -117,7 +116,7 @@ solutions = [
       "name": "setup_gn",
       "pattern": ".",
       "action": [
-        "python",
+        "python3",
         "src/ios/build/tools/setup-gn.py",
       ]
     }],
@@ -171,6 +170,7 @@ application extensions:
 -   `${prefix}.chrome.ios.dev`
 -   `${prefix}.chrome.ios.dev.ContentTodayExtension`
 -   `${prefix}.chrome.ios.dev.CredentialProviderExtension`
+-   `${prefix}.chrome.ios.dev.IntentsExtension`
 -   `${prefix}.chrome.ios.dev.SearchTodayExtension`
 -   `${prefix}.chrome.ios.dev.ShareExtension`
 -   `${prefix}.chrome.ios.dev.TodayExtension`
@@ -188,8 +188,8 @@ to share files and configurations while the `group.${prefix}.common` is shared
 with Chromium and other applications from the same organisation and can be used
 to send commands to Chromium.
 
-`${prefix}.chrome.ios.dev.CredentialProviderExtension` needs the AutoFill 
-Credential Provider Entitlement, which corresponds to the key 
+`${prefix}.chrome.ios.dev.CredentialProviderExtension` needs the AutoFill
+Credential Provider Entitlement, which corresponds to the key
 `com.apple.developer.authentication-services.autofill-credential-provider`
 Please refer to Apple's documentation on how to set this up.
 
@@ -237,7 +237,7 @@ installed that could sign the `ios_web_shell.app` bundle with the identity
 request such a mobile provisioning profile from Apple.
 
 You can inspect the file passed via the `-e` flag to the `codesign.py` script
-to check which capabilites are required for the mobile provisioning profile
+to check which capabilities are required for the mobile provisioning profile
 (e.g. `src/build/config/ios/entitlements.plist` for the above build error,
 remember that the paths are relative to the build directory, not to the source
 directory).
@@ -318,7 +318,7 @@ $ gclient sync
 
 The first command updates the primary Chromium source repository and rebases
 any of your local branches on top of tip-of-tree (aka the Git branch
-`origin/master`). If you don't want to use this script, you can also just use
+`origin/main`). If you don't want to use this script, you can also just use
 `git pull` or other common Git commands to update the repo.
 
 The second command syncs dependencies to the appropriate versions and re-runs
@@ -350,7 +350,7 @@ script import lldbinit
 ```
 
 This will also allow you to see the content of some of Chromium types in the
-debugger like `base::string16`, ... If you want to use `lldb` directly, name
+debugger like `std::u16string`, ... If you want to use `lldb` directly, name
 the file `~/.lldbinit` instead of `~/.lldbinit-Xcode`.
 
 Note: if you are using `ios/build/tools/setup-gn.py` to generate the Xcode

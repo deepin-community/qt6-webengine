@@ -8,7 +8,6 @@
 
 #include "base/logging.h"
 #include "base/numerics/safe_conversions.h"
-#include "base/optional.h"
 #include "media/base/decrypt_config.h"
 #include "media/base/encryption_pattern.h"
 #include "media/base/media_util.h"
@@ -18,6 +17,7 @@
 #include "media/formats/common/offset_byte_queue.h"
 #include "media/formats/mp2t/mp2t_common.h"
 #include "media/video/h264_parser.h"
+#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
 
@@ -397,7 +397,7 @@ bool EsParserH264::EmitFrame(int64_t access_unit_pos,
   DVLOG_IF(1, current_timing_desc.pts == kNoTimestamp) << "Missing timestamp";
 
   // If only the PTS is provided, copy the PTS into the DTS.
-  if (current_timing_desc.dts == kNoDecodeTimestamp()) {
+  if (current_timing_desc.dts == kNoDecodeTimestamp) {
     current_timing_desc.dts =
         DecodeTimestamp::FromPresentationTime(current_timing_desc.pts);
   }
@@ -490,11 +490,11 @@ bool EsParserH264::UpdateVideoDecoderConfig(const H264SPS* sps,
   int sar_width = (sps->sar_width == 0) ? 1 : sps->sar_width;
   int sar_height = (sps->sar_height == 0) ? 1 : sps->sar_height;
 
-  base::Optional<gfx::Size> coded_size = sps->GetCodedSize();
+  absl::optional<gfx::Size> coded_size = sps->GetCodedSize();
   if (!coded_size)
     return false;
 
-  base::Optional<gfx::Rect> visible_rect = sps->GetVisibleRect();
+  absl::optional<gfx::Rect> visible_rect = sps->GetVisibleRect();
   if (!visible_rect)
     return false;
 
@@ -517,7 +517,7 @@ bool EsParserH264::UpdateVideoDecoderConfig(const H264SPS* sps,
   }
 
   VideoDecoderConfig video_decoder_config(
-      kCodecH264, profile, VideoDecoderConfig::AlphaMode::kIsOpaque,
+      VideoCodec::kH264, profile, VideoDecoderConfig::AlphaMode::kIsOpaque,
       VideoColorSpace::REC709(), kNoTransformation, coded_size.value(),
       visible_rect.value(), natural_size, EmptyExtraData(), scheme);
 

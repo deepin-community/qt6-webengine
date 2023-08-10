@@ -6,11 +6,12 @@
 
 #include <utility>
 
-#include "base/macros.h"
+#include "base/memory/raw_ptr.h"
 #include "ui/aura/scoped_window_targeter.h"
 #include "ui/aura/test/aura_test_base.h"
 #include "ui/aura/test/test_window_delegate.h"
 #include "ui/aura/window.h"
+#include "ui/compositor/layer.h"
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
 #include "ui/events/event_utils.h"
@@ -22,6 +23,10 @@ namespace aura {
 class StaticWindowTargeter : public WindowTargeter {
  public:
   explicit StaticWindowTargeter(aura::Window* window) : window_(window) {}
+
+  StaticWindowTargeter(const StaticWindowTargeter&) = delete;
+  StaticWindowTargeter& operator=(const StaticWindowTargeter&) = delete;
+
   ~StaticWindowTargeter() override {}
 
  private:
@@ -31,9 +36,7 @@ class StaticWindowTargeter : public WindowTargeter {
     return window_;
   }
 
-  Window* window_;
-
-  DISALLOW_COPY_AND_ASSIGN(StaticWindowTargeter);
+  raw_ptr<Window> window_;
 };
 
 gfx::RectF GetEffectiveVisibleBoundsInRootWindow(Window* window) {
@@ -217,7 +220,7 @@ class IdCheckingEventTargeter : public WindowTargeter {
   // WindowTargeter:
   bool SubtreeShouldBeExploredForEvent(Window* window,
                                        const ui::LocatedEvent& event) override {
-    return (window->id() == id_ &&
+    return (window->GetId() == id_ &&
             WindowTargeter::SubtreeShouldBeExploredForEvent(window, event));
   }
 

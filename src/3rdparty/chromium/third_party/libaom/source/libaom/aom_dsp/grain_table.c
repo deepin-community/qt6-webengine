@@ -105,7 +105,11 @@ static void grain_table_entry_read(FILE *file,
       }
     }
 
-    fscanf(file, "\n\tcY");
+    if (fscanf(file, "\n\tcY")) {
+      aom_internal_error(error_info, AOM_CODEC_ERROR,
+                         "Unable to read Y coeffs header (cY)");
+      return;
+    }
     const int n = 2 * pars->ar_coeff_lag * (pars->ar_coeff_lag + 1);
     for (int i = 0; i < n; ++i) {
       if (1 != fscanf(file, "%d", &pars->ar_coeffs_y[i])) {
@@ -114,7 +118,11 @@ static void grain_table_entry_read(FILE *file,
         return;
       }
     }
-    fscanf(file, "\n\tcCb");
+    if (fscanf(file, "\n\tcCb")) {
+      aom_internal_error(error_info, AOM_CODEC_ERROR,
+                         "Unable to read Cb coeffs header (cCb)");
+      return;
+    }
     for (int i = 0; i <= n; ++i) {
       if (1 != fscanf(file, "%d", &pars->ar_coeffs_cb[i])) {
         aom_internal_error(error_info, AOM_CODEC_ERROR,
@@ -122,7 +130,11 @@ static void grain_table_entry_read(FILE *file,
         return;
       }
     }
-    fscanf(file, "\n\tcCr");
+    if (fscanf(file, "\n\tcCr")) {
+      aom_internal_error(error_info, AOM_CODEC_ERROR,
+                         "Unable read to Cr coeffs header (cCr)");
+      return;
+    }
     for (int i = 0; i <= n; ++i) {
       if (1 != fscanf(file, "%d", &pars->ar_coeffs_cr[i])) {
         aom_internal_error(error_info, AOM_CODEC_ERROR,
@@ -130,7 +142,7 @@ static void grain_table_entry_read(FILE *file,
         return;
       }
     }
-    fscanf(file, "\n");
+    (void)fscanf(file, "\n");
   }
 }
 
@@ -202,7 +214,7 @@ int aom_film_grain_table_lookup(aom_film_grain_table_t *t, int64_t time_stamp,
                                 int64_t end_time, int erase,
                                 aom_film_grain_t *grain) {
   aom_film_grain_table_entry_t *entry = t->head;
-  aom_film_grain_table_entry_t *prev_entry = 0;
+  aom_film_grain_table_entry_t *prev_entry = NULL;
   uint16_t random_seed = grain ? grain->random_seed : 0;
   if (grain) memset(grain, 0, sizeof(*grain));
 
@@ -241,10 +253,10 @@ int aom_film_grain_table_lookup(aom_film_grain_table_t *t, int64_t time_stamp,
         entry->end_time = time_stamp;
         if (t->tail == entry) t->tail = new_entry;
       }
-      // If segments aren't aligned, delete from the beggining of subsequent
+      // If segments aren't aligned, delete from the beginning of subsequent
       // segments
       if (end_time > entry_end_time) {
-        aom_film_grain_table_lookup(t, entry->end_time, end_time, 1, 0);
+        aom_film_grain_table_lookup(t, entry_end_time, end_time, 1, 0);
       }
       return 1;
     }
@@ -275,12 +287,12 @@ aom_codec_err_t aom_film_grain_table_read(
     return error_info->error_code;
   }
 
-  aom_film_grain_table_entry_t *prev_entry = 0;
+  aom_film_grain_table_entry_t *prev_entry = NULL;
   while (!feof(file)) {
     aom_film_grain_table_entry_t *entry = aom_malloc(sizeof(*entry));
     memset(entry, 0, sizeof(*entry));
     grain_table_entry_read(file, error_info, entry);
-    entry->next = 0;
+    entry->next = NULL;
 
     if (prev_entry) prev_entry->next = entry;
     if (!t->head) t->head = entry;

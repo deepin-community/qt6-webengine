@@ -153,7 +153,12 @@ class Buffer final : public ui::GbmBuffer {
         format_modifier_(modifier),
         flags_(flags),
         size_(size),
-        handle_(std::move(handle)) {}
+        handle_(std::move(handle)) {
+    handle_.supports_zero_copy_webgpu_import = SupportsZeroCopyWebGPUImport();
+  }
+
+  Buffer(const Buffer&) = delete;
+  Buffer& operator=(const Buffer&) = delete;
 
   ~Buffer() override {
     DCHECK(!mmap_data_);
@@ -184,6 +189,21 @@ class Buffer final : public ui::GbmBuffer {
     DCHECK_LT(plane, handle_.planes.size());
     return handle_.planes[plane].fd.get();
   }
+
+  bool SupportsZeroCopyWebGPUImport() const override {
+    // NOT supported if the buffer is multi-planar and its planes are disjoint.
+    size_t plane_count = GetNumPlanes();
+    if (plane_count > 1) {
+      uint32_t handle = GetPlaneHandle(0);
+      for (size_t plane = 1; plane < plane_count; ++plane) {
+        if (GetPlaneHandle(plane) != handle) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
   uint32_t GetPlaneStride(size_t plane) const override {
     DCHECK_LT(plane, handle_.planes.size());
     return handle_.planes[plane].stride;
@@ -245,9 +265,7 @@ class Buffer final : public ui::GbmBuffer {
 
   const gfx::Size size_;
 
-  const gfx::NativePixmapHandle handle_;
-
-  DISALLOW_COPY_AND_ASSIGN(Buffer);
+  gfx::NativePixmapHandle handle_;
 };
 
 std::unique_ptr<Buffer> CreateBufferForBO(struct gbm_bo* bo,
@@ -289,6 +307,10 @@ std::unique_ptr<Buffer> CreateBufferForBO(struct gbm_bo* bo,
 class Device final : public ui::GbmDevice {
  public:
   Device(gbm_device* device) : device_(device) {}
+
+  Device(const Device&) = delete;
+  Device& operator=(const Device&) = delete;
+
   ~Device() override { gbm_device_destroy(device_); }
 
   std::unique_ptr<ui::GbmBuffer> CreateBuffer(uint32_t format,
@@ -298,9 +320,9 @@ class Device final : public ui::GbmDevice {
         gbm_bo_create(device_, size.width(), size.height(), format, flags);
     if (!bo) {
 #if DCHECK_IS_ON()
-      const char fourcc_as_string[5] = {format & 0xFF, format >> 8 & 0xFF,
-                                        format >> 16 & 0xFF,
-                                        format >> 24 & 0xFF, 0};
+      const char fourcc_as_string[5] = {
+          static_cast<char>(format), static_cast<char>(format >> 8),
+          static_cast<char>(format >> 16), static_cast<char>(format >> 24), 0};
 
       DVLOG(2) << "Failed to create GBM BO, " << fourcc_as_string << ", "
                << size.ToString() << ", flags: 0x" << std::hex << flags
@@ -378,8 +400,6 @@ class Device final : public ui::GbmDevice {
 
  private:
   gbm_device* const device_;
-
-  DISALLOW_COPY_AND_ASSIGN(Device);
 };
 
 }  // namespace gbm_wrapper

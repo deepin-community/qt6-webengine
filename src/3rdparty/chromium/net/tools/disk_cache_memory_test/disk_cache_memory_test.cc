@@ -51,11 +51,11 @@ struct CacheSpec {
     std::vector<std::string> tokens = base::SplitString(
         spec_string, ":", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
     if (tokens.size() != 3)
-      return std::unique_ptr<CacheSpec>();
+      return nullptr;
     if (tokens[0] != kBlockFileBackendType && tokens[0] != kSimpleBackendType)
-      return std::unique_ptr<CacheSpec>();
+      return nullptr;
     if (tokens[1] != kDiskCacheType && tokens[1] != kAppCacheType)
-      return std::unique_ptr<CacheSpec>();
+      return nullptr;
     return std::unique_ptr<CacheSpec>(new CacheSpec(
         tokens[0] == kBlockFileBackendType ? net::CACHE_BACKEND_BLOCKFILE
                                            : net::CACHE_BACKEND_SIMPLE,
@@ -95,10 +95,10 @@ std::unique_ptr<Backend> CreateAndInitBackend(const CacheSpec& spec) {
   base::RunLoop run_loop;
   net::CompletionOnceCallback callback =
       base::BindOnce(&SetSuccessCodeOnCompletion, &run_loop, &succeeded);
-  const int net_error =
-      CreateCacheBackend(spec.cache_type, spec.backend_type, spec.path, 0,
-                         disk_cache::ResetHandling::kNeverReset, nullptr,
-                         &backend, std::move(callback));
+  const int net_error = CreateCacheBackend(
+      spec.cache_type, spec.backend_type, /*file_operations=*/nullptr,
+      spec.path, 0, disk_cache::ResetHandling::kNeverReset, nullptr, &backend,
+      std::move(callback));
   if (net_error == net::OK)
     SetSuccessCodeOnCompletion(&run_loop, &succeeded, net::OK);
   else
@@ -216,7 +216,6 @@ uint64_t GetMemoryConsumption() {
         return total_size;
     }
   }
-  return total_size;
 }
 
 bool CacheMemTest(const std::vector<std::unique_ptr<CacheSpec>>& specs) {

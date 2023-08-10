@@ -5,9 +5,8 @@
 #ifndef SERVICES_NETWORK_TRUST_TOKENS_HAS_TRUST_TOKENS_ANSWERER_H_
 #define SERVICES_NETWORK_TRUST_TOKENS_HAS_TRUST_TOKENS_ANSWERER_H_
 
-#include <memory>
-
 #include "base/callback.h"
+#include "base/memory/raw_ptr.h"
 #include "services/network/public/mojom/trust_tokens.mojom.h"
 #include "services/network/trust_tokens/pending_trust_token_store.h"
 #include "services/network/trust_tokens/suitable_trust_token_origin.h"
@@ -15,6 +14,8 @@
 #include "url/origin.h"
 
 namespace network {
+
+class SynchronousTrustTokenKeyCommitmentGetter;
 
 // HasTrustTokensAnswerer is a class bound to a top-level origin, able to answer
 // queries about whether the user possesses trust tokens issued by any issuer
@@ -27,8 +28,10 @@ namespace network {
 class HasTrustTokensAnswerer : public mojom::HasTrustTokensAnswerer {
  public:
   // Constructs a new answerer bound to the given top frame origin.
-  HasTrustTokensAnswerer(SuitableTrustTokenOrigin top_frame_origin,
-                         PendingTrustTokenStore* pending_trust_token_store);
+  HasTrustTokensAnswerer(
+      SuitableTrustTokenOrigin top_frame_origin,
+      PendingTrustTokenStore* pending_trust_token_store,
+      const SynchronousTrustTokenKeyCommitmentGetter* key_commitment_getter);
 
   ~HasTrustTokensAnswerer() override;
 
@@ -49,7 +52,9 @@ class HasTrustTokensAnswerer : public mojom::HasTrustTokensAnswerer {
                             TrustTokenStore* trust_token_store);
 
   const SuitableTrustTokenOrigin top_frame_origin_;
-  PendingTrustTokenStore* pending_trust_token_store_;
+  raw_ptr<PendingTrustTokenStore> pending_trust_token_store_;
+  raw_ptr<const SynchronousTrustTokenKeyCommitmentGetter> const
+      key_commitment_getter_;
 
   base::WeakPtrFactory<HasTrustTokensAnswerer> weak_factory_{this};
 };

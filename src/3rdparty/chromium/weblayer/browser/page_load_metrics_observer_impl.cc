@@ -7,7 +7,7 @@
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "components/no_state_prefetch/browser/no_state_prefetch_manager.h"
-#include "components/no_state_prefetch/browser/prerender_util.h"
+#include "components/no_state_prefetch/browser/no_state_prefetch_utils.h"
 #include "components/page_load_metrics/browser/observers/core/largest_contentful_paint_handler.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/web_contents.h"
@@ -20,9 +20,8 @@ namespace weblayer {
 
 PageLoadMetricsObserverImpl::ObservePolicy
 PageLoadMetricsObserverImpl::OnCommit(
-    content::NavigationHandle* navigation_handle,
-    ukm::SourceId source_id) {
-#if defined(OS_ANDROID)
+    content::NavigationHandle* navigation_handle) {
+#if BUILDFLAG(IS_ANDROID)
   if (!ukm::UkmRecorder::Get())
     return CONTINUE_OBSERVING;
 
@@ -33,7 +32,8 @@ PageLoadMetricsObserverImpl::OnCommit(
           navigation_handle->GetWebContents()->GetBrowserContext());
   if (!no_state_prefetch_manager)
     return CONTINUE_OBSERVING;
-  prerender::RecordNoStatePrefetchMetrics(navigation_handle, source_id,
+  prerender::RecordNoStatePrefetchMetrics(navigation_handle,
+                                          GetDelegate().GetPageUkmSourceId(),
                                           no_state_prefetch_manager);
 #endif
   return CONTINUE_OBSERVING;

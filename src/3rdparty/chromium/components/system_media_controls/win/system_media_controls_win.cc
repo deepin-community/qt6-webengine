@@ -179,7 +179,7 @@ void SystemMediaControlsWin::SetPlaybackStatus(PlaybackStatus status) {
   DCHECK(SUCCEEDED(hr));
 }
 
-void SystemMediaControlsWin::SetTitle(const base::string16& title) {
+void SystemMediaControlsWin::SetTitle(const std::u16string& title) {
   DCHECK(initialized_);
   DCHECK(display_properties_);
   base::win::ScopedHString h_title =
@@ -188,7 +188,7 @@ void SystemMediaControlsWin::SetTitle(const base::string16& title) {
   DCHECK(SUCCEEDED(hr));
 }
 
-void SystemMediaControlsWin::SetArtist(const base::string16& artist) {
+void SystemMediaControlsWin::SetArtist(const std::u16string& artist) {
   DCHECK(initialized_);
   DCHECK(display_properties_);
   base::win::ScopedHString h_artist =
@@ -251,21 +251,22 @@ void SystemMediaControlsWin::SetThumbnail(const SkBitmap& bitmap) {
             status == ABI::Windows::Foundation::AsyncStatus::Completed) {
           Microsoft::WRL::ComPtr<IRandomAccessStreamReferenceStatics>
               reference_statics;
-          HRESULT hr = base::win::GetActivationFactory<
+          HRESULT result = base::win::GetActivationFactory<
               IRandomAccessStreamReferenceStatics,
               RuntimeClass_Windows_Storage_Streams_RandomAccessStreamReference>(
               &reference_statics);
-          DCHECK(SUCCEEDED(hr));
+          DCHECK(SUCCEEDED(result));
 
-          hr = reference_statics->CreateFromStream(icon_stream_.Get(),
-                                                   &icon_stream_reference_);
-          DCHECK(SUCCEEDED(hr));
+          result = reference_statics->CreateFromStream(icon_stream_.Get(),
+                                                       &icon_stream_reference_);
+          DCHECK(SUCCEEDED(result));
 
-          hr = display_updater_->put_Thumbnail(icon_stream_reference_.Get());
-          DCHECK(SUCCEEDED(hr));
+          result =
+              display_updater_->put_Thumbnail(icon_stream_reference_.Get());
+          DCHECK(SUCCEEDED(result));
 
-          hr = display_updater_->Update();
-          DCHECK(SUCCEEDED(hr));
+          result = display_updater_->Update();
+          DCHECK(SUCCEEDED(result));
         }
         return hr;
       });

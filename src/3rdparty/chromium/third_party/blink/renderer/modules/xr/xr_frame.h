@@ -7,13 +7,14 @@
 
 #include <memory>
 
-#include "device/vr/public/mojom/vr_service.mojom-blink-forward.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_dom_matrix.h"
+#include "third_party/blink/renderer/core/typed_arrays/array_buffer_view_helpers.h"
+#include "third_party/blink/renderer/core/typed_arrays/dom_typed_array.h"
 #include "third_party/blink/renderer/modules/xr/xr_joint_pose.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
-#include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/transforms/transformation_matrix.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
 
@@ -91,14 +92,14 @@ class XRFrame final : public ScriptWrappable {
 
   XRJointPose* getJointPose(XRJointSpace* joint,
                             XRSpace* baseSpace,
-                            ExceptionState& exception_state);
+                            ExceptionState& exception_state) const;
   bool fillJointRadii(HeapVector<Member<XRJointSpace>>& jointSpaces,
                       NotShared<DOMFloat32Array> radii,
-                      ExceptionState& exception_state);
+                      ExceptionState& exception_state) const;
   bool fillPoses(HeapVector<Member<XRSpace>>& spaces,
                  XRSpace* baseSpace,
                  NotShared<DOMFloat32Array> transforms,
-                 ExceptionState& exception_state);
+                 ExceptionState& exception_state) const;
 
  private:
   std::unique_ptr<TransformationMatrix> GetAdjustedPoseMatrix(XRSpace*) const;
@@ -113,7 +114,12 @@ class XRFrame final : public ScriptWrappable {
       ScriptState* script_state,
       const blink::TransformationMatrix& native_origin_from_anchor,
       XRSpace* space,
+      absl::optional<uint64_t> maybe_plane_id,
       ExceptionState& exception_state);
+  // Helper for checking if space and frame have the same session.
+  // Sets kInvalidStateError exception state if sessions are different.
+  bool IsSameSession(XRSession* space_session,
+                     ExceptionState& exception_state) const;
 
   const Member<XRSession> session_;
 
